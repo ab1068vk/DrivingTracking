@@ -199,7 +199,7 @@ export function buildTrackingHealth(/** @type {any} */ { permissionStatus = {}, 
       label: 'Background location',
       status: permissionStatus?.backgroundLocation === 'granted' ? 'good' : 'warn',
       value: permissionStatus?.backgroundLocation || 'unknown',
-      detail: 'Needed for reliable auto tracking while the app is closed.',
+      detail: 'Needed for reliable auto tracking while the app is minimized or in the background. Force-closing can still stop Android tracking.',
     },
     {
       id: 'activity',
@@ -322,7 +322,7 @@ export function buildDashboardTrackingExplanation(/** @type {any} */ {
     blockerDetails.push('Physical Activity permission is not granted, so Android cannot tell the app you are in a vehicle.');
   }
   if (backgroundAuto && backgroundLocation !== 'granted') {
-    blockerDetails.push('Background location is not granted, so trips may not start while the app is closed.');
+    blockerDetails.push('Background location is not granted, so trips may not start while the app is minimized or in the background.');
   }
   if (backgroundAuto && notifications !== 'granted') {
     blockerDetails.push('Notifications are not granted, so Android may block the persistent background tracking service.');

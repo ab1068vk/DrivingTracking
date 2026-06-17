@@ -1,7 +1,7 @@
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
-import { localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
+import { BACKUP_EXCLUDED_KEYS, localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
 import { createPrivacyExportSalt, getPrivacyZones, maskTripForPrivacyExport } from '@/lib/privacyZones';
 import { commitZoneForExportSync, createExportId } from '@/lib/exportCommitment';
 import { getJson, setJson } from '@/lib/mobileStorage';
@@ -27,6 +27,9 @@ import {
   verifyAndUnwrapExport,
 } from '@/lib/exportIntegrity';
 import { logTransmission } from '@/lib/transmissionLog';
+
+// CHANGES (session):
+// - Added speed knowledge backup exclusion metadata and trip_speed_summary_v1 backup field support.
 
 /*
  * Backup schema history:
@@ -118,6 +121,7 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'night_driving',
   'road_type',
   'speed_zones',
+  'trip_speed_summary_v1',
   'score_overall',
   'score_confidence',
   'score_confidence_label',
@@ -570,6 +574,7 @@ export function buildDriveSenseBackup({
       shifted_trip_count: privacyShiftedTrips.length,
       boundary_placeholder_count: privacyPlaceholderCount,
       shifted_trip_ids: privacyShiftedTrips.map((trip) => trip.id).filter(Boolean).slice(0, 1000),
+      no_backup_keys: [...BACKUP_EXCLUDED_KEYS],
     },
     zone_commitments: zoneCommitments,
     settings: exportSettings,
@@ -626,6 +631,10 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
       privacyZones: signedBackup?.payload?.settings?.privacy_zones || [],
     }).match(/"lat(?:itude)?"|"lng"|"longitude"|"radius(?:_m)?"|"zone_radius_m"|"label":"(?!Private area")/i),
     privacyTransformSource: 'dataBackup.js:buildDriveSenseBackup',
+    privacyVerificationEvidence: [
+      'backup payload was inspected for zone coordinate and radius fields',
+      'privacy zones are exported as coordinate-free commitments',
+    ],
     sentCoords: '0 - zone coordinates and ranges excluded, boundary points committed',
     protections: ['HMAC-signed', 'commitment scheme', 'no zone centers or ranges included'],
     offsetMeters: null,

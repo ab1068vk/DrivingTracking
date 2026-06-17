@@ -48,6 +48,7 @@ describe('transmissionLog', () => {
       coordinateDisclosure: 'rounded',
       privacyTransformVerified: true,
       privacyTransformSource: 'test',
+      privacyVerificationEvidence: ['coordinate rounded before send'],
       sentCoords: '43.6500, -79.3800',
       protections: ['rounded to 4 decimals'],
       bytesOut: 123.4,
@@ -60,6 +61,9 @@ describe('transmissionLog', () => {
       bytesOut: 123,
       status: 'safe',
       zonesSuppressed: ['Home'],
+      privacyTransformVerified: true,
+      privacyVerificationEvidence: ['coordinate rounded before send'],
+      privacyVerificationWarnings: [],
     });
     expect(await loadTransmissionLog()).toHaveLength(1);
     expect(mocks.appendPrivacyEvent).toHaveBeenCalledWith({
@@ -111,6 +115,7 @@ describe('transmissionLog', () => {
     const loaded = await loadTransmissionLog();
     expect(loaded).toHaveLength(20);
     expect(new Set(loaded.map((entry) => entry.type)).size).toBe(20);
+    expect(loaded.every((entry) => entry.status === 'warning')).toBe(true);
   });
 
   it('clears the encrypted log after queued writes finish', async () => {
@@ -130,6 +135,42 @@ describe('transmissionLog', () => {
     await expect(logTransmission({ service: 'test' })).rejects.toThrow('invalid coordinateDisclosure');
   });
 
+  it('downgrades protected claims that lack named verification evidence', async () => {
+    const record = await logTransmission({
+      service: 'open-meteo',
+      type: 'Weather lookup',
+      coordinateDisclosure: 'rounded',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'test',
+      sentCoords: '43.6500, -79.3800',
+    });
+
+    expect(record.privacyTransformVerified).toBe(false);
+    expect(record.status).toBe('warning');
+    expect(record.privacyVerificationWarnings).toContain(
+      'Protection is caller-reported but not verified by named pre-send evidence.'
+    );
+  });
+
+  it('marks raw coordinate sends as warnings even when explicit consent is logged', async () => {
+    const record = await logTransmission({
+      service: 'osrm',
+      type: 'Route matching',
+      coordinateDisclosure: 'raw',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'test',
+      privacyVerificationEvidence: ['privacy-zone guard ran before request'],
+      sentCoords: '10 sampled coordinates',
+      protections: ['explicit consent'],
+      status: 'safe',
+    });
+
+    expect(record.status).toBe('warning');
+    expect(record.privacyVerificationWarnings).toContain(
+      'Raw coordinates left the app; consent or guards do not make this a protected send.'
+    );
+  });
+
   it('migrates legacy claims without retroactively verifying them', async () => {
     mocks.stored = [{
       id: 'legacy',
@@ -142,6 +183,7 @@ describe('transmissionLog', () => {
       coordinateDisclosure: 'rounded',
       privacyTransformVerified: false,
       privacyTransformSource: 'migrated_from_v1',
+      privacyVerificationWarnings: ['Legacy transmission claim was migrated without pre-send verification evidence.'],
       schemaVersion: 2,
     });
   });

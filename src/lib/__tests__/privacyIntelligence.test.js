@@ -1,13 +1,27 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  loadTransmissionLog: vi.fn(),
+}));
+
+vi.mock('@/lib/transmissionLog', () => ({
+  loadTransmissionLog: mocks.loadTransmissionLog,
+}));
+
 import {
   summarizeAudit,
   summarizeZones,
   transmissionPrivacyLevel,
   computePrivacyScoreFromControls,
+  buildPrivacyActionPlan,
+  getTransmissionSummary,
 } from '@/lib/privacyIntelligence';
 
 describe('privacy intelligence summaries', () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    mocks.loadTransmissionLog.mockReset();
+  });
 
   it('classifies blocked, protected, and raw outbound location data', () => {
     expect(transmissionPrivacyLevel({ coordinateDisclosure: 'blocked' })).toBe('blocked');
@@ -16,6 +30,11 @@ describe('privacy intelligence summaries', () => {
       coordinateDisclosure: 'bounding_box',
       privacyTransformVerified: true,
     })).toBe('protected');
+    expect(transmissionPrivacyLevel({
+      coordinateDisclosure: 'bounding_box',
+      privacyTransformVerified: true,
+      privacyVerificationWarnings: ['missing evidence'],
+    })).toBe('unverified');
     expect(transmissionPrivacyLevel({
       coordinateDisclosure: 'raw',
     })).toBe('raw');
@@ -82,5 +101,69 @@ describe('privacy intelligence summaries', () => {
       { operation: 'TRANSMISSION', count: 2 },
       { operation: 'ZONE_SAVED', count: 1 },
     ]);
+  });
+
+  it('summarizes raw and unverified transmissions as review-worthy', async () => {
+    mocks.loadTransmissionLog.mockResolvedValue([
+      {
+        service: 'osrm',
+        coordinateDisclosure: 'raw',
+        protections: ['explicit consent'],
+        status: 'warning',
+        timestamp: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+      {
+        service: 'osrm',
+        coordinateDisclosure: 'raw',
+        protections: [],
+        status: 'warning',
+        timestamp: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+      {
+        service: 'open-meteo',
+        coordinateDisclosure: 'rounded',
+        privacyTransformVerified: false,
+        privacyVerificationWarnings: ['missing evidence'],
+        status: 'warning',
+        timestamp: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+    ]);
+
+    const summary = await getTransmissionSummary();
+
+    expect(summary.totalRawCoords).toBe(2);
+    expect(summary.rawWithConsentCount).toBe(1);
+    expect(summary.rawWithoutConsentCount).toBe(1);
+    expect(summary.claimedButUnverifiedCount).toBe(1);
+    expect(summary.warningTotal).toBe(3);
+  });
+
+  it('builds an actionable privacy plan from the highest-risk findings', () => {
+    const plan = buildPrivacyActionPlan({
+      score: { label: 'Needs review' },
+      protections: [
+        { status: 'error' },
+        { status: 'unknown' },
+      ],
+      transmissions: {
+        rawWithoutConsentCount: 1,
+        rawWithConsentCount: 0,
+        claimedButUnverifiedCount: 2,
+      },
+      chainResult: { valid: true },
+      zoneSummary: { zoneCount: 1 },
+    });
+
+    expect(plan.tone).toBe('error');
+    expect(plan.primaryAction.id).toBe('raw_without_consent');
+    expect(plan.issues.map((item) => item.id)).toEqual(expect.arrayContaining([
+      'raw_without_consent',
+      'failed_controls',
+      'unverified_transmissions',
+      'unknown_controls',
+    ]));
   });
 });

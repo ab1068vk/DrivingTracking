@@ -1,5 +1,31 @@
 const UNKNOWN_ALERT_KEY = 'general';
 
+// CHANGES (session):
+// - Added VOICE_COOLDOWNS_BY_TIER and TIER_EVENT_LABELS.
+// - Modified buildSpeedingMessage to export tier-aware voice wording while preserving legacy catalog behavior.
+// - Renamed regional default wording to REGION_DEFAULT and softened regional default messages.
+// - Ensured non-posted legacy speed messages use speed-check coaching wording.
+// - Updated REGION_DEFAULT voice wording and removed forbidden certainty terms from estimated tiers.
+// - Updated REGION_DEFAULT event label to "no posted sign confirmed" wording.
+
+export const VOICE_COOLDOWNS_BY_TIER = Object.freeze({
+  POSTED: 60000,
+  MAP_ESTIMATED: 90000,
+  LEARNED_LOCAL: 90000,
+  REGION_DEFAULT: 120000,
+  GPS_INFERRED: 180000,
+  UNKNOWN: Infinity,
+});
+
+export const TIER_EVENT_LABELS = Object.freeze({
+  POSTED: 'Posted speed limit (OSM or user-confirmed)',
+  MAP_ESTIMATED: 'Road-type estimate — check posted signs',
+  LEARNED_LOCAL: 'Learned from past trips on this road',
+  REGION_DEFAULT: 'Regional default estimate — no posted sign confirmed',
+  GPS_INFERRED: 'Inferred from traffic — may not reflect posted limit; reduced penalty weight',
+  UNKNOWN: 'Speed limit unavailable',
+});
+
 const VOICE_ALERT_MESSAGE_CATALOG = Object.freeze({
   general: Object.freeze({
     title: 'Safety alert',
@@ -9,10 +35,10 @@ const VOICE_ALERT_MESSAGE_CATALOG = Object.freeze({
     ]),
   }),
   speeding: Object.freeze({
-    title: 'Speed warning',
+    title: 'Speed check',
     messages: Object.freeze([
-      (context) => buildSpeedingMessage(context, 'Speed warning. Ease off and settle back to the limit.'),
-      (context) => buildSpeedingMessage(context, 'Speed warning. Bring your speed down smoothly.'),
+      (context) => buildSpeedingMessage(context, 'Speed check. Ease off and check posted signs.'),
+      (context) => buildSpeedingMessage(context, 'Speed check. Bring your speed down smoothly and check posted signs.'),
     ]),
   }),
   harsh_brake: Object.freeze({
@@ -170,19 +196,53 @@ function humanizeEventType(value) {
   return label || 'risk event';
 }
 
-function buildSpeedingMessage(context, fallback) {
+export function buildSpeedingMessage(context = {}, fallback = null) {
+  if (context.tier) {
+    const speed = `${Math.round(Number(context.speedKmh) || 0)} km/h`;
+    const limit = context.speedLimitKmh ? `${Math.round(Number(context.speedLimitKmh))} km/h` : null;
+
+    switch (context.tier) {
+      case 'POSTED':
+        return limit
+          ? `Speed warning. You are at ${speed} in a posted ${limit} zone. Ease off smoothly.`
+          : 'Speed warning. Ease off and settle back.';
+      case 'MAP_ESTIMATED':
+        return limit
+          ? `Speed check. Estimated ${limit} road-type zone. Check posted signs.`
+          : 'Speed check. Ease off and check signs.';
+      case 'LEARNED_LOCAL':
+        return limit
+          ? `Speed check. This road is usually around ${limit}. Check posted signs and ease off smoothly.`
+          : 'Speed check. Ease off and check signs.';
+      case 'REGION_DEFAULT':
+        return limit
+          ? `Speed check. This area is estimated around ${limit}. Check posted signs.`
+          : 'Speed check. Ease off and check posted signs.';
+      case 'GPS_INFERRED':
+        return 'Speed check. Road speed is uncertain. Ease off and check signs.';
+      default:
+        return null;
+    }
+  }
+
   const speed = formatKmh(context.speedKmh);
   const limit = formatKmh(context.speedLimitKmh);
   const overLimit = formatKmh(context.overLimitKmh);
+  const source = context.speedLimitSource || context.limitSource;
+  const postedSource = source === 'openstreetmap' || source === 'user_confirmed_posted_sign';
+  const estimatedSource = context.limitIsEstimated || !postedSource;
 
   if (speed && limit) {
-    const zoneLabel = context.limitIsEstimated || context.speedLimitSource === 'inferred'
-      ? `an estimated ${limit} zone`
-      : `a ${limit} zone`;
-    return `Speed warning. You are at ${speed} in ${zoneLabel}. Ease off smoothly.`;
+    if (estimatedSource) {
+      return `Speed check. You are at ${speed} in an estimated ${limit} zone. Check posted signs.`;
+    }
+    return `Speed warning. You are at ${speed} in a posted ${limit} zone. Ease off smoothly.`;
   }
 
   if (overLimit) {
+    if (estimatedSource) {
+      return `Speed check. You are about ${overLimit} over the estimated zone. Check posted signs.`;
+    }
     return `Speed warning. You are about ${overLimit} over the limit. Ease off smoothly.`;
   }
 

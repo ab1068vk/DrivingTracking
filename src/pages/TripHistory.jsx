@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { Search, Filter, Car, Tag, Star, CalendarDays, TrendingUp } from 'lucide-react';
 import TripCard from '@/components/TripCard';
-import { localSettings } from '@/lib/trackingStore';
+import SpeedLimitConflictReview from '@/components/SpeedLimitConflictReview';
+import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDistance, formatDuration, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
@@ -144,9 +146,11 @@ export default function TripHistory() {
   const [savedFilters, setSavedFilters] = useState([]);
   const [savedFiltersLoaded, setSavedFiltersLoaded] = useState(false);
   const [visibleCount, setVisibleCount] = useState(TRIP_PAGE_SIZE);
-  const settings = localSettings.get();
+  const location = useLocation();
+  const settings = useLocalSettings();
   const units = settings.units || 'metric';
   const qc = useQueryClient();
+  const reviewSpeedLimitConflicts = new URLSearchParams(location.search || '').get('review') === 'speed-limit-conflicts';
 
   const { data: trips = [], isLoading } = useQuery({
     ...tripSummaryQueryOptions(),
@@ -269,6 +273,10 @@ export default function TripHistory() {
         <h1 className="text-2xl font-grotesk font-bold">Trip History</h1>
         <p className="text-muted-foreground text-sm mt-1">{sorted.length} of {completed.length} completed trips</p>
       </motion.div>
+
+      {reviewSpeedLimitConflicts && (
+        <SpeedLimitConflictReview reviewMode />
+      )}
 
       <div className="relative">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

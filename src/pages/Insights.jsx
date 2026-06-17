@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Award, CalendarDays, CheckCircle2, Clock, Flag, MapPinned, Route, ShieldAlert, Target, TrendingUp } from 'lucide-react';
 import { tripSummaryQueryOptions } from '@/api/trips';
-import { localSettings } from '@/lib/trackingStore';
+import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDistance, getScoreColor } from '@/lib/tripEngine';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import {
@@ -20,7 +20,7 @@ const dayInitials = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 export default function Insights() {
   const navigate = useNavigate();
-  const settings = localSettings.get();
+  const settings = useLocalSettings();
   const units = settings.units || 'metric';
   const [monthOffset, setMonthOffset] = useState(0);
   const monthDate = useMemo(() => {

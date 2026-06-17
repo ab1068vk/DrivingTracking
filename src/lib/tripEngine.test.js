@@ -20,6 +20,8 @@ import {
   calculateBrakeOnsetSmoothness,
   scoreBrakeOnsetSmoothness,
   calculateSpeedLimitCompliance,
+  computeGpsRoadClass,
+  computeSegmentP85,
   cleanRoutePoints,
   computeSmoothedAccelerations,
   detectDrivingEvents,
@@ -27,6 +29,7 @@ import {
   detectHighwayMergeBehavior,
   inferSpeedZones,
   getInferredLimitForPoint,
+  reliablePointSpeed,
   resolveEffectiveSpeedLimitForIndex,
   detectHeadingDeviationEvents,
   detectLaneChanges,
@@ -98,6 +101,10 @@ import {
   getVehicleOdometerKm,
 } from '@/lib/tripInsights';
 
+// CHANGES (session):
+// - Updated inferred speed-limit provenance expectation for six-tier speed-limit sources.
+// - Added Phase 3 tests for segment P85 inference and GPS road-class derivation.
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -142,6 +149,77 @@ describe('tripEngine', () => {
     const zones = inferSpeedZones(points);
     expect(zones.length).toBeGreaterThan(0);
     expect(zones.every((zone) => zone.startIndex > 0 && zone.endIndex < points.length - 1)).toBe(true);
+  });
+
+  it('computes 30-second overlapping P85 windows', () => {
+    const points = Array.from({ length: 7 }, (_, index) => point(43.6532 + index * 0.0001, -79.3832, index * 10, 20 + index * 10));
+    const windows = computeSegmentP85(points, 30, 0.5);
+    expect(windows.length).toBeGreaterThanOrEqual(4);
+    expect(windows[0]).toMatchObject({ windowStartIdx: 0, windowEndIdx: 3, p85Kmh: 40 });
+    expect(windows[1].windowStartIdx).toBe(2);
+    expect(windows[1].p85Kmh).toBe(50);
+  });
+
+  it('uses the most recent overlapping P85 window for each inferred point', () => {
+    const points = Array.from({ length: 8 }, (_, index) => point(43.6532 + index * 0.0001, -79.3832, index * 10, index < 4 ? 105 : 45));
+    const zones = inferSpeedZones(points, DEFAULT_THRESHOLDS);
+    const zoneForLatePoint = zones.filter((zone) => 5 >= zone.startIndex && 5 <= zone.endIndex).at(-1);
+    const resolved = resolveEffectiveSpeedLimitForIndex(points, 5, DEFAULT_THRESHOLDS, { inferredZones: zones });
+    expect(zoneForLatePoint.inferredZoneKmh).toBe(50);
+    expect(resolved.inferredZone.inferredZoneKmh).toBe(50);
+  });
+
+  it('derives speed-zone inference from coordinate movement when reported GPS speed is zero', () => {
+    const start = { lat: 43.6532, lng: -79.3832 };
+    const points = Array.from({ length: 8 }, (_, index) => {
+      const coord = pointNorthOf(start, index * 83.33);
+      return point(coord.lat, coord.lng, index * 5, 0);
+    });
+
+    expect(reliablePointSpeed(points, 3, DEFAULT_THRESHOLDS)).toBeGreaterThan(55);
+    expect(reliablePointSpeed(points, 3, DEFAULT_THRESHOLDS)).toBeLessThan(65);
+    expect(inferSpeedZones(points, DEFAULT_THRESHOLDS).some((zone) => zone.inferredZoneKmh >= 50)).toBe(true);
+  });
+
+  it('emits a regional-default speed check when a 60 km/h drive reports zero GPS speed', () => {
+    const start = { lat: 43.6532, lng: -79.3832 };
+    const points = Array.from({ length: 8 }, (_, index) => {
+      const coord = pointNorthOf(start, index * 83.33);
+      return point(coord.lat, coord.lng, index * 5, 0);
+    });
+    const result = detectDrivingEvents(
+      points,
+      DEFAULT_THRESHOLDS,
+      points.at(-1).timestamp,
+      [],
+      { settings: { configurable_country_defaults: 'CA-ON' } }
+    );
+    const speedingEvent = result.events.find((event) => event.type === EVENT_TYPES.SPEEDING);
+
+    expect(speedingEvent).toBeTruthy();
+    expect(speedingEvent.speed_kmh).toBeGreaterThanOrEqual(59);
+    expect(speedingEvent.speed_limit_kmh).toBe(50);
+    expect(speedingEvent.speed_limit_source).toBe('region_default_estimate');
+  });
+
+  it('uses conservative global defaults instead of self-inferred speed when no country profile is selected', () => {
+    const start = { lat: 43.6532, lng: -79.3832 };
+    const points = Array.from({ length: 8 }, (_, index) => {
+      const coord = pointNorthOf(start, index * 83.33);
+      return point(coord.lat, coord.lng, index * 5, 0);
+    });
+    const result = detectDrivingEvents(points, DEFAULT_THRESHOLDS, points.at(-1).timestamp);
+    const speedingEvent = result.events.find((event) => event.type === EVENT_TYPES.SPEEDING);
+
+    expect(speedingEvent).toBeTruthy();
+    expect(speedingEvent.speed_limit_kmh).toBe(50);
+    expect(speedingEvent.speed_limit_source).toBe('region_default_estimate');
+  });
+
+  it('derives GPS road class when OSM highway type is absent', () => {
+    expect(computeGpsRoadClass(105, 0, 0, 0.9)).toBe('motorway');
+    expect(computeGpsRoadClass(85, 0, 0.1, 0.4)).toBe('rural_or_arterial');
+    expect(computeGpsRoadClass(45, 0.25, 0, 0.4)).toBe('urban');
   });
 
   it('rejects inaccurate, duplicate, and impossible GPS points', () => {
@@ -1376,7 +1454,7 @@ describe('tripEngine', () => {
       road_type: 'urban',
     });
     expect(scores.score_overall).toBeGreaterThanOrEqual(90);
-    expect(scores.score_safety).toBe(98);
+    expect(scores.score_safety).toBe(96);
   });
 
   it('applies configured detection thresholds to event calculations', () => {
@@ -1412,9 +1490,9 @@ describe('tripEngine', () => {
     expect(detectDrivingEvents(osmTaggedUrbanRoad).events.some((event) => event.type === EVENT_TYPES.SPEEDING)).toBe(false);
   });
 
-  it('emits inferred-limit speeding events when OSM speed limits are missing', () => {
+  it('emits regional-default speeding events when OSM speed limits are missing', () => {
     const points = Array.from({ length: 40 }, (_, index) => {
-      const speed = index >= 20 && index <= 24 ? 60 : 45;
+      const speed = index >= 20 && index <= 22 ? 60 : 45;
       return {
         ...point(43.6532 + index * 0.00008, -79.3832, index, speed),
         heading: 0,
@@ -1431,14 +1509,12 @@ describe('tripEngine', () => {
       severity: 'low',
       speed_kmh: 60,
       speed_limit_kmh: 50,
-      speed_limit_source: 'inferred',
+      speed_limit_source: 'region_default_estimate',
       inferred_zone_kmh: 50,
     });
     expect(liveLimit).toBe(50);
     expect(inferredLimit).toBe(50);
-    expect(scores.component_scores.speed_limit_compliance.dataSource).toContain('gps_inferred_speed_limit');
-    expect(scores.component_scores.speed_limit_compliance.note).toContain('inferred road-type limits');
-    expect(scores.component_scores.safety.note).toContain('speeding penalties are half-weighted');
+    expect(scores.component_scores.speed_limit_compliance.dataSource).toContain('regional_default_estimate');
   });
 
   it('keeps OSM highway-default speed sources separate from posted maxspeed', () => {

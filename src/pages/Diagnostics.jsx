@@ -34,7 +34,8 @@ import {
   getTrackingDiagnostics,
   normalizeNativeDiagnosticEvents,
 } from '@/lib/trackingDiagnostics';
-import { activeTripStore, localSettings } from '@/lib/trackingStore';
+import { activeTripStore } from '@/lib/trackingStore';
+import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDateTime } from '@/lib/tripEngine';
 import { buildLocalFeatureTestTrips, LOCAL_TEST_TRIP_PREFIX } from '@/lib/localTestTrips';
 import {
@@ -249,7 +250,7 @@ export default function Diagnostics() {
   }, [nativeDiagnostics, webDiagnostics]);
 
   const parkingTimeline = useMemo(() => buildParkingTimeline(latestTrip), [latestTrip]);
-  const settings = localSettings.get();
+  const settings = useLocalSettings();
   const backgroundAutoEnabled = settings.tracking_mode === 'background_auto' && !settings.tracking_paused;
   const osrmLastReachable = settings.osrm_last_reachable_at ? relativeAge(settings.osrm_last_reachable_at) : 'never';
   const motionDiagnostics = useMemo(() => buildMotionSensorDiagnostics({

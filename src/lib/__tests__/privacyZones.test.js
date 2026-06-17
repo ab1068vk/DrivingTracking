@@ -23,6 +23,9 @@ import {
   mergePrivacyZones,
   NATIVE_PRIVACY_ZONES_KEY,
   NATIVE_PRIVACY_SYNC_STATUS_FAILED,
+  PRIVACY_RADIUS_DEFAULT_M,
+  PRIVACY_RADIUS_MAX_M,
+  PRIVACY_RADIUS_MIN_M,
   PRIVACY_ZONES_SECURE_KEY,
   privacyBoundaryPoint,
   privacyZonesForRoute,
@@ -73,6 +76,39 @@ describe('privacyZones', () => {
     Capacitor.isNativePlatform.mockReturnValue(false);
     Capacitor.getPlatform.mockReturnValue('web');
     vi.unstubAllGlobals();
+  });
+
+  it('uses explicit privacy radius limits and the 180 m default when radius is missing', async () => {
+    expect(PRIVACY_RADIUS_MIN_M).toBe(50);
+    expect(PRIVACY_RADIUS_MAX_M).toBe(1000);
+    expect(PRIVACY_RADIUS_DEFAULT_M).toBe(180);
+
+    const values = new Map([[
+      'drivesense_settings',
+      JSON.stringify({
+        settings_defaults_version: 9,
+        privacy_zones: [],
+      }),
+    ]]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    const updated = await upsertPrivacyZone({
+      id: 'default',
+      label: 'Default',
+      lat: 43.65,
+      lng: -79.38,
+    }, JSON.parse(values.get('drivesense_settings')));
+
+    expect(updated.privacy_zones[0].radius_m).toBe(PRIVACY_RADIUS_DEFAULT_M);
+    expect(updated.privacy_zones[0].lat).toBeUndefined();
+    expect(updated.privacy_zones[0].lng).toBeUndefined();
+
+    const display = getPrivacyZoneDisplayCircle({ id: 'default', label: 'Default', lat: 43.65, lng: -79.38 });
+    expect(display.source_radius_m).toBe(PRIVACY_RADIUS_DEFAULT_M);
   });
 
   it('uses stable offset geometry without exposing the stored center', () => {
@@ -499,6 +535,30 @@ describe('privacyZones', () => {
     expect(first.week).toMatchObject({ hidden: 1, events: 1 });
     expect(first.lastActive).toBe(Date.parse(protectedAt));
     expect(second).toEqual(first);
+  });
+
+  it('derives zone activity from saved local route points inside privacy zones', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-13T16:00:00.000Z'));
+    const protectedAt = '2026-06-13T14:00:00.000Z';
+    const trips = [{
+      id: 'raw-zone-trip',
+      start_time: protectedAt,
+      route_points: [
+        { lat: 43.65, lng: -79.38, timestamp: protectedAt },
+        { lat: 43.6532, lng: -79.38, timestamp: protectedAt },
+      ],
+      driving_events: [
+        { type: 'harsh_brake', lat: 43.65, lng: -79.38, timestamp: protectedAt },
+      ],
+    }];
+
+    const [stats] = deriveZoneStatsFromTrips(trips, { privacy_zones: [zone] });
+
+    expect(stats.today).toMatchObject({ hidden: 1, events: 1 });
+    expect(stats.week).toMatchObject({ hidden: 1, events: 1 });
+    expect(stats.allTime).toMatchObject({ hidden: 1, events: 1 });
+    expect(stats.lastActive).toBe(Date.parse(protectedAt));
   });
 
   it('resets expired daily and weekly zone counters when the dashboard reads them', async () => {

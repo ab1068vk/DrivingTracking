@@ -135,7 +135,12 @@ final class DriveSenseSpeechController {
             return;
         }
 
-        requestAudioFocus();
+        if (!requestAudioFocus()) {
+            if (request.callback != null) {
+                request.callback.onError("Android audio focus is unavailable for voice alerts.");
+            }
+            return;
+        }
         textToSpeech.setSpeechRate(request.rate);
         textToSpeech.setPitch(request.pitch);
         String utteranceId = "roadsage_" + System.currentTimeMillis() + "_" + activeUtterances.size();
@@ -165,12 +170,12 @@ final class DriveSenseSpeechController {
         if (activeUtterances.isEmpty()) abandonAudioFocus();
     }
 
-    private void requestAudioFocus() {
-        if (audioManager == null || hasAudioFocus) return;
+    private boolean requestAudioFocus() {
+        if (audioManager == null || hasAudioFocus) return true;
         int result;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (audioFocusRequest == null) {
-                audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
                     .setAudioAttributes(SPEECH_ATTRIBUTES)
                     .setAcceptsDelayedFocusGain(false)
                     .setOnAudioFocusChangeListener(focusListener)
@@ -181,10 +186,11 @@ final class DriveSenseSpeechController {
             result = audioManager.requestAudioFocus(
                 focusListener,
                 AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
             );
         }
         hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        return hasAudioFocus;
     }
 
     private void abandonAudioFocus() {

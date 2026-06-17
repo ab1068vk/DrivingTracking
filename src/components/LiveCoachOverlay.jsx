@@ -6,6 +6,7 @@ import {
   calculateTripStats,
   detectDrivingEvents,
   EVENT_TYPES,
+  reliablePointSpeed,
   resolveEffectiveSpeedLimitForIndex,
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
@@ -19,7 +20,16 @@ import { isAndroid } from '@/lib/nativePlatform';
 import { getAndroidPhoneUsageSummary } from '@/lib/activityRecognition';
 import { buildPhoneUseFromAndroidUsage, mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
 import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
-import { buildVoiceAlertMessage } from '@/lib/voiceAlertMessages';
+import { alertMarginForConfidence, shouldWarnForSpeed, VOICE_COOLDOWNS_BY_TIER } from '@/lib/speedLimitSource';
+import { buildSpeedingMessage, buildVoiceAlertMessage } from '@/lib/voiceAlertMessages';
+
+// CHANGES (session):
+// - Added tier-aware speed alert helpers for LiveCoachOverlay.
+// - Modified live coach speed alerts to use buildSpeedingMessage and speeding_${resolved.tier} cooldowns.
+// - Modified live coach speed alert badge to render tier-aware text and styles.
+// - Renamed regional default badge wording away from legal certainty.
+// - Use speed-check display wording for non-POSTED speed tiers.
+// - Wired live coach speed checks to speed estimate and tier voice settings.
 
 const RECENT_WINDOW_MS = 120000;
 const CHECK_INTERVAL_MS = 15000;
@@ -30,12 +40,106 @@ const VOICE_COOLDOWNS_MS = {
   close_proximity: 120000,
   harsh_brake: 30000,
   stop_start_pattern: 60000,
-  speeding: 60000,
   heading_drift_beta: 10 * 60 * 1000,
   rapid_accel: 30000,
   long_drive: 30 * 60 * 1000,
   idle: 5 * 60 * 1000,
 };
+
+function createTierAwareSpeedLimitContext(context, settings = {}) {
+  const limitKmh = context?.limitKmh ?? context?.effectiveLimitKmh ?? null;
+  const confidence = Number(context?.confidence) || 0;
+  const margin = alertMarginForConfidence(confidence, settings.threshold_speed_over_kmh ?? 5);
+  const tier = context?.tier || 'UNKNOWN';
+  const estimateGuidanceAllowed = settings.speed_estimates_enabled !== false || tier === 'POSTED';
+  if (!estimateGuidanceAllowed) {
+    return {
+      ...context,
+      limitKmh: null,
+      tier: 'UNKNOWN',
+      confidence: 0,
+      alertMarginKmh: Infinity,
+      shouldAlert: () => false,
+    };
+  }
+  return {
+    ...context,
+    limitKmh,
+    alertMarginKmh: margin,
+    shouldAlert: (speedKmh) => (
+      settings.speed_warning_enabled !== false &&
+      estimateGuidanceAllowed &&
+      Number.isFinite(Number(speedKmh)) &&
+      Number.isFinite(Number(limitKmh)) &&
+      Number(speedKmh) > Number(limitKmh) + margin
+    ),
+  };
+}
+
+function speedLimitBadgeForResolved(resolved) {
+  const tier = resolved?.tier || 'UNKNOWN';
+  const limit = Number(resolved?.limitKmh);
+  const roundedLimit = Number.isFinite(limit) ? Math.round(limit) : null;
+  const badgeByTier = {
+    POSTED: {
+      text: roundedLimit == null ? '— km/h' : `${roundedLimit}`,
+      className: 'border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-100',
+    },
+    MAP_ESTIMATED: {
+      text: roundedLimit == null ? '— km/h' : `~${roundedLimit} (road type)`,
+      className: 'border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100',
+    },
+    LEARNED_LOCAL: {
+      text: roundedLimit == null ? '— km/h' : `${roundedLimit} (this road)`,
+      className: 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100',
+    },
+    REGION_DEFAULT: {
+      text: roundedLimit == null ? '— km/h' : `~${roundedLimit} (regional estimate)`,
+      className: 'border-dashed border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100',
+    },
+    GPS_INFERRED: {
+      text: roundedLimit == null ? '— km/h' : `~${roundedLimit} (estimated)`,
+      className: 'border-dashed border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100',
+    },
+    UNKNOWN: {
+      text: '— km/h',
+      className: 'border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100',
+    },
+  };
+  return badgeByTier[tier] || badgeByTier.UNKNOWN;
+}
+
+function buildTierAwareSpeedAlert(speed, resolved, settings = {}) {
+  if (speed < 1) return null;
+  const warning = shouldWarnForSpeed({ speedKmh: speed, candidate: resolved, settings });
+  if (!warning) return null;
+
+  const voiceText = warning.voice
+    ? buildSpeedingMessage({
+      speedKmh: speed,
+      speedLimitKmh: resolved.limitKmh,
+      tier: resolved.tier,
+    })
+    : null;
+  if (warning.voice && !voiceText) return null;
+
+  const badge = speedLimitBadgeForResolved(resolved);
+  const displayLabel = resolved.tier === 'POSTED' ? 'Speed warning' : 'Speed check';
+  return {
+    text: (
+      <>
+        <span className="block text-sm font-bold">{displayLabel}. {Math.round(speed)} km/h.</span>
+        <span className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${badge.className}`}>
+          {badge.text}
+        </span>
+      </>
+    ),
+    voiceKey: `speeding_${resolved.tier}`,
+    voiceText,
+    voiceCooldownMs: warning.cooldownMs ?? VOICE_COOLDOWNS_BY_TIER[resolved.tier] ?? 60000,
+    silent: !warning.voice,
+  };
+}
 
 const plainText = (message) => {
   if (typeof message === 'string') return message;
@@ -68,18 +172,20 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     const next = queueRef.current.shift();
     const normalized = typeof next === 'string' ? { text: next, tone: 'default' } : next;
     const settings = localSettings.get();
-    const voiceText = plainText(normalized.voiceText ?? normalized.text);
-    const speak = normalized.voiceKey
-      ? speakSafetyAlertOnce(
-        normalized.voiceKey,
-        voiceText,
-        settings,
-        normalized.voiceCooldownMs,
-        undefined,
-        normalized.voiceParams
-      ).catch(() => {})
-      : speakSafetyAlert(voiceText, settings, normalized.voiceParams).catch(() => {});
-    void speak;
+    if (!normalized.silent) {
+      const voiceText = plainText(normalized.voiceText ?? normalized.text);
+      const speak = normalized.voiceKey
+        ? speakSafetyAlertOnce(
+          normalized.voiceKey,
+          voiceText,
+          settings,
+          normalized.voiceCooldownMs,
+          undefined,
+          normalized.voiceParams
+        ).catch(() => {})
+        : speakSafetyAlert(voiceText, settings, normalized.voiceParams).catch(() => {});
+      void speak;
+    }
     if (!dismissed) setMessage(normalized);
     setTimeout(() => {
       visibleRef.current = false;
@@ -141,16 +247,18 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
       const stopStartPatternCount = events.filter((event) => event.type === EVENT_TYPES.STOP_START_PATTERN || event.type === EVENT_TYPES.TAILGATE_CYCLE).length;
       const speedingEvents = events.filter((event) => event.type === EVENT_TYPES.SPEEDING);
       const latestSpeeding = speedingEvents[speedingEvents.length - 1];
-      const latestSpeed = Number(currentRoutePoints[currentRoutePoints.length - 1]?.speed_kmh) || 0;
+      const latestSpeed = reliablePointSpeed(currentRoutePoints, currentRoutePoints.length - 1, thresholds) ?? 0;
       const latestSpeedLimitContext = resolveEffectiveSpeedLimitForIndex(
         currentRoutePoints,
         currentRoutePoints.length - 1,
-        thresholds
+        thresholds,
+        { settings }
       );
-      const latestSpeedLimit = latestSpeedLimitContext.effectiveLimitKmh;
+      const resolvedSpeedLimit = createTierAwareSpeedLimitContext(latestSpeedLimitContext, settings);
       const durationMins = Number.isFinite(tripStartMs) ? (now - tripStartMs) / 60000 : 0;
 
       let nextMessage = null;
+      const liveSpeedAlert = buildTierAwareSpeedAlert(latestSpeed, resolvedSpeedLimit, settings);
       const livePhoneAlertsEnabled = settings.phone_use_detection_enabled !== false && settings.phone_use_live_alert_enabled !== false;
       if (newPhoneWindows.length > 0 && livePhoneAlertsEnabled) {
         const highestConfidence = [...newPhoneWindows].sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
@@ -188,17 +296,8 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           voiceText: buildVoiceAlertMessage('heading_drift_beta'),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.heading_drift_beta,
         };
-      } else if (settings.speed_warning_enabled !== false && latestSpeed > (latestSpeedLimit ?? thresholds.SPEEDING_FALLBACK_KMH ?? 100) + (thresholds.SPEED_OVER_KMH ?? 5)) {
-        nextMessage = {
-          text: `Speed warning. ${Math.round(latestSpeed)} km/h${latestSpeedLimit ? ` over ${Math.round(latestSpeedLimit)} km/h` : ''}.`,
-          voiceKey: 'speeding',
-          voiceText: buildVoiceAlertMessage('speeding', {
-            speedKmh: latestSpeed,
-            speedLimitKmh: latestSpeedLimit,
-            speedLimitSource: latestSpeedLimitContext.limitSource,
-          }),
-          voiceCooldownMs: VOICE_COOLDOWNS_MS.speeding,
-        };
+      } else if (liveSpeedAlert) {
+        nextMessage = liveSpeedAlert;
       } else if (harshBrakeCount > previousCountsRef.current[EVENT_TYPES.HARSH_BRAKE]) {
         nextMessage = {
           text: 'Brake earlier and more gradually',
@@ -242,18 +341,8 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
           limitKmh: latestSpeeding.speed_limit_kmh ?? latestSpeeding.inferred_zone_kmh ?? thresholds.SPEEDING_FALLBACK_KMH,
           durationS: latestSpeeding.duration_seconds ?? 0,
         }, settings).catch(() => {});
-        if (!nextMessage && settings.voice_alerts_enabled !== false) {
-          nextMessage = {
-            text: `Speed warning. ${Math.round(latestSpeeding.speed_kmh || latestSpeed)} km/h.`,
-            voiceKey: 'speeding',
-            voiceText: buildVoiceAlertMessage('speeding', {
-              speedKmh: latestSpeeding.speed_kmh || latestSpeed,
-              speedLimitKmh: latestSpeeding.speed_limit_kmh ?? latestSpeeding.inferred_zone_kmh ?? thresholds.SPEEDING_FALLBACK_KMH,
-              speedLimitSource: latestSpeeding.speed_limit_source,
-              limitIsEstimated: latestSpeeding.speed_limit_source === 'inferred' || latestSpeeding.speed_limit_kmh == null,
-            }),
-            voiceCooldownMs: VOICE_COOLDOWNS_MS.speeding,
-          };
+        if (!nextMessage) {
+          nextMessage = buildTierAwareSpeedAlert(latestSpeeding.speed_kmh || latestSpeed, resolvedSpeedLimit, settings);
         }
       }
       if (stats.heading_drift_beta_level === 'high' && settings.notif_heading_drift_alert_enabled !== false) {

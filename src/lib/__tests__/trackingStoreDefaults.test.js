@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, migrateDefaultSettings, sanitizeImportedSettings, validateSettingsPatch } from '@/lib/trackingStore';
+import {
+  DEFAULT_SETTINGS,
+  SETTINGS_CHANGED_EVENT,
+  localSettings,
+  migrateDefaultSettings,
+  sanitizeImportedSettings,
+  validateSettingsPatch,
+} from '@/lib/trackingStore';
+
+// CHANGES (session):
+// - Added validation coverage for blank numeric setting drafts during input editing.
 
 describe('tracking store default settings', () => {
   it('keeps external context auto-fetch off until the user approves it', () => {
@@ -27,7 +37,7 @@ describe('tracking store default settings', () => {
     expect(DEFAULT_SETTINGS.osrm_timeout_ms).toBe(12000);
     expect(DEFAULT_SETTINGS.osrm_block_near_any_zone).toBe(true);
     expect(migrateDefaultSettings({
-      settings_defaults_version: 11,
+      settings_defaults_version: 12,
       osrm_block_near_any_zone: false,
     }).settings.osrm_block_near_any_zone).toBe(true);
     expect(sanitizeImportedSettings({
@@ -118,6 +128,7 @@ describe('tracking store default settings', () => {
   it('keeps inferred speed-limit country defaults configurable', () => {
     expect(DEFAULT_SETTINGS.country_code).toBe('');
     expect(DEFAULT_SETTINGS.configurable_country_defaults).toBe('global');
+    expect(DEFAULT_SETTINGS.speak_estimated_speed_checks).toBe(true);
     expect(sanitizeImportedSettings({ configurable_country_defaults: 'gb' })).toMatchObject({
       configurable_country_defaults: 'gb',
     });
@@ -125,6 +136,82 @@ describe('tracking store default settings', () => {
       country_code: 'GB',
     });
     expect(sanitizeImportedSettings({ configurable_country_defaults: 'mars' }).configurable_country_defaults).toBeUndefined();
+  });
+
+  it('enables spoken estimated speed checks for older installs with speed voice enabled', () => {
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 11,
+      voice_alerts_enabled: true,
+      speed_warning_enabled: true,
+      speak_estimated_speed_checks: false,
+    }).settings.speak_estimated_speed_checks).toBe(true);
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 11,
+      voice_alerts_enabled: false,
+      speed_warning_enabled: true,
+      speak_estimated_speed_checks: false,
+    }).settings.speak_estimated_speed_checks).toBe(false);
+  });
+
+  it('allows blank numeric drafts while editing text number inputs', () => {
+    expect(validateSettingsPatch({ estimated_voice_margin_kmh: '' })).toEqual({ valid: true, errors: [] });
+    expect(validateSettingsPatch({ inferred_voice_margin_kmh: '' })).toEqual({ valid: true, errors: [] });
+    expect(validateSettingsPatch({ co2_baseline_kg_per_100km: '' })).toEqual({ valid: true, errors: [] });
+    expect(validateSettingsPatch({ default_ev_kwh_per_100km: '' })).toEqual({ valid: true, errors: [] });
+    expect(validateSettingsPatch({ grid_co2_kg_per_kwh: '' })).toEqual({ valid: true, errors: [] });
+    expect(validateSettingsPatch({ tree_co2_kg_per_year: '' })).toEqual({ valid: true, errors: [] });
+    expect(validateSettingsPatch({ estimated_voice_margin_kmh: 61 }).valid).toBe(false);
+    expect(validateSettingsPatch({ inferred_voice_margin_kmh: 81 }).valid).toBe(false);
+    expect(validateSettingsPatch({ default_ev_kwh_per_100km: 4 }).valid).toBe(false);
+  });
+
+  it('notifies same-tab UI subscribers when settings change', () => {
+    const previousWindow = globalThis.window;
+    const previousCustomEvent = globalThis.CustomEvent;
+    const eventTarget = new EventTarget();
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: eventTarget,
+    });
+    if (typeof globalThis.CustomEvent === 'undefined') {
+      Object.defineProperty(globalThis, 'CustomEvent', {
+        configurable: true,
+        value: class TestCustomEvent extends Event {
+          constructor(type, params = {}) {
+            super(type, params);
+            this.detail = params.detail;
+          }
+        },
+      });
+    }
+    const previousUnits = localSettings.get().units;
+    const seen = [];
+    const listener = (event) => seen.push(event.detail?.settings?.units);
+    window.addEventListener(SETTINGS_CHANGED_EVENT, listener);
+
+    try {
+      localSettings.update({ units: previousUnits === 'metric' ? 'imperial' : 'metric' });
+      expect(seen.at(-1)).toBe(localSettings.get().units);
+    } finally {
+      localSettings.update({ units: previousUnits });
+      window.removeEventListener(SETTINGS_CHANGED_EVENT, listener);
+      if (previousWindow === undefined) {
+        delete globalThis.window;
+      } else {
+        Object.defineProperty(globalThis, 'window', {
+          configurable: true,
+          value: previousWindow,
+        });
+      }
+      if (previousCustomEvent === undefined) {
+        delete globalThis.CustomEvent;
+      } else {
+        Object.defineProperty(globalThis, 'CustomEvent', {
+          configurable: true,
+          value: previousCustomEvent,
+        });
+      }
+    }
   });
 
   it('keeps the rapid acceleration minimum speed at 5 km/h', () => {
@@ -169,7 +256,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(11);
+    expect(legacySunset.settings_defaults_version).toBe(12);
     expect(legacySunset.raw_gps_retention_days).toBe(0);
     expect(legacyCustom.night_end_time).toBe('06:00');
     expect(legacyCustom.raw_gps_retention_days).toBe(0);

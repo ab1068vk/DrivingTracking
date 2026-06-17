@@ -16,6 +16,9 @@ const PRIVACY_CELL_SIZE_M = 50;
 const PRIVACY_CELL_SCHEMA = 'global_grid_v1';
 const EXPORT_PRIVACY_ZONE_ID = 'private_area';
 const EXPORT_PRIVACY_ZONE_LABEL = 'Private area';
+export const PRIVACY_RADIUS_MIN_M = 50;
+export const PRIVACY_RADIUS_MAX_M = 1000;
+export const PRIVACY_RADIUS_DEFAULT_M = 180;
 export const ZONE_STATS_KEY = 'drivesense_privacy_zone_stats_v1';
 export const ZONE_EVENT_GUARD_M = 50;
 const PRIVACY_CELL_STORAGE_GUARD_M = 0;
@@ -167,13 +170,31 @@ export function deriveZoneStatsFromTrips(trips = [], settings = localSettings.ge
     riskLevel: 'Low',
     lastActive: null,
   }]));
+  const protectedZoneForRoutePoint = (point) => {
+    if (point?.privacy_boundary === true) return null;
+    if (point?.masked_for_privacy === true && point?.privacy_zone_id) {
+      return statsByZone.get(point.privacy_zone_id) || null;
+    }
+    const zone = isPointInPrivacyZone(point, zones);
+    if (zone) return statsByZone.get(zone.id) || null;
+    const fallbackZone = zones.find((candidate) => isRoutePointInsidePrivacyZone(point, candidate));
+    return fallbackZone ? statsByZone.get(fallbackZone.id) || null : null;
+  };
+  const protectedZoneForEvent = (event) => {
+    if (event?.privacy_event_redacted === true && event?.privacy_zone_id) {
+      return statsByZone.get(event.privacy_zone_id) || null;
+    }
+    const zone = isPointInPrivacyZone(event, zones, ZONE_EVENT_GUARD_M);
+    if (zone) return statsByZone.get(zone.id) || null;
+    const fallbackZone = zones.find((candidate) => isRoutePointInsidePrivacyZone(event, candidate, ZONE_EVENT_GUARD_M));
+    return fallbackZone ? statsByZone.get(fallbackZone.id) || null : null;
+  };
 
   for (const trip of Array.isArray(trips) ? trips : []) {
     const tripTime = zoneStatsTimestampMs(trip?.end_time, trip?.start_time);
-    const countProtected = (items, field, predicate) => {
+    const countProtected = (items, field, zoneForItem) => {
       for (const item of Array.isArray(items) ? items : []) {
-        if (!predicate(item)) continue;
-        const zone = statsByZone.get(item?.privacy_zone_id);
+        const zone = zoneForItem(item);
         if (!zone) continue;
         const itemTime = zoneStatsTimestampMs(item?.timestamp ?? item?.time, tripTime);
         zone.allTime[field] += 1;
@@ -183,14 +204,8 @@ export function deriveZoneStatsFromTrips(trips = [], settings = localSettings.ge
       }
     };
 
-    countProtected(trip?.route_points, 'hidden', (point) => (
-      point?.masked_for_privacy === true &&
-      point?.privacy_boundary !== true &&
-      Boolean(point?.privacy_zone_id)
-    ));
-    countProtected(trip?.driving_events, 'events', (event) => (
-      event?.privacy_event_redacted === true && Boolean(event?.privacy_zone_id)
-    ));
+    countProtected(trip?.route_points, 'hidden', protectedZoneForRoutePoint);
+    countProtected(trip?.driving_events, 'events', protectedZoneForEvent);
   }
 
   return Array.from(statsByZone.values());
@@ -320,7 +335,7 @@ const normalizePrivacyZones = (zones = []) => (
   Array.isArray(zones)
     ? zones
       .map((zone) => {
-        const radiusM = Math.max(50, Math.min(1000, Number(zone?.radius_m) || 150));
+        const radiusM = Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, Number(zone?.radius_m) || PRIVACY_RADIUS_DEFAULT_M));
         const base = {
           id: String(zone?.id || `pz_${Date.now().toString(36)}`),
           label: String(zone?.label || 'Private place').trim() || 'Private place',
@@ -355,7 +370,7 @@ const redactedPrivacyZones = (zones = []) => (
   (Array.isArray(zones) ? zones : []).map((zone) => ({
     id: String(zone.id || ''),
     label: String(zone.label || 'Private place'),
-    radius_m: Math.max(50, Math.min(1000, Number(zone.radius_m) || 150)),
+    radius_m: Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, Number(zone.radius_m) || PRIVACY_RADIUS_DEFAULT_M)),
     exclude_from_osrm: true,
     masked_for_privacy: true,
   }))
@@ -583,7 +598,7 @@ function recoverPrivacyZoneCenter(zone = {}, referencePoints = []) {
   for (const reference of references.slice(0, 600)) {
     const cell = cellCoordinate(reference.lat, reference.lng, cellSizeM);
     if (!cell) continue;
-    const searchCells = Math.max(4, Math.ceil((Number(zone.radius_m) || 150) / cell.cellSizeM) + 4);
+    const searchCells = Math.max(4, Math.ceil((Number(zone.radius_m) || PRIVACY_RADIUS_DEFAULT_M) / cell.cellSizeM) + 4);
 
     for (let y = cell.y - searchCells; y <= cell.y + searchCells && !seed; y++) {
       for (let x = cell.x - searchCells; x <= cell.x + searchCells; x++) {
@@ -729,7 +744,7 @@ export function getPrivacyZoneDisplayCircle(zone, offsetM = DISPLAY_CIRCLE_OFFSE
   const latitudeCosine = Math.max(0.01, Math.abs(Math.cos(lat * Math.PI / 180)));
   const dLat = (safeOffsetM * Math.cos(angle)) / 111320;
   const dLng = (safeOffsetM * Math.sin(angle)) / (111320 * latitudeCosine);
-  const radiusM = Math.max(50, Math.min(1000, finiteNumber(zone?.radius_m) ?? 150));
+  const radiusM = Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, finiteNumber(zone?.radius_m) ?? PRIVACY_RADIUS_DEFAULT_M));
 
   return {
     ...zone,
@@ -751,7 +766,7 @@ export function isPointInPrivacyZone(point, zones = getPrivacyZones(), guardM = 
       if (hasCellZoneGeometry(zone)) cellOnlyZones.push(zone);
       continue;
     }
-    const radius = Number(zone?.radius_m || 150) + guardM;
+    const radius = Number(zone?.radius_m || PRIVACY_RADIUS_DEFAULT_M) + guardM;
     const depth = radius - distanceM(point, zone);
     if (depth >= 0 && depth > bestDepth) {
       bestZone = zone;
@@ -816,7 +831,7 @@ export function boundsOverlapPrivacyZone(bounds, zones = getPrivacyZones(), guar
         lat: Math.max(minLat, Math.min(maxLat, Number(zone.lat))),
         lng: Math.max(minLng, Math.min(maxLng, Number(zone.lng))),
       };
-      if (distanceM(nearest, zone) <= Number(zone.radius_m || 150) + guard) return true;
+      if (distanceM(nearest, zone) <= Number(zone.radius_m || PRIVACY_RADIUS_DEFAULT_M) + guard) return true;
       continue;
     }
 
@@ -968,8 +983,8 @@ export function mergePrivacyZones(a, b) {
   const bLng = finiteNumber(b.lng);
   if (aLat == null || aLng == null || bLat == null || bLng == null) return null;
 
-  const aRadius = Math.max(50, Math.min(1000, finiteNumber(a.radius_m) ?? 150));
-  const bRadius = Math.max(50, Math.min(1000, finiteNumber(b.radius_m) ?? 150));
+  const aRadius = Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, finiteNumber(a.radius_m) ?? PRIVACY_RADIUS_DEFAULT_M));
+  const bRadius = Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, finiteNumber(b.radius_m) ?? PRIVACY_RADIUS_DEFAULT_M));
   const d = distanceM(a, b);
   const base = {
     id: `pz_merge_${Date.now().toString(36)}`,
@@ -1174,7 +1189,7 @@ export function privacyZonesForRoute(routePoints = [], settings = localSettings.
 export function privacyBoundaryPoint(insidePoint, outsidePoint, zone) {
   if (!insidePoint || !outsidePoint || !zone) return null;
   if (isPointInPrivacyZone(outsidePoint, [zone])) return null;
-  const radius = Number(zone.radius_m || 150);
+  const radius = Number(zone.radius_m || PRIVACY_RADIUS_DEFAULT_M);
   let low = 0;
   let high = 1;
   let mid = 1;
@@ -1492,7 +1507,7 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
   const proposed = {
     id: zone.id || `pz_${Date.now().toString(36)}`,
     label: String(zone.label || 'Private place').trim() || 'Private place',
-    radius_m: Math.max(50, Math.min(1000, Number(zone.radius_m) || 150)),
+    radius_m: Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, Number(zone.radius_m) || PRIVACY_RADIUS_DEFAULT_M)),
     exclude_from_osrm: true,
     ...(finiteNumber(zone.lat) != null && finiteNumber(zone.lng) != null ? {
       lat: Number(zone.lat),

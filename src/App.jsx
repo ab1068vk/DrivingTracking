@@ -14,7 +14,7 @@ import { loadPrivacyZonesFromStorage } from '@/lib/privacyZones';
 import { isAndroid } from '@/lib/nativePlatform';
 import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { openExportLocation } from '@/lib/nativeDownloads';
-import { recordSystemEvent } from '@/lib/systemLog';
+import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { setScreenCaptureAllowed } from '@/lib/screenSecurity';
 import { APP_LOCK_SETTING_EVENT, authenticateDevice } from '@/lib/biometricGate';
 import { checkIntegrity } from '@/lib/rasp';
@@ -34,6 +34,7 @@ const TripDetail = lazy(() => import('@/pages/TripDetail'));
 const MapScreen = lazy(() => import('@/pages/MapScreen'));
 const Reports = lazy(() => import('@/pages/Report'));
 const Settings = lazy(() => import('@/pages/Settings'));
+const SpeedLimits = lazy(() => import('@/pages/SpeedLimits'));
 const PrivacyIntelligence = lazy(() => import('@/pages/PrivacyIntelligence'));
 const AndroidReference = showDebugRoutes ? lazy(() => import('@/pages/AndroidReference')) : null;
 const Vehicles = lazy(() => import('@/pages/Vehicles'));
@@ -42,6 +43,14 @@ const DrivingCoach = lazy(() => import('@/pages/DrivingCoach'));
 const Diagnostics = lazy(() => import('@/pages/Diagnostics'));
 const SystemLogs = lazy(() => import('@/pages/SystemLogs'));
 const Insights = lazy(() => import('@/pages/Insights'));
+
+function AppRouteBoundary({ context, title = 'Page unavailable', message = 'Something went wrong while opening this page. Reload to try again.', children }) {
+  return (
+    <SectionErrorBoundary context={context} title={title} message={message}>
+      {children}
+    </SectionErrorBoundary>
+  );
+}
 
 function AppLoading() {
   return (
@@ -98,10 +107,12 @@ const AuthenticatedApp = () => {
       const notificationService = import('@/lib/notificationService');
       notificationService
         .then(({ configureNotificationChannels }) => configureNotificationChannels())
-        .catch(() => {});
+        .catch((error) => logSystemFailure('notification_channels_configure', error));
       const settings = await localSettings.hydrateFromNative();
-      await setScreenCaptureAllowed(settings.allow_screen_capture === true).catch(() => {});
-      await checkIntegrity().catch(() => {});
+      await setScreenCaptureAllowed(settings.allow_screen_capture === true)
+        .catch((error) => logSystemFailure('screen_capture_policy_apply', error));
+      await checkIntegrity()
+        .catch((error) => logSystemFailure('device_integrity_check', error));
       const lockEnabled = isAndroid() && settings.app_lock_enabled === true;
       setAppLockEnabled(lockEnabled);
       setAppLocked(lockEnabled);
@@ -109,13 +120,14 @@ const AuthenticatedApp = () => {
       await activeTripStore.hydrate();
       notificationService
         .then(({ syncReminderNotifications }) => syncReminderNotifications(settings, { requestPermission: false }))
-        .catch(() => {});
+        .catch((error) => logSystemFailure('reminder_notifications_sync', error));
       setOnboardingDone(settings.onboarding_completed);
-      const shouldShowFirstLaunchLegalNotice = !settings.onboarding_completed &&
+      const shouldShowFirstLaunchLegalNotice =
         Number(settings.legal_notice_ack_version) < LEGAL_NOTICE_ACK_VERSION;
       setLegalNoticeOpen(shouldShowFirstLaunchLegalNotice);
       if (isAndroid() && settings.tracking_mode === 'background_auto' && !settings.tracking_paused) {
-        startNativeAutoTracking().catch(() => {});
+        startNativeAutoTracking()
+          .catch((error) => logSystemFailure('app_boot_native_auto_tracking_start', error));
       }
 
       applyThemeMode(settings.dark_mode);
@@ -123,14 +135,15 @@ const AuthenticatedApp = () => {
       const runDeferredMaintenance = async () => {
         await import('@/lib/localTripRepository')
           .then(({ runTripRepositoryMaintenance }) => runTripRepositoryMaintenance())
-          .catch(() => {});
-        await checkAndRotateEncryptionKey().catch(() => {});
+          .catch((error) => logSystemFailure('trip_repository_maintenance', error));
+        await checkAndRotateEncryptionKey()
+          .catch((error) => logSystemFailure('encryption_key_rotation_check', error));
         import('@/lib/roadContextQueue')
           .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs())
-          .catch(() => {});
+          .catch((error) => logSystemFailure('road_context_queue_resume', error));
         import('@/lib/rescoringWorker')
           .then(({ startRescoringWorker }) => startRescoringWorker())
-          .catch(() => {});
+          .catch((error) => logSystemFailure('rescoring_worker_start', error));
       };
       if (typeof window.requestIdleCallback === 'function') {
         window.requestIdleCallback(runDeferredMaintenance, { timeout: 1500 });
@@ -138,7 +151,14 @@ const AuthenticatedApp = () => {
         window.setTimeout(runDeferredMaintenance, 0);
       }
     };
-    bootstrapSettings();
+    bootstrapSettings().catch((error) => {
+      logSystemFailure('app_bootstrap', error);
+      const fallbackSettings = localSettings.get?.() || {};
+      setAppLockEnabled(false);
+      setAppLocked(false);
+      setOnboardingDone(Boolean(fallbackSettings.onboarding_completed));
+      applyThemeMode(fallbackSettings.dark_mode);
+    });
   }, []);
 
   const unlockApp = async () => {
@@ -155,6 +175,7 @@ const AuthenticatedApp = () => {
         setAppLockError(result.cancelled ? 'Authentication was cancelled.' : 'Authentication was not verified.');
       }
     } catch (error) {
+      logSystemFailure('app_lock_authenticate', error);
       setAppLockError(error?.message || 'Device authentication is unavailable.');
     } finally {
       unlockInProgressRef.current = false;
@@ -172,13 +193,14 @@ const AuthenticatedApp = () => {
 
     CapacitorApp.addListener('appStateChange', ({ isActive }) => {
       if (isActive) {
-        checkAndRotateEncryptionKey().catch(() => {});
+        checkAndRotateEncryptionKey()
+          .catch((error) => logSystemFailure('app_resume_key_rotation_check', error));
         import('@/lib/roadContextQueue')
           .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs())
-          .catch(() => {});
+          .catch((error) => logSystemFailure('app_resume_road_context_queue', error));
         import('@/lib/localTripRepository')
           .then(({ enforceRawGpsRetention }) => enforceRawGpsRetention())
-          .catch(() => {});
+          .catch((error) => logSystemFailure('app_resume_raw_gps_retention', error));
       }
       if (!appLockEnabled) return;
       if (!isActive) {
@@ -192,7 +214,7 @@ const AuthenticatedApp = () => {
       backgroundedAtRef.current = 0;
     }).then((listener) => {
       appStateListener = listener;
-    }).catch(() => {});
+    }).catch((error) => logSystemFailure('app_state_listener_register', error));
 
     return () => {
       appStateListener?.remove?.();
@@ -202,13 +224,14 @@ const AuthenticatedApp = () => {
   useEffect(() => {
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        checkAndRotateEncryptionKey().catch(() => {});
+        checkAndRotateEncryptionKey()
+          .catch((error) => logSystemFailure('visibility_key_rotation_check', error));
         import('@/lib/roadContextQueue')
           .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs())
-          .catch(() => {});
+          .catch((error) => logSystemFailure('visibility_road_context_queue', error));
         import('@/lib/localTripRepository')
           .then(({ enforceRawGpsRetention }) => enforceRawGpsRetention())
-          .catch(() => {});
+          .catch((error) => logSystemFailure('visibility_raw_gps_retention', error));
       }
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
@@ -250,13 +273,17 @@ const AuthenticatedApp = () => {
       else if (extra.type === 'phone_use_pattern') navigate('/coach');
       else if (extra.type === 'maintenance') navigate('/vehicles');
       else if (extra.type === 'export_saved') {
-        openExportLocation({ uri: extra.uri, mimeType: extra.mimeType }).catch(() => {
+        openExportLocation({ uri: extra.uri, mimeType: extra.mimeType }).catch((error) => {
+          logSystemFailure('notification_export_location_open', error, {
+            notification_type: extra.type,
+            has_uri: Boolean(extra.uri),
+          });
           navigate('/reports');
         });
       }
     }).then((handle) => {
       listener = handle;
-    }).catch(() => {});
+    }).catch((error) => logSystemFailure('notification_action_listener_register', error));
     return () => {
       listener?.remove?.();
     };
@@ -281,12 +308,29 @@ const AuthenticatedApp = () => {
       <Suspense fallback={<AppLoading />}>
       <Routes>
         {/* Onboarding (no layout) - only shown to new users */}
-        {!onboardingDone && <Route path="*" element={<Onboarding onComplete={() => setOnboardingDone(true)} />} />}
+        {!onboardingDone && (
+          <Route
+            path="*"
+            element={(
+              <AppRouteBoundary context="onboarding_page" title="Onboarding unavailable">
+                <Onboarding onComplete={() => setOnboardingDone(true)} />
+              </AppRouteBoundary>
+            )}
+          />
+        )}
 
         {/* Main App with shared Layout */}
         <Route element={<Layout />}>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/trips" element={<TripHistory />} />
+          <Route path="/" element={(
+            <AppRouteBoundary context="dashboard_page" title="Dashboard unavailable">
+              <Dashboard />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/trips" element={(
+            <AppRouteBoundary context="trip_history_page" title="Trip history unavailable">
+              <TripHistory />
+            </AppRouteBoundary>
+          )} />
           <Route path="/trips/:id" element={(
             <SectionErrorBoundary
               context="trip_detail_page"
@@ -296,20 +340,75 @@ const AuthenticatedApp = () => {
               <TripDetail />
             </SectionErrorBoundary>
           )} />
-          <Route path="/map" element={<MapScreen />} />
-          <Route path="/coach" element={<DrivingCoach />} />
-          <Route path="/insights" element={<Insights />} />
-          <Route path="/achievements" element={<Achievements />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/diagnostics" element={<Diagnostics />} />
-          <Route path="/system-logs" element={<SystemLogs />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/privacy-intelligence" element={<PrivacyIntelligence />} />
-          {showDebugRoutes && AndroidReference && <Route path="/android" element={<AndroidReference />} />}
-          <Route path="/vehicles" element={<Vehicles />} />
+          <Route path="/map" element={(
+            <AppRouteBoundary context="map_page" title="Map unavailable">
+              <MapScreen />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/coach" element={(
+            <AppRouteBoundary context="driving_coach_page" title="Coach unavailable">
+              <DrivingCoach />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/insights" element={(
+            <AppRouteBoundary context="insights_page" title="Insights unavailable">
+              <Insights />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/achievements" element={(
+            <AppRouteBoundary context="achievements_page" title="Achievements unavailable">
+              <Achievements />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/reports" element={(
+            <AppRouteBoundary context="reports_page" title="Reports unavailable">
+              <Reports />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/diagnostics" element={(
+            <AppRouteBoundary context="diagnostics_page" title="Diagnostics unavailable">
+              <Diagnostics />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/system-logs" element={(
+            <AppRouteBoundary context="system_logs_page" title="System logs unavailable">
+              <SystemLogs />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/settings" element={(
+            <AppRouteBoundary context="settings_page" title="Settings unavailable">
+              <Settings />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/speed-limits" element={(
+            <AppRouteBoundary context="speed_limits_page" title="Saved road speeds unavailable">
+              <SpeedLimits />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/privacy-intelligence" element={(
+            <AppRouteBoundary context="privacy_intelligence_page" title="Privacy intelligence unavailable">
+              <PrivacyIntelligence />
+            </AppRouteBoundary>
+          )} />
+          {showDebugRoutes && AndroidReference && (
+            <Route path="/android" element={(
+              <AppRouteBoundary context="android_reference_page" title="Android reference unavailable">
+                <AndroidReference />
+              </AppRouteBoundary>
+            )} />
+          )}
+          <Route path="/vehicles" element={(
+            <AppRouteBoundary context="vehicles_page" title="Vehicles unavailable">
+              <Vehicles />
+            </AppRouteBoundary>
+          )} />
         </Route>
 
-        <Route path="*" element={<PageNotFound />} />
+        <Route path="*" element={(
+          <AppRouteBoundary context="not_found_page" title="Page unavailable">
+            <PageNotFound />
+          </AppRouteBoundary>
+        )} />
       </Routes>
       </Suspense>
       <LegalNoticeDialog

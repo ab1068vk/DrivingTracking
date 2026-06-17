@@ -34,6 +34,37 @@ const safeNumber = (value, fallback = 0) => {
 
 const generateId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
+const PROTECTED_DISCLOSURES = new Set(['rounded', 'bounding_box', 'masked', 'committed']);
+
+function verificationWarningsFor(record) {
+  const warnings = [];
+  if (record.coordinateDisclosure === 'raw') {
+    warnings.push('Raw coordinates left the app; consent or guards do not make this a protected send.');
+    if (!record.protections.some((item) => /explicit consent/i.test(item))) {
+      warnings.push('Raw coordinate send has no explicit-consent metadata.');
+    }
+  }
+  if (record.coordinateDisclosure === 'blocked' && (record.sentCoords || record.bytesOut > 0)) {
+    warnings.push('Blocked transmission includes send metadata that should be empty.');
+  }
+  if (PROTECTED_DISCLOSURES.has(record.coordinateDisclosure)) {
+    if (!record.privacyTransformVerified) {
+      warnings.push('Protection is caller-reported but not verified by named pre-send evidence.');
+    }
+    if (record.privacyTransformVerified && !record.privacyVerificationEvidence.length) {
+      warnings.push('Verified protection is missing evidence details.');
+    }
+  }
+  return warnings;
+}
+
+function statusForRecord(record) {
+  if (record.coordinateDisclosure === 'blocked') return 'blocked';
+  if (record.coordinateDisclosure === 'raw') return 'warning';
+  if ((record.privacyVerificationWarnings || []).length) return 'warning';
+  return ['safe', 'blocked', 'warning'].includes(record.status) ? record.status : 'safe';
+}
+
 export async function loadTransmissionLog() {
   try {
     const log = await getEncryptedJson(TRANSMISSION_LOG_KEY, []);
@@ -65,16 +96,25 @@ export async function logTransmission(entry = {}) {
     );
   }
   const now = Date.now();
+  const privacyTransformSource = entry.privacyTransformSource == null
+    ? null
+    : safeText(entry.privacyTransformSource);
+  const privacyVerificationEvidence = safeArray(entry.privacyVerificationEvidence);
+  const privacyTransformVerified = entry.privacyTransformVerified === true &&
+    Boolean(privacyTransformSource) &&
+    (
+      !PROTECTED_DISCLOSURES.has(entry.coordinateDisclosure) ||
+      privacyVerificationEvidence.length > 0
+    );
   const record = {
     id: generateId(),
     timestamp: now,
     service: safeText(entry.service, 'unknown'),
     type: safeText(entry.type, 'Outbound request'),
     coordinateDisclosure: entry.coordinateDisclosure,
-    privacyTransformVerified: entry.privacyTransformVerified === true,
-    privacyTransformSource: entry.privacyTransformSource == null
-      ? null
-      : safeText(entry.privacyTransformSource),
+    privacyTransformVerified,
+    privacyTransformSource,
+    privacyVerificationEvidence,
     sentCoords: entry.sentCoords == null ? null : safeText(entry.sentCoords),
     protections: safeArray(entry.protections),
     offsetMeters: entry.offsetMeters == null ? null : safeNumber(entry.offsetMeters, null),
@@ -86,6 +126,8 @@ export async function logTransmission(entry = {}) {
     expiresAt: now + EXPIRY_MS,
     schemaVersion: 2,
   };
+  record.privacyVerificationWarnings = verificationWarningsFor(record);
+  record.status = statusForRecord(record);
 
   try {
     logWriteQueue = logWriteQueue
@@ -126,7 +168,12 @@ export { loadTransmissionLog as loadLog };
 
 export function migrateTransmissionEntry(entry = {}) {
   if (entry.schemaVersion === 2 && COORDINATE_DISCLOSURE_VALUES.includes(entry.coordinateDisclosure)) {
-    return entry;
+    return {
+      ...entry,
+      protections: safeArray(entry.protections),
+      privacyVerificationEvidence: safeArray(entry.privacyVerificationEvidence),
+      privacyVerificationWarnings: safeArray(entry.privacyVerificationWarnings),
+    };
   }
   const protections = safeArray(entry.protections);
   const joined = protections.join(' ');
@@ -143,6 +190,8 @@ export function migrateTransmissionEntry(entry = {}) {
     coordinateDisclosure,
     privacyTransformVerified: false,
     privacyTransformSource: 'migrated_from_v1',
+    privacyVerificationEvidence: [],
+    privacyVerificationWarnings: ['Legacy transmission claim was migrated without pre-send verification evidence.'],
     schemaVersion: 2,
   };
 }

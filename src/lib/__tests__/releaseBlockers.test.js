@@ -24,6 +24,9 @@ import {
 } from '@/lib/tripEngine';
 import { calculateAchievementBadges, calculateCarbonImpact, estimateTripEconomics } from '@/lib/tripInsights';
 
+// CHANGES (session):
+// - Added coverage that blank numeric Settings drafts do not become zero in economics calculations.
+
 const routePoints = [
   { lat: 43.6500, lng: -79.3800, speed_kmh: 20, accuracy: 8, timestamp: '2026-01-01T12:00:00.000Z' },
   { lat: 43.6504, lng: -79.3800, speed_kmh: 30, accuracy: 8, timestamp: '2026-01-01T12:00:20.000Z' },
@@ -392,6 +395,27 @@ describe('release blocker regressions', () => {
     expect(ev.grid_co2_kg_per_kwh).toBe(0.05);
   });
 
+  it('treats blank economics setting drafts as defaults, not zeroes', () => {
+    const blankDraft = estimateTripEconomics(
+      { distance_km: 100, eco_driving_score: 50 },
+      { fuel_type: 'electric' },
+      {
+        co2_baseline_kg_per_100km: '',
+        default_ev_kwh_per_100km: '',
+        grid_co2_kg_per_kwh: '',
+      },
+    );
+    const defaults = estimateTripEconomics(
+      { distance_km: 100, eco_driving_score: 50 },
+      { fuel_type: 'electric' },
+      {},
+    );
+
+    expect(blankDraft.kwh).toBe(defaults.kwh);
+    expect(blankDraft.grid_co2_kg).toBe(defaults.grid_co2_kg);
+    expect(blankDraft.co2_baseline_kg_per_100km).toBe(defaults.co2_baseline_kg_per_100km);
+  });
+
   it('computes carbon impact for legacy trips saved before co2_saved_kg existed', () => {
     const carbon = estimateTripEconomics(
       { distance_km: 100, eco_driving_score: 80 },
@@ -634,6 +658,42 @@ describe('release blocker regressions', () => {
     expect(dispatchEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: SYSTEM_LOG_EVENT }));
   });
 
+  it('suppresses scroll logs so routine browsing cannot flood the system log page', () => {
+    const now = Date.now();
+    const scrollLog = {
+      id: 'scroll-log',
+      timestamp: new Date(now).toISOString(),
+      severity: 'info',
+      category: 'user_action',
+      source: 'web',
+      operation: 'user_scroll',
+      title: 'User scroll',
+      message: 'Page scrolled',
+      page: '/system-logs',
+      details: { event_type: 'scroll', scroll_y: 1200 },
+    };
+    const clickLog = {
+      ...scrollLog,
+      id: 'click-log',
+      operation: 'user_click',
+      title: 'User click',
+      details: { event_type: 'click', target: { tag: 'button' } },
+    };
+    const values = new Map([
+      ['drivesense_system_logs_v1', JSON.stringify([scrollLog, clickLog])],
+    ]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    expect(recordSystemEvent('user_scroll', { event_type: 'scroll' }, { category: 'user_action' })).toBeNull();
+    expect(pruneExpiredSystemLogs([scrollLog, clickLog], now)).toEqual([clickLog]);
+    expect(getSystemLogs()).toEqual([clickLog]);
+    expect(JSON.parse(values.get('drivesense_system_logs_v1'))).toEqual([clickLog]);
+  });
+
   it('captures browser resource load failures in the system logger', () => {
     const source = readFileSync(new URL('../systemLog.js', import.meta.url), 'utf8');
 
@@ -643,7 +703,8 @@ describe('release blocker regressions', () => {
     expect(source).toContain('browser_long_task');
     expect(source).toContain("document.addEventListener('invalid', logControlEvent, true)");
     expect(source).toContain("document.addEventListener('paste', logClipboardEvent, true)");
-    expect(source).toContain("window.addEventListener('scroll', logScrollEvent, { passive: true })");
+    expect(source).not.toContain("window.addEventListener('scroll'");
+    expect(source).toContain('isSuppressedSystemLog');
   });
 
   it('captures runtime failures and navigation without leaking query values', () => {
@@ -660,15 +721,30 @@ describe('release blocker regressions', () => {
     expect(systemLogSource).toContain('TOKEN_PAIR_PATTERN');
   });
 
-  it('keeps the legal notice automatic popup limited to first-launch onboarding', () => {
+  it('shows the required legal notice on launch until the current version is acknowledged', () => {
     const appSource = readFileSync(new URL('../../App.jsx', import.meta.url), 'utf8');
     const noticeDialogSource = readFileSync(new URL('../../components/LegalNoticeDialog.jsx', import.meta.url), 'utf8');
 
     expect(appSource).toContain('shouldShowFirstLaunchLegalNotice');
-    expect(appSource).toContain('!settings.onboarding_completed');
     expect(appSource).toContain('Number(settings.legal_notice_ack_version) < LEGAL_NOTICE_ACK_VERSION');
     expect(appSource).toContain('setLegalNoticeOpen(shouldShowFirstLaunchLegalNotice)');
-    expect(noticeDialogSource).toContain('same first-launch notice');
+    expect(noticeDialogSource).toContain('same notice shown during first-launch setup and whenever the required notice version changes');
+  });
+
+  it('keeps the legal notice practical and permanently discoverable from Settings', () => {
+    const noticeDialogSource = readFileSync(new URL('../../components/LegalNoticeDialog.jsx', import.meta.url), 'utf8');
+    const settingsPageSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
+
+    expect(noticeDialogSource).toContain('Practical limits');
+    expect(noticeDialogSource).toContain('Tracking reliability');
+    expect(noticeDialogSource).toContain('Speed limits and alerts');
+    expect(noticeDialogSource).toContain('This is not a hidden one-time warning');
+    expect(noticeDialogSource).toContain('max-h-[calc(100dvh-1rem)]');
+    expect(noticeDialogSource).toContain('overflow-y-auto');
+    expect(noticeDialogSource).not.toContain('min-h-0 flex-1 space-y-6 overflow-y-auto');
+    expect(noticeDialogSource).toContain('pb-[calc(1rem+env(safe-area-inset-bottom))]');
+    expect(settingsPageSource).not.toContain('How this notice works');
+    expect(settingsPageSource).toContain('Same required notice shown on first launch and after notice updates');
   });
 
   it('verifies settings updates after writes so placeholder controls are visible', () => {
@@ -679,6 +755,8 @@ describe('release blocker regressions', () => {
     expect(source).toContain('unchanged_requested_keys');
     expect(source).toContain('failed_keys');
     expect(source).toContain('no_effect');
+    expect(source).toContain("if (result !== 'no_effect')");
+    expect(source).toContain("severity: failedKeys.length ? 'warn' : 'info'");
     const settingsPageSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
     const backupSource = readFileSync(new URL('../dataBackup.js', import.meta.url), 'utf8');
     expect(settingsPageSource).not.toContain('localSettings.set(next)');
@@ -780,6 +858,67 @@ describe('release blocker regressions', () => {
     expect(tripPlaybackSource).toContain('function TripPlaybackContent');
   });
 
+  it('keeps posted-sign speed corrections in parked review only', () => {
+    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+    const reviewSource = readFileSync(new URL('../../components/SpeedLimitConflictReview.jsx', import.meta.url), 'utf8');
+    const tripDetailSource = readFileSync(new URL('../../pages/TripDetail.jsx', import.meta.url), 'utf8');
+
+    expect(dashboardSource).toContain('Review after trip');
+    expect(dashboardSource).toContain('Review speed limits while parked');
+    expect(dashboardSource).not.toContain('openSpeedCorrectionSheet');
+    expect(dashboardSource).not.toContain('Confirm posted sign');
+    expect(reviewSource).toContain('Save posted sign');
+    expect(reviewSource).toContain('Save estimate');
+    expect(reviewSource).toContain('used for future trips near the same road area');
+    expect(reviewSource).toContain('Saved as a posted-sign confirmation for future speed checks.');
+    expect(reviewSource).toContain('tripReviewComplete');
+    expect(tripDetailSource).toContain('speed_limit_review_required: false');
+    expect(tripDetailSource).toContain('onResolved={handleSpeedLimitReviewResolved}');
+  });
+
+  it('shows trip speed-limit source mix instead of a vague estimate note only', () => {
+    const tripDetailSource = readFileSync(new URL('../../pages/TripDetail.jsx', import.meta.url), 'utf8');
+
+    expect(tripDetailSource).toContain('buildSpeedLimitSourceBreakdown');
+    expect(tripDetailSource).toContain('OpenStreetMap posted maxspeed');
+    expect(tripDetailSource).toContain('fallback estimate');
+    expect(tripDetailSource).toContain('OSM road-type estimate');
+    expect(tripDetailSource).toContain('Your saved posted sign');
+    expect(tripDetailSource).toContain('sample{row.count === 1 ?');
+    expect(tripDetailSource).toContain('Limits used:');
+  });
+
+  it('falls manual Android trips back to foreground GPS when background GPS fails', () => {
+    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+
+    expect(dashboardSource).toContain('forceForeground');
+    expect(dashboardSource).toContain("await startGPS({ forceForeground: true })");
+    expect(dashboardSource).toContain('manual_background_tracking_fallback_foreground');
+    expect(dashboardSource).toContain('Manual trip fell back to foreground GPS');
+  });
+
+  it('uses raw GPS evidence before discarding manually ended trips', () => {
+    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+
+    expect(dashboardSource).toContain('const manualRawStats = isManualTrip');
+    expect(dashboardSource).toContain('points: rawPoints');
+    expect(dashboardSource).toContain('manual_sparse_distance_estimate');
+    expect(dashboardSource).toContain('manual_sparse_gps_distance_estimate');
+  });
+
+  it('keeps manual tracking background limits visible and persistent', () => {
+    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+    const settingsSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
+    const onboardingSource = readFileSync(new URL('../../pages/Onboarding.jsx', import.meta.url), 'utf8');
+
+    expect(dashboardSource).toContain('Foreground GPS only');
+    expect(dashboardSource).toContain('recording notification is visible');
+    expect(dashboardSource).toContain('fully close or force-stop');
+    expect(dashboardSource).toContain('force-stopped, GPS may pause');
+    expect(settingsSource).toContain('force-closing can still stop Android tracking');
+    expect(onboardingSource).toContain('Do not force-close the app during a drive');
+  });
+
   it('does not hard-code London as the Trip Playback default map center', () => {
     const tripPlaybackSource = readFileSync(new URL('../../components/TripPlayback.jsx', import.meta.url), 'utf8');
     const legacyLondonLat = ['51', '505'].join('.');
@@ -791,5 +930,15 @@ describe('release blocker regressions', () => {
     expect(tripPlaybackSource).toContain('last_map_center');
     expect(tripPlaybackSource).toContain('VITE_DEFAULT_MAP_LAT');
     expect(tripPlaybackSource).toContain('VITE_DEFAULT_MAP_LNG');
+  });
+
+  it('keeps Trip Playback Leaflet cleanup from racing map animations', () => {
+    const tripPlaybackSource = readFileSync(new URL('../../components/TripPlayback.jsx', import.meta.url), 'utf8');
+
+    expect(tripPlaybackSource).toContain('clearMapInvalidateTimers');
+    expect(tripPlaybackSource).toContain('stopLeafletMap');
+    expect(tripPlaybackSource).toContain('panTo(latlng, { animate: false })');
+    expect(tripPlaybackSource).toContain('resolveFallbackMapCenter(settingsRef.current || {})');
+    expect(tripPlaybackSource).not.toContain('panTo(latlng, { animate: true');
   });
 });

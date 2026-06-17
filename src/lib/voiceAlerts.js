@@ -50,16 +50,19 @@ export async function speakSafetyAlert(text, settings = localSettings.get(), spe
   const tuning = normalizeSpeechParams(speechParams);
 
   if (isNativePlatform()) {
+    const nativeSpeak = typeof NativeSpeech?.speakText === 'function'
+      ? NativeSpeech.speakText.bind(NativeSpeech)
+      : typeof NativeSpeech?.speak === 'function'
+        ? NativeSpeech.speak.bind(NativeSpeech)
+        : null;
+
     try {
-      const payload = { text: message, ...tuning };
-      if (typeof NativeSpeech?.speakText === 'function') {
-        await NativeSpeech.speakText(payload);
-      } else {
-        await NativeSpeech.speak(payload);
+      if (nativeSpeak) {
+        await nativeSpeak({ text: message, ...tuning });
+        return true;
       }
-      return true;
     } catch {
-      // Fall through to Web Speech for browser/WebView cases without the native bridge.
+      return false;
     }
   }
 

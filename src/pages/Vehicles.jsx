@@ -9,7 +9,7 @@ import { calculateAverageEngineStressScore, calculatePredictiveMaintenance, calc
 import { buildMaintenanceReminders, buildVehicleCostSummary } from '@/lib/mediumInsights';
 import { toast } from '@/components/ui/use-toast';
 import { logError } from '@/lib/errorReporting';
-import { localSettings } from '@/lib/trackingStore';
+import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
 import { getTripComponentScore } from '@/lib/tripEngine';
 import { METRIC_REGISTRY } from '@/lib/metricRegistry';
@@ -225,7 +225,7 @@ export default function Vehicles() {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [editId, setEditId] = useState(null);
-  const settings = localSettings.get();
+  const settings = useLocalSettings();
   const currencySymbol = normalizeCurrencySymbol(settings.currencySymbol);
 
   const { data: vehicles = [], isLoading } = useQuery({

@@ -13,7 +13,6 @@ import {
 } from '@/lib/mapPopupHtml';
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
-import { localSettings } from '@/lib/trackingStore';
 import {
   getPrivacyZoneDisplayCircle,
   getPrivacyZones,
@@ -22,6 +21,7 @@ import {
   maskRoutePointsForPrivacy,
 } from '@/lib/privacyZones';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
+import useLocalSettings from '@/hooks/useLocalSettings';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -369,6 +369,7 @@ function TripMapContent({
   showRouteRisk = false,
   routeRiskSegments = EMPTY_ROUTE_RISK_SEGMENTS,
   showSpeedLimits = false,
+  speedLimitKnowledgeResults = EMPTY_ROUTE_POINTS,
   rawPointCount = null,
   smoothRoute = true,
   height = '350px',
@@ -385,6 +386,7 @@ function TripMapContent({
   const [tileErrorCount, setTileErrorCount] = useState(0);
   const [showInsights, setShowInsights] = useState(true);
   const [selectedSegment, setSelectedSegment] = useState(null);
+  const settings = useLocalSettings();
 
   const selectedRoute = useMemo(() => {
     const routeSets = Array.isArray(routes)
@@ -484,7 +486,7 @@ function TripMapContent({
     const routeSets = Array.isArray(routes)
       ? routes
       : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
-    const privacySettings = localSettings.get();
+    const privacySettings = settings;
     const privacyDisplayReferences = [
       ...routeSets.flatMap((route) => route.route_points || []),
       currentLocation,
@@ -661,12 +663,24 @@ function TripMapContent({
               const prev = route.route_points[i - 1];
               const curr = route.route_points[i];
               if (isRouteGapSegment(prev, curr)) continue;
-              const limit = Number(curr.speed_limit_kmh ?? prev.speed_limit_kmh);
+              const currLocal = speedLimitKnowledgeResults[i] || null;
+              const prevLocal = speedLimitKnowledgeResults[i - 1] || null;
+              const confirmedLocal = [currLocal, prevLocal].find((item) => (
+                item?.source === 'user_confirmed_posted_sign' && Number(item.limitKmh) > 0
+              ));
+              const fallbackLocal = [currLocal, prevLocal].find((item) => Number(item?.limitKmh) > 0);
+              const tripLimit = Number(curr.speed_limit_kmh ?? prev.speed_limit_kmh);
+              const selectedLimit = confirmedLocal || (
+                Number.isFinite(tripLimit) && tripLimit > 0
+                  ? { limitKmh: tripLimit, source: curr.speed_limit_source || prev.speed_limit_source || 'openstreetmap' }
+                  : fallbackLocal
+              );
+              const limit = Number(selectedLimit?.limitKmh);
               if (!Number.isFinite(limit) || limit <= 0) continue;
               const speed = Number(curr.speed_kmh ?? prev.speed_kmh) || 0;
               const overBy = speed - limit;
               const color = overBy > 10 ? '#ef4444' : overBy > 0 ? '#f97316' : '#22c55e';
-              const source = curr.speed_limit_source || prev.speed_limit_source || 'openstreetmap';
+              const source = selectedLimit?.source || curr.speed_limit_source || prev.speed_limit_source || 'openstreetmap';
               const roadName = curr.speed_limit_road_name || prev.speed_limit_road_name || 'matched road';
               window.L.polyline(
                 [[prev.lat, prev.lng], [curr.lat, curr.lng]],
@@ -829,19 +843,19 @@ function TripMapContent({
         .bindPopup(`<b>Parked here</b><br>${escapeHtml(safeParkedLocation.address || `${safeParkedLocation.lat.toFixed(5)}, ${safeParkedLocation.lng.toFixed(5)}`)}`)
         .addTo(layers);
     }
-  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, smoothRoute]);
+  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !showCurrentLocation || !currentLocation) return;
-    if (isPointInPrivacyZone(currentLocation, getPrivacyZones(localSettings.get()))) return;
+    if (isPointInPrivacyZone(currentLocation, getPrivacyZones(settings))) return;
     leafletMapRef.current.panTo([currentLocation.lat, currentLocation.lng]);
-  }, [currentLocation, showCurrentLocation]);
+  }, [currentLocation, showCurrentLocation, settings]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !parkedLocation?.lat || !parkedLocation?.lng) return;
-    if (isPointInPrivacyZone(parkedLocation, getPrivacyZones(localSettings.get()))) return;
+    if (isPointInPrivacyZone(parkedLocation, getPrivacyZones(settings))) return;
     leafletMapRef.current.setView([parkedLocation.lat, parkedLocation.lng], 17);
-  }, [parkedLocation]);
+  }, [parkedLocation, settings]);
 
   if (mapFailed) {
     return (
@@ -1007,7 +1021,7 @@ function OfflineRoutePreview({
   height = '350px',
   className = '',
 }) {
-  const settings = localSettings.get();
+  const settings = useLocalSettings();
   const showPrivacyCircles = settings.show_privacy_circles === true;
   const routeSets = Array.isArray(routes)
     ? routes

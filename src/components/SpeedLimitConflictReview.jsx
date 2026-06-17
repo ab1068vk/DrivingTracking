@@ -1,0 +1,614 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, CheckCircle2, Gauge, MapPin, RefreshCw, ShieldCheck } from 'lucide-react';
+import { LocalSpeedKnowledge, geohashCenter, geohashEncode } from '@/lib/localSpeedKnowledge';
+import { buildTripSpeedLimitReviewCells } from '@/lib/speedLimitReview';
+import { getJson, setJson } from '@/lib/mobileStorage';
+import { getPrivacyZones } from '@/lib/privacyZones';
+import useLocalSettings from '@/hooks/useLocalSettings';
+
+const knowledgeStore = {
+  get: (key) => getJson(key, null),
+  set: (key, value) => setJson(key, value),
+};
+
+const sourceLabel = (source) => {
+  switch (source) {
+    case 'user_confirmed_posted_sign':
+      return 'Posted sign confirmation';
+    case 'user_entered_estimate':
+      return 'User estimate';
+    case 'trip_consensus':
+      return 'Local trip consensus';
+    case 'openstreetmap':
+      return 'OpenStreetMap maxspeed';
+    case 'osm_highway_default':
+      return 'OSM road-type estimate';
+    case 'region_default_estimate':
+      return 'Regional default estimate';
+    case 'inferred':
+      return 'GPS-inferred estimate';
+    case 'learned_local':
+      return 'Learned local estimate';
+    case 'time_of_day_bucket':
+      return 'Time-of-day local estimate';
+    case 'missing_posted_review':
+      return 'Needs parked review';
+    case 'unknown':
+      return 'Unknown source';
+    default:
+      return source ? String(source).replace(/_/g, ' ') : 'Unknown source';
+  }
+};
+
+const formatLimit = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? `${Math.round(number)} km/h` : 'Unknown';
+};
+
+const formatDate = (value) => {
+  const date = new Date(value || 0);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : 'Unknown time';
+};
+
+const sortedNumbers = (values = []) => [...new Set(values
+  .map((value) => Number(value))
+  .filter((value) => Number.isFinite(value) && value > 0)
+  .map((value) => Math.round(value)))]
+  .sort((a, b) => a - b);
+
+const sortedStrings = (values = []) => [...new Set(values
+  .map((value) => String(value || '').trim())
+  .filter(Boolean))]
+  .sort((a, b) => a.localeCompare(b));
+
+const mostCommonNumber = (values = []) => {
+  const counts = new Map();
+  for (const value of values) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number <= 0) continue;
+    const rounded = Math.round(number);
+    counts.set(rounded, (counts.get(rounded) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0] ?? '';
+};
+
+const formatLimitList = (values = []) => {
+  const limits = sortedNumbers(values);
+  return limits.length ? `${limits.join(', ')} km/h` : 'Unknown';
+};
+
+const formatSourceList = (values = []) => {
+  const sources = sortedStrings(values);
+  return sources.length ? sources.map(sourceLabel).join(', ') : 'Unknown source';
+};
+
+const primaryRoadLabel = (roads = [], geohash = '') => {
+  const [road] = sortedStrings(roads);
+  return road || `Unlabeled driven segment ${String(geohash || '').slice(0, 6)}`;
+};
+
+const reviewGroupKey = (cell = {}) => {
+  const roads = sortedStrings(cell.roads);
+  if (roads.length) return `road:${roads.join('|').toLowerCase()}`;
+  return `area:${String(cell.geohash || '').slice(0, 5)}`;
+};
+
+function isPublicReviewPoint(point = {}) {
+  const lat = Number(point.lat);
+  const lng = Number(point.lng);
+  return Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    point.privacy_export_placeholder !== true &&
+    point.masked_for_privacy !== true &&
+    point.privacy_gap !== true &&
+    point.privacy_live_redacted !== true;
+}
+
+const buildReviewGroups = (items = []) => {
+  const groups = new Map();
+  for (const cell of items.filter((item) => item?.tripReview && !item?.existingLocalCorrection)) {
+    const key = reviewGroupKey(cell);
+    const existing = groups.get(key) || {
+      key,
+      label: primaryRoadLabel(cell.roads, cell.geohash),
+      cells: [],
+      sampleCount: 0,
+      limits: [],
+      sources: [],
+      roads: new Set(),
+    };
+    existing.cells.push(cell);
+    existing.sampleCount += Number(cell.sampleCount) || 0;
+    existing.limits.push(...(cell.limits || []), cell.limitKmh, cell.suggestedLimitKmh);
+    existing.sources.push(...(cell.sources || []), cell.source);
+    for (const road of cell.roads || []) existing.roads.add(road);
+    groups.set(key, existing);
+  }
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      roads: [...group.roads],
+      limits: sortedNumbers(group.limits),
+      sources: sortedStrings(group.sources),
+      suggestedLimitKmh: mostCommonNumber(group.limits),
+    }))
+    .sort((a, b) => b.sampleCount - a.sampleCount || a.label.localeCompare(b.label));
+};
+
+function pointSource(point = {}) {
+  return point.speed_limit_source ?? point.limitSource ?? point.speedLimitSource ?? point.source ?? null;
+}
+
+function pointLimit(point = {}) {
+  const limit = Number(point.speed_limit_kmh ?? point.limitKmh ?? point.speedLimitKmh);
+  return Number.isFinite(limit) && limit > 0 ? Math.round(limit) : null;
+}
+
+function buildTripRoadStatusRows(trip = null, reviewCells = []) {
+  const points = Array.isArray(trip?.route_points) ? trip.route_points.filter(isPublicReviewPoint) : [];
+  if (!points.length) return [];
+
+  const reviewGeohashes = new Set(reviewCells
+    .filter((cell) => cell?.tripReview && !cell?.existingLocalCorrection)
+    .map((cell) => cell.geohash));
+  const savedByGeohash = new Map(reviewCells
+    .filter((cell) => cell?.existingLocalCorrection)
+    .map((cell) => [cell.geohash, cell]));
+  const groups = new Map();
+  for (const point of points) {
+    const lat = Number(point?.lat);
+    const lng = Number(point?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    const geohash = geohashEncode(lat, lng);
+    const road = String(point.speed_limit_road_name || '').trim();
+    const key = road ? `road:${road.toLowerCase()}` : `area:${geohash.slice(0, 5)}`;
+    const group = groups.get(key) || {
+      key,
+      label: road || `Unlabeled driven segment ${geohash.slice(0, 6)}`,
+      sampleCount: 0,
+      geohashes: new Set(),
+      limits: [],
+      sources: [],
+      reviewCount: 0,
+    };
+    group.sampleCount += 1;
+    group.geohashes.add(geohash);
+    const limit = pointLimit(point);
+    if (limit != null) group.limits.push(limit);
+    const source = pointSource(point);
+    if (source) group.sources.push(source);
+    const saved = savedByGeohash.get(geohash);
+    if (saved) {
+      const savedLimit = Number(saved.limitKmh ?? saved.suggestedLimitKmh);
+      if (Number.isFinite(savedLimit) && savedLimit > 0) group.limits.push(savedLimit);
+      if (saved.source) group.sources.push(saved.source);
+    }
+    groups.set(key, group);
+  }
+
+  return [...groups.values()]
+    .map((group) => {
+      const sources = sortedStrings(group.sources);
+      const limits = sortedNumbers(group.limits);
+      const reviewCount = [...group.geohashes].filter((geohash) => reviewGeohashes.has(geohash)).length;
+      const hasPosted = sources.some((source) => source === 'openstreetmap' || source === 'user_confirmed_posted_sign');
+      const hasEstimated = sources.some((source) => !['openstreetmap', 'user_confirmed_posted_sign'].includes(source));
+      const status = reviewCount > 0
+        ? 'Needs parked review'
+        : hasPosted
+          ? 'Posted data'
+          : hasEstimated
+            ? 'Estimated only'
+            : 'No speed data';
+      return {
+        ...group,
+        geohashes: [...group.geohashes],
+        limits,
+        sources,
+        reviewCount,
+        status,
+      };
+    })
+    .sort((a, b) => {
+      if (a.reviewCount && !b.reviewCount) return -1;
+      if (!a.reviewCount && b.reviewCount) return 1;
+      return b.sampleCount - a.sampleCount || a.label.localeCompare(b.label);
+    });
+}
+
+function routeEvidenceForCell(trip, geohash) {
+  const points = Array.isArray(trip?.route_points) ? trip.route_points.filter(isPublicReviewPoint) : [];
+  const matches = points.filter((point) => {
+    const lat = Number(point?.lat);
+    const lng = Number(point?.lng);
+    return Number.isFinite(lat) && Number.isFinite(lng) && geohashEncode(lat, lng) === geohash;
+  });
+  if (!matches.length) return null;
+
+  const limits = [...new Set(matches
+    .map((point) => Number(point.speed_limit_kmh))
+    .filter((value) => Number.isFinite(value) && value > 0))]
+    .sort((a, b) => a - b);
+  const sources = [...new Set(matches.map((point) => point.speed_limit_source).filter(Boolean))];
+  const roads = [...new Set(matches.map((point) => point.speed_limit_road_name).filter(Boolean))].slice(0, 3);
+
+  return {
+    sampleCount: matches.length,
+    limits,
+    sources,
+    roads,
+  };
+}
+
+function countBlockingReviewCells(items = []) {
+  return items.filter((cell) => !cell?.existingLocalCorrection).length;
+}
+
+export default function SpeedLimitConflictReview({ trip = null, reviewMode = false, onResolved = null }) {
+  const [cells, setCells] = useState([]);
+  const [drafts, setDrafts] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [busyGeohash, setBusyGeohash] = useState(null);
+  const [status, setStatus] = useState('');
+  const settings = useLocalSettings();
+
+  const knowledge = useMemo(() => new LocalSpeedKnowledge(knowledgeStore), []);
+  const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
+
+  const loadConflicts = useCallback(async ({ notifyComplete = false } = {}) => {
+    setLoading(true);
+    const conflicted = await knowledge.getConflictedCells().catch(() => []);
+    const conflictedGeohashes = new Set(conflicted.map((cell) => cell.geohash));
+    const tripReviewCells = reviewMode && trip
+      ? await Promise.all(buildTripSpeedLimitReviewCells(trip, { maxCells: Infinity }).map(async (cell) => {
+        if (conflictedGeohashes.has(cell.geohash)) return null;
+        const existing = await knowledge.getForPoint(cell.lat, cell.lng).catch(() => null);
+        return existing?.source
+          ? {
+            ...cell,
+            limitKmh: Number(existing.limitKmh) || cell.limitKmh,
+            suggestedLimitKmh: Number(existing.limitKmh) || cell.suggestedLimitKmh,
+            source: existing.source,
+            sources: [...new Set([...(cell.sources || []), existing.source])],
+            existingLocalCorrection: true,
+            reviewReason: 'A saved local speed exists here. Update it only if the posted speed changed.',
+          }
+          : cell;
+      }))
+      : [];
+    const nextCells = [
+      ...conflicted.map((cell) => ({ ...cell, tripReview: false })),
+      ...tripReviewCells.filter(Boolean),
+    ];
+    setCells(nextCells);
+    setDrafts((current) => {
+      const next = { ...current };
+      for (const cell of nextCells) {
+        const suggested = cell.conflictDetails?.newLimitKmh ?? cell.suggestedLimitKmh ?? cell.limitKmh ?? cell.conflictDetails?.existingLimitKmh ?? '';
+        if (next[cell.geohash] == null) next[cell.geohash] = String(suggested || '');
+      }
+      for (const group of buildReviewGroups(nextCells)) {
+        if (next[group.key] == null) next[group.key] = String(group.suggestedLimitKmh || '');
+      }
+      return next;
+    });
+    setLoading(false);
+    if (notifyComplete && reviewMode && trip?.id && trip.speed_limit_review_required === true && countBlockingReviewCells(nextCells) === 0) {
+      onResolved?.({
+        remainingCount: 0,
+        tripReviewComplete: true,
+      });
+    }
+    return nextCells;
+  }, [knowledge, onResolved, reviewMode, trip]);
+
+  useEffect(() => {
+    loadConflicts({ notifyComplete: true });
+  }, [loadConflicts]);
+
+  if (!reviewMode && !loading && cells.length === 0) return null;
+
+  const reviewGroups = buildReviewGroups(cells);
+  const roadStatusRows = buildTripRoadStatusRows(trip, cells);
+
+  const saveCellLimit = async (cell, source, limitKmh) => {
+    const note = source === 'user_confirmed_posted_sign'
+      ? 'Resolved from parked posted-sign review'
+      : 'Resolved from parked user estimate review';
+    const center = geohashCenter(cell.geohash);
+    return cell.tripReview
+      ? knowledge.saveUserCorrection(
+        cell.lat ?? center.lat,
+        cell.lng ?? center.lng,
+        Math.round(limitKmh),
+        note,
+        null,
+        privacyZones,
+        source
+      ).catch(() => false)
+      : knowledge.resolveConflict(
+        cell.geohash,
+        Math.round(limitKmh),
+        source,
+        note
+      ).catch(() => false);
+  };
+
+  const resolveCells = async (targetCells, source, draftKey) => {
+    const limitKmh = Number(drafts[draftKey]);
+    if (!Number.isFinite(limitKmh) || limitKmh <= 0) {
+      setStatus('Enter a valid speed limit before saving.');
+      return;
+    }
+    setBusyGeohash(draftKey);
+    const uniqueCells = [...new Map(targetCells.map((cell) => [cell.geohash, cell])).values()];
+    const results = await Promise.all(uniqueCells.map((cell) => saveCellLimit(cell, source, limitKmh)));
+    const savedCount = results.filter(Boolean).length;
+    if (savedCount) {
+      const label = savedCount === 1 ? 'road area' : 'road areas';
+      setStatus(source === 'user_confirmed_posted_sign'
+        ? `Saved as a posted-sign confirmation for future speed checks. Updated ${savedCount} ${label}.`
+        : `Saved as a local estimate for future speed checks. Updated ${savedCount} ${label}.`);
+      const remainingCells = await loadConflicts();
+      const remainingCount = countBlockingReviewCells(remainingCells);
+      onResolved?.({
+        geohash: uniqueCells[0]?.geohash,
+        source,
+        remainingCount,
+        tripReviewComplete: Boolean(trip?.id) && remainingCount === 0,
+      });
+    } else {
+      setStatus('Could not save that speed-limit review.');
+    }
+    setBusyGeohash(null);
+  };
+
+  return (
+    <section id="speed-limit-conflicts" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+          <div>
+            <h2 className="text-sm font-semibold">Speed-limit conflict review</h2>
+            <p className="mt-1 text-xs opacity-85">
+              Review every trip road area that lacks posted-speed evidence. Save a posted sign only when you saw one while parked or after the trip. Saved values stay local and are used for future trips near the same road area.
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={loadConflicts}
+          disabled={loading}
+          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-300 bg-background/70 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-background disabled:opacity-60 dark:border-amber-800 dark:text-amber-100"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          Refresh
+        </button>
+      </div>
+
+      {status && (
+        <div className="mt-3 rounded-xl bg-background/70 px-3 py-2 text-xs font-medium">
+          {status}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="mt-3 rounded-xl bg-background/60 p-3 text-xs">Loading conflicted cells...</div>
+      ) : cells.length === 0 ? (
+        <div className="mt-3 flex items-center gap-2 rounded-xl bg-emerald-50 p-3 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+          <CheckCircle2 className="h-4 w-4" />
+          All local speed-limit conflicts are resolved.
+        </div>
+      ) : (
+        <div className="mt-4 space-y-3">
+          {roadStatusRows.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-background/80 p-3 shadow-sm dark:border-amber-900/60 dark:bg-background/70">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold">Road speed coverage</h3>
+                  <p className="text-xs text-muted-foreground">
+                    This shows which roads already have posted data and which still need parked confirmation.
+                  </p>
+                </div>
+                <span className="text-xs font-semibold text-amber-900 dark:text-amber-100">
+                  {roadStatusRows.filter((row) => row.reviewCount > 0).length} road{roadStatusRows.filter((row) => row.reviewCount > 0).length === 1 ? '' : 's'} need review
+                </span>
+              </div>
+              <div className="mt-3 divide-y divide-border overflow-hidden rounded-lg border border-border bg-background/60">
+                {roadStatusRows.map((row) => (
+                  <div key={row.key} className="grid gap-2 px-3 py-2 text-xs sm:grid-cols-[1.2fr_0.8fr_0.8fr] sm:items-center">
+                    <div className="min-w-0">
+                      <div className="truncate font-semibold text-foreground">{row.label}</div>
+                      <div className="text-muted-foreground">{row.sampleCount} route sample{row.sampleCount === 1 ? '' : 's'}</div>
+                    </div>
+                    <div className="text-muted-foreground">
+                      <span className={`inline-flex rounded-full px-2 py-0.5 font-semibold ${
+                        row.reviewCount > 0
+                          ? 'bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-100'
+                          : row.status === 'Posted data'
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
+                            : 'bg-secondary text-muted-foreground'
+                      }`}>
+                        {row.status}
+                      </span>
+                    </div>
+                    <div className="min-w-0 text-muted-foreground sm:text-right">
+                      <div>{formatLimitList(row.limits)}</div>
+                      <div className="truncate">{formatSourceList(row.sources)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {reviewGroups.length > 1 && (
+            <div className="rounded-xl border border-amber-200 bg-background/80 p-3 shadow-sm dark:border-amber-900/60 dark:bg-background/70">
+              <h3 className="text-sm font-semibold">Save by road</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Use these when one road label used the same posted limit across multiple GPS cells.
+              </p>
+              <div className="mt-3 space-y-2">
+                {reviewGroups.map((group) => {
+                  const disabled = busyGeohash === group.key;
+                  return (
+                    <div key={group.key} className="grid gap-2 rounded-lg border border-border bg-secondary/30 p-2 text-xs lg:grid-cols-[1fr_13rem_15rem] lg:items-center">
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-foreground">{group.label}</div>
+                        <div className="text-muted-foreground">
+                          {group.cells.length} area{group.cells.length === 1 ? '' : 's'}; {group.sampleCount} route sample{group.sampleCount === 1 ? '' : 's'}; sources {formatSourceList(group.sources)}
+                        </div>
+                      </div>
+                      <label className="flex items-center gap-2 font-semibold text-foreground">
+                        <Gauge className="h-4 w-4 text-muted-foreground" />
+                        <input
+                          type="number"
+                          min="5"
+                          step="5"
+                          value={drafts[group.key] ?? ''}
+                          onChange={(event) => setDrafts((current) => ({ ...current, [group.key]: event.target.value }))}
+                          className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                        />
+                        <span className="text-xs text-muted-foreground">km/h</span>
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => resolveCells(group.cells, 'user_confirmed_posted_sign', group.key)}
+                          disabled={disabled}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                          Save sign
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => resolveCells(group.cells, 'user_entered_estimate', group.key)}
+                          disabled={disabled}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary disabled:opacity-60"
+                        >
+                          <Gauge className="h-3.5 w-3.5" />
+                          Estimate
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {cells.map((cell) => {
+            const center = geohashCenter(cell.geohash);
+            const evidence = cell.tripReview ? cell : routeEvidenceForCell(trip, cell.geohash);
+            const evidenceLimits = Array.isArray(evidence?.limits) ? evidence.limits : [];
+            const evidenceSources = Array.isArray(evidence?.sources) ? evidence.sources : [];
+            const evidenceRoads = Array.isArray(evidence?.roads) ? evidence.roads : [];
+            const displayLat = Number(cell.lat);
+            const displayLng = Number(cell.lng);
+            const displayCoordinateText = Number.isFinite(displayLat) && Number.isFinite(displayLng)
+              ? `${displayLat.toFixed(5)}, ${displayLng.toFixed(5)}`
+              : `${center.lat.toFixed(5)}, ${center.lng.toFixed(5)}`;
+            const disabled = busyGeohash === cell.geohash;
+            return (
+              <article key={cell.geohash} className="rounded-xl border border-amber-200 bg-background/80 p-3 text-sm shadow-sm dark:border-amber-900/60 dark:bg-background/70">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900 dark:bg-amber-900/50 dark:text-amber-100">
+                        <MapPin className="h-3.5 w-3.5" />
+                        {cell.geohash}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {displayCoordinateText}
+                      </span>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <div className="rounded-lg bg-secondary/60 px-3 py-2">
+                        <div className="text-[11px] text-muted-foreground">Stored limit</div>
+                        <div className="font-semibold">{formatLimit(cell.conflictDetails?.existingLimitKmh ?? cell.limitKmh)}</div>
+                      </div>
+                      <div className="rounded-lg bg-secondary/60 px-3 py-2">
+                        <div className="text-[11px] text-muted-foreground">New report</div>
+                        <div className="font-semibold">{formatLimit(cell.conflictDetails?.newLimitKmh)}</div>
+                      </div>
+                      <div className="rounded-lg bg-secondary/60 px-3 py-2">
+                        <div className="text-[11px] text-muted-foreground">Detected</div>
+                        <div className="font-semibold">{formatDate(cell.conflictDetails?.detectedAt || cell.lastUpdatedAt)}</div>
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {cell.tripReview
+                        ? cell.reviewReason
+                        : `Current source: ${sourceLabel(cell.source)}; confidence ${Math.round((Number(cell.confidence) || 0) * 100)}%; ${Number(cell.tripCount) || 0} matching trip${Number(cell.tripCount) === 1 ? '' : 's'}.`}
+                    </div>
+                    {evidence && (
+                      <div className="rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+                        <div className="font-semibold text-foreground">{cell.tripReview ? 'Trip review evidence' : 'Opened trip evidence'}</div>
+                        <div className="mt-1">
+                          {evidence.sampleCount} route point{evidence.sampleCount === 1 ? '' : 's'} in this cell
+                          {evidenceLimits.length ? `; trip limits ${evidenceLimits.join(', ')} km/h` : ''}
+                          {evidenceSources.length ? `; sources ${evidenceSources.map(sourceLabel).join(', ')}` : ''}.
+                        </div>
+                        {evidenceRoads.length > 0 ? (
+                          <div className="mt-1">Road labels: {evidenceRoads.join(', ')}</div>
+                        ) : (
+                          <div className="mt-1 font-medium text-amber-800 dark:text-amber-100">
+                            Road name unavailable. This point is from the driven route; tap Get Road Data before saving if you need a road label.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="w-full shrink-0 space-y-2 lg:w-64">
+                    <label className="block text-xs font-semibold" htmlFor={`limit-${cell.geohash}`}>
+                      Resolved limit
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <Gauge className="h-4 w-4 text-muted-foreground" />
+                      <input
+                        id={`limit-${cell.geohash}`}
+                        type="number"
+                        min="5"
+                        step="5"
+                        value={drafts[cell.geohash] ?? ''}
+                        onChange={(event) => setDrafts((current) => ({ ...current, [cell.geohash]: event.target.value }))}
+                        className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                      />
+                      <span className="text-xs text-muted-foreground">km/h</span>
+                    </div>
+                    <div className="rounded-lg bg-secondary/50 px-3 py-2 text-[11px] text-muted-foreground">
+                      {cell.existingLocalCorrection
+                        ? 'Saving here replaces the previous local speed for this road cell.'
+                        : 'Saving here updates local speed guidance for later trips near this road cell.'}
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => resolveCells([cell], 'user_confirmed_posted_sign', cell.geohash)}
+                        disabled={disabled}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                      >
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                        {cell.existingLocalCorrection ? 'Update posted sign' : 'Save posted sign'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => resolveCells([cell], 'user_entered_estimate', cell.geohash)}
+                        disabled={disabled}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary disabled:opacity-60"
+                      >
+                        <Gauge className="h-3.5 w-3.5" />
+                        {cell.existingLocalCorrection ? 'Update estimate' : 'Save estimate'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}

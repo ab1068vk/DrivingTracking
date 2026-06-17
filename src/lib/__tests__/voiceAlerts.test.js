@@ -152,6 +152,28 @@ describe('voice alert cooldowns', () => {
     expect(mockState.nativeSpeech.speak).not.toHaveBeenCalled();
   });
 
+  it('does not fall back to browser speech when the native Android bridge rejects', async () => {
+    mockState.isNative = true;
+    mockState.nativeSpeech.speakText = vi.fn().mockRejectedValue(new Error('audio focus denied'));
+    const speechSynthesis = stubSpeechSynthesis();
+
+    expect(await speakSafetyAlert('Eyes on the road.', { voice_alerts_enabled: true })).toBe(false);
+    expect(mockState.nativeSpeech.speakText).toHaveBeenCalledTimes(1);
+    expect(speechSynthesis.speak).not.toHaveBeenCalled();
+  });
+
+  it('does not consume keyed cooldowns when native Android speech fails', async () => {
+    mockState.isNative = true;
+    resetSafetyAlertCooldowns();
+    mockState.nativeSpeech.speakText = vi.fn()
+      .mockRejectedValueOnce(new Error('audio focus denied'))
+      .mockResolvedValueOnce();
+
+    expect(await speakSafetyAlertOnce('phone_use', 'Eyes up.', { voice_alerts_enabled: true }, 60000, 1000)).toBe(false);
+    expect(await speakSafetyAlertOnce('phone_use', 'Eyes up.', { voice_alerts_enabled: true }, 2000)).toBe(true);
+    expect(mockState.nativeSpeech.speakText).toHaveBeenCalledTimes(2);
+  });
+
   it('marks the settings test alert as interruptible', async () => {
     mockState.isNative = true;
     mockState.nativeSpeech.speakText = vi.fn().mockResolvedValue();

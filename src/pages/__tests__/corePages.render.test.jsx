@@ -3,6 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SCORING_VERSION } from '@/lib/tripEngine';
 
+// CHANGES (session):
+// - Updated TripDetail render expectation to require posted-sign estimate wording.
+
 const navigate = vi.fn();
 const queryData = new Map();
 const settings = {
@@ -131,8 +134,10 @@ vi.mock('@tanstack/react-query', () => ({
 }));
 
 vi.mock('react-router-dom', () => ({
+  Link: ({ children, to, ...props }) => <a href={to} {...props}>{children}</a>,
   useNavigate: () => navigate,
   useParams: () => ({ id: 'trip-1' }),
+  useLocation: () => ({ pathname: '/', search: '', hash: '', state: null }),
 }));
 
 vi.mock('@/components/ScoreRing', () => ({
@@ -375,8 +380,8 @@ describe('core page component renders', () => {
     const html = renderToStaticMarkup(<TripDetail />);
 
     expect(html).toContain('Speed-limit score uses estimated limits');
-    expect(html).toContain('not official legal limits');
-    expect(html).toContain('half-weighted');
+    expect(html).toContain('not proof of the posted speed limit');
+    expect(html).toContain('REGION_DEFAULT is more reliable than GPS-only inference');
     expect(html).toContain('Sources');
     expect(html).toContain('GPS-inferred speed limit');
     expect(html).toContain('3 samples');
@@ -467,7 +472,7 @@ describe('core page component renders', () => {
     expect(html).not.toContain('Tracking Mode');
     expect(html).not.toContain('Snap route to roads');
     expect(html).toContain('Share route samples with OSRM?');
-    expect(html).toContain('Personal-use estimates only');
+    expect(html).toContain('Personal-use informational estimates only');
   });
 
   it('renders Diagnostics recovery compatibility as read-only identity facts', async () => {

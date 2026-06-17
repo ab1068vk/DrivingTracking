@@ -32,8 +32,8 @@
       "night_driving": false
     },
     "scores": {
-      "score_overall": 45,
-      "score_safety": 16,
+      "score_overall": 42,
+      "score_safety": 10,
       "score_smoothness": 95,
       "score_eco": 20,
       "score_confidence_label": "developing",
@@ -42,17 +42,17 @@
       "sharp_turns_count": 0,
       "speeding_events_count": 2,
       "speed_creep_score": 0,
-      "aggressive_driving_score": 0,
+      "aggressive_driving_score": 3,
       "defensive_driving_score": 74
     },
     "component_scores": {
-      "overall": { "value": 45, "evidence": "developing", "dataSource": ["gps", "gps_inferred_speed_limit"], "sampleCount": 12 },
-      "safety": { "value": 16, "evidence": "developing", "dataSource": ["gps", "gps_inferred_speed_limit"], "sampleCount": 12 },
+      "overall": { "value": 42, "evidence": "developing", "dataSource": ["gps", "regional_default_estimate", "gps_inferred_limit"], "sampleCount": 12 },
+      "safety": { "value": 10, "evidence": "developing", "dataSource": ["gps", "regional_default_estimate", "gps_inferred_limit"], "sampleCount": 12 },
       "smoothness": { "value": 95, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "eco": { "value": 20, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "intersection": { "value": null, "evidence": "unavailable", "dataSource": ["gps"], "sampleCount": 0 },
       "speed_creep": { "value": 0, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
-      "aggressive_driving": { "value": 0, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
+      "aggressive_driving": { "value": 3, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "defensive_driving": { "value": 74, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "fatigue_risk": { "value": 1, "evidence": "high", "dataSource": ["gps"], "sampleCount": 1 }
     },

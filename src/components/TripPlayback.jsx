@@ -15,6 +15,7 @@ import {
   maskRoutePointsForPrivacy,
 } from '@/lib/privacyZones';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
+import useLocalSettings from '@/hooks/useLocalSettings';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -222,6 +223,14 @@ const persistLastMapCenter = (point, tripId = null) => {
   });
 };
 
+const stopLeafletMap = (map) => {
+  try {
+    map?.stop?.();
+  } catch {
+    // Leaflet can throw while a map is already halfway through teardown.
+  }
+};
+
 const carIconHtml = (color, heading, label = '') => `
   <div style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,0.94);border:1px solid rgba(15,23,42,0.18);box-shadow:0 4px 16px rgba(15,23,42,0.24);display:flex;align-items:center;justify-content:center">
     <div style="width:20px;height:20px;border-radius:999px;background:${color};color:white;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;transform:rotate(${heading}deg)">${label || '^'}</div>
@@ -265,6 +274,8 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
   const secondaryMarkerRef = useRef(null);
   const progressLayersRef = useRef(null);
   const animRef = useRef(null);
+  const settingsRef = useRef(null);
+  const invalidateTimersRef = useRef([]);
 
   const [currentIdx, setCurrentIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -275,23 +286,29 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
   const [selectedSegmentId, setSelectedSegmentId] = useState(null);
   const [mapFailed, setMapFailed] = useState(false);
 
-  const privacySettings = useMemo(() => localSettings.get(), [trip?.id, secondaryTrip?.id]);
+  const privacySettings = useLocalSettings();
+  settingsRef.current = privacySettings;
+  const privacyZonesKey = JSON.stringify(privacySettings.privacy_zones || []);
+  const playbackPrivacySettings = useMemo(() => ({
+    privacy_zones: privacySettings.privacy_zones,
+    show_privacy_circles: privacySettings.show_privacy_circles,
+  }), [privacySettings.show_privacy_circles, privacyZonesKey]);
   const points = useMemo(() => prepareMapRoutePoints(
-    maskRoutePointsForPrivacy(trip?.route_points || [], privacySettings),
+    maskRoutePointsForPrivacy(trip?.route_points || [], playbackPrivacySettings),
     { maxPoints: 900 }
-  ), [privacySettings, trip?.route_points]);
+  ), [playbackPrivacySettings, trip?.route_points]);
   const secondaryPoints = useMemo(() => prepareMapRoutePoints(
-    maskRoutePointsForPrivacy(secondaryTrip?.route_points || [], privacySettings),
+    maskRoutePointsForPrivacy(secondaryTrip?.route_points || [], playbackPrivacySettings),
     { maxPoints: 700 }
-  ), [privacySettings, secondaryTrip?.route_points]);
+  ), [playbackPrivacySettings, secondaryTrip?.route_points]);
   const events = useMemo(
-    () => maskEventsForPrivacy(trip?.driving_events || [], privacySettings)
+    () => maskEventsForPrivacy(trip?.driving_events || [], playbackPrivacySettings)
       .filter((event) => validLatLng(event?.lat, event?.lng)),
-    [privacySettings, trip?.driving_events]
+    [playbackPrivacySettings, trip?.driving_events]
   );
   const visiblePrivacyZones = useMemo(
-    () => privacySettings.show_privacy_circles === true
-      ? getPrivacyZones(privacySettings)
+    () => playbackPrivacySettings.show_privacy_circles === true
+      ? getPrivacyZones(playbackPrivacySettings)
         .map((zone) => getPrivacyZoneDisplayCircle(
           zone,
           undefined,
@@ -299,7 +316,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
         ))
         .filter(Boolean)
       : [],
-    [privacySettings, secondaryTrip?.route_points, trip?.route_points]
+    [playbackPrivacySettings, secondaryTrip?.route_points, trip?.route_points]
   );
   const totalPoints = points.length;
   const rawPointCount = Number(trip?.route_points_raw_count) || totalPoints;
@@ -347,6 +364,24 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
     setMapFailed(false);
   }, [trip?.id, secondaryTrip?.id]);
 
+  const scheduleMapInvalidate = (map, delay = 50) => {
+    const timer = window.setTimeout(() => {
+      invalidateTimersRef.current = invalidateTimersRef.current.filter((item) => item !== timer);
+      if (leafletMapRef.current !== map) return;
+      try {
+        map.invalidateSize();
+      } catch {
+        // Map cleanup can race with browser resize/layout callbacks.
+      }
+    }, delay);
+    invalidateTimersRef.current.push(timer);
+  };
+
+  const clearMapInvalidateTimers = () => {
+    invalidateTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    invalidateTimersRef.current = [];
+  };
+
   useEffect(() => {
     let cancelled = false;
     loadLeaflet().then(() => {
@@ -358,7 +393,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
         map.setView([initialCenter.lat, initialCenter.lng], DEFAULT_MAP_ZOOM);
         window.L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
         map.whenReady(() => {
-          if (!cancelled) setTimeout(() => map.invalidateSize(), 50);
+          if (!cancelled) scheduleMapInvalidate(map);
         });
 
         if (points.length === 1) {
@@ -493,9 +528,9 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
           });
 
           map.fitBounds(bounds, { padding: [24, 24] });
-          setTimeout(() => map.invalidateSize(), 50);
+          scheduleMapInvalidate(map);
         } else {
-          resolveFallbackMapCenter(privacySettings).then((center) => {
+          resolveFallbackMapCenter(settingsRef.current || {}).then((center) => {
             if (cancelled || !center || !leafletMapRef.current) return;
             map.setView([center.lat, center.lng], DEFAULT_MAP_ZOOM);
           });
@@ -504,6 +539,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
         console.error('Playback map failed to initialize', error);
         if (!cancelled) setMapFailed(true);
         try {
+          stopLeafletMap(leafletMapRef.current);
           leafletMapRef.current?.remove();
         } catch {
           // Ignore Leaflet cleanup failures from partially initialized maps.
@@ -520,8 +556,10 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
     return () => {
       cancelled = true;
       cancelAnimationFrame(animRef.current);
+      clearMapInvalidateTimers();
       if (leafletMapRef.current) {
         try {
+          stopLeafletMap(leafletMapRef.current);
           leafletMapRef.current.remove();
         } catch {
           // Ignore Leaflet cleanup failures from partially initialized maps.
@@ -532,7 +570,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
       secondaryMarkerRef.current = null;
       progressLayersRef.current = null;
     };
-  }, [events, points, privacySettings, secondaryPoints, secondarySegments, speedSegments, trip?.id, secondaryTrip?.id, visiblePrivacyZones]);
+  }, [events, playbackPrivacySettings, points, secondaryPoints, secondarySegments, speedSegments, trip?.id, secondaryTrip?.id, visiblePrivacyZones]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !points[currentIdx]) return;
@@ -570,7 +608,10 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
         iconAnchor: [17, 17],
       }));
     }
-    if (followVehicle) leafletMapRef.current.panTo(latlng, { animate: true, duration: 0.25 });
+    if (followVehicle) {
+      stopLeafletMap(leafletMapRef.current);
+      leafletMapRef.current.panTo(latlng, { animate: false });
+    }
     if (progressLayersRef.current && window.L) {
       progressLayersRef.current.clearLayers();
       speedSegments.slice(0, currentIdx).forEach((segment) => {

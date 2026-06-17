@@ -3,6 +3,7 @@ package com.drivesense.app;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.InputStream;
@@ -160,6 +161,56 @@ public class DriveSenseAutoTrackingServiceTest {
             DriveSenseAutoTrackingService.calculateLateralG(40d, 50d, 2_000L),
             0.001d
         );
+    }
+
+    @Test
+    public void nativeBackgroundSpeedLookupUsesLatestMatchingUserCorrection() throws Exception {
+        double lat = 43.6532d;
+        double lng = -79.3832d;
+        String geohash = DriveSenseAutoTrackingService.geohashEncode(lat, lng, 6);
+        JSONObject data = new JSONObject()
+            .put("corrections", new JSONArray()
+                .put(new JSONObject()
+                    .put("geohash", geohash)
+                    .put("limitKmh", 50d)
+                    .put("source", "user_entered_estimate")
+                    .put("appliedAt", "2026-06-16T12:00:00Z"))
+                .put(new JSONObject()
+                    .put("geohash", geohash)
+                    .put("limitKmh", 70d)
+                    .put("source", "user_confirmed_posted_sign")
+                    .put("appliedAt", "2026-06-17T12:00:00Z")));
+
+        DriveSenseAutoTrackingService.NativeSpeedLimit resolved =
+            DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, lng, Instant.parse("2026-06-17T13:00:00Z").toEpochMilli());
+
+        assertNotNull(resolved);
+        assertEquals(70d, resolved.limitKmh, 0.0d);
+        assertEquals("user_confirmed_posted_sign", resolved.source);
+    }
+
+    @Test
+    public void nativeBackgroundSpeedLookupIgnoresExpiredOrDifferentRoadCells() throws Exception {
+        double lat = 43.6532d;
+        double lng = -79.3832d;
+        JSONObject data = new JSONObject()
+            .put("corrections", new JSONArray()
+                .put(new JSONObject()
+                    .put("geohash", DriveSenseAutoTrackingService.geohashEncode(lat, lng, 6))
+                    .put("limitKmh", 70d)
+                    .put("source", "user_confirmed_posted_sign")
+                    .put("expiresAt", "2026-06-17T11:00:00Z"))
+                .put(new JSONObject()
+                    .put("geohash", DriveSenseAutoTrackingService.geohashEncode(45.4215d, -75.6972d, 6))
+                    .put("limitKmh", 40d)
+                    .put("source", "user_confirmed_posted_sign")));
+
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(
+            data,
+            lat,
+            lng,
+            Instant.parse("2026-06-17T13:00:00Z").toEpochMilli()
+        ));
     }
 
     private static JSONObject loadParityFixture() throws Exception {

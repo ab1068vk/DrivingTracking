@@ -28,6 +28,26 @@ import {
 } from './scoringConstants';
 import { ECO_DEFAULTS } from './ecoDefaults';
 import { formatEstimatedScore, isEstimatedScoreMetric } from './scoreDisplay';
+import {
+  alertMarginForConfidence,
+  confidenceToPenaltyWeight,
+  confidenceForSource,
+  getRegionDefaultEstimate,
+  roadContextFromGpsBehaviour,
+  roadContextFromOsmType,
+  canonicalSpeedTier,
+  tierForSource,
+} from './speedLimitSource';
+import { geohashEncode, timeToBucket } from './localSpeedKnowledge';
+
+// CHANGES (session):
+// - Modified resolveEffectiveSpeedLimitForIndex to include tier, confidence, limitKmh, alertMarginKmh, and shouldAlert.
+// - Added regional default estimate lookup and localKnowledge option to resolveEffectiveSpeedLimitForIndex.
+// - Added prefetchLocalKnowledge and tier-provenance trip speed summary helpers.
+// - Added 30-second overlapping segment P85 inference and GPS road-class derivation.
+// - Added per-point confidence-weighted speed-limit scoring totals.
+// - Renamed canonical regional default tier to REGION_DEFAULT.
+// - Split user speed corrections into posted-sign confirmations and user-entered estimates.
 
 /**
  * Provisional multiplier for converting coefficient of variation in moving
@@ -260,6 +280,14 @@ const isDiagnosticOnlyScoringEvent = (event = {}, { advancedSafetyEnabled = true
 const MIN_BRAKE_ONSET_SMOOTHNESS_SEQUENCES = 2;
 
 export const EVENT_PENALTIES = scoringValue('EVENT_PENALTY_POINTS');
+export const tierProvenance = Object.freeze({
+  POSTED: 'posted_speed_limit',
+  MAP_ESTIMATED: 'osm_highway_default',
+  LEARNED_LOCAL: 'learned_local_limit',
+  REGION_DEFAULT: 'regional_default_estimate',
+  GPS_INFERRED: 'gps_inferred_limit',
+  UNKNOWN: 'no_limit_data',
+});
 
 export function weightedBlend(components = []) {
   // Null is the only acceptable "not computed" input. Callers must not pass
@@ -1527,8 +1555,41 @@ function isLikelySpeedSpike(points = [], index = 0, thresholds = DEFAULT_THRESHO
   return speed - maxAdjacentImplied > spikeDelta;
 }
 
-function reliablePointSpeed(points = [], index = 0, thresholds = DEFAULT_THRESHOLDS) {
-  return isLikelySpeedSpike(points, index, thresholds) ? null : pointSpeedKmh(points[index], thresholds);
+export function reliablePointSpeed(points = [], index = 0, thresholds = DEFAULT_THRESHOLDS) {
+  thresholds = thresholds || DEFAULT_THRESHOLDS;
+  if (isLikelySpeedSpike(points, index, thresholds)) return null;
+  const reportedSpeed = pointSpeedKmh(points[index], thresholds);
+  const candidates = [];
+  if (points[index - 1]) {
+    const previousSegment = calculateSegmentMetrics(points[index - 1], points[index], thresholds);
+    if (previousSegment.dt > 0 && previousSegment.dt <= ROUTE_GAP_SECONDS && !previousSegment.isNoise) {
+      candidates.push(previousSegment.impliedSpeedKmh);
+    }
+  }
+  if (points[index + 1]) {
+    const nextSegment = calculateSegmentMetrics(points[index], points[index + 1], thresholds);
+    if (nextSegment.dt > 0 && nextSegment.dt <= ROUTE_GAP_SECONDS && !nextSegment.isNoise) {
+      candidates.push(nextSegment.impliedSpeedKmh);
+    }
+  }
+
+  const derivedSpeed = candidates
+    .filter(Number.isFinite)
+    .sort((a, b) => b - a)[0];
+  if (!Number.isFinite(derivedSpeed)) return reportedSpeed;
+  if (reportedSpeed == null) return derivedSpeed;
+
+  const trustedSpeed = thresholds.MIN_TRUSTED_SPEED_KMH ?? DEFAULT_THRESHOLDS.MIN_TRUSTED_SPEED_KMH;
+  const stationarySpeed = thresholds.STATIONARY_SPEED_KMH ?? DEFAULT_THRESHOLDS.STATIONARY_SPEED_KMH;
+  const neighboringReportedSpeeds = [points[index - 1], points[index + 1]]
+    .map((point) => pointSpeedKmh(point, thresholds))
+    .filter((speed) => speed != null);
+  const reportedStationaryWhileSustainedMovement = reportedSpeed < stationarySpeed &&
+    derivedSpeed >= trustedSpeed &&
+    neighboringReportedSpeeds.every((speed) => speed < stationarySpeed);
+  return reportedStationaryWhileSustainedMovement
+    ? derivedSpeed
+    : reportedSpeed;
 }
 
 function round1(value) {
@@ -1881,89 +1942,139 @@ function roadTypeFromWindowSummary(summary) {
 function createZoneLookup(zones = []) {
   let cursor = 0;
   return (index) => {
-    while (cursor < zones.length && index > zones[cursor].endIndex) cursor++;
-    const zone = zones[cursor];
-    return zone && index >= zone.startIndex && index <= zone.endIndex ? zone : null;
+    while (cursor + 1 < zones.length && index >= zones[cursor + 1].startIndex) cursor++;
+    for (let i = cursor; i >= 0; i--) {
+      const zone = zones[i];
+      if (!zone) continue;
+      if (index >= zone.startIndex && index <= zone.endIndex) return zone;
+      if (zone.endIndex < index) break;
+    }
+    return null;
   };
 }
 
+export function computeSegmentP85(points, windowSecs = 30, overlapFraction = 0.5) {
+  const entries = (Array.isArray(points) ? points : [])
+    .map((point, index) => ({
+      point,
+      index,
+      ts: timestampMs(point),
+      speed: Number(point?.speed_kmh ?? point?.speedKmh),
+    }))
+    .filter((entry) => Number.isFinite(entry.ts) && Number.isFinite(entry.speed) && hasValidCoordinates(entry.point));
+  if (entries.length < 2) return [];
+
+  const windowMs = Math.max(1, Number(windowSecs) || 30) * 1000;
+  const stepMs = Math.max(1000, windowMs * Math.max(0.05, Math.min(1, Number(overlapFraction) || 0.5)));
+  const firstTs = entries[0].ts;
+  const lastTs = entries[entries.length - 1].ts;
+  const windows = [];
+
+  for (let startTs = firstTs; startTs <= lastTs; startTs += stepMs) {
+    const endTs = startTs + windowMs;
+    const samples = entries.filter((entry) => entry.ts >= startTs && entry.ts <= endTs);
+    if (!samples.length) continue;
+    const speeds = samples.map((entry) => entry.speed).sort((a, b) => a - b);
+    const percentileIndex = Math.min(speeds.length - 1, Math.max(0, Math.floor((speeds.length - 1) * 0.85)));
+    windows.push({
+      windowStartIdx: samples[0].index,
+      windowEndIdx: samples[samples.length - 1].index,
+      p85Kmh: speeds[percentileIndex],
+      midpointTimestamp: new Date(startTs + windowMs / 2).toISOString(),
+    });
+  }
+
+  return windows;
+}
+
+export function computeGpsRoadClass(p85, stopDensity, turnDensity, headingStability) {
+  const p85Speed = Number(p85);
+  const stopDensityLow = Number(stopDensity) < 0.08;
+  const stopDensityHigh = Number(stopDensity) >= 0.20;
+  const turnDensityHigh = Number(turnDensity) >= 0.25;
+  const headingStable = Number(headingStability) >= 0.75;
+  if (p85Speed > 95 && stopDensityLow && headingStable) return 'motorway';
+  if (p85Speed > 75 && stopDensityLow) return 'rural_or_arterial';
+  if (stopDensityHigh || turnDensityHigh) return 'urban';
+  return 'unknown';
+}
+
+function pointHasOsmHighwayType(point) {
+  return Boolean(point?.osmHighwayType || point?.speed_limit_highway || point?.highway);
+}
+
+function roadTypeFromGpsRoadClass(gpsRoadClass, fallbackRoadType) {
+  if (gpsRoadClass === 'motorway' || gpsRoadClass === 'rural_or_arterial') return 'highway';
+  if (gpsRoadClass === 'urban') return 'urban';
+  return fallbackRoadType || 'urban';
+}
+
 export function inferSpeedZones(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
-  const points = (routePoints || [])
-    .map((point, index) => ({ point, index, ts: timestampMs(point), speed: reliablePointSpeed(routePoints, index, thresholds) }))
-    .filter((entry) => Number.isFinite(entry.ts) && hasValidCoordinates(entry.point));
-  if (points.length < 2) return [];
+  const normalizedPoints = (routePoints || []).map((point, index) => ({
+    ...point,
+    speed_kmh: reliablePointSpeed(routePoints, index, thresholds),
+  }));
+  const windows = computeSegmentP85(normalizedPoints, 30, 0.5);
+  if (!windows.length) return [];
 
-  const zones = [];
-  const speeds = [];
-  const roadSummary = createRoadTypeWindowSummary();
-  let speedSum = 0;
-  let speedSumSq = 0;
-  let speedCount = 0;
-  let end = -1;
-
-  const addEntry = (entry) => {
-    if (Number.isFinite(entry.speed)) {
-      sortedInsert(speeds, entry.speed);
-      speedSum += entry.speed;
-      speedSumSq += entry.speed * entry.speed;
-      speedCount++;
-    }
-    updateRoadTypeWindowSummary(roadSummary, entry.point, 1);
-  };
-
-  const removeEntry = (entry) => {
-    if (Number.isFinite(entry.speed)) {
-      sortedRemove(speeds, entry.speed);
-      speedSum -= entry.speed;
-      speedSumSq -= entry.speed * entry.speed;
-      speedCount--;
-    }
-    updateRoadTypeWindowSummary(roadSummary, entry.point, -1);
-  };
-
-  for (let start = 0; start < points.length - 1; start++) {
-    const startTs = points[start].ts;
-    while (end + 1 < points.length && points[end + 1].ts - startTs <= 60000) {
-      end++;
-      addEntry(points[end]);
-    }
-    if (end <= start) {
-      removeEntry(points[start]);
-      continue;
-    }
-
-    if (speeds.length < 2) {
-      removeEntry(points[start]);
-      continue;
-    }
-
+  return windows.map((window) => {
+    const windowPoints = normalizedPoints.slice(window.windowStartIdx, window.windowEndIdx + 1);
+    const speeds = windowPoints.map((point) => Number(point?.speed_kmh)).filter(Number.isFinite).sort((a, b) => a - b);
+    const speedSum = speeds.reduce((sum, speed) => sum + speed, 0);
+    const speedSumSq = speeds.reduce((sum, speed) => sum + speed * speed, 0);
+    const roadSummary = createRoadTypeWindowSummary();
+    windowPoints.forEach((point) => updateRoadTypeWindowSummary(roadSummary, point, 1));
+    const { road_type: summaryRoadType, highway_fraction: highwayFraction } = roadTypeFromWindowSummary(roadSummary);
+    const p85Speed = Number(window.p85Kmh);
     const medianSpeed = percentileFromSorted(speeds, 50);
-    const p85Speed = percentileFromSorted(speeds, 85);
-    const deviation = speedStdDevFromSummary(speedCount, speedSum, speedSumSq);
-    const { road_type: roadType, highway_fraction: highwayFraction } = roadTypeFromWindowSummary(roadSummary);
+    const deviation = speedStdDevFromSummary(speeds.length, speedSum, speedSumSq);
+    const stopDensity = windowPoints.length
+      ? windowPoints.filter((point) => Number(point?.speed_kmh) <= (thresholds.IDLE_SPEED_KMH ?? DEFAULT_THRESHOLDS.IDLE_SPEED_KMH)).length / windowPoints.length
+      : 0;
+    const headingChanges = [];
+    for (let i = 1; i < windowPoints.length; i++) {
+      const previousHeading = Number.isFinite(Number(windowPoints[i - 1]?.heading)) ? Number(windowPoints[i - 1].heading) : null;
+      const currentHeading = Number.isFinite(Number(windowPoints[i]?.heading)) ? Number(windowPoints[i].heading) : null;
+      if (previousHeading != null && currentHeading != null) headingChanges.push(Math.abs(headingDiff(previousHeading, currentHeading)));
+    }
+    const turnDensity = headingChanges.length
+      ? headingChanges.filter((change) => change >= 25).length / headingChanges.length
+      : 0;
+    const headings = windowPoints.map((point) => Number(point?.heading)).filter(Number.isFinite);
+    const headingStability = headings.length >= 2
+      ? Math.max(0, 1 - calculateAngularStdDev(headings) / 45)
+      : 1;
+    const gpsRoadClass = windowPoints.some(pointHasOsmHighwayType)
+      ? null
+      : computeGpsRoadClass(p85Speed, stopDensity, turnDensity, headingStability);
+    const roadType = gpsRoadClass
+      ? roadTypeFromGpsRoadClass(gpsRoadClass, summaryRoadType)
+      : summaryRoadType;
     const zone = zoneFromP85(p85Speed);
     const inferredLimitKmh = Math.min(zone.inferredZoneKmh, complianceFallbackLimit(roadType, thresholds));
-    zones.push({
-      startIndex: points[start].index,
-      endIndex: points[end].index,
+
+    return {
+      startIndex: window.windowStartIdx,
+      endIndex: window.windowEndIdx,
       inferredZone: zone.inferredZone,
       inferredZoneKmh: zone.inferredZoneKmh,
       inferredLimitKmh,
       confidence: deviation < 8 ? 'high' : deviation < 18 ? 'medium' : 'low',
       median_speed_kmh: round1(medianSpeed),
       p85_speed_kmh: round1(p85Speed),
+      midpointTimestamp: window.midpointTimestamp,
       road_type: roadType,
+      gps_road_class: gpsRoadClass,
       road_type_fraction: highwayFraction,
       speed_std_dev: round1(deviation),
+      stop_density: round2(stopDensity),
+      turn_density: round2(turnDensity),
+      heading_stability: round2(headingStability),
       threshold_kmh: zone.inferredZone === 'zone_highway'
         ? thresholds.SPEEDING_FALLBACK_KMH ?? DEFAULT_THRESHOLDS.SPEEDING_FALLBACK_KMH
         : zone.inferredZoneKmh + (thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH),
-    });
-
-    removeEntry(points[start]);
-  }
-
-  return zones;
+    };
+  });
 }
 
 export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = DEFAULT_THRESHOLDS) {
@@ -4224,9 +4335,93 @@ function speedLimitForIndex(points = [], index) {
   return null;
 }
 
+function speedDefaultRegionFromSettings(settings = {}) {
+  const raw = settings?.configurable_country_defaults || settings?.country_code || '';
+  const [countryRaw, provinceRaw] = String(raw || '').split('-');
+  const countryCode = countryRaw && countryRaw.toLowerCase() !== 'global'
+    ? countryRaw.toUpperCase()
+    : 'GLOBAL';
+  const provinceCode = provinceRaw ? provinceRaw.toUpperCase() : null;
+  return { countryCode, provinceCode };
+}
+
+export async function prefetchLocalKnowledge(points = [], knowledge = null) {
+  const list = Array.isArray(points) ? points : [];
+  if (!knowledge || typeof knowledge.getForPoint !== 'function') return list.map(() => null);
+
+  const lookupByHash = new Map();
+  const hashes = list.map((point) => {
+    const lat = Number(point?.lat);
+    const lng = Number(point?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    const hash = geohashEncode(lat, lng, 6);
+    const pointTime = timestampMs(point);
+    const lookupKey = `${hash}:${Number.isFinite(pointTime) ? timeToBucket(pointTime) : 'none'}`;
+    if (!lookupByHash.has(lookupKey)) {
+      lookupByHash.set(lookupKey, knowledge.getForPoint(lat, lng, pointTime).catch(() => null));
+    }
+    return lookupKey;
+  });
+  const resolved = new Map();
+  await Promise.all([...lookupByHash.entries()].map(async ([lookupKey, promise]) => {
+    resolved.set(lookupKey, await promise);
+  }));
+  return hashes.map((lookupKey) => (lookupKey ? resolved.get(lookupKey) ?? null : null));
+}
+
+export function calculateTripSpeedSummary(routePoints = [], stats = {}, thresholds = DEFAULT_THRESHOLDS, options = {}) {
+  const points = Array.isArray(routePoints) ? routePoints : [];
+  const zones = Array.isArray(stats.speed_zones) ? stats.speed_zones : inferSpeedZones(points, thresholds);
+  const zoneForIndex = createZoneLookup(zones);
+  const roadTypesByPoint = options.roadTypesByPoint || classifyRoadTypesByPoint(points);
+  const tierCounts = {
+    POSTED: 0,
+    MAP_ESTIMATED: 0,
+    LEARNED_LOCAL: 0,
+    REGION_DEFAULT: 0,
+    GPS_INFERRED: 0,
+    UNKNOWN: 0,
+  };
+  let confidenceTotal = 0;
+  let counted = 0;
+  let learnablePoints = 0;
+
+  points.forEach((point, index) => {
+    if (point?.speed_limit_source === 'openstreetmap' && Number(point?.speed_limit_kmh) > 0) learnablePoints++;
+    const resolved = resolveEffectiveSpeedLimitForIndex(points, index, thresholds, {
+      zoneForIndex,
+      roadTypesByPoint,
+      localKnowledge: options.localKnowledgeResults?.[index] ?? null,
+      settings: options.settings || {},
+    });
+    const tierName = canonicalSpeedTier(resolved.tier || 'UNKNOWN');
+    tierCounts[tierName] = (tierCounts[tierName] ?? 0) + 1;
+    confidenceTotal += Number(resolved.confidence) || 0;
+    counted++;
+  });
+
+  const total = Math.max(1, counted);
+  const tierCoverage = Object.fromEntries(
+    Object.entries(tierCounts).map(([tierName, count]) => [tierName, round2(count / total)])
+  );
+  const dominantTier = Object.entries(tierCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'UNKNOWN';
+  const { countryCode, provinceCode } = speedDefaultRegionFromSettings(options.settings || {});
+  const totalRawPenalty = Number(options.penaltyTotals?.totalRawPenalty) || 0;
+  const totalWeightedPenalty = Number(options.penaltyTotals?.totalWeightedPenalty) || 0;
+
+  return {
+    tierCoverage,
+    dominantTier,
+    weightedConfidence: counted ? round2(confidenceTotal / counted) : 0,
+    countryCode,
+    provinceCode,
+    learnablePoints,
+    penaltyReductionFraction: round2((totalRawPenalty - totalWeightedPenalty) / Math.max(totalRawPenalty, 1)),
+  };
+}
+
 export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thresholds = DEFAULT_THRESHOLDS, options = {}) {
   const speedLimit = speedLimitForIndex(points, index);
-  const actualLimitKmh = speedLimit?.limitKmh ?? null;
   const zoneForIndex = options.zoneForIndex || createZoneLookup(options.inferredZones || inferSpeedZones(points, thresholds));
   const inferredZone = zoneForIndex(index);
   const roadTypesByPoint = options.roadTypesByPoint || classifyRoadTypesByPoint(points);
@@ -4238,17 +4433,68 @@ export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thres
         ? Math.min(Number(inferredZone.inferredZoneKmh), fallbackLimitKmh)
         : fallbackLimitKmh
     );
-  const effectiveLimitKmh = actualLimitKmh ?? (Number.isFinite(inferredLimitKmh) && inferredLimitKmh > 0 ? inferredLimitKmh : null);
+  const localKnowledge = options.localKnowledge || null;
+  const currentPoint = points[index] || {};
+  const actualLimitKmh = speedLimit?.limitKmh ?? null;
+  const actualSource = speedLimit?.source ?? null;
+  let effectiveLimitKmh = actualLimitKmh;
+  let source = actualSource;
+  let learnedLocalConfidence = null;
+
+  if (localKnowledge?.source === 'user_confirmed_posted_sign' && Number(localKnowledge.limitKmh) > 0) {
+    effectiveLimitKmh = Number(localKnowledge.limitKmh);
+    source = 'user_confirmed_posted_sign';
+  } else if (actualLimitKmh != null) {
+    effectiveLimitKmh = actualLimitKmh;
+    source = actualSource;
+  } else {
+    const { countryCode, provinceCode } = speedDefaultRegionFromSettings(options.settings || {});
+    const osmHighwayType = currentPoint.osmHighwayType || currentPoint.speed_limit_highway || currentPoint.highway || null;
+    const roadCtx = roadContextFromOsmType(osmHighwayType)
+      ?? roadTypesByPoint?.[index]
+      ?? (Number.isFinite(Number(inferredZone?.inferredZoneKmh)) ? roadContextFromGpsBehaviour(Number(inferredZone.inferredZoneKmh)) : null);
+    const regionalDefaultEstimate = getRegionDefaultEstimate(countryCode, provinceCode, roadCtx);
+    if (regionalDefaultEstimate != null) {
+      effectiveLimitKmh = countryCode === 'GLOBAL'
+        ? Math.min(regionalDefaultEstimate, fallbackLimitKmh)
+        : regionalDefaultEstimate;
+      source = 'region_default_estimate';
+    } else if (localKnowledge && Number(localKnowledge.limitKmh) > 0 && Number(localKnowledge.confidence) >= 0.55) {
+      effectiveLimitKmh = Number(localKnowledge.limitKmh);
+      source = localKnowledge.source === 'user_entered_estimate' || localKnowledge.source === 'user_correction'
+        ? 'user_entered_estimate'
+        : 'learned_local';
+      learnedLocalConfidence = Number(localKnowledge.confidence);
+    }
+  }
+
+  if (effectiveLimitKmh == null && Number.isFinite(inferredLimitKmh) && inferredLimitKmh > 0) {
+    effectiveLimitKmh = inferredLimitKmh;
+    source = 'inferred';
+  }
+
+  const tier = tierForSource(source);
+  const confidence = confidenceForSource(source, learnedLocalConfidence);
+  const alertMarginKmh = alertMarginForConfidence(confidence, thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH);
 
   return {
     actualLimitKmh,
     effectiveLimitKmh,
+    limitKmh: effectiveLimitKmh,
     fallbackLimitKmh,
     inferredLimitKmh: Number.isFinite(inferredLimitKmh) && inferredLimitKmh > 0 ? inferredLimitKmh : null,
     inferredZone,
-    limitSource: speedLimit?.source ?? (effectiveLimitKmh != null ? 'inferred' : null),
+    limitSource: source,
     speedLimitSource: speedLimit?.source ?? null,
     speedLimitDefaultCountry: speedLimit?.defaultCountry ?? null,
+    tier,
+    confidence,
+    alertMarginKmh,
+    shouldAlert: (speedKmh) => (
+      Number.isFinite(Number(speedKmh)) &&
+      Number.isFinite(Number(effectiveLimitKmh)) &&
+      Number(speedKmh) > Number(effectiveLimitKmh) + alertMarginKmh
+    ),
   };
 }
 
@@ -4278,14 +4524,14 @@ export function getInferredLimitForPoint(routePoints = [], point = null, thresho
  * @example
  * const compliance = calculateSpeedLimitCompliance(points, stats, DEFAULT_THRESHOLDS);
  */
-export function calculateSpeedLimitCompliance(routePoints, stats = {}, thresholds = DEFAULT_THRESHOLDS) {
+export function calculateSpeedLimitCompliance(routePoints, stats = {}, thresholds = DEFAULT_THRESHOLDS, options = {}) {
   const points = routePoints || [];
   const roadTypes = classifyRoadTypesByPoint(points);
   const zones = Array.isArray(stats.speed_zones) ? stats.speed_zones : inferSpeedZones(points, thresholds);
   const byType = {
-    highway: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0, osmMaxspeedPoints: 0, osmDefaultPoints: 0 },
-    urban: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0, osmMaxspeedPoints: 0, osmDefaultPoints: 0 },
-    residential: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0, osmMaxspeedPoints: 0, osmDefaultPoints: 0 },
+    highway: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0, osmMaxspeedPoints: 0, osmDefaultPoints: 0, confidenceTotal: 0, tierCounts: {}, totalRawPenalty: 0, totalWeightedPenalty: 0, totalPostedWeight: 0, penalizedPoints: 0 },
+    urban: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0, osmMaxspeedPoints: 0, osmDefaultPoints: 0, confidenceTotal: 0, tierCounts: {}, totalRawPenalty: 0, totalWeightedPenalty: 0, totalPostedWeight: 0, penalizedPoints: 0 },
+    residential: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0, osmMaxspeedPoints: 0, osmDefaultPoints: 0, confidenceTotal: 0, tierCounts: {}, totalRawPenalty: 0, totalWeightedPenalty: 0, totalPostedWeight: 0, penalizedPoints: 0 },
   };
   const speedOver = thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH;
   const zoneForIndex = createZoneLookup(zones);
@@ -4295,19 +4541,34 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
     if (!Number.isFinite(speed)) return;
     if (speed <= (thresholds.STATIONARY_SPEED_KMH ?? DEFAULT_THRESHOLDS.STATIONARY_SPEED_KMH)) return;
     const roadType = roadTypes[index] || 'urban';
-    const zone = zoneForIndex(index);
-    const speedLimit = speedLimitForIndex(points, index);
-    const limit = speedLimit?.limitKmh ?? zone?.inferredZoneKmh ?? complianceFallbackLimit(roadType, thresholds);
+    const speedLimitContext = resolveEffectiveSpeedLimitForIndex(points, index, thresholds, {
+      zoneForIndex,
+      roadTypesByPoint: roadTypes,
+      localKnowledge: options.localKnowledgeResults?.[index] ?? null,
+      settings: options.settings || {},
+    });
+    const limit = speedLimitContext.effectiveLimitKmh ?? complianceFallbackLimit(roadType, thresholds);
     const bucket = byType[roadType];
     bucket.totalPoints++;
     bucket.limitTotal += limit;
-    if (speedLimit) {
+    bucket.confidenceTotal += Number(speedLimitContext.confidence) || 0;
+    const bucketTier = canonicalSpeedTier(speedLimitContext.tier || 'UNKNOWN');
+    bucket.tierCounts[bucketTier] = (bucket.tierCounts[bucketTier] || 0) + 1;
+    if (speedLimitContext.actualLimitKmh != null) {
       bucket.actualLimitPoints++;
-      if (speedLimit.source === 'openstreetmap') bucket.osmMaxspeedPoints++;
-      if (speedLimit.source === 'osm_highway_default') bucket.osmDefaultPoints++;
+      if (speedLimitContext.limitSource === 'openstreetmap') bucket.osmMaxspeedPoints++;
+      if (speedLimitContext.limitSource === 'osm_highway_default') bucket.osmDefaultPoints++;
     }
     bucket.maxSpeed = Math.max(bucket.maxSpeed, speed);
-    if (speed > limit + speedOver) bucket.overLimitPoints++;
+    if (speed > limit + speedOver) {
+      const rawPenalty = Math.min(100, Math.max(0, (speed - (limit + speedOver)) * 2));
+      const penaltyWeight = confidenceToPenaltyWeight(speedLimitContext.confidence);
+      bucket.overLimitPoints++;
+      bucket.penalizedPoints++;
+      bucket.totalRawPenalty += rawPenalty;
+      bucket.totalWeightedPenalty += rawPenalty * penaltyWeight;
+      bucket.totalPostedWeight += penaltyWeight;
+    }
   });
 
   const build = (bucket) => {
@@ -4315,22 +4576,39 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
     const inferredLimit = Math.round(bucket.limitTotal / bucket.totalPoints);
     const rate = 1 - bucket.overLimitPoints / bucket.totalPoints;
     const maxExcessKmh = Math.max(0, bucket.maxSpeed - inferredLimit);
-    const limitSource = bucket.osmMaxspeedPoints > bucket.totalPoints / 2
-      ? 'openstreetmap'
-      : bucket.osmDefaultPoints > bucket.totalPoints / 2
-        ? 'osm_highway_default'
-        : 'inferred';
-    const rawScore = clamp(Math.round(rate * 100 - maxExcessKmh * 0.5), 0, 100);
-    const penaltyWeight = limitSource === 'inferred' ? 0.5 : 1;
+    const dominantTier = Object.entries(bucket.tierCounts)
+      .sort((a, b) => b[1] - a[1])[0]?.[0] || 'UNKNOWN';
+    const limitSource = {
+      POSTED: 'posted',
+      MAP_ESTIMATED: 'osm_highway_default',
+      LEARNED_LOCAL: 'learned_local',
+      REGION_DEFAULT: 'region_default_estimate',
+      GPS_INFERRED: 'inferred',
+      UNKNOWN: 'unknown',
+    }[canonicalSpeedTier(dominantTier)] || 'unknown';
+    const averageConfidence = bucket.confidenceTotal / bucket.totalPoints;
+    const rawScore = bucket.penalizedPoints
+      ? clamp(Math.round(100 - (bucket.totalRawPenalty / bucket.penalizedPoints)), 0, 100)
+      : 100;
+    const score = bucket.totalPostedWeight > 0
+      ? clamp(Math.round(100 - (bucket.totalWeightedPenalty / bucket.totalPostedWeight)), 0, 100)
+      : 100;
+    const penaltyWeight = bucket.totalRawPenalty > 0
+      ? bucket.totalWeightedPenalty / bucket.totalRawPenalty
+      : confidenceToPenaltyWeight(averageConfidence);
     return {
-      score: Math.round(100 - ((100 - rawScore) * penaltyWeight)),
+      score,
       raw_score: rawScore,
-      penalty_weight: penaltyWeight,
-      confidence: round2(clamp(bucket.totalPoints / 30, 0, 1)),
+      penalty_weight: round2(penaltyWeight),
+      total_raw_penalty: round2(bucket.totalRawPenalty),
+      total_weighted_penalty: round2(bucket.totalWeightedPenalty),
+      total_posted_weight: round2(bucket.totalPostedWeight),
+      confidence: round2(averageConfidence),
       rate: round2(rate),
       max_excess_kmh: round1(maxExcessKmh),
       inferred_limit_kmh: inferredLimit,
       limit_source: limitSource,
+      dominant_tier: dominantTier,
       actual_limit_coverage: round2(bucket.actualLimitPoints / bucket.totalPoints),
       osm_maxspeed_coverage: round2(bucket.osmMaxspeedPoints / bucket.totalPoints),
       osm_highway_default_coverage: round2(bucket.osmDefaultPoints / bucket.totalPoints),
@@ -4352,6 +4630,11 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
     urban_compliance: urban,
     residential_compliance: residential,
     overall_compliance_score: overall,
+    speed_penalty_totals: {
+      totalRawPenalty: round2(weighted.reduce((sum, item) => sum + (Number(item.total_raw_penalty) || 0), 0)),
+      totalWeightedPenalty: round2(weighted.reduce((sum, item) => sum + (Number(item.total_weighted_penalty) || 0), 0)),
+      totalPostedWeight: round2(weighted.reduce((sum, item) => sum + (Number(item.total_posted_weight) || 0), 0)),
+    },
   };
 }
 
@@ -4975,7 +5258,7 @@ function maskDetectedEventsForPrivacy(events = [], privacyZones = []) {
     : events;
 }
 
-export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, endTime = null, privacyZones = []) {
+export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, endTime = null, privacyZones = [], options = {}) {
   const events = [];
   if (!Array.isArray(points) || points.length < 3) return attachEventResult();
 
@@ -5160,6 +5443,8 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
     const speedLimitContext = resolveEffectiveSpeedLimitForIndex(points, i, thresholds, {
       zoneForIndex,
       roadTypesByPoint,
+      localKnowledge: options.localKnowledgeResults?.[i] ?? null,
+      settings: options.settings || {},
     });
     const {
       actualLimitKmh,
@@ -6030,8 +6315,8 @@ export function calculateTripScores(
       const speedFactor = 1 + Math.max(0, Math.min(1.5, (evt.speed_kmh - 30) / 60));
       p *= speedFactor;
     }
-    if (evt.type === EVENT_TYPES.SPEEDING && (evt.speed_limit_source == null || evt.speed_limit_source === 'inferred')) {
-      p *= 0.5;
+    if (evt.type === EVENT_TYPES.SPEEDING) {
+      p *= confidenceToPenaltyWeight(confidenceForSource(evt.speed_limit_source || evt.limitSource || 'inferred'));
     }
     // Safety uses scored driving evidence only; GPS-only advisory patterns stay diagnostic.
     if ([
@@ -6159,7 +6444,15 @@ export function calculateTripScores(
   const brakeOnset = calculateBrakeOnsetSmoothness(routePoints, scoringEvents, thresholds);
   const cornering = calculateCorneringConsistency(routePoints, thresholds);
   const brakingEfficiency = calculateBrakingEfficiency(routePoints, scoringEvents, thresholds);
-  const compliance = calculateSpeedLimitCompliance(routePoints, stats, thresholds);
+  const compliance = calculateSpeedLimitCompliance(routePoints, stats, thresholds, {
+    localKnowledgeResults: options.localKnowledgeResults,
+    settings: options.settings,
+  });
+  const tripSpeedSummary = calculateTripSpeedSummary(routePoints, stats, thresholds, {
+    localKnowledgeResults: options.localKnowledgeResults,
+    settings: options.settings,
+    penaltyTotals: compliance.speed_penalty_totals,
+  });
   const laneChangeScoreEnabled = thresholds.LANE_CHANGE_SCORE_ENABLED !== false;
   const laneChangeResult = options?.laneChangeResult || (
     advancedSafetyEnabled
@@ -6393,6 +6686,7 @@ export function calculateTripScores(
     overtake_quality_score_confidence: componentEvidence.overtake_quality,
     overtake_quality_beta: true,
     ...slippery,
+    trip_speed_summary_v1: tripSpeedSummary,
     ...(options.includeRoadTypeSegments === false ? {} : calculateRoadTypeSegmentedScores(routePoints, scoringEvents, stats, thresholds)),
     ...aggressive,
     aggressive_driving_score_confidence: componentEvidence.aggressive_driving,
@@ -6413,12 +6707,14 @@ export function calculateTripScores(
     Number.isFinite(Number(point?.obd_throttle_pct)) ||
     Number.isFinite(Number(point?.obd_maf_gps))
   ));
-  const osmSpeedLimitObserved = routePoints.some((point) => (
-    ['openstreetmap', 'osm_highway_default'].includes(point?.speed_limit_source)
-  ));
   const speedLimitSources = compliance.overall_compliance_score == null
     ? []
-    : [...gpsSources, osmSpeedLimitObserved ? 'osm_speed_limit' : 'gps_inferred_speed_limit'];
+    : [
+      ...gpsSources,
+      ...Object.entries(tripSpeedSummary.tierCoverage || {})
+        .filter(([, coverage]) => Number(coverage) > 0)
+        .map(([tierName]) => tierProvenance[tierName] || tierProvenance.UNKNOWN),
+    ];
   const phoneSources = confirmedPhoneScoreAvailable
     ? [...new Set(phoneUseResult.data_sources?.length ? phoneUseResult.data_sources : ['android_usage_access'])]
     : [];
@@ -6428,7 +6724,7 @@ export function calculateTripScores(
     ? combinedSources(gpsSources, ['device_motion_imu'])
     : gpsSources;
   const powertrainSources = combinedSources(vehicleSpeedSources, obdPowertrainObserved ? ['obd_bluetooth'] : []);
-  const inferredSpeedLimitScoring = speedLimitSources.includes('gps_inferred_speed_limit');
+  const inferredSpeedLimitScoring = speedLimitSources.includes(tierProvenance.GPS_INFERRED);
   const inferredSpeedLimitNote = inferredSpeedLimitScoring
     ? 'Speed-limit compliance used inferred road-type limits because no posted OpenStreetMap maxspeed was available; speeding penalties are half-weighted.'
     : undefined;

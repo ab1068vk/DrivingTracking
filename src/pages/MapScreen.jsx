@@ -26,6 +26,7 @@ import { runRoadContextRefresh } from '@/lib/roadContextQueue';
 import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 import { MAX_VISIBLE_DANGER_ZONES } from '@/lib/appConstants';
 import { pinnedFetch } from '@/lib/pinnedFetch';
+import useLocalSettings from '@/hooks/useLocalSettings';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -85,7 +86,7 @@ export default function MapScreen() {
   const [showAllDangerZones, setShowAllDangerZones] = useState(false);
   const [osmFetchStatus, setOsmFetchStatus] = useState('');
   const [tripListPage, setTripListPage] = useState(0);
-  const settings = useMemo(() => localSettings.get(), []);
+  const settings = useLocalSettings();
   const units = settings.units || 'metric';
   const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
   const privacyZonesKey = useMemo(() => JSON.stringify(privacyZones.map((zone) => [
@@ -154,10 +155,13 @@ export default function MapScreen() {
   const selectedHasSpeedLimits = (selectedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
   const selectedSpeedLimitStatus = selectedTrip?.speed_limit_context?.status || 'not_fetched';
   const selectedMapMatchingStatus = selectedTrip?.map_matching_context?.status || 'not_fetched';
+  const speedLimitLookupEnabled = settings.speed_limit_lookup_enabled !== false;
   const selectedLayerEffect = !selectedTrip
     ? 'Select a trip to get road data.'
     : selectedHasSpeedLimits
       ? 'Turning the layer on recolors the selected route: green is within the matched/default limit, orange is over, red is well over.'
+      : !speedLimitLookupEnabled
+        ? 'Speed-limit lookup is off in Settings. Get Road Data can still run other enabled lookups, but it will not add OpenStreetMap speed limits.'
       : selectedSpeedLimitStatus === 'unavailable'
         ? selectedTrip.speed_limit_context?.error || 'The OSM speed-limit lookup failed, so the map is still using GPS speed bands and fallback scoring thresholds.'
       : selectedSpeedLimitStatus === 'not_fetched' || selectedSpeedLimitStatus === 'manual_required'
@@ -460,12 +464,13 @@ export default function MapScreen() {
               onClick={() => {
                 if (!selectedTrip) return;
                 if (!selectedHasSpeedLimits) {
+                  if (!speedLimitLookupEnabled) return;
                   confirmAndFetchRoadContext();
                   return;
                 }
                 setShowSpeedLimits(value => !value);
               }}
-              disabled={!selectedTrip || contextMutation.isPending}
+              disabled={!selectedTrip || contextMutation.isPending || (!selectedHasSpeedLimits && !speedLimitLookupEnabled)}
               className={`rounded-xl border p-3 text-left text-xs font-semibold transition-all disabled:opacity-50 ${
                 showSpeedLimits ? 'border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' : 'border-border bg-secondary/40 text-muted-foreground'
               }`}
@@ -479,6 +484,8 @@ export default function MapScreen() {
                   ? 'Select a trip first'
                   : selectedHasSpeedLimits
                     ? `${selectedSpeedLimitCoverage}% coverage - tap to show or hide`
+                    : !speedLimitLookupEnabled
+                      ? 'OpenStreetMap speed-limit lookup is off in Settings'
                     : contextMutation.isPending
                       ? osmFetchStatus || 'Getting road data...'
                       : `${selectedSpeedLimitStatus.replace(/_/g, ' ')} - tap to get road data`}
@@ -509,7 +516,7 @@ export default function MapScreen() {
               <div className="font-semibold text-foreground">Get Road Data, in plain words</div>
               <div className="mt-1">Runs only the enabled online lookups for this selected trip. Privacy-zone coordinates are excluded before anything leaves the app.</div>
               <div className="mt-2 grid gap-1">
-                <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'OpenStreetMap is skipped; map uses GPS/fallback limits.' : 'sends privacy-filtered public road boxes to OpenStreetMap for posted maxspeed; missing tags may use labeled estimates.'}</div>
+                <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'OpenStreetMap speed-limit lookup is skipped; route colors use GPS bands or any speed-limit data already saved on the trip.' : 'sends privacy-filtered public road boxes to OpenStreetMap for posted maxspeed; missing tags may use labeled estimates.'}</div>
                 <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'Open-Meteo is skipped; scores get no weather adjustment.' : 'sends one privacy-safe route point and trip date to Open-Meteo.'}</div>
                 <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'OSRM is skipped; map/playback keep GPS shape.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled public GPS segments to your OSRM endpoint.' : 'OSRM is skipped until a trusted endpoint and consent are saved in Settings.'}</div>
               </div>
@@ -527,7 +534,7 @@ export default function MapScreen() {
               )}
             </div>
           )}
-          {selectedTrip && !selectedHasSpeedLimits && (
+          {selectedTrip && !selectedHasSpeedLimits && speedLimitLookupEnabled && (
             <div className="mt-3 rounded-2xl border border-dashed border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
               <div>{describeOsmSpeedLimitStatus(selectedTrip.speed_limit_context)}</div>
               <button
@@ -636,12 +643,13 @@ export default function MapScreen() {
                 onClick={() => {
                   if (!selectedTrip) return;
                   if (!selectedHasSpeedLimits) {
+                    if (!speedLimitLookupEnabled) return;
                     confirmAndFetchRoadContext();
                     return;
                   }
                   setShowSpeedLimits(value => !value);
                 }}
-                disabled={!selectedTrip || contextMutation.isPending}
+                disabled={!selectedTrip || contextMutation.isPending || (!selectedHasSpeedLimits && !speedLimitLookupEnabled)}
                 className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all whitespace-nowrap disabled:opacity-50 ${
                   showSpeedLimits ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
                 }`}

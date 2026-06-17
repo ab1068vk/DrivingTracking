@@ -12,7 +12,6 @@ let pendingLogs = [];
 let flushTimer = null;
 let initialized = false;
 let fetchWrapped = false;
-let lastScrollLogAt = 0;
 let lastLongTaskLogAt = 0;
 
 const safeNow = () => new Date().toISOString();
@@ -95,6 +94,7 @@ const retentionMsForEvent = (event) => (
 
 export function pruneExpiredSystemLogs(logs = readStoredLogs(), nowMs = Date.now()) {
   return logs
+    .filter((event) => !isSuppressedSystemLog(event))
     .filter((event) => {
       const retentionMs = retentionMsForEvent(event);
       if (retentionMs <= 0) return false;
@@ -248,6 +248,12 @@ const isPrivacySensitiveLog = (event = {}) => (
   containsPrivacyLogMetadata(event?.details)
 );
 
+const isSuppressedSystemLog = (event = {}) => {
+  const operation = String(event.operation || event.type || '').toLowerCase();
+  const eventType = String(event.details?.event_type || '').toLowerCase();
+  return operation === 'user_scroll' || eventType === 'scroll';
+};
+
 const flushPendingLogs = () => {
   flushTimer = null;
   if (!pendingLogs.length) return;
@@ -263,6 +269,8 @@ const scheduleFlush = () => {
 };
 
 export function recordSystemLog(event = {}) {
+  if (isSuppressedSystemLog(event)) return null;
+
   const category = event.category || 'app';
   const privacySensitive = isPrivacySensitiveLog({ ...event, category });
   if (privacySensitive && getPrivacyLogRetentionMs() <= 0) {
@@ -414,25 +422,6 @@ function logClipboardEvent(event) {
   });
 }
 
-function logScrollEvent() {
-  const now = Date.now();
-  if (now - lastScrollLogAt < 2000) return;
-  lastScrollLogAt = now;
-  recordSystemLog({
-    operation: 'user_scroll',
-    title: 'User scroll',
-    category: 'user_action',
-    severity: 'info',
-    message: 'Page scrolled',
-    details: {
-      scroll_x: Math.round(window.scrollX || 0),
-      scroll_y: Math.round(window.scrollY || 0),
-      viewport_height: window.innerHeight,
-      document_height: document.documentElement?.scrollHeight,
-    },
-  });
-}
-
 function initializePerformanceFailureLogging() {
   if (typeof PerformanceObserver === 'undefined') return;
   try {
@@ -558,7 +547,6 @@ export function initializeSystemLogging() {
   document.addEventListener('copy', logClipboardEvent, true);
   document.addEventListener('cut', logClipboardEvent, true);
   document.addEventListener('paste', logClipboardEvent, true);
-  window.addEventListener('scroll', logScrollEvent, { passive: true });
   window.addEventListener('pagehide', () => recordSystemEvent('page_hidden', {}, { category: 'background' }));
   window.addEventListener('beforeunload', () => recordSystemEvent('page_unloading', {}, { category: 'background' }));
   document.addEventListener('keydown', (event) => {

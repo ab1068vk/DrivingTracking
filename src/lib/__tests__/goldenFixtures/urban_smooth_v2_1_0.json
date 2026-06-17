@@ -42,8 +42,8 @@
       "defensive_driving_score": null
     },
     "component_scores": {
-      "overall": { "value": 92, "evidence": "low", "dataSource": ["gps", "gps_inferred_speed_limit"], "sampleCount": 8 },
-      "safety": { "value": 100, "evidence": "low", "dataSource": ["gps", "gps_inferred_speed_limit"], "sampleCount": 8 },
+      "overall": { "value": 92, "evidence": "low", "dataSource": ["gps", "regional_default_estimate"], "sampleCount": 8 },
+      "safety": { "value": 100, "evidence": "low", "dataSource": ["gps", "regional_default_estimate"], "sampleCount": 8 },
       "smoothness": { "value": 100, "evidence": "low", "dataSource": ["gps"], "sampleCount": 8 },
       "eco": { "value": 66, "evidence": "low", "dataSource": ["gps"], "sampleCount": 8 },
       "intersection": { "value": null, "evidence": "unavailable", "dataSource": ["gps"], "sampleCount": 0 },

@@ -22,7 +22,7 @@ import {
   UBI_INSURANCE_NOTICE_DETAIL,
   formatEstimatedScore,
 } from '@/lib/scoreDisplay';
-import { localSettings } from '@/lib/trackingStore';
+import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatCurrencyAmount } from '@/lib/currency';
 import { exportMonthlyReportPDF, exportUBIReportPDF } from '@/lib/pdfExport';
 import { computeUBIReport } from '@/lib/ubiReport';
@@ -71,7 +71,7 @@ export function buildReportExportSummary(trips = [], period = 'week') {
 export default function Reports() {
   const [period, setPeriod] = useState('week');
   const [ubiLoading, setUbiLoading] = useState(false);
-  const settings = localSettings.get();
+  const settings = useLocalSettings();
   const units = settings.units || 'metric';
 
   const { data: allTrips = [], isLoading } = useQuery({

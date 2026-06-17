@@ -46,6 +46,15 @@ const LAYERS = {
   integrity: { label: 'Integrity', color: '#f59e0b', weight: 0.2 },
 };
 
+const RECOMMENDATION_PRIORITY = {
+  error: 0,
+  warn: 1,
+  unknown: 2,
+  configured: 3,
+  ok: 4,
+  not_applicable: 5,
+};
+
 const control = (id, category, weight, label, check, riskIfMissing, developerAction) => ({
   id,
   category,
@@ -214,7 +223,9 @@ export function transmissionPrivacyLevel(entry = {}) {
   if (entry.coordinateDisclosure === 'blocked') return 'blocked';
   if (entry.coordinateDisclosure === 'none') return 'none';
   if (entry.coordinateDisclosure === 'raw') return 'raw';
-  return entry.privacyTransformVerified ? 'protected' : 'unverified';
+  return entry.privacyTransformVerified && !(entry.privacyVerificationWarnings || []).length
+    ? 'protected'
+    : 'unverified';
 }
 
 export function classifyTransmissionForDisplay(entry = {}) {
@@ -222,12 +233,12 @@ export function classifyTransmissionForDisplay(entry = {}) {
   if (entry.coordinateDisclosure === 'none') return { label: 'No location data', color: '#10b981' };
   if (entry.coordinateDisclosure === 'raw') {
     return (entry.protections || []).includes('explicit consent')
-      ? { label: 'Raw - by consent', color: '#f59e0b' }
-      : { label: 'Raw - UNEXPECTED', color: '#ef4444' };
+      ? { label: 'Raw - consented', color: '#f59e0b' }
+      : { label: 'Raw - REVIEW', color: '#ef4444' };
   }
-  return entry.privacyTransformVerified
+  return entry.privacyTransformVerified && !(entry.privacyVerificationWarnings || []).length
     ? { label: 'Verified protection', color: '#10b981' }
-    : { label: 'Claimed protection (unverified)', color: '#f59e0b' };
+    : { label: 'Unverified protection claim', color: '#f59e0b' };
 }
 
 export async function getTransmissionSummary() {
@@ -247,14 +258,22 @@ export async function getTransmissionSummary() {
     ...counts,
     [entry.status]: (counts[entry.status] || 0) + 1,
   }), { safe: 0, blocked: 0, warning: 0 });
+  const rawEntries = entries.filter((entry) => entry.privacyLevel === 'raw');
+  const rawWithConsent = rawEntries.filter((entry) => (
+    (entry.protections || []).some((item) => /explicit consent/i.test(item))
+  ));
+  const unverifiedEntries = entries.filter((entry) => entry.privacyLevel === 'unverified');
   return {
     entries: entries.slice().sort((a, b) => b.timestamp - a.timestamp),
-    totalRawCoords: entries.filter((entry) => entry.privacyLevel === 'raw').length,
+    totalRawCoords: rawEntries.length,
+    rawWithConsentCount: rawWithConsent.length,
+    rawWithoutConsentCount: rawEntries.length - rawWithConsent.length,
     protectedTotal: entries.filter((entry) => entry.privacyLevel === 'protected').length,
-    claimedButUnverifiedCount: entries.filter((entry) => entry.privacyLevel === 'unverified').length,
+    claimedButUnverifiedCount: unverifiedEntries.length,
     rawUnverifiedCount: entries.filter((entry) => (
       entry.coordinateDisclosure === 'raw' && entry.privacyTransformVerified !== true
     )).length,
+    needsReviewTotal: rawEntries.length + unverifiedEntries.length + statusCounts.warning,
     blockedTotal: statusCounts.blocked,
     warningTotal: statusCounts.warning,
     safeTotal: statusCounts.safe,
@@ -266,6 +285,134 @@ export async function getTransmissionSummary() {
     todayTotal: entries.filter((entry) => entry.timestamp > now - DAY_MS).length,
     weekTotal: entries.filter((entry) => entry.timestamp > now - 7 * DAY_MS).length,
     latestAt: entries[0]?.timestamp || null,
+  };
+}
+
+export function buildPrivacyActionPlan({
+  score = {},
+  protections = [],
+  transmissions = {},
+  chainResult = {},
+  zoneSummary = {},
+} = {}) {
+  const failedControls = protections.filter((item) => item.status === 'error');
+  const warningControls = protections.filter((item) => item.status === 'warn');
+  const unknownControls = protections.filter((item) => item.status === 'unknown');
+  const rawWithoutConsent = Number(transmissions.rawWithoutConsentCount) || 0;
+  const rawWithConsent = Number(transmissions.rawWithConsentCount) || 0;
+  const unverifiedTransmissions = Number(transmissions.claimedButUnverifiedCount) || 0;
+  const issues = [];
+
+  if (rawWithoutConsent > 0) {
+    issues.push({
+      id: 'raw_without_consent',
+      tone: 'error',
+      targetTab: 'transmissions',
+      title: 'Review raw-coordinate sends',
+      detail: `${rawWithoutConsent} raw-coordinate request${rawWithoutConsent === 1 ? '' : 's'} had no explicit-consent evidence.`,
+      action: 'Open transmissions',
+    });
+  }
+  if (chainResult.valid === false) {
+    issues.push({
+      id: 'audit_invalid',
+      tone: 'error',
+      targetTab: 'audit',
+      title: 'Audit history needs review',
+      detail: chainResult.reason || 'The local audit chain did not verify.',
+      action: 'Open audit log',
+    });
+  }
+  if (failedControls.length) {
+    issues.push({
+      id: 'failed_controls',
+      tone: 'error',
+      targetTab: 'protections',
+      title: 'Fix failing protection checks',
+      detail: `${failedControls.length} protection${failedControls.length === 1 ? '' : 's'} failed local verification.`,
+      action: 'Open protections',
+    });
+  }
+  if (unverifiedTransmissions > 0) {
+    issues.push({
+      id: 'unverified_transmissions',
+      tone: 'warn',
+      targetTab: 'transmissions',
+      title: 'Verify protected-request claims',
+      detail: `${unverifiedTransmissions} outbound record${unverifiedTransmissions === 1 ? '' : 's'} claimed protection without complete evidence.`,
+      action: 'Open transmissions',
+    });
+  }
+  if (rawWithConsent > 0) {
+    issues.push({
+      id: 'raw_with_consent',
+      tone: 'warn',
+      targetTab: 'transmissions',
+      title: 'Raw sharing is active',
+      detail: `${rawWithConsent} raw-coordinate request${rawWithConsent === 1 ? '' : 's'} had consent metadata. Confirm the endpoint is still trusted.`,
+      action: 'Review sharing',
+    });
+  }
+  if (warningControls.length) {
+    issues.push({
+      id: 'warning_controls',
+      tone: 'warn',
+      targetTab: 'protections',
+      title: 'Resolve degraded checks',
+      detail: `${warningControls.length} protection${warningControls.length === 1 ? '' : 's'} reported a warning.`,
+      action: 'Open protections',
+    });
+  }
+  if (unknownControls.length) {
+    issues.push({
+      id: 'unknown_controls',
+      tone: 'unknown',
+      targetTab: 'protections',
+      title: 'Do not treat unknown as safe',
+      detail: `${unknownControls.length} protection${unknownControls.length === 1 ? '' : 's'} could not be verified in this session.`,
+      action: 'Open protections',
+    });
+  }
+  if ((Number(zoneSummary.zoneCount) || 0) === 0) {
+    issues.push({
+      id: 'no_privacy_zones',
+      tone: 'unknown',
+      targetTab: 'zones',
+      title: 'Add privacy zones for private places',
+      detail: 'No home, work, or sensitive-place mask is configured yet.',
+      action: 'Open zones',
+    });
+  }
+
+  const hasErrors = issues.some((item) => item.tone === 'error');
+  const hasWarnings = issues.some((item) => item.tone === 'warn');
+  const hasUnknowns = issues.some((item) => item.tone === 'unknown');
+  const headline = hasErrors
+    ? 'Needs action before privacy claims are trustworthy'
+    : hasWarnings
+      ? 'Useful, with items to review'
+      : hasUnknowns
+        ? 'Useful, but evidence is incomplete'
+        : 'No urgent privacy issues recorded';
+
+  return {
+    headline,
+    tone: hasErrors ? 'error' : hasWarnings ? 'warn' : hasUnknowns ? 'unknown' : 'ok',
+    scoreLabel: score.label || 'Unavailable',
+    claim: hasErrors
+      ? 'Do not claim this setup is private until the flagged items are fixed.'
+      : hasWarnings || hasUnknowns
+        ? 'Treat this as local transparency, not a security guarantee.'
+        : 'The dashboard found no urgent local issues, but it is still not an external audit.',
+    primaryAction: issues[0] || {
+      id: 'no_action',
+      tone: 'ok',
+      targetTab: 'overview',
+      title: 'Keep reviewing after trips',
+      detail: 'New trips, exports, and external lookups can change this posture.',
+      action: 'Stay on overview',
+    },
+    issues: issues.slice(0, 5),
   };
 }
 
@@ -320,8 +467,19 @@ export async function loadPrivacyIntelligence() {
   ]);
   const recommendations = protections
     .filter((item) => ['error', 'warn', 'unknown'].includes(item.status))
-    .sort((a, b) => (a.status === 'error' ? -1 : 1) - (b.status === 'error' ? -1 : 1))
+    .sort((a, b) => (
+      (RECOMMENDATION_PRIORITY[a.status] ?? 9) - (RECOMMENDATION_PRIORITY[b.status] ?? 9) ||
+      (b.weight || 0) - (a.weight || 0)
+    ))
     .slice(0, 4);
+  const zoneSummary = summarizeZones(zones);
+  const actionPlan = buildPrivacyActionPlan({
+    score,
+    protections,
+    transmissions,
+    chainResult,
+    zoneSummary,
+  });
   return {
     generatedAt: Date.now(),
     score,
@@ -336,10 +494,11 @@ export async function loadPrivacyIntelligence() {
     },
     recommendations,
     zones,
-    zoneSummary: summarizeZones(zones),
+    zoneSummary,
     transmissions,
     chain,
     chainResult,
     auditSummary: summarizeAudit(chain),
+    actionPlan,
   };
 }

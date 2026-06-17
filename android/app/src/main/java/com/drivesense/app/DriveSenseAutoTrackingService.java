@@ -102,6 +102,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final String SUMMARY_CHANNEL_ID = "drivesense_summary";
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
     private static final String SETTINGS_KEY = "drivesense_settings";
+    private static final String SPEED_KNOWLEDGE_KEY = "speed_knowledge_v1";
+    private static final String GEOHASH_BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
+    private static final int SPEED_KNOWLEDGE_GEOHASH_PRECISION = 6;
+    private static final double SPEED_KNOWLEDGE_MATCH_RADIUS_KM = 0.8d;
     private static final String NOTIFICATION_PREFS = "drivesense_native_notification_state";
     private static final String KEY_LAST_PHONE_USE_NOTIFICATION_MS = "last_phone_use_notification_ms";
     private static final String KEY_LAST_TRIP_COMPLETED_NOTIFICATION_ID = "last_trip_completed_notification_id";
@@ -189,6 +193,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private long lastLinearSensorMs = 0L;
     private long lastGyroSensorMs = 0L;
     private long lastMotionSampleMs = 0L;
+    private long lastNativeSpeechDiagnosticMs = 0L;
 
     @Override
     public void onCreate() {
@@ -1014,6 +1019,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             trip.put("native_auto_start_reason", nativeAutoStartReason);
             trip.put("native_auto_stop_reason", lastNativeAutoStopReason);
             trip.put("native_tracking_timeline", timeline);
+            JSONObject speedLimitContext = new JSONObject();
+            speedLimitContext.put("status", "deferred_review");
+            speedLimitContext.put("source", "native_auto_tracking");
+            speedLimitContext.put("review_required", true);
+            speedLimitContext.put("reason", "background_tracking_cannot_confirm_posted_signs_while_driving");
+            trip.put("speed_limit_context", speedLimitContext);
+            trip.put("speed_limit_review_required", true);
+            trip.put("speed_limit_review_reason", "Background tracking cannot confirm posted signs while driving.");
             if (permissionLoss) {
                 JSONArray flags = new JSONArray();
                 flags.put("location_permission_loss");
@@ -1230,7 +1243,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         } catch (JSONException ignored) {}
     }
 
-    private double haversineKm(double lat1, double lng1, double lat2, double lng2) {
+    private static double haversineKm(double lat1, double lng1, double lat2, double lng2) {
         double earthKm = 6371d;
         double dLat = Math.toRadians(lat2 - lat1);
         double dLng = Math.toRadians(lng2 - lng1);
@@ -1284,13 +1297,37 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private void speakNativeAlert(String text) {
-        speakNativeAlert(text, false);
+        speakNativeAlert(text, false, null);
     }
 
     private void speakNativeAlert(String text, boolean interrupt) {
+        speakNativeAlert(text, interrupt, null);
+    }
+
+    private void speakNativeAlert(String text, boolean interrupt, @Nullable Runnable onAccepted) {
         if (text == null || text.trim().isEmpty()) return;
         if (speechController == null) speechController = new DriveSenseSpeechController(this);
-        speechController.speak(text, TTS_SPEECH_RATE, 1.0f, TTS_VOLUME, interrupt, null);
+        speechController.speak(text, TTS_SPEECH_RATE, 1.0f, TTS_VOLUME, interrupt, new DriveSenseSpeechController.Callback() {
+            @Override
+            public void onAccepted() {
+                if (onAccepted != null) onAccepted.run();
+            }
+
+            @Override
+            public void onError(String message) {
+                long now = System.currentTimeMillis();
+                if (now - lastNativeSpeechDiagnosticMs < 30_000L) return;
+                lastNativeSpeechDiagnosticMs = now;
+                recordDiagnostic(
+                    "voice_alert_failed",
+                    "Voice alert could not play.",
+                    message == null || message.trim().isEmpty() ? "unknown_tts_error" : message,
+                    lastKnownSpeedKmh,
+                    0L,
+                    0d
+                );
+            }
+        });
     }
 
     private void evaluateNativeLiveAlerts(
@@ -1299,29 +1336,63 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         double priorSpeedKmh,
         double speedKmh
     ) {
-        if (!isSettingEnabled("voice_alerts_enabled", true) ||
-            !isSettingEnabled("live_coaching_enabled", true)) {
+        if (!isSettingEnabled("voice_alerts_enabled", true)) {
             speedingSinceMs = 0L;
             return;
         }
 
         long now = System.currentTimeMillis();
-        double speedLimitKmh = getSettingDouble("threshold_speeding_kmh", 100.0d);
-        double speedMarginKmh = getSettingDouble("threshold_speed_over_kmh", 5.0d);
+        NativeSpeedLimit localSpeedLimit = resolveLocalSpeedLimit(
+            location.getLatitude(),
+            location.getLongitude(),
+            now
+        );
+        double speedLimitKmh = localSpeedLimit != null
+            ? localSpeedLimit.limitKmh
+            : getSettingDouble("threshold_speeding_kmh", 100.0d);
+        boolean postedLimit = localSpeedLimit != null &&
+            "user_confirmed_posted_sign".equals(localSpeedLimit.source);
+        boolean estimatedLimit = localSpeedLimit != null && !postedLimit;
+        double speedMarginKmh = estimatedLimit
+            ? getSettingDouble("estimated_voice_margin_kmh", 12.0d)
+            : getSettingDouble("threshold_speed_over_kmh", 5.0d);
+        boolean sourceVoiceAllowed = postedLimit
+            ? isSettingEnabled("speak_posted_speed_warnings", true)
+            : estimatedLimit
+                ? isSettingEnabled("speed_estimates_enabled", true) &&
+                    isSettingEnabled("speak_estimated_speed_checks", true)
+                : isSettingEnabled("speak_estimated_speed_checks", true);
         if (isSettingEnabled("speed_warning_enabled", true) &&
+            isSettingEnabled("notif_speeding_alert_enabled", true) &&
+            sourceVoiceAllowed &&
             shouldTriggerSpeedAlert(speedKmh, speedLimitKmh, speedMarginKmh)) {
             if (speedingSinceMs == 0L) speedingSinceMs = now;
             if (now - speedingSinceMs >= SPEED_ALERT_SUSTAINED_MS &&
                 now - lastSpeedAlertMs >= SPEED_ALERT_COOLDOWN_MS) {
-                speakNativeAlert(
-                    String.format(
+                String message = postedLimit
+                    ? String.format(
                         Locale.US,
-                        "Speed warning. You are driving %d kilometers per hour. Ease off toward the configured %d kilometer per hour limit.",
+                        "Speed warning. You are at %d in a posted %d kilometer per hour zone. Ease off smoothly.",
                         Math.round(speedKmh),
                         Math.round(speedLimitKmh)
                     )
+                    : estimatedLimit
+                        ? String.format(
+                            Locale.US,
+                            "Speed check. You are at %d in an estimated %d kilometer per hour zone. Check posted signs.",
+                            Math.round(speedKmh),
+                            Math.round(speedLimitKmh)
+                        )
+                        : String.format(
+                            Locale.US,
+                            "Speed check. You are driving %d kilometers per hour. Ease off and check posted signs.",
+                            Math.round(speedKmh)
+                        );
+                speakNativeAlert(
+                    message,
+                    false,
+                    () -> lastSpeedAlertMs = now
                 );
-                lastSpeedAlertMs = now;
             }
         } else {
             speedingSinceMs = 0L;
@@ -1333,14 +1404,20 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         ) * 60_000L;
         if (activeStartMs > 0L && now - activeStartMs >= fatigueThresholdMs &&
             now - lastFatigueAlertMs >= FATIGUE_ALERT_COOLDOWN_MS) {
-            speakNativeAlert("Long drive reminder. Plan a break soon when it is safe.");
-            lastFatigueAlertMs = now;
+            speakNativeAlert(
+                "Long drive reminder. Plan a break soon when it is safe.",
+                false,
+                () -> lastFatigueAlertMs = now
+            );
         }
 
         if (stillSinceMs > 0L && now - stillSinceMs >= 5 * 60_000L &&
             now - lastIdleAlertMs >= IDLE_ALERT_COOLDOWN_MS) {
-            speakNativeAlert("Idling reminder. Keep the trip moving when conditions allow.");
-            lastIdleAlertMs = now;
+            speakNativeAlert(
+                "Idling reminder. Keep the trip moving when conditions allow.",
+                false,
+                () -> lastIdleAlertMs = now
+            );
         }
 
         if (priorLocation == null) return;
@@ -1357,15 +1434,21 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (accelerationMs2 <= -harshBrakeThreshold &&
             priorSpeedKmh >= LIVE_EVENT_MIN_SPEED_KMH &&
             now - lastHarshBrakeAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
-            speakNativeAlert("Hard braking detected. Open your following space and brake earlier.");
-            lastHarshBrakeAlertMs = now;
+            speakNativeAlert(
+                "Hard braking detected. Open your following space and brake earlier.",
+                false,
+                () -> lastHarshBrakeAlertMs = now
+            );
             return;
         }
         if (accelerationMs2 >= rapidAccelThreshold &&
             speedKmh >= LIVE_EVENT_MIN_SPEED_KMH &&
             now - lastRapidAccelAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
-            speakNativeAlert("Rapid acceleration detected. Ease into the throttle.");
-            lastRapidAccelAlertMs = now;
+            speakNativeAlert(
+                "Rapid acceleration detected. Ease into the throttle.",
+                false,
+                () -> lastRapidAccelAlertMs = now
+            );
             return;
         }
 
@@ -1380,8 +1463,136 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             speedKmh >= LIVE_EVENT_MIN_SPEED_KMH &&
             lateralG >= sharpTurnThreshold &&
             now - lastCorneringAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
-            speakNativeAlert("Sharp cornering detected. Slow before the turn and steer smoothly.");
-            lastCorneringAlertMs = now;
+            speakNativeAlert(
+                "Sharp cornering detected. Slow before the turn and steer smoothly.",
+                false,
+                () -> lastCorneringAlertMs = now
+            );
+        }
+    }
+
+    @Nullable
+    private NativeSpeedLimit resolveLocalSpeedLimit(double lat, double lng, long nowMs) {
+        try {
+            String raw = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE)
+                .getString(SPEED_KNOWLEDGE_KEY, null);
+            if (raw == null || raw.trim().isEmpty()) return null;
+            return findLocalSpeedLimit(new JSONObject(raw), lat, lng, nowMs);
+        } catch (Exception error) {
+            recordDiagnostic(
+                "local_speed_lookup_failed",
+                "Saved road speed could not be read for a background voice check.",
+                error.getMessage() == null ? "invalid_speed_knowledge" : error.getMessage(),
+                lastKnownSpeedKmh,
+                0L,
+                0d
+            );
+            return null;
+        }
+    }
+
+    @Nullable
+    static NativeSpeedLimit findLocalSpeedLimit(JSONObject data, double lat, double lng, long nowMs) {
+        if (data == null || !Double.isFinite(lat) || !Double.isFinite(lng)) return null;
+        JSONArray corrections = data.optJSONArray("corrections");
+        if (corrections == null) return null;
+
+        NativeSpeedLimit best = null;
+        long bestAppliedAtMs = Long.MIN_VALUE;
+        for (int index = 0; index < corrections.length(); index++) {
+            JSONObject correction = corrections.optJSONObject(index);
+            if (correction == null) continue;
+            double limitKmh = correction.optDouble("limitKmh", Double.NaN);
+            String geohash = correction.optString("geohash", "");
+            if (!Double.isFinite(limitKmh) || limitKmh <= 0d || geohash.isEmpty()) continue;
+
+            long expiresAtMs = parseIsoEpochMs(correction.optString("expiresAt", ""));
+            if (expiresAtMs > 0L && expiresAtMs <= nowMs) continue;
+            double[] center = geohashCenter(geohash);
+            if (center == null || haversineKm(center[0], center[1], lat, lng) > SPEED_KNOWLEDGE_MATCH_RADIUS_KM) {
+                continue;
+            }
+
+            long appliedAtMs = parseIsoEpochMs(correction.optString("appliedAt", ""));
+            if (best != null && appliedAtMs < bestAppliedAtMs) continue;
+            String source = "user_confirmed_posted_sign".equals(correction.optString("source", ""))
+                ? "user_confirmed_posted_sign"
+                : "user_entered_estimate";
+            best = new NativeSpeedLimit(limitKmh, source);
+            bestAppliedAtMs = appliedAtMs;
+        }
+        return best;
+    }
+
+    static String geohashEncode(double lat, double lng, int precision) {
+        double[] latitude = new double[]{ -90d, 90d };
+        double[] longitude = new double[]{ -180d, 180d };
+        StringBuilder hash = new StringBuilder();
+        int bit = 0;
+        int character = 0;
+        boolean even = true;
+
+        while (hash.length() < precision) {
+            double[] range = even ? longitude : latitude;
+            double value = even ? lng : lat;
+            double midpoint = (range[0] + range[1]) / 2d;
+            if (value >= midpoint) {
+                character |= 1 << (4 - bit);
+                range[0] = midpoint;
+            } else {
+                range[1] = midpoint;
+            }
+            even = !even;
+            if (bit < 4) {
+                bit++;
+            } else {
+                hash.append(GEOHASH_BASE32.charAt(character));
+                bit = 0;
+                character = 0;
+            }
+        }
+        return hash.toString();
+    }
+
+    @Nullable
+    private static double[] geohashCenter(String hash) {
+        if (hash == null || hash.trim().isEmpty()) return null;
+        double[] latitude = new double[]{ -90d, 90d };
+        double[] longitude = new double[]{ -180d, 180d };
+        boolean even = true;
+        for (int index = 0; index < hash.length(); index++) {
+            int value = GEOHASH_BASE32.indexOf(hash.charAt(index));
+            if (value < 0) return null;
+            for (int mask : new int[]{ 16, 8, 4, 2, 1 }) {
+                double[] range = even ? longitude : latitude;
+                double midpoint = (range[0] + range[1]) / 2d;
+                if ((value & mask) != 0) range[0] = midpoint;
+                else range[1] = midpoint;
+                even = !even;
+            }
+        }
+        return new double[]{
+            (latitude[0] + latitude[1]) / 2d,
+            (longitude[0] + longitude[1]) / 2d,
+        };
+    }
+
+    private static long parseIsoEpochMs(String value) {
+        if (value == null || value.trim().isEmpty()) return 0L;
+        try {
+            return Instant.parse(value).toEpochMilli();
+        } catch (DateTimeParseException ignored) {
+            return 0L;
+        }
+    }
+
+    static final class NativeSpeedLimit {
+        final double limitKmh;
+        final String source;
+
+        NativeSpeedLimit(double limitKmh, String source) {
+            this.limitKmh = limitKmh;
+            this.source = source;
         }
     }
 

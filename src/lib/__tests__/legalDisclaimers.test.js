@@ -11,10 +11,11 @@ import {
 
 describe('legal and responsible-use explanations', () => {
   it('clearly identifies estimates and keeps driving responsibility with the user', () => {
-    expect(LEGAL_DISCLAIMER_SHORT).toContain('Personal-use estimates only');
+    expect(LEGAL_DISCLAIMER_SHORT).toContain('Personal-use informational estimates only');
     expect(LEGAL_DISCLAIMER_SUMMARY).toContain('You remain responsible for safe driving');
     expect(LEGAL_DISCLAIMER_SUMMARY).toContain('posted signs');
     expect(LEGAL_DISCLAIMER_SUMMARY).toContain('traffic laws');
+    expect(LEGAL_DISCLAIMER_SUMMARY).toContain('consent');
   });
 
   it('covers each high-risk interpretation without promising professional or emergency use', () => {
@@ -28,13 +29,17 @@ describe('legal and responsible-use explanations', () => {
       expect.stringContaining('outside services'),
     ]));
     expect(LEGAL_DISCLAIMER_ITEMS.length).toBeGreaterThanOrEqual(12);
-    expect(LEGAL_NOTICE_ACK_VERSION).toBeGreaterThanOrEqual(3);
+    expect(LEGAL_NOTICE_ACK_VERSION).toBeGreaterThanOrEqual(5);
     expect(copy).toContain('Maps are not navigation');
     expect(copy.toLowerCase()).toContain('not official records');
     expect(copy).toContain('not diagnostics');
     expect(copy).toContain('does not monitor you for emergencies');
+    expect(copy).toContain('No use for monitoring others without consent');
+    expect(copy).toContain('Not for adverse decisions');
+    expect(copy).toContain('No guarantees');
     expect(copy).toContain('Background tracking requires consent');
-    expect(copy).toContain('while the app is closed or not in use');
+    expect(copy).toContain('while the app is minimized or in the background');
+    expect(copy).toContain('force-stopping the app can still stop Android tracking');
     expect(copy).toContain('Usage Access');
     expect(copy).toContain('Survey labels are local');
     expect(copy).toContain('Optional external requests');
@@ -47,10 +52,12 @@ describe('legal and responsible-use explanations', () => {
 
     expect(LEGAL_DATA_PRACTICES.length).toBeGreaterThanOrEqual(4);
     expect(summary).toContain('Background tracking');
-    expect(summary).toContain('while the app is closed');
+    expect(summary).toContain('while the app is minimized');
+    expect(summary).toContain('Fully closing or force-stopping the app can still stop Android tracking');
     expect(summary).toContain('OpenStreetMap');
     expect(summary).toContain('Open-Meteo');
     expect(summary).toContain('OSRM');
+    expect(summary).toContain('Consent, control, and device access');
     expect(summary).toContain('backup files');
     expect(summary).toContain('cannot be recovered');
   });

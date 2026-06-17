@@ -3,15 +3,22 @@ import {
   calculateTripScores,
   calculateTripStats,
   detectDrivingEvents,
+  prefetchLocalKnowledge,
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/speedLimitSource';
+import { LocalSpeedKnowledge } from '@/lib/localSpeedKnowledge';
+import { getJson, setJson } from '@/lib/mobileStorage';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { getPrivacyZones, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
 import { isAndroid } from '@/lib/nativePlatform';
+
+// CHANGES (session):
+// - Wired LocalSpeedKnowledge.learnFromTrip after OSM speed-limit enrichment using only openstreetmap-sourced points.
+// - Added stronger posted-sign override wording for regional default estimates.
 
 const stage = (onProgress, message) => {
   if (typeof onProgress === 'function') onProgress(message);
@@ -138,7 +145,7 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
     '',
   ];
   if (settings.speed_limit_lookup_enabled !== false) {
-    lines.push('- Speed limits: send privacy-filtered public road boxes to OpenStreetMap for road names and posted maxspeed limits. Missing maxspeed tags may use labeled road-type estimates, not official legal data.');
+    lines.push('- Speed limits: send privacy-filtered public road boxes to OpenStreetMap for road names and posted maxspeed limits. Missing maxspeed tags may use labeled road-type and regional default estimates. Regional defaults are useful fallback estimates when posted speed data is unavailable, but they are not proof of the posted speed limit; posted signs, school zones, construction zones, temporary limits, municipal bylaws, and road-specific exceptions can override them.');
   }
   if (settings.weather_context_enabled !== false) {
     lines.push('- Weather: send one privacy-safe route point and the trip date to Open-Meteo.');
@@ -247,12 +254,31 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     error: error?.message || 'Speed limit lookup unavailable',
   }));
   routePoints = speedLimitContext.routePoints || routePoints;
+  const knowledge = new LocalSpeedKnowledge({
+    get: (key) => getJson(key, null),
+    set: (key, value) => setJson(key, value),
+  });
+  try {
+    const osmConfirmedPoints = routePoints.filter((point) => (
+      point?.speed_limit_source === 'openstreetmap' &&
+      Number(point?.speed_limit_kmh) > 0
+    ));
+    if (osmConfirmedPoints.length) {
+      await knowledge.learnFromTrip(osmConfirmedPoints, privacyZones);
+    }
+  } catch (error) {
+    console.warn('Local speed knowledge learning skipped.', error);
+  }
+  const localKnowledgeResults = await prefetchLocalKnowledge(routePoints, knowledge);
   stage(onProgress, 'Recalculating trip scores');
   const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, {
     ...trip,
     raw_route_points: originalPoints,
   });
-  const { events: detectedEvents, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time, privacyZones);
+  const { events: detectedEvents, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time, privacyZones, {
+    localKnowledgeResults,
+    settings,
+  });
   const phoneUse = buildPhoneUseFromTripEvidence(
     trip,
     routePoints,
@@ -260,8 +286,18 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     detectedPhoneUse
   );
   const weatherContext = await weatherPromise;
-  let scores = calculateTripScores(detectedEvents, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, { endTime: trip.end_time, privacyZones });
+  let scores = calculateTripScores(detectedEvents, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, {
+    endTime: trip.end_time,
+    privacyZones,
+    localKnowledgeResults,
+    settings,
+  });
   scores = applyWeatherRiskToScores(scores, weatherContext);
+  if (trip.id && scores.trip_speed_summary_v1) {
+    await setJson(`trip_speed_summary_${trip.id}_v1`, scores.trip_speed_summary_v1).catch((error) => {
+      console.warn('Trip speed summary storage skipped.', error);
+    });
+  }
   const events = maskEventsForPrivacy(
     mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || detectedEvents, phoneUse),
     { privacy_zones: privacyZones }
@@ -301,6 +337,74 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   };
 }
 
+export async function buildLocalSpeedKnowledgeScorePatch(trip, settings = localSettings.get()) {
+  if (!trip) throw new Error('Trip not loaded');
+  const routePoints = Array.isArray(trip.route_points) ? trip.route_points : [];
+  if (routePoints.length < 2) {
+    return {
+      needs_rescore: false,
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  const thresholds = buildDrivingThresholds(settings);
+  const privacyZones = getPrivacyZones(settings);
+  const knowledge = new LocalSpeedKnowledge({
+    get: (key) => getJson(key, null),
+    set: (key, value) => setJson(key, value),
+  });
+  const localKnowledgeResults = await prefetchLocalKnowledge(routePoints, knowledge);
+  const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, {
+    ...trip,
+    raw_route_points: routePoints,
+  });
+  const { events: detectedEvents, phoneUse: detectedPhoneUse } = detectDrivingEvents(
+    routePoints,
+    thresholds,
+    trip.end_time,
+    privacyZones,
+    { localKnowledgeResults, settings }
+  );
+  const phoneUse = buildPhoneUseFromTripEvidence(
+    trip,
+    routePoints,
+    stats.duration_seconds,
+    detectedPhoneUse
+  );
+  let scores = calculateTripScores(
+    detectedEvents,
+    stats,
+    routePoints,
+    thresholds,
+    stats.duration_seconds,
+    phoneUse,
+    {
+      endTime: trip.end_time,
+      privacyZones,
+      localKnowledgeResults,
+      settings,
+    }
+  );
+  scores = applyWeatherRiskToScores(scores, trip.weather_context || null);
+  if (trip.id && scores.trip_speed_summary_v1) {
+    await setJson(`trip_speed_summary_${trip.id}_v1`, scores.trip_speed_summary_v1).catch((error) => {
+      console.warn('Trip speed summary storage skipped.', error);
+    });
+  }
+  const events = maskEventsForPrivacy(
+    mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || detectedEvents, phoneUse),
+    { privacy_zones: privacyZones }
+  );
+
+  return {
+    ...stats,
+    ...scores,
+    driving_events: events,
+    needs_rescore: false,
+    updated_at: new Date().toISOString(),
+  };
+}
+
 export function describeOsmSpeedLimitStatus(context = {}) {
   if (!context || !context.status) {
     return 'OpenStreetMap speed limits have not been fetched for this trip yet.';
@@ -308,10 +412,10 @@ export function describeOsmSpeedLimitStatus(context = {}) {
   if (context.status === 'manual_required') return 'Speed limits have not been fetched. Tap Get Road Data when you want to send privacy-filtered public road boxes to OpenStreetMap.';
   if (context.status === 'disabled') return 'OpenStreetMap speed-limit lookup is disabled in Settings.';
   if (context.status === 'empty_route' && context.skipped_reason === 'all_points_private') {
-    return 'OpenStreetMap speed-limit lookup was skipped because every usable route point is inside a privacy-zone guard.';
+    return 'OpenStreetMap posted speed lookup was skipped because every usable route point is inside a privacy-zone guard. No protected coordinates were sent; regional or GPS estimates are used where available.';
   }
   if (context.status === 'empty_route' && context.skipped_reason === 'privacy_bounds_overlap') {
-    return 'OpenStreetMap speed-limit lookup was skipped because the route query area would overlap a privacy-zone guard.';
+    return 'OpenStreetMap posted speed lookup was skipped because the safe route query area would overlap a privacy-zone guard. No protected coordinates were sent; regional or GPS estimates are used where available.';
   }
   if (context.status === 'empty_route') return 'This trip does not have enough usable GPS coordinates to fetch OpenStreetMap speed limits.';
   if (context.status === 'bbox_too_large') return 'This route is too large for one Overpass speed-limit request. Split the trip or refresh a shorter route.';

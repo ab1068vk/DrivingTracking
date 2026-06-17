@@ -212,6 +212,7 @@ async function fetchOpenMeteoWeather({
   tripId = null,
   zonesSuppressed = [],
   privacyTransformVerified = false,
+  privacyVerificationEvidence = [],
 }) {
   const startDate = dayKey(date);
   const url = openMeteoUrl({ lat, lng, date });
@@ -225,6 +226,7 @@ async function fetchOpenMeteoWeather({
       coordinateDisclosure: 'rounded',
       privacyTransformVerified,
       privacyTransformSource: 'weatherContext.js:safeWeatherPoint',
+      privacyVerificationEvidence,
       sentCoords: `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
       protections: ['privacy-zone buffer +100m', 'rounded to 4 decimals'],
       offsetMeters: null,
@@ -318,6 +320,7 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
         coordinateDisclosure: 'blocked',
         privacyTransformVerified: true,
         privacyTransformSource: 'weatherContext.js:safeWeatherPoint',
+        privacyVerificationEvidence: ['all weather candidates were inside privacy-zone buffers'],
         sentCoords: null,
         protections: ['all route points inside privacy buffer - request blocked'],
         offsetMeters: null,
@@ -351,6 +354,12 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
       zonesSuppressed: privacyZones.map((zone) => zone.label),
       privacyTransformVerified: privacyZones.length === 0 ||
         !insidePrivacyWeatherBuffer(center, privacyZones),
+      privacyVerificationEvidence: [
+        privacyZones.length === 0
+          ? 'no privacy zones were configured for this weather lookup'
+          : 'selected point is outside privacy-zone weather buffer',
+        'coordinate is rounded to 4 decimals',
+      ],
     };
     data = await enqueueLocationRequest(
       'weather',

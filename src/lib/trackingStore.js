@@ -29,15 +29,21 @@ import {
   sanitizeTripForPrivacyStorage,
 } from '@/lib/privacyZones';
 
+// CHANGES (session):
+// - Added Phase 2 speed estimate guidance defaults and validation ranges.
+// - Added speed_knowledge_v1 to backup exclusion list.
+// - Allowed numeric settings drafts to be blank while the user edits an input.
+
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 const SETTINGS_KEY = 'drivesense_settings';
 const LAST_PARKED_KEY = 'drivesense_last_parked';
+export const SETTINGS_CHANGED_EVENT = 'roadsage-settings-changed';
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
 let activeTripMemory = null;
 let activeTripWriteQueue = Promise.resolve();
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 11;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 12;
 
 const settingsStorage = () => {
   try {
@@ -118,12 +124,70 @@ const syncSettingsForNative = (settings) => {
     })
     .then((module) => {
       if (!module?.Preferences) return;
-      module.Preferences.set({ key: SETTINGS_KEY, value: serialized }).catch(() => {});
+      module.Preferences.set({ key: SETTINGS_KEY, value: serialized }).catch((error) => {
+        logError('settings_native_sync_write', error, {
+          requested_key_count: Object.keys(settings || {}).length,
+        });
+      });
     })
-    .catch(() => {});
+    .catch((error) => {
+      logError('settings_native_sync_init', error, {
+        requested_key_count: Object.keys(settings || {}).length,
+      });
+    });
+};
+
+const dispatchSettingsChanged = (settings, detail = {}) => {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+  window.dispatchEvent(new CustomEvent(SETTINGS_CHANGED_EVENT, {
+    detail: {
+      settings,
+      ...detail,
+    },
+  }));
 };
 
 // ─── Default Settings ──────────────────────────────────────────────────────────
+// CHANGES (session):
+// - Added Phase 2 speed estimate defaults for regional default selection and voice margin controls.
+// - Added BACKUP_EXCLUDED_KEYS with speed_knowledge_v1 excluded from backup.
+// - Allowed combined regional default settings such as CA-ON and US-TX.
+
+export const BACKUP_EXCLUDED_KEYS = Object.freeze([
+  'speed_knowledge_v1',
+]);
+
+const STATUTORY_REGION_SETTING_VALUES = Object.freeze([
+  'global',
+  'ca',
+  'CA',
+  'CA-ON',
+  'CA-BC',
+  'CA-AB',
+  'CA-QC',
+  'CA-MB',
+  'CA-SK',
+  'us',
+  'US',
+  'US-CA',
+  'US-TX',
+  'US-NY',
+  'gb',
+  'uk',
+  'GB',
+  'GB-ENG',
+  'GB-WLS',
+  'de',
+  'DE',
+  'au',
+  'AU',
+  'AU-NSW',
+  'AU-VIC',
+  'AU-QLD',
+  'fr',
+  'FR',
+]);
+
 export const DEFAULT_SETTINGS = {
   settings_defaults_version: CURRENT_SETTINGS_DEFAULTS_VERSION,
   tracking_mode: 'manual',
@@ -187,6 +251,11 @@ export const DEFAULT_SETTINGS = {
   advanced_safety_detection_enabled: true,
   speed_warning_enabled: true,
   speed_limit_lookup_enabled: true,
+  speed_estimates_enabled: true,
+  speak_posted_speed_warnings: true,
+  speak_estimated_speed_checks: true,
+  estimated_voice_margin_kmh: 12,
+  inferred_voice_margin_kmh: 20,
   country_code: '',
   configurable_country_defaults: 'global',
   weather_context_enabled: true,
@@ -339,6 +408,14 @@ export function migrateDefaultSettings(parsed = {}) {
     merged.raw_gps_retention_days = 0;
   }
 
+  if (
+    version < 12 &&
+    parsed.voice_alerts_enabled !== false &&
+    parsed.speed_warning_enabled !== false
+  ) {
+    merged.speak_estimated_speed_checks = true;
+  }
+
   const osrmZoneGuardChanged = merged.osrm_block_near_any_zone !== true;
   merged.osrm_block_near_any_zone = true;
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
@@ -358,6 +435,8 @@ const IMPORT_NUMBER_RANGES = {
   threshold_sharp_turn_g_medium: [0.05, 2],
   threshold_sharp_turn_g_high: [0.05, 2],
   threshold_speeding_kmh: [10, 250],
+  estimated_voice_margin_kmh: [0, 60],
+  inferred_voice_margin_kmh: [0, 80],
   threshold_speed_over_kmh: [0, 80],
   threshold_eco_cruise_min_kmh: [0, 160],
   threshold_eco_cruise_max_kmh: [20, 200],
@@ -408,7 +487,7 @@ const SETTINGS_ENUMS = {
   dark_mode: ['system', 'light', 'dark'],
   night_detection_mode: ['sunset', 'custom'],
   phone_use_sensitivity: ['low', 'medium', 'high'],
-  configurable_country_defaults: ['global', 'ca', 'us', 'gb', 'uk', 'de', 'au', 'fr'],
+  configurable_country_defaults: STATUTORY_REGION_SETTING_VALUES,
   decoy_traffic_mode: ['off', 'first_party'],
   privacy_zones_native_sync_status: ['', 'ok', 'failed'],
 };
@@ -594,6 +673,7 @@ export function validateSettingsPatch(patch = {}) {
       return;
     }
     if (IMPORT_NUMBER_RANGES[key]) {
+      if (value === '') return;
       const number = Number(value);
       const [min, max] = IMPORT_NUMBER_RANGES[key];
       if (!Number.isFinite(number) || number < min || number > max) {
@@ -723,7 +803,12 @@ export const localSettings = {
       if (storage) storage.setItem(SETTINGS_KEY, JSON.stringify(data));
       else memorySettings = data;
       syncSettingsForNative(data);
-    } catch {}
+      dispatchSettingsChanged(data, { source: 'set' });
+    } catch (error) {
+      logError('settings_local_persist', error, {
+        requested_key_count: Object.keys(data || {}).length,
+      });
+    }
   },
   update(patch) {
     const current = this.get();
@@ -755,20 +840,22 @@ export const localSettings = {
       });
     }
 
-    recordSystemEvent('settings_update_verified', {
-      result,
-      requested_keys: requestedKeys,
-      changed_keys: changedKeys,
-      applied_keys: appliedKeys,
-      failed_keys: failedKeys,
-      unchanged_requested_keys: unchangedRequestedKeys,
-      persisted_matches_request: failedKeys.length === 0,
-      changes: summarizeSettingsPatch(requestedKeys, current, updated),
-    }, {
-      category: 'settings',
-      title: result === 'no_effect' ? 'Settings update had no effect' : 'Settings update verified',
-      severity: result === 'applied' ? 'info' : 'warn',
-    });
+    if (result !== 'no_effect') {
+      recordSystemEvent('settings_update_verified', {
+        result,
+        requested_keys: requestedKeys,
+        changed_keys: changedKeys,
+        applied_keys: appliedKeys,
+        failed_keys: failedKeys,
+        unchanged_requested_keys: unchangedRequestedKeys,
+        persisted_matches_request: failedKeys.length === 0,
+        changes: summarizeSettingsPatch(requestedKeys, current, updated),
+      }, {
+        category: 'settings',
+        title: 'Settings update verified',
+        severity: failedKeys.length ? 'warn' : 'info',
+      });
+    }
     return updated;
   },
 };
@@ -809,13 +896,21 @@ export const activeTripStore = {
     const tripSnapshot = activeTripMemory;
     activeTripWriteQueue = activeTripWriteQueue
       .then(() => setEncryptedJson(ACTIVE_TRIP_KEY, tripSnapshot))
-      .catch(() => {});
+      .catch((error) => {
+        logError('active_trip_persist', error, {
+          trip_state: tripSnapshot?.trip_state || null,
+          start_source: tripSnapshot?.start_source || null,
+          route_point_count: Array.isArray(tripSnapshot?.route_points) ? tripSnapshot.route_points.length : 0,
+        });
+      });
   },
   clear() {
     activeTripMemory = null;
     activeTripWriteQueue = activeTripWriteQueue
       .then(() => removeEncryptedJson(ACTIVE_TRIP_KEY))
-      .catch(() => {});
+      .catch((error) => {
+        logError('active_trip_clear_persist', error);
+      });
   },
   flush() {
     return activeTripWriteQueue;

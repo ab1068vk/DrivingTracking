@@ -27,7 +27,7 @@ For most saved trips without road data, speed-limit scoring is labeled as `gps_i
 | Trip stats, speed cleanup, inferred zones, events, scoring | `src/lib/tripEngine.js` |
 | OSM speed-limit lookup and road-type default tables | `src/lib/speedLimitSource.js` |
 | Manual `Get Road Data`, OSRM, weather, and trip rescore | `src/lib/openSourceTripContext.js`, `src/lib/roadContextQueue.js` |
-| Live dashboard speed warnings | `src/pages/Dashboard.jsx` |
+| Live dashboard speed checks and posted warnings | `src/pages/Dashboard.jsx` |
 | Live coach overlay and speeding notifications | `src/components/LiveCoachOverlay.jsx`, `src/lib/notificationService.js` |
 | Voice alert text and speech output | `src/lib/voiceAlertMessages.js`, `src/lib/voiceAlerts.js` |
 | Settings defaults and toggles | `src/lib/trackingStore.js`, `src/pages/Settings.jsx` |
@@ -37,8 +37,8 @@ For most saved trips without road data, speed-limit scoring is labeled as `gps_i
 
 | Setting | Default | Meaning |
 | --- | ---: | --- |
-| `speed_warning_enabled` | `true` | Enables live dashboard speed warnings. |
-| `voice_alerts_enabled` | `true` | Enables spoken alerts, including speed warnings. |
+| `speed_warning_enabled` | `true` | Enables live dashboard speed checks and posted warnings. |
+| `voice_alerts_enabled` | `true` | Enables spoken alerts, including speed checks and posted warnings. |
 | `notif_speeding_alert_enabled` | `true` | Enables native speeding notifications. |
 | `threshold_speeding_kmh` | `100` | App-level fallback speed threshold. Used mainly for highway/default fallback behavior. |
 | `threshold_speed_over_kmh` | `5` | Margin above the selected limit before a warning/event is triggered. |
@@ -337,6 +337,16 @@ The app separates two OSM-related sources.
 
 `osm_highway_default` is not a legal speed limit lookup. It is an approximate app fallback based on OSM road type.
 
+Regional defaults are useful fallback estimates when posted speed data is unavailable, but they are not proof of the posted speed limit. Posted signs, school zones, construction zones, temporary limits, municipal bylaws, and road-specific exceptions can override them.
+
+A `REGION_DEFAULT` result is more reliable than GPS-only inference because it uses country/province/state and road-context information, but it must still be treated as an estimate unless confirmed by posted data.
+
+## Honest UI Wording
+
+Wording guardrail:
+The words "posted", "official", "legal limit", "statutory limit", and "you are speeding" may only be used when `tier === 'POSTED'`.
+For `MAP_ESTIMATED`, `LEARNED_LOCAL`, `REGION_DEFAULT`, and `GPS_INFERRED`, use "speed check", "estimated", "usually around", "regional estimate", or "check posted signs."
+
 The parser accepts numeric speed-limit strings and converts mph to km/h.
 
 ```js
@@ -630,7 +640,7 @@ if (settings.speed_warning_enabled !== false &&
     latestSpeed > (latestSpeedLimit ?? thresholds.SPEEDING_FALLBACK_KMH ?? 100) +
     (thresholds.SPEED_OVER_KMH ?? 5)) {
   nextMessage = {
-    text: `Speed warning. ${Math.round(latestSpeed)} km/h...`,
+    text: `${resolved.tier === 'POSTED' ? 'Speed warning' : 'Speed check'}. ${Math.round(latestSpeed)} km/h...`,
     voiceKey: 'speeding',
     voiceText: buildVoiceAlertMessage('speeding', {
       speedKmh: latestSpeed,
@@ -652,10 +662,10 @@ The speed alert catalog has two message variants:
 
 ```js
 speeding: Object.freeze({
-  title: 'Speed warning',
+  title: 'Speed check',
   messages: Object.freeze([
-    (context) => buildSpeedingMessage(context, 'Speed warning. Ease off and settle back to the limit.'),
-    (context) => buildSpeedingMessage(context, 'Speed warning. Bring your speed down smoothly.'),
+    (context) => buildSpeedingMessage(context, 'Speed check. Ease off and check posted signs.'),
+    (context) => buildSpeedingMessage(context, 'Speed check. Bring your speed down smoothly and check posted signs.'),
   ]),
 });
 ```
@@ -668,10 +678,10 @@ function buildSpeedingMessage(context, fallback) {
   const limit = formatKmh(context.speedLimitKmh);
 
   if (speed && limit) {
-    const zoneLabel = context.limitIsEstimated || context.speedLimitSource === 'inferred'
-      ? `an estimated ${limit} zone`
-      : `a ${limit} zone`;
-    return `Speed warning. You are at ${speed} in ${zoneLabel}. Ease off smoothly.`;
+    if (context.speedLimitSource === 'openstreetmap' || context.speedLimitSource === 'user_confirmed_posted_sign') {
+      return `Speed warning. You are at ${speed} in a posted ${limit} zone. Ease off smoothly.`;
+    }
+    return `Speed check. You are at ${speed} in an estimated ${limit} zone. Check posted signs.`;
   }
 
   return fallback;
@@ -680,9 +690,9 @@ function buildSpeedingMessage(context, fallback) {
 
 Example spoken messages:
 
-- `Speed warning. You are at 78 kilometers per hour in a 60 kilometers per hour zone. Ease off smoothly.`
-- `Speed warning. You are at 78 kilometers per hour in an estimated 60 kilometers per hour zone. Ease off smoothly.`
-- `Speed warning. Ease off and settle back to the limit.`
+- `Speed warning. You are at 78 kilometers per hour in a posted 60 kilometers per hour zone. Ease off smoothly.`
+- `Speed check. You are at 78 kilometers per hour in an estimated 60 kilometers per hour zone. Check posted signs.`
+- `Speed check. Ease off and check posted signs.`
 
 ## Speech Output
 
@@ -775,7 +785,7 @@ Inferred limit - may not reflect actual limit; half-weight score penalty
 For OSM defaults:
 
 ```text
-OSM road-type estimate (... profile, not official legal data)
+OSM road-type estimate (... profile) - not proof of the posted speed limit
 ```
 
 ## Privacy Behavior

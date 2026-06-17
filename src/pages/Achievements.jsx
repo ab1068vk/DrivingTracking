@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Award, CheckCircle2, Lock, Trophy } from 'lucide-react';
 import { tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
-import { localSettings } from '@/lib/trackingStore';
+import useLocalSettings from '@/hooks/useLocalSettings';
 import { calculateAchievementBadges } from '@/lib/tripInsights';
 import { syncAchievementNotifications } from '@/lib/notificationService';
 
@@ -37,7 +37,7 @@ const nextStepLabel = (badge) => {
 };
 
 export default function Achievements() {
-  const settings = localSettings.get();
+  const settings = useLocalSettings();
   const { data: allTrips = [], isLoading } = useQuery({
     ...tripSummaryQueryOptions(),
   });

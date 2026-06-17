@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
@@ -83,6 +83,9 @@ import {
   mergePrivacyZones,
   NATIVE_PRIVACY_SYNC_FAILED_EVENT,
   NATIVE_PRIVACY_SYNC_STATUS_FAILED,
+  PRIVACY_RADIUS_DEFAULT_M,
+  PRIVACY_RADIUS_MAX_M,
+  PRIVACY_RADIUS_MIN_M,
   purgeGpsWithinPrivacyZone,
   removePrivacyZone,
   tripIdsAffectedByPrivacyZone,
@@ -100,6 +103,7 @@ import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
 import {
   clearOsmSpeedLimitCache,
   SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
+  REGION_SPEED_DEFAULTS,
   speedLimitDefaultCountryKey,
 } from '@/lib/speedLimitSource';
 import { clearWeatherContextCache } from '@/lib/weatherContext';
@@ -124,6 +128,15 @@ import {
 } from '@/lib/biometricGate';
 import { checkIntegrity, integrityStatusFromSettings } from '@/lib/rasp';
 import { searchSettingsSections } from '@/lib/settingsSearch';
+
+// CHANGES (session):
+// - Added province/state picker and Phase 2 estimated speed guidance settings.
+// - Renamed regional default settings copy to estimate wording.
+// - Added stronger posted-sign override wording for regional default estimates.
+// - Softened generic speed-warning labels to speed-check wording for estimated tiers.
+// - Fixed speed margin numeric inputs so users can clear and retype values.
+// - Added explicit copy explaining speed margin values affect live voice alert timing.
+// - Applied the same blank-safe numeric input handling to editable economics settings.
 
 function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -163,6 +176,21 @@ function SettingRow({ icon: Icon = null, label, sublabel = '', children = null, 
       <div className="flex-shrink-0 max-w-[46%]">{children}</div>
     </div>
   );
+}
+
+function numberDraftValue(value, fallback) {
+  return value === '' ? '' : value ?? fallback;
+}
+
+function updateOptionalNumberDraft(updateCfg, key, rawValue) {
+  if (rawValue === '') {
+    updateCfg({ [key]: '' });
+    return;
+  }
+  const number = Number(rawValue);
+  if (Number.isFinite(number)) {
+    updateCfg({ [key]: number });
+  }
 }
 
 function formatLegalNoticeDate(value) {
@@ -221,6 +249,22 @@ const SETTINGS_NAV_GROUPS = [
   { id: 'coaching-detection', label: 'Coaching & Detection' },
   { id: 'privacy-data', label: 'Privacy & Data' },
 ];
+
+const REGION_LABELS = Object.freeze({
+  CA: 'California',
+  TX: 'Texas',
+  NY: 'New York',
+  ON: 'Ontario',
+  BC: 'British Columbia',
+  AB: 'Alberta',
+  QC: 'Quebec',
+  MB: 'Manitoba',
+  SK: 'Saskatchewan',
+});
+
+const regionDefaultOptions = (countryCode) => (
+  Object.keys(REGION_SPEED_DEFAULTS[countryCode] || {}).filter((key) => key !== '_country')
+);
 
 const SETTINGS_SECTIONS = [
   {
@@ -394,17 +438,17 @@ const SETTINGS_SECTIONS = [
     group: 'coaching-detection',
     title: 'Speed & Road Data',
     icon: Gauge,
-    detail: 'Live speed warnings, speed limits, weather, and automatic road-data lookup.',
+    detail: 'Live speed checks, posted speed warnings, speed limits, weather, and automatic road-data lookup.',
     keywords: 'speed limits overpass osm warning margin over limit openstreetmap road data weather',
     searchItems: [
-      { label: 'Live speed warning', keywords: 'over limit alert' },
+      { label: 'Live speed check', keywords: 'over limit alert coaching' },
       { label: 'Speed limits from OpenStreetMap', keywords: 'osm posted maxspeed' },
-      { label: 'Fallback estimate country', keywords: 'canada united states global legal limit' },
+      { label: 'Fallback estimate country', keywords: 'canada united states global regional estimate' },
       { label: 'Weather from Open-Meteo', keywords: 'rain snow fog ice' },
       { label: 'Automatic road-data lookup', keywords: 'auto fetch speed weather' },
       { label: 'Snap route to roads with OSRM', keywords: 'map matching cleanup endpoint' },
       { label: 'OSRM timeout and endpoint', keywords: 'server route matching link' },
-      { label: 'Speed warning margin', keywords: 'strict lenient over limit kmh' },
+      { label: 'Speed check margin', keywords: 'strict lenient over limit kmh' },
     ],
   },
   {
@@ -543,7 +587,7 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
   {
     term: 'Inferred speed limits',
-    definition: 'Fallback limits are estimated from road type and the configured country default when OSM maxspeed data is unavailable. Inferred-limit speeding penalties use half weight and may not reflect the actual legal limit.',
+    definition: 'Regional defaults are useful fallback estimates when posted speed data is unavailable, but they are not proof of the posted speed limit. Posted signs, school zones, construction zones, temporary limits, municipal bylaws, and road-specific exceptions can override them. A REGION_DEFAULT result is more reliable than GPS-only inference because it uses country/province/state and road-context information, but it must still be treated as an estimate unless confirmed by posted data.',
   },
   {
     term: 'Parking approach',
@@ -551,9 +595,6 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
 ];
 
-const PRIVACY_RADIUS_MIN_M = 50;
-const PRIVACY_RADIUS_MAX_M = 1000;
-const PRIVACY_RADIUS_DEFAULT_M = 180;
 const SETTINGS_HEAVY_QUERY_STALE_MS = 30_000;
 const PROVISIONAL_SCORING_CONSTANTS = getProvisionalScoringConstants();
 const PENALTY_SCALE_CALIBRATION = Object.freeze({
@@ -611,7 +652,7 @@ const backupPasswordRequirements = (value = '') => ({
 function validatePrivacyRadius(value) {
   const raw = String(value ?? '').trim();
   if (!raw) {
-    return { valid: false, error: `Enter a radius between ${PRIVACY_RADIUS_MIN_M} and ${PRIVACY_RADIUS_MAX_M} meters.` };
+    return { valid: false, error: `Enter a radius from ${PRIVACY_RADIUS_MIN_M} m to ${PRIVACY_RADIUS_MAX_M} m.` };
   }
 
   const number = Number(raw);
@@ -620,7 +661,7 @@ function validatePrivacyRadius(value) {
   }
 
   if (number < PRIVACY_RADIUS_MIN_M || number > PRIVACY_RADIUS_MAX_M) {
-    return { valid: false, error: `Radius must be between ${PRIVACY_RADIUS_MIN_M} and ${PRIVACY_RADIUS_MAX_M} meters.` };
+    return { valid: false, error: `Radius must be from ${PRIVACY_RADIUS_MIN_M} m to ${PRIVACY_RADIUS_MAX_M} m. Values outside this range are not saved.` };
   }
 
   return { valid: true, radius: Math.round(number), error: '' };
@@ -628,6 +669,7 @@ function validatePrivacyRadius(value) {
 
 export default function Settings() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [saved, setSaved] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [nativeTrackingStatus, setNativeTrackingStatus] = useState(null);
@@ -686,6 +728,18 @@ export default function Settings() {
   const [thresholdEditingEnabled, setThresholdEditingEnabled] = useState(false);
   const [deferredDataEnabled, setDeferredDataEnabled] = useState(false);
 
+  useEffect(() => {
+    const sectionId = new URLSearchParams(location.search || '').get('section');
+    if (!sectionId || !SETTINGS_SECTIONS.some((section) => section.id === sectionId)) return;
+    setActiveSettingsSection(sectionId);
+    setSettingsSearch('');
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+  }, [location.search]);
+
   const { data: scoreMigrationSummary = {
     scoring_version: SCORING_VERSION,
     completed_count: 0,
@@ -732,7 +786,9 @@ export default function Settings() {
 
   useEffect(() => {
     scheduleRescoringQueue({ rescoreTrip: rescoreTripForQueue });
-    getRawGpsLifecycleStatus().then(setRawGpsLifecycleStatus).catch(() => {});
+    getRawGpsLifecycleStatus().then(setRawGpsLifecycleStatus).catch((error) => {
+      logSystemFailure('settings_raw_gps_lifecycle_status', error);
+    });
   }, []);
 
   useEffect(() => {
@@ -1177,8 +1233,12 @@ export default function Settings() {
       });
       return;
     }
+    const enabledLookups = [
+      cfg.speed_limit_lookup_enabled !== false ? 'OpenStreetMap speed-limit' : null,
+      cfg.weather_context_enabled !== false ? 'Open-Meteo weather' : null,
+    ].filter(Boolean).join(' and ') || 'enabled road-data';
     const ok = typeof window === 'undefined' || window.confirm(
-      'Automatic road data queues OpenStreetMap and Open-Meteo lookups with randomized privacy delays whenever a trip is saved. OSRM route snapping still stays manual. Continue?'
+      `Automatic road data queues ${enabledLookups} lookups with randomized privacy delays whenever a trip is saved. OSRM route snapping still stays manual. Continue?`
     );
     if (!ok) return;
     updateCfg({
@@ -2473,7 +2533,7 @@ export default function Settings() {
             <div className="text-sm font-medium mb-2 px-1">Tracking Mode</div>
             <div className="space-y-2">
               {[
-                { id: 'manual', label: 'Manual Only', sub: 'Start/stop trips manually' },
+                { id: 'manual', label: 'Manual Only', sub: 'Start/stop manually; keep app open unless Background GPS is active' },
                 { id: 'auto_detect', label: 'Auto-Detect', sub: 'Detects driving when app is open' },
                 { id: 'background_auto', label: 'Background Auto', sub: 'Uses background location when enabled' },
               ].map(opt => (
@@ -2519,7 +2579,7 @@ export default function Settings() {
           <SettingRow
             icon={Shield}
             label="Background Tracking"
-            sublabel={cfg.tracking_paused ? 'Paused until Pause All Tracking is turned off' : nativeTrackingStatus?.enabled ? 'Native background auto tracking is running' : 'Keeps recording after the app is minimized with a persistent notification'}
+            sublabel={cfg.tracking_paused ? 'Paused until Pause All Tracking is turned off' : nativeTrackingStatus?.enabled ? 'Native background auto tracking is running' : 'Keeps recording while minimized with a persistent notification; force-closing can still stop Android tracking'}
           >
             <Toggle value={!cfg.tracking_paused && cfg.background_tracking_enabled} onChange={async v => {
               if (v) {
@@ -2617,7 +2677,7 @@ export default function Settings() {
             },
             {
               label: 'Background auto tracking for richer repeated-route history',
-              sub: 'Only needed if you choose Background Auto. Android asks separately for Background Location, Activity, and Notifications, and it can collect location while the app is closed or not in use.',
+              sub: 'Only needed if you choose Background Auto. Android asks separately for Background Location, Activity, and Notifications. It can collect location while minimized or in the background, but force-closing can still stop tracking.',
               value: permissionStatus?.backgroundLocation,
               action: requestBackgroundLocationPermission,
             },
@@ -2628,7 +2688,7 @@ export default function Settings() {
               action: handleMotionPermission,
             },
             {
-              label: 'Real speed limits, weather, optional OSRM matching, and offline route previews',
+              label: 'Posted speed data, weather, optional OSRM matching, and offline route previews',
               sub: 'Uses open-source map/weather data over the network or cached local route data. OSRM route matching stays off unless you add an endpoint.',
               value: 'none',
             },
@@ -2744,8 +2804,9 @@ export default function Settings() {
               min="0"
               max="50"
               step="0.1"
-              value={cfg.co2_baseline_kg_per_100km ?? 12}
-              onChange={e => updateCfg({ co2_baseline_kg_per_100km: Number(e.target.value) })}
+              value={numberDraftValue(cfg.co2_baseline_kg_per_100km, 12)}
+              placeholder="12"
+              onChange={e => updateOptionalNumberDraft(updateCfg, 'co2_baseline_kg_per_100km', e.target.value)}
               className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
             />
           </SettingRow>
@@ -2759,8 +2820,9 @@ export default function Settings() {
               min="5"
               max="40"
               step="0.1"
-              value={cfg.default_ev_kwh_per_100km ?? 18}
-              onChange={e => updateCfg({ default_ev_kwh_per_100km: Number(e.target.value) })}
+              value={numberDraftValue(cfg.default_ev_kwh_per_100km, 18)}
+              placeholder="18"
+              onChange={e => updateOptionalNumberDraft(updateCfg, 'default_ev_kwh_per_100km', e.target.value)}
               className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
             />
           </SettingRow>
@@ -2774,8 +2836,9 @@ export default function Settings() {
               min="0"
               max="2"
               step="0.001"
-              value={cfg.grid_co2_kg_per_kwh ?? 0.04}
-              onChange={e => updateCfg({ grid_co2_kg_per_kwh: Number(e.target.value) })}
+              value={numberDraftValue(cfg.grid_co2_kg_per_kwh, 0.04)}
+              placeholder="0.04"
+              onChange={e => updateOptionalNumberDraft(updateCfg, 'grid_co2_kg_per_kwh', e.target.value)}
               className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
             />
           </SettingRow>
@@ -2789,8 +2852,9 @@ export default function Settings() {
               min="1"
               max="100"
               step="0.1"
-              value={cfg.tree_co2_kg_per_year ?? 21}
-              onChange={e => updateCfg({ tree_co2_kg_per_year: Number(e.target.value) })}
+              value={numberDraftValue(cfg.tree_co2_kg_per_year, 21)}
+              placeholder="21"
+              onChange={e => updateOptionalNumberDraft(updateCfg, 'tree_co2_kg_per_year', e.target.value)}
               className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-right text-xs outline-none focus:border-primary"
             />
           </SettingRow>
@@ -2837,7 +2901,7 @@ export default function Settings() {
                   />
                 </label>
               </div>
-              <p className="mt-2 px-1 text-xs text-muted-foreground">Safety alerts always come through unless that channel is disabled.</p>
+              <p className="mt-2 px-1 text-xs text-muted-foreground">During quiet hours, safety alerts can still come through unless that channel is disabled.</p>
             </div>
 
             <div className="rounded-2xl bg-secondary/40 p-3">
@@ -3671,11 +3735,11 @@ export default function Settings() {
         <SettingsSection id="settings-speed-warning" activeId={activeSettingsSection}>
         {/* Speed & Road Data */}
         <SectionTitle id="settings-speed-warning">Speed & Road Data</SectionTitle>
-        <SettingsSubheading>Live speed alert</SettingsSubheading>
+        <SettingsSubheading>Live speed check</SettingsSubheading>
         <SettingRow
           icon={Bell}
-          label="Live Speed Warning"
-          sublabel={cfg.speed_warning_enabled === false ? 'Dashboard speed warnings are disabled' : 'Warn during a trip when speed exceeds the current or fallback limit plus margin'}
+          label="Live speed check"
+          sublabel={cfg.speed_warning_enabled === false ? 'Live speed checks are disabled' : 'Coach during a trip when speed exceeds the current posted or estimated limit plus margin'}
         >
           <Toggle
             value={cfg.speed_warning_enabled !== false}
@@ -3696,16 +3760,19 @@ export default function Settings() {
         <SettingRow
           icon={Gauge}
           label="Fallback estimate country"
-          sublabel={`Not an official legal-speed database. Used only when OSM gives a road type but no maxspeed; current estimate profile: ${SPEED_LIMIT_DEFAULT_COUNTRY_LABELS[speedLimitDefaultCountryKey(cfg)] || 'Global'}.`}
+          sublabel={`Regional default estimates are not proof of the posted speed limit. Posted signs, school zones, construction zones, temporary limits, municipal bylaws, and road-specific exceptions can override them. Current estimate profile: ${SPEED_LIMIT_DEFAULT_COUNTRY_LABELS[speedLimitDefaultCountryKey(cfg)] || 'Global'}.`}
         >
           <select
             className="rounded-lg border border-border bg-background px-2 py-1 text-sm"
-            value={String(cfg.country_code || cfg.configurable_country_defaults || 'global').toLowerCase()}
+            value={String(cfg.configurable_country_defaults || cfg.country_code || 'global').split('-')[0].toLowerCase()}
             onChange={event => {
               const value = event.target.value;
+              const country = value === 'global' ? '' : value.toUpperCase();
+              const regions = country ? regionDefaultOptions(country) : [];
+              const combined = regions.length ? `${country}-${regions[0]}` : value;
               updateCfg({
-                country_code: value === 'global' ? '' : value.toUpperCase(),
-                configurable_country_defaults: value,
+                country_code: country,
+                configurable_country_defaults: combined,
               });
             }}
           >
@@ -3717,6 +3784,84 @@ export default function Settings() {
             <option value="au">Australia</option>
             <option value="fr">France</option>
           </select>
+        </SettingRow>
+        {(() => {
+          const [countryCode, provinceCode] = String(cfg.configurable_country_defaults || cfg.country_code || 'global').toUpperCase().split('-');
+          const options = regionDefaultOptions(countryCode);
+          if (!options.length) return null;
+          return (
+            <SettingRow
+              icon={MapPin}
+              label="Province/State"
+              sublabel="Used for regional default estimates when posted speed data is unavailable. More reliable than GPS-only inference, but still an estimate unless confirmed by posted data."
+            >
+              <select
+                className="rounded-lg border border-border bg-background px-2 py-1 text-sm"
+                value={provinceCode || options[0]}
+                onChange={event => updateCfg({
+                  country_code: countryCode,
+                  configurable_country_defaults: `${countryCode}-${event.target.value}`,
+                })}
+              >
+                {options.map((option) => (
+                  <option key={option} value={option}>{REGION_LABELS[option] || option}</option>
+                ))}
+              </select>
+            </SettingRow>
+          );
+        })()}
+        <SettingsSubheading>Estimated speed guidance</SettingsSubheading>
+        <SettingRow
+          icon={Gauge}
+          label="Use estimated speed guidance"
+          sublabel="Shows helpful speed guidance when posted limits are unavailable. Estimates are not legal speed limits."
+        >
+          <Toggle value={cfg.speed_estimates_enabled !== false} onChange={v => updateCfg({ speed_estimates_enabled: v })} />
+        </SettingRow>
+        <SettingRow
+          icon={Volume2}
+          label="Speak posted speed warnings"
+        >
+          <Toggle value={cfg.speak_posted_speed_warnings !== false} onChange={v => updateCfg({ speak_posted_speed_warnings: v })} />
+        </SettingRow>
+        <SettingRow
+          icon={Volume2}
+          label="Speak estimated speed checks"
+          sublabel="On by default. Road Sage speaks gentle speed checks for estimated limits using check-posted-signs wording."
+        >
+          <Toggle value={cfg.speak_estimated_speed_checks === true} onChange={v => updateCfg({ speak_estimated_speed_checks: v })} />
+        </SettingRow>
+        <SettingRow
+          icon={Gauge}
+          label="Estimated speed check margin (km/h)"
+          sublabel="Voice only. Estimated road-type, learned, and regional checks speak only after this many km/h over the estimated limit; visual checks can appear sooner."
+        >
+          <input
+            type="number"
+            min={0}
+            max={60}
+            step={1}
+            value={numberDraftValue(cfg.estimated_voice_margin_kmh, 12)}
+            placeholder="12"
+            onChange={event => updateOptionalNumberDraft(updateCfg, 'estimated_voice_margin_kmh', event.target.value)}
+            className="w-20 rounded-lg border border-border bg-background px-2 py-1 text-sm"
+          />
+        </SettingRow>
+        <SettingRow
+          icon={Gauge}
+          label="Inferred speed check margin (km/h)"
+          sublabel="Voice only. GPS-inferred checks are least certain, so this separate margin controls when those spoken checks happen."
+        >
+          <input
+            type="number"
+            min={0}
+            max={80}
+            step={1}
+            value={numberDraftValue(cfg.inferred_voice_margin_kmh, 20)}
+            placeholder="20"
+            onChange={event => updateOptionalNumberDraft(updateCfg, 'inferred_voice_margin_kmh', event.target.value)}
+            className="w-20 rounded-lg border border-border bg-background px-2 py-1 text-sm"
+          />
         </SettingRow>
         <SettingRow
           icon={Droplets}
@@ -3730,8 +3875,8 @@ export default function Settings() {
         </SettingRow>
         <SettingRow
           icon={Info}
-          label="Auto-fetch speed limits + weather"
-          sublabel="Off: saved trips stay local until you tap Get Road Data. On: future trips fetch speed limits and weather after a private delay. OSRM is never automatic."
+          label="Auto-fetch enabled road data"
+          sublabel="Off: saved trips stay local until you tap Get Road Data. On: future trips fetch only enabled speed-limit and weather lookups after a private delay. OSRM is never automatic."
         >
           <Toggle
             value={isExternalContextAutoFetchEnabled(cfg)}
@@ -3863,7 +4008,7 @@ export default function Settings() {
             <div>
               <span className="font-semibold text-foreground">Auto-fetch {isExternalContextAutoFetchEnabled(cfg) ? 'ON' : 'OFF'}:</span>{' '}
               {isExternalContextAutoFetchEnabled(cfg)
-                ? 'future saved trips fetch speed limits and weather after a randomized privacy delay. OSRM still waits for manual Get Road Data.'
+                ? 'future saved trips fetch only enabled speed-limit and weather lookups after a randomized privacy delay. OSRM still waits for manual Get Road Data.'
                 : 'nothing is sent automatically after saving a trip; the user must tap Get Road Data for that trip.'}
             </div>
           </div>
@@ -3895,10 +4040,17 @@ export default function Settings() {
           <SettingRow
             icon={Shield}
             label="Legal, safety, data & privacy notice"
-            sublabel={`Reread the first-launch notice, permission disclosures, local data rules, safety limits, and external-service warnings. ${legalNoticeStatus}.`}
+            sublabel={`Same required notice shown on first launch and after notice updates. Review legal limits, safety responsibilities, consent, app-close tracking rules, speed-limit trust, data sharing, exports, backups, and privacy controls anytime. ${legalNoticeStatus}.`}
             onClick={showPrivacyPolicy}
           >
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
+            <div className="flex items-center gap-2">
+              {legalNoticeNeedsReview && (
+                <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/50 dark:text-amber-100">
+                  Review
+                </span>
+              )}
+              <ChevronRight className="w-4 h-4 text-muted-foreground" />
+            </div>
           </SettingRow>
           <SettingRow
             icon={Shield}
@@ -4181,7 +4333,7 @@ export default function Settings() {
               />
             </div>
             <div className={`mt-1 flex justify-end text-[11px] font-medium ${privacyDraftRadiusError ? 'text-red-500' : 'text-muted-foreground'}`}>
-              Min 50 m · Max 1000 m
+              Allowed radius: {PRIVACY_RADIUS_MIN_M}-{PRIVACY_RADIUS_MAX_M} m
             </div>
             {privacyDraftRadiusError && (
               <div className="mt-1 text-right text-[11px] font-medium text-red-500">
@@ -4189,7 +4341,7 @@ export default function Settings() {
               </div>
             )}
             <div className="mt-2 rounded-xl bg-card px-3 py-2 text-xs text-muted-foreground">
-              Radius can be 50-1000 m. Routes and events inside the zone stay hidden from maps and exports. Optional map outlines are offset and expanded so they never pinpoint the saved center.
+              Default radius is {PRIVACY_RADIUS_DEFAULT_M} m. You can save any radius from {PRIVACY_RADIUS_MIN_M} m to {PRIVACY_RADIUS_MAX_M} m; larger or smaller values are rejected instead of silently saved smaller. Routes and events inside the full saved radius stay hidden from maps and exports. Get Road Data also keeps an extra guard outside that radius before any road-data request can run.
             </div>
             <div className="mt-2 rounded-xl border border-border bg-background/60 px-3 py-2 text-xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -4316,7 +4468,7 @@ export default function Settings() {
                     <div className="min-w-0">
                       <div className="truncate font-semibold">{zone.label}</div>
                       <div className="text-muted-foreground">
-                        {Math.round(zone.radius_m)} m mask radius - always excluded from OSRM
+                        {Math.round(zone.radius_m)} m saved mask radius - full radius protected
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
@@ -4345,6 +4497,7 @@ export default function Settings() {
                         }}
                         className={`h-8 w-20 rounded-lg border bg-background px-2 text-right text-xs font-semibold ${privacyZoneRadiusErrors[zone.id] ? 'border-red-500 focus:outline-red-500' : 'border-border'}`}
                         aria-label={`Radius in meters for ${zone.label}`}
+                        title={`Allowed radius: ${PRIVACY_RADIUS_MIN_M}-${PRIVACY_RADIUS_MAX_M} m`}
                       />
                       <button
                         type="button"

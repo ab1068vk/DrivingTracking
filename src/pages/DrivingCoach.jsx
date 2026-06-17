@@ -5,7 +5,7 @@ import { AlertTriangle, Gauge, MapPinned, ShieldCheck, Target } from 'lucide-rea
 import { Bar, BarChart, CartesianGrid, PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { tripSummaryQueryOptions } from '@/api/trips';
 import { formatDistance, formatSpeed } from '@/lib/tripEngine';
-import { localSettings } from '@/lib/trackingStore';
+import useLocalSettings from '@/hooks/useLocalSettings';
 import {
   analyzeDayOfWeek,
   analyzeTimeOfDay,
@@ -37,7 +37,7 @@ const focusLabels = {
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 
 export default function DrivingCoach() {
-  const settings = localSettings.get();
+  const settings = useLocalSettings();
   const units = settings.units || 'metric';
   const { data: allTrips = [], isLoading } = useQuery({
     ...tripSummaryQueryOptions(),

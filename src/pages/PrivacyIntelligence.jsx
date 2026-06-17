@@ -62,6 +62,13 @@ const privacyLevelClass = {
   none: 'bg-secondary text-muted-foreground',
 };
 
+const actionToneClass = {
+  ok: 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100',
+  warn: 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100',
+  unknown: 'border-slate-300 bg-slate-100 text-slate-800 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-100',
+  error: 'border-red-200 bg-red-50 text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100',
+};
+
 const STATUS_LABELS = {
   ok: 'Verified',
   configured: 'Configured',
@@ -230,7 +237,7 @@ export default function PrivacyIntelligence() {
             </div>
             <div>
               <h1 className="font-grotesk text-2xl font-bold">Privacy Intelligence</h1>
-              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">See what was protected, what left the device, and whether the privacy record can be trusted.</p>
+              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Review local privacy activity, protection checks, and recorded outbound data. This shows what the app recorded leaving the device.</p>
               <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
                 <Clock3 className="h-3.5 w-3.5" />
                 Updated {data?.generatedAt ? formatRelativeTime(data.generatedAt) : 'recently'}
@@ -278,6 +285,7 @@ function OverviewTab({ data, onOpenTab, onOpenSettings }) {
   const zoneSummary = data?.zoneSummary || {};
   const transmissions = data?.transmissions || {};
   const recommendations = data?.recommendations || [];
+  const actionPlan = data?.actionPlan || {};
   const [showThreatModel, setShowThreatModel] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(() => (
     globalThis.localStorage?.getItem(V2_BANNER_KEY) === 'true'
@@ -286,8 +294,8 @@ function OverviewTab({ data, onOpenTab, onOpenSettings }) {
     <div className="min-w-0 space-y-4 overflow-hidden">
       {!bannerDismissed && (
         <section className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sky-950 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100">
-          <div className="font-semibold">Privacy Intelligence now verifies protections in real time</div>
-          <p className="mt-1 text-sm opacity-90">Your score may look different because unverified checks no longer receive full credit.</p>
+          <div className="font-semibold">Privacy Intelligence now checks protection status from local evidence</div>
+          <p className="mt-1 text-sm opacity-90">Your score may look different because checks that cannot be confirmed in this session no longer receive full credit.</p>
           <button
             type="button"
             onClick={() => {
@@ -312,14 +320,48 @@ function OverviewTab({ data, onOpenTab, onOpenSettings }) {
           {score.summary.error} protection{score.summary.error === 1 ? '' : 's'} failed verification.
         </button>
       )}
+      <section className={`rounded-2xl border p-4 shadow-sm ${actionToneClass[actionPlan.tone] || actionToneClass.unknown}`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <div className="text-xs font-bold uppercase tracking-wide opacity-70">What to do next</div>
+            <h2 className="mt-1 break-words text-lg font-semibold">{actionPlan.headline || 'Privacy review unavailable'}</h2>
+            <p className="mt-1 break-words text-sm opacity-85">{actionPlan.claim || 'This dashboard reports local evidence only.'}</p>
+          </div>
+          {actionPlan.primaryAction?.targetTab && actionPlan.primaryAction.targetTab !== 'overview' && (
+            <button
+              type="button"
+              onClick={() => onOpenTab(actionPlan.primaryAction.targetTab)}
+              className="shrink-0 rounded-xl bg-background/70 px-3 py-2 text-xs font-bold shadow-sm"
+            >
+              {actionPlan.primaryAction.action || 'Review'}
+            </button>
+          )}
+        </div>
+        {(actionPlan.issues || []).length > 0 && (
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            {actionPlan.issues.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => item.targetTab && item.targetTab !== 'overview' ? onOpenTab(item.targetTab) : undefined}
+                className="min-w-0 rounded-xl border border-current/20 bg-background/55 p-3 text-left"
+              >
+                <div className="break-words text-sm font-semibold">{item.title}</div>
+                <div className="mt-1 break-words text-xs opacity-80">{item.detail}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
       <div className="grid min-w-0 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
         <section className={`min-w-0 rounded-3xl border p-5 shadow-sm ${statusClass[score.tone] || statusClass.warn}`}>
           <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-bold uppercase tracking-wide opacity-80">Privacy posture</span>
+            <span className="text-xs font-bold uppercase tracking-wide opacity-80">Local evidence posture</span>
             <span className="rounded-full bg-background/60 px-2 py-1 text-xs font-bold">{score.label || 'Checking'}</span>
           </div>
           <div className="mt-5 flex items-end gap-2"><span className="font-grotesk text-6xl font-bold leading-none">{score.overall ?? 0}</span><span className="pb-1 text-sm font-semibold opacity-70">/ 100</span></div>
           <p className="mt-3 break-words text-sm opacity-90">{score.detail}</p>
+          <p className="mt-2 break-words text-xs opacity-75">Local evidence only. Unknown checks are not proof of safety.</p>
         </section>
 
         <section className="grid min-w-0 gap-3 sm:grid-cols-2">
@@ -338,7 +380,7 @@ function OverviewTab({ data, onOpenTab, onOpenSettings }) {
 
       <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard icon={EyeOff} label="Protected today" value={(zoneSummary.pointsToday || 0) + (zoneSummary.eventsToday || 0)} detail={`${zoneSummary.pointsToday || 0} GPS samples, ${zoneSummary.eventsToday || 0} events`} />
-        <SummaryCard icon={Radio} label="Requests this week" value={transmissions.weekTotal || 0} detail={`${transmissions.protectedTotal || 0} protected, ${transmissions.blockedTotal || 0} blocked`} onClick={() => onOpenTab('transmissions')} />
+        <SummaryCard icon={Radio} label="Requests this week" value={transmissions.weekTotal || 0} detail={`${transmissions.protectedTotal || 0} protected, ${transmissions.totalRawCoords || 0} raw, ${transmissions.claimedButUnverifiedCount || 0} unverified`} tone={(transmissions.totalRawCoords || transmissions.claimedButUnverifiedCount) ? 'warn' : 'default'} onClick={() => onOpenTab('transmissions')} />
         <SummaryCard icon={ShieldCheck} label="Protections active" value={data?.protectionSummary?.active || 0} detail={`${data?.protectionSummary?.warnings || 0} warnings, ${data?.protectionSummary?.errors || 0} errors`} onClick={() => onOpenTab('protections')} />
         <SummaryCard icon={History} label="Audit integrity" value={data?.chainResult?.valid ? 'Verified' : 'Needs review'} detail={`${data?.chain?.length || 0} chained entries`} tone={data?.chainResult?.valid ? 'ok' : 'error'} onClick={() => onOpenTab('audit')} />
       </div>
@@ -402,8 +444,15 @@ function ThreatList({ title, items }) {
 
 function SummaryCard({ icon: Icon, label, value, detail, tone = 'default', onClick = null }) {
   const Component = onClick ? 'button' : 'div';
+  const toneClass = tone === 'error'
+    ? statusClass.error
+    : tone === 'warn'
+      ? statusClass.warn
+      : tone === 'ok'
+        ? statusClass.ok
+        : 'border-border bg-card';
   return (
-    <Component type={onClick ? 'button' : undefined} onClick={onClick} className={`min-w-0 rounded-2xl border p-4 text-left shadow-sm ${tone === 'error' ? statusClass.error : 'border-border bg-card'} ${onClick ? 'transition-colors hover:bg-secondary/40' : ''}`}>
+    <Component type={onClick ? 'button' : undefined} onClick={onClick} className={`min-w-0 rounded-2xl border p-4 text-left shadow-sm ${toneClass} ${onClick ? 'transition-colors hover:bg-secondary/40' : ''}`}>
       <div className="flex min-w-0 items-center gap-2 text-xs font-semibold text-muted-foreground"><Icon className="h-4 w-4 shrink-0 text-primary" /><span className="min-w-0 break-words">{label}</span></div>
       <div className="mt-2 break-words font-grotesk text-2xl font-bold">{value}</div>
       <div className="mt-1 break-words text-xs text-muted-foreground">{detail}</div>
@@ -421,6 +470,9 @@ function TransmissionsTab({ data, onClear }) {
   const [status, setStatus] = useState('all');
   const [service, setService] = useState('all');
   const services = data?.transmissions?.services || [];
+  const rawWithoutConsent = data?.transmissions?.rawWithoutConsentCount || 0;
+  const rawWithConsent = data?.transmissions?.rawWithConsentCount || 0;
+  const unverifiedClaims = data?.transmissions?.claimedButUnverifiedCount || 0;
   const filtered = useMemo(() => entries.filter((entry) => {
     if (status !== 'all' && entry.privacyLevel !== status && entry.status !== status) return false;
     if (service !== 'all' && entry.service !== service) return false;
@@ -432,15 +484,28 @@ function TransmissionsTab({ data, onClear }) {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard icon={ShieldCheck} label="Verified protections" value={data?.transmissions?.protectedTotal || 0} detail={`${data?.transmissions?.claimedButUnverifiedCount || 0} claimed but unverified`} />
+        <SummaryCard icon={ShieldCheck} label="Verified transforms" value={data?.transmissions?.protectedTotal || 0} detail={`${data?.transmissions?.claimedButUnverifiedCount || 0} unverified claim${data?.transmissions?.claimedButUnverifiedCount === 1 ? '' : 's'}`} />
         <SummaryCard icon={Ban} label="Blocked requests" value={data?.transmissions?.blockedTotal || 0} detail="Nothing was sent" />
-        <SummaryCard icon={AlertTriangle} label="Raw-coordinate sends" value={data?.transmissions?.totalRawCoords || 0} detail="Review any non-zero count" tone={data?.transmissions?.totalRawCoords ? 'error' : 'default'} />
+        <SummaryCard icon={AlertTriangle} label="Raw-coordinate sends" value={data?.transmissions?.totalRawCoords || 0} detail={`${rawWithConsent} consented, ${rawWithoutConsent} missing consent evidence`} tone={rawWithoutConsent ? 'error' : data?.transmissions?.totalRawCoords ? 'warn' : 'default'} />
         <SummaryCard icon={Database} label="Outbound metadata" value={formatBytes(data?.transmissions?.totalBytesOut)} detail="Retained locally for 30 days" />
       </div>
 
+      {(rawWithoutConsent || rawWithConsent || unverifiedClaims) > 0 && (
+        <div className={`rounded-2xl border p-4 text-sm shadow-sm ${rawWithoutConsent ? statusClass.error : statusClass.warn}`}>
+          <div className="font-semibold">Transmission review needed</div>
+          <p className="mt-1 opacity-85">
+            {rawWithoutConsent
+              ? `${rawWithoutConsent} raw-coordinate send${rawWithoutConsent === 1 ? '' : 's'} lacked explicit-consent evidence.`
+              : rawWithConsent
+                ? `${rawWithConsent} raw-coordinate send${rawWithConsent === 1 ? '' : 's'} used consent metadata. Confirm the endpoint is still trusted.`
+                : `${unverifiedClaims} protected-request claim${unverifiedClaims === 1 ? '' : 's'} need stronger evidence.`}
+          </p>
+        </div>
+      )}
+
       <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div><h2 className="font-semibold">Outbound data records</h2><p className="mt-1 text-xs text-muted-foreground">This log records what category of location data left the device. It does not store full request responses.</p></div>
+          <div><h2 className="font-semibold">Outbound data records</h2><p className="mt-1 text-xs text-muted-foreground">This log records what category of location data the app reported sending. It does not store full payloads or responses.</p></div>
           <button type="button" onClick={onClear} disabled={!entries.length} className="rounded-xl border border-border px-3 py-2 text-xs font-semibold text-muted-foreground disabled:opacity-50">Clear retained records</button>
         </div>
         <div className="mt-4 grid gap-2 md:grid-cols-[1fr_180px_180px]">
@@ -467,8 +532,27 @@ function TransmissionCard({ entry }) {
       <div className="mt-3 grid gap-2 rounded-xl bg-secondary/40 p-3 text-xs sm:grid-cols-3">
         <div><span className="font-semibold">Data shape:</span> {entry.sentCoords || 'Nothing'}</div>
         <div><span className="font-semibold">Request size:</span> {formatBytes(entry.bytesOut)}</div>
+        <div><span className="font-semibold">Log status:</span> {STATUS_LABELS[entry.status] || titleCase(entry.status)}</div>
         <div><span className="font-semibold">Trip:</span> {entry.tripId || 'Not linked'}</div>
       </div>
+      {(entry.privacyTransformSource || (entry.privacyVerificationEvidence || []).length > 0) && (
+        <div className="mt-3 rounded-xl border border-border bg-background/70 p-3 text-xs">
+          <div><span className="font-semibold">Verification source:</span> {entry.privacyTransformSource || 'Not recorded'}</div>
+          {(entry.privacyVerificationEvidence || []).length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {entry.privacyVerificationEvidence.map((item) => <span key={item} className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100">{item}</span>)}
+            </div>
+          )}
+        </div>
+      )}
+      {(entry.privacyVerificationWarnings || []).length > 0 && (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+          <div className="font-semibold">Review warning</div>
+          <ul className="mt-1 list-disc space-y-1 pl-4">
+            {entry.privacyVerificationWarnings.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </div>
+      )}
       <div className="mt-3 flex flex-wrap gap-1.5">{(entry.protections || []).length ? entry.protections.map((item) => <span key={item} className="rounded-full bg-primary/10 px-2 py-1 text-[11px] font-semibold text-primary">{item}</span>) : <span className="text-xs text-muted-foreground">No additional protection metadata recorded.</span>}</div>
     </article>
   );
@@ -557,9 +641,9 @@ function AuditTab({ data }) {
   return (
     <div className="space-y-4">
       <div className={`rounded-2xl border p-4 ${data?.chainResult?.valid ? statusClass.ok : statusClass.error}`}>
-        <div className="flex items-start gap-3">{data?.chainResult?.valid ? <ShieldCheck className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}<div><div className="font-semibold">{data?.chainResult?.valid ? 'Audit chain verified' : 'Audit chain broken'}</div><div className="mt-1 text-xs opacity-80">{data?.chainResult?.valid ? `${data.chainResult.length || 0} entries are linked in order. Tip ${shortHash(data.chainResult.tip)}.` : `Entry ${(data?.chainResult?.brokenAt ?? 0) + 1}: ${data?.chainResult?.reason || 'Verification failed'}`}</div></div></div>
+        <div className="flex items-start gap-3">{data?.chainResult?.valid ? <ShieldCheck className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}<div><div className="font-semibold">{data?.chainResult?.valid ? 'Local audit chain internally consistent' : 'Audit chain broken'}</div><div className="mt-1 text-xs opacity-80">{data?.chainResult?.valid ? `${data.chainResult.length || 0} entries are linked in order. Tip ${shortHash(data.chainResult.tip)}. This is tamper-evident locally, not tamper-proof.` : `Entry ${(data?.chainResult?.brokenAt ?? 0) + 1}: ${data?.chainResult?.reason || 'Verification failed'}`}</div></div></div>
       </div>
-      <div className="rounded-2xl border border-border bg-card p-4 text-sm shadow-sm"><div className="flex items-start gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="font-semibold">What the audit log proves</div><p className="mt-1 text-xs text-muted-foreground">Each entry includes the previous entry's hash. Editing, reordering, or deleting an entry breaks verification. The log records privacy operations and intentionally excludes coordinates, addresses, tokens, and zone radius details.</p></div></div></div>
+      <div className="rounded-2xl border border-border bg-card p-4 text-sm shadow-sm"><div className="flex items-start gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="font-semibold">What the audit log can show</div><p className="mt-1 text-xs text-muted-foreground">Each entry includes the previous entry's hash. Editing, reordering, or deleting an entry breaks local verification unless the attacker can also rewrite the local anchor. The log records privacy operations and intentionally excludes coordinates, addresses, tokens, and zone radius details.</p></div></div></div>
       <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap gap-2">
           <button

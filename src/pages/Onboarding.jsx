@@ -29,7 +29,7 @@ const STEPS = [
     icon: MapPin,
     title: 'Location Access',
     subtitle: 'Required for trip tracking',
-    description: 'Road Sage needs GPS location to track routes, calculate speed, and detect driving events. Manual and foreground modes use location while tracking is active; Background Auto can also use location when the app is closed or not in use.',
+    description: 'Road Sage needs GPS location to track routes, calculate speed, and detect driving events. Manual and foreground modes need the app open onscreen; Background Auto can keep recording while minimized, but force-closing the app can still stop Android tracking.',
     color: 'gradient-success',
     textColor: 'text-white',
     permissionType: 'location',
@@ -82,7 +82,7 @@ const TRACKING_OPTIONS = [
   {
     id: 'background_auto',
     title: 'Background Auto',
-    description: 'Tracks trips automatically, including when the app is closed or not in use. Uses more battery.',
+    description: 'Tracks trips automatically while Road Sage is in the background or minimized. Do not force-close the app during a drive. Uses more battery.',
     icon: Globe2,
     recommended: false,
     warning: 'Requires background location, activity, notification, and battery setup.',
@@ -384,7 +384,7 @@ export default function Onboarding({ onComplete }) {
                   className="w-full rounded-2xl border border-border bg-card p-3 text-left text-sm font-semibold text-foreground"
                 >
                   Open Phone Usage Access
-                  <span className="mt-1 block text-xs font-normal text-muted-foreground">Needed only for real Android app-use detection while driving.</span>
+                  <span className="mt-1 block text-xs font-normal text-muted-foreground">Needed only for confirmed Android app-use detection while driving.</span>
                 </button>
               )}
               {TRACKING_OPTIONS.map(opt => (
@@ -432,7 +432,7 @@ export default function Onboarding({ onComplete }) {
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
                   <div className="font-semibold">Background Auto disclosure</div>
                   <div className="mt-1">
-                    Road Sage collects location and activity signals in the background only if you choose Background Auto and grant Android permissions. This enables automatic trip capture while the app is closed or not in use. You can pause tracking, switch to Manual Only, or revoke permissions at any time.
+                    Road Sage collects location and activity signals in the background only if you choose Background Auto and grant Android permissions. This enables automatic trip capture while the app is minimized or in the background, but force-closing the app can still stop Android tracking. You can pause tracking, switch to Manual Only, or revoke permissions at any time.
                   </div>
                 </div>
               )}
@@ -463,7 +463,7 @@ export default function Onboarding({ onComplete }) {
                   <>
                     <SetupChecklistRow
                       label="Background location"
-                      detail="Needed for automatic trip capture while the app is closed or not in use."
+                      detail="Needed for automatic trip capture while the app is minimized or in the background. Force-closing can still stop tracking."
                       ready={backgroundGranted}
                       onAction={handleBackgroundLocationRequest}
                       disabled={requesting}

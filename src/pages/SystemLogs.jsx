@@ -31,6 +31,7 @@ import {
   getTrackingDiagnostics,
   normalizeNativeDiagnosticEvents,
 } from '@/lib/trackingDiagnostics';
+import useLocalSettings from '@/hooks/useLocalSettings';
 
 const severityStyle = {
   error: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300',
@@ -111,11 +112,22 @@ function mergeLogs(...groups) {
 }
 
 function getWebDiagnosticLogs() {
-  return (getTrackingDiagnostics().events || []).map((event) => diagnosticEventToLog(event, 'web_diagnostic'));
+  try {
+    return (getTrackingDiagnostics().events || []).map((event) => diagnosticEventToLog(event, 'web_diagnostic'));
+  } catch (error) {
+    logSystemFailure('system_logs_web_diagnostics_load', error);
+    return [];
+  }
 }
 
 function getLocalLogSnapshot() {
-  return mergeLogs(getSystemLogs(), getWebDiagnosticLogs());
+  let systemLogs = [];
+  try {
+    systemLogs = getSystemLogs();
+  } catch (error) {
+    logSystemFailure('system_logs_local_load', error);
+  }
+  return mergeLogs(systemLogs, getWebDiagnosticLogs());
 }
 
 async function getFullLogSnapshot() {
@@ -148,12 +160,15 @@ function downloadText(filename, text, type) {
   const blob = new Blob([text], { type });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  try {
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+  } finally {
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
 }
 
 async function exportLogText({ filename, text, mimeType, format, logCount }) {
@@ -178,15 +193,25 @@ async function exportLogText({ filename, text, mimeType, format, logCount }) {
     }
   }
 
-  downloadText(filename, text, mimeType);
-  recordSystemEvent('system_logs_exported', {
-    format,
-    native: false,
-    native_fallback: Boolean(nativeFallbackError),
-    log_count: logCount,
-    byte_count: text.length,
-  }, { category: 'storage', title: 'System logs exported' });
-  return { native: false, filename, nativeFallback: Boolean(nativeFallbackError), nativeFallbackError };
+  try {
+    downloadText(filename, text, mimeType);
+    recordSystemEvent('system_logs_exported', {
+      format,
+      native: false,
+      native_fallback: Boolean(nativeFallbackError),
+      log_count: logCount,
+      byte_count: text.length,
+    }, { category: 'storage', title: 'System logs exported' });
+    return { native: false, filename, nativeFallback: Boolean(nativeFallbackError), nativeFallbackError };
+  } catch (error) {
+    logSystemFailure('system_logs_browser_export', error, {
+      format,
+      mime_type: mimeType,
+      native_fallback: Boolean(nativeFallbackError),
+      byte_count: text.length,
+    });
+    throw error;
+  }
 }
 
 function detailSummary(details = {}) {
@@ -315,6 +340,7 @@ function LogRow({ event, index }) {
 }
 
 export default function SystemLogs() {
+  const settings = useLocalSettings();
   const [logs, setLogs] = useState(() => getLocalLogSnapshot());
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
@@ -329,8 +355,16 @@ export default function SystemLogs() {
   const [exportStatus, setExportStatus] = useState('');
 
   const refresh = () => {
-    setLogs(getLocalLogSnapshot());
-    getFullLogSnapshot().then(setLogs);
+    try {
+      setLogs(getLocalLogSnapshot());
+    } catch (error) {
+      logSystemFailure('system_logs_refresh_local', error);
+    }
+    getFullLogSnapshot()
+      .then(setLogs)
+      .catch((error) => {
+        logSystemFailure('system_logs_refresh', error);
+      });
   };
 
   useEffect(() => {
@@ -414,7 +448,10 @@ export default function SystemLogs() {
       nextDeletion: oldestSystemLog ? formatDeletionTime(oldestSystemLog.timestamp) : null,
     };
   }, [logs]);
-  const privacyRetentionHours = Math.round(getPrivacyLogRetentionMs() / (60 * 60 * 1000));
+  const privacyRetentionHours = useMemo(
+    () => Math.round(getPrivacyLogRetentionMs() / (60 * 60 * 1000)),
+    [settings.privacy_log_retention_hours]
+  );
 
   const activeFilterCount = [
     query.trim(),
@@ -441,31 +478,41 @@ export default function SystemLogs() {
   };
 
   const exportJson = async () => {
-    setExportStatus('Saving JSON export...');
-    const result = await exportLogText({
-      filename: `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.json`,
-      text: exportSystemLogsJson(filteredLogs),
-      mimeType: 'application/json',
-      format: 'json',
-      logCount: filteredLogs.length,
-    });
-    setExportStatus(result.native
-      ? `${result.filename} saved to Downloads.`
-      : `${result.filename} is downloading.`);
+    try {
+      setExportStatus('Saving JSON export...');
+      const result = await exportLogText({
+        filename: `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.json`,
+        text: exportSystemLogsJson(filteredLogs),
+        mimeType: 'application/json',
+        format: 'json',
+        logCount: filteredLogs.length,
+      });
+      setExportStatus(result.native
+        ? `${result.filename} saved to Downloads.`
+        : `${result.filename} is downloading.`);
+    } catch (error) {
+      logSystemFailure('system_logs_json_export', error, { log_count: filteredLogs.length });
+      setExportStatus('JSON export failed. Check the latest failure log for details.');
+    }
   };
 
   const exportCsv = async () => {
-    setExportStatus('Saving CSV export...');
-    const result = await exportLogText({
-      filename: `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.csv`,
-      text: exportSystemLogsCsv(filteredLogs),
-      mimeType: 'text/csv',
-      format: 'csv',
-      logCount: filteredLogs.length,
-    });
-    setExportStatus(result.native
-      ? `${result.filename} saved to Downloads.`
-      : `${result.filename} is downloading.`);
+    try {
+      setExportStatus('Saving CSV export...');
+      const result = await exportLogText({
+        filename: `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.csv`,
+        text: exportSystemLogsCsv(filteredLogs),
+        mimeType: 'text/csv',
+        format: 'csv',
+        logCount: filteredLogs.length,
+      });
+      setExportStatus(result.native
+        ? `${result.filename} saved to Downloads.`
+        : `${result.filename} is downloading.`);
+    } catch (error) {
+      logSystemFailure('system_logs_csv_export', error, { log_count: filteredLogs.length });
+      setExportStatus('CSV export failed. Check the latest failure log for details.');
+    }
   };
 
   const clearLogs = () => {

@@ -193,6 +193,48 @@ describe('external service contracts', () => {
     });
   });
 
+  it('fetches only safe public Overpass chunks when a trip also has privacy-adjacent points', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        elements: [{
+          id: 202,
+          tags: { highway: 'residential', maxspeed: '50', name: 'Public Road' },
+          geometry: [
+            { lat: 43.019, lon: -79.0002 },
+            { lat: 43.021, lon: -79.0002 },
+          ],
+        }],
+      }),
+    })));
+
+    const boundaryPoint = { lat: 43, lng: -79.00123, privacy_boundary: true };
+    const privacyAdjacentPoint = { lat: 43.005, lng: -79 };
+    const safePublicPoint = { lat: 43.02, lng: -79 };
+    const result = await loadOsmSpeedLimitWays([boundaryPoint, privacyAdjacentPoint, safePublicPoint], {
+      overpass_speed_limit_url: 'https://overpass.example/api/interpreter',
+      privacy_zones: [{ id: 'home', label: 'Home', lat: 43, lng: -79, radius_m: 100 }],
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      status: 'partial_fetched',
+      source: 'openstreetmap_overpass',
+    });
+    expect(result.ways).toHaveLength(1);
+
+    const [, options] = fetch.mock.calls[0];
+    const query = new URLSearchParams(String(options.body)).get('data');
+    const [, rawBbox] = query.match(/\]\(([^)]+)\);/) || [];
+    const [south, west, north, east] = rawBbox.split(',').map(Number);
+    expect(south).toBeGreaterThan(43.01);
+    expect(north).toBeLessThan(43.03);
+    expect(west).toBeGreaterThan(-79.01);
+    expect(east).toBeLessThan(-78.99);
+    expect(query).not.toContain('Home');
+    expect(query).not.toContain('43,-79');
+  });
+
   it('allows Overpass bounding boxes that stay outside privacy zone guards', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,

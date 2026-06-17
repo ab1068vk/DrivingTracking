@@ -23,6 +23,9 @@ import {
   WEAR_KM_PER_STRESS_UNIT,
 } from '@/lib/tripEconomyDefaults';
 
+// CHANGES (session):
+// - Hardened trip economics against blank numeric Settings drafts.
+
 export {
   CO2_KG_PER_LITER,
   DEFAULT_CO2_BASELINE_KG_PER_100KM,
@@ -61,6 +64,12 @@ export const STRESS_UNITS = {
 };
 
 const DAY_MS = 86400000;
+
+const finiteNumberOrNull = (value) => {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
 
 const distanceWeightedScore = (trips = [], field = 'score_overall') => {
   const scored = trips
@@ -489,10 +498,13 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   const fuelType = String(vehicle?.fuel_type || settings.fuel_type || 'gasoline').trim().toLowerCase();
   const isElectric = fuelType === 'electric' || fuelType === 'ev';
   const lPer100Km = isElectric ? 0 : (Number(vehicle?.fuel_efficiency_l_per_100km) || Number(settings.default_l_per_100km) || DEFAULT_L_PER_100KM);
-  const evKwhPer100Km = Number(vehicle?.ev_efficiency_kwh_per_100km ?? vehicle?.energy_efficiency_kwh_per_100km ?? settings.default_ev_kwh_per_100km) || DEFAULT_EV_KWH_PER_100KM;
-  const gridCo2KgPerKwh = Number(vehicle?.grid_co2_kg_per_kwh ?? settings.grid_co2_kg_per_kwh);
-  const hasKnownGridCo2 = Number.isFinite(gridCo2KgPerKwh);
-  const effectiveGridCo2KgPerKwh = Number.isFinite(gridCo2KgPerKwh) ? gridCo2KgPerKwh : DEFAULT_GRID_CO2_KG_PER_KWH;
+  const evKwhPer100Km = finiteNumberOrNull(vehicle?.ev_efficiency_kwh_per_100km ?? vehicle?.energy_efficiency_kwh_per_100km)
+    ?? finiteNumberOrNull(settings.default_ev_kwh_per_100km)
+    ?? DEFAULT_EV_KWH_PER_100KM;
+  const gridCo2KgPerKwh = finiteNumberOrNull(vehicle?.grid_co2_kg_per_kwh)
+    ?? finiteNumberOrNull(settings.grid_co2_kg_per_kwh);
+  const hasKnownGridCo2 = gridCo2KgPerKwh != null;
+  const effectiveGridCo2KgPerKwh = gridCo2KgPerKwh ?? DEFAULT_GRID_CO2_KG_PER_KWH;
   const fuelPrice = Number(vehicle?.fuel_price_per_liter) || Number(settings.default_fuel_price_per_liter) || DEFAULT_FUEL_PRICE_PER_LITER;
   const rawEcoDrivingScore = trip?.eco_driving_score == null || trip?.eco_driving_score === ''
     ? NaN
@@ -523,14 +535,14 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   const roundedCo2Kg = Math.round(co2Kg * 100) / 100;
   const roundedFuelCo2Kg = Math.round(fuelCo2Kg * 100) / 100;
   const roundedGridCo2Kg = Math.round(gridCo2Kg * 100) / 100;
-  const vehicleBaselineCo2KgPer100Km = Number(vehicle?.co2_baseline_kg_per_100km);
-  const settingsBaselineCo2KgPer100Km = Number(settings.co2_baseline_kg_per_100km);
-  const baselineCo2KgPer100Km = Number.isFinite(vehicleBaselineCo2KgPer100Km)
+  const vehicleBaselineCo2KgPer100Km = finiteNumberOrNull(vehicle?.co2_baseline_kg_per_100km);
+  const settingsBaselineCo2KgPer100Km = finiteNumberOrNull(settings.co2_baseline_kg_per_100km);
+  const baselineCo2KgPer100Km = vehicleBaselineCo2KgPer100Km != null
     ? vehicleBaselineCo2KgPer100Km
-    : Number.isFinite(settingsBaselineCo2KgPer100Km)
+    : settingsBaselineCo2KgPer100Km != null
       ? settingsBaselineCo2KgPer100Km
       : DEFAULT_CO2_BASELINE_KG_PER_100KM;
-  const baselineSource = Number.isFinite(vehicleBaselineCo2KgPer100Km)
+  const baselineSource = vehicleBaselineCo2KgPer100Km != null
     ? 'vehicle'
     : 'fleet average estimate';
   const estimateErrorPct = baselineSource === 'vehicle' ? 15 : 30;
@@ -1122,8 +1134,8 @@ export function calculateCarbonImpact(completedTrips = [], settings = {}, vehicl
     eligibleTripCount += 1;
     return sum + estimatedSaved;
   }, 0) * 10) / 10;
-  const treeCo2KgPerYear = Number(settings.tree_co2_kg_per_year);
-  const effectiveTreeCo2KgPerYear = Number.isFinite(treeCo2KgPerYear) && treeCo2KgPerYear > 0
+  const treeCo2KgPerYear = finiteNumberOrNull(settings.tree_co2_kg_per_year);
+  const effectiveTreeCo2KgPerYear = treeCo2KgPerYear != null && treeCo2KgPerYear > 0
     ? treeCo2KgPerYear
     : DEFAULT_TREE_CO2_KG_PER_YEAR;
   const treesEquivalent = Math.round((totalCo2SavedKg / effectiveTreeCo2KgPerYear) * 10) / 10;
