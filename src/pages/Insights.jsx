@@ -2,11 +2,13 @@ import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Award, CalendarDays, CheckCircle2, Clock, Flag, MapPinned, Route, ShieldAlert, Target, TrendingUp } from 'lucide-react';
+import { Award, CalendarDays, CheckCircle2, Clock, ExternalLink, Flag, MapPinned, Route, ShieldAlert, Smartphone, Target, TrendingUp } from 'lucide-react';
 import { tripSummaryQueryOptions } from '@/api/trips';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDistance, getScoreColor } from '@/lib/tripEngine';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { isDriverMetricEligible, summarizePhoneUseAcrossTrips } from '@/lib/phoneUseSummary';
+import phoneUseRiskImage from '@/assets/phone-use-risk.jpg';
 import {
   buildCommuteDetections,
   buildGoalStatus,
@@ -17,6 +19,32 @@ import {
 } from '@/lib/mediumInsights';
 
 const dayInitials = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const nhtsaDistractedDrivingFacts = [
+  { value: '3,208', label: 'people killed in crashes involving distracted drivers in 2024' },
+  { value: '315k+', label: 'people injured in crashes involving distracted drivers in 2024' },
+  { value: '8%', label: 'of fatal crashes involved distracted drivers in 2024' },
+];
+const phoneUseHazards = [
+  'Looking away from the road',
+  'Taking a hand off the wheel',
+  'Thinking about the phone instead of traffic',
+  'Late braking or missed pedestrian/cyclist cues',
+];
+
+const formatPhoneDuration = (seconds = 0) => {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  if (total < 60) return `${total}s`;
+  const minutes = Math.floor(total / 60);
+  const remainder = total % 60;
+  return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+};
+
+const phoneUseRiskTone = (risk = 'none') => ({
+  high: 'border-red-200 bg-red-50 text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-300',
+  medium: 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-300',
+  low: 'border-yellow-200 bg-yellow-50 text-yellow-700 dark:border-yellow-800/50 dark:bg-yellow-950/30 dark:text-yellow-300',
+  none: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-300',
+}[risk] || 'border-border bg-secondary text-foreground');
 
 export default function Insights() {
   const navigate = useNavigate();
@@ -34,13 +62,15 @@ export default function Insights() {
   });
 
   const completed = trips.filter((trip) => trip.status === 'completed');
-  const routes = buildRouteComparisons(completed);
-  const commutes = buildCommuteDetections(completed);
-  const calendar = buildTripCalendarMonth(completed, monthDate);
-  const weekly = buildWeeklyDriverSummary(completed, settings);
-  const roadTypes = buildRoadTypeBreakdown(completed);
+  const driverCompleted = completed.filter(isDriverMetricEligible);
+  const routes = buildRouteComparisons(driverCompleted);
+  const commutes = buildCommuteDetections(driverCompleted);
+  const calendar = buildTripCalendarMonth(driverCompleted, monthDate);
+  const weekly = buildWeeklyDriverSummary(driverCompleted, settings);
+  const roadTypes = buildRoadTypeBreakdown(driverCompleted);
+  const phoneUseSummary = useMemo(() => summarizePhoneUseAcrossTrips(completed), [completed]);
   const goalStatus = buildGoalStatus(
-    completed.filter((trip) => new Date(trip.start_time).getTime() >= (() => {
+    driverCompleted.filter((trip) => new Date(trip.start_time).getTime() >= (() => {
       const d = new Date();
       d.setHours(0, 0, 0, 0);
       d.setDate(d.getDate() - d.getDay());
@@ -105,6 +135,220 @@ export default function Insights() {
               <SummaryLine label="Best day" value={weekly.best_day} />
               <SummaryLine label="Main issue" value={weekly.main_issue} />
               <SummaryLine label="Biggest improvement" value={weekly.biggest_improvement} />
+            </div>
+          </section>
+
+          <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+            <div className="grid gap-0 lg:grid-cols-[1.05fr_0.95fr]">
+              <div className="p-5">
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="font-semibold">Phone Use Focus</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">Confirmed Android Usage Access evidence, separate from GPS proxy diagnostics</p>
+                  </div>
+                  <Smartphone className="h-5 w-5 text-red-500" />
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <div className={`rounded-2xl border p-4 ${phoneUseRiskTone(phoneUseSummary.worstRisk)}`}>
+                    <div className="text-xs font-medium opacity-80">Worst risk</div>
+                    <div className="mt-1 font-grotesk text-2xl font-bold capitalize">{phoneUseSummary.worstRisk}</div>
+                  </div>
+                  <SummaryLine label="Measured trips" value={`${phoneUseSummary.measuredTrips}/${phoneUseSummary.driverTrips}`} />
+                  <SummaryLine label="Phone windows" value={phoneUseSummary.totalWindows} />
+                  <SummaryLine label="Total phone time" value={formatPhoneDuration(phoneUseSummary.totalSeconds)} />
+                </div>
+                {phoneUseSummary.excludedPassengerTrips > 0 && (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    {phoneUseSummary.excludedPassengerTrips} passenger trip{phoneUseSummary.excludedPassengerTrips === 1 ? '' : 's'} excluded from driver trends.
+                  </div>
+                )}
+
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <button
+                    type="button"
+                    disabled={!phoneUseSummary.latestPhoneUseTrip?.tripId}
+                    onClick={() => phoneUseSummary.latestPhoneUseTrip?.tripId && navigate(`/trips/${phoneUseSummary.latestPhoneUseTrip.tripId}`)}
+                    className="rounded-2xl bg-secondary/50 p-4 text-left transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    <div className="text-xs text-muted-foreground">Latest confirmed use</div>
+                    <div className="mt-1 text-lg font-semibold">
+                      {phoneUseSummary.latestPhoneUseTrip
+                        ? formatPhoneDuration(phoneUseSummary.latestPhoneUseTrip.totalSeconds)
+                        : 'None recorded'}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {phoneUseSummary.latestPhoneUseTrip?.startTime
+                        ? new Date(phoneUseSummary.latestPhoneUseTrip.startTime).toLocaleDateString()
+                        : phoneUseSummary.unmeasuredTrips > 0
+                          ? `${phoneUseSummary.unmeasuredTrips} trip${phoneUseSummary.unmeasuredTrips === 1 ? '' : 's'} missing Usage Access evidence`
+                          : 'Measured trips have no confirmed phone use'}
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!phoneUseSummary.longestPhoneUseTrip?.tripId}
+                    onClick={() => phoneUseSummary.longestPhoneUseTrip?.tripId && navigate(`/trips/${phoneUseSummary.longestPhoneUseTrip.tripId}`)}
+                    className="rounded-2xl bg-secondary/50 p-4 text-left transition hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    <div className="text-xs text-muted-foreground">Longest confirmed use</div>
+                    <div className="mt-1 text-lg font-semibold">
+                      {phoneUseSummary.longestPhoneUseTrip
+                        ? formatPhoneDuration(phoneUseSummary.longestPhoneUseTrip.totalSeconds)
+                        : 'None recorded'}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {phoneUseSummary.longestPhoneUseTrip
+                        ? `${phoneUseSummary.longestPhoneUseTrip.windowCount} window${phoneUseSummary.longestPhoneUseTrip.windowCount === 1 ? '' : 's'}, ${phoneUseSummary.longestPhoneUseTrip.avgSpeedKmh || '-'} avg km/h`
+                        : 'No trip has confirmed phone-use windows'}
+                    </div>
+                  </button>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <div className="rounded-2xl border border-border p-4">
+                    <div className="text-xs text-muted-foreground">7-day phone-use rate</div>
+                    <div className="mt-1 text-lg font-semibold">
+                      {formatPhoneDuration(phoneUseSummary.currentPeriod.secondsPerMeasuredTrip)} per measured trip
+                    </div>
+                    <div className={`mt-1 text-xs font-medium ${
+                      phoneUseSummary.trendDirection === 'improving'
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : phoneUseSummary.trendDirection === 'worsening'
+                          ? 'text-red-600 dark:text-red-400'
+                          : 'text-muted-foreground'
+                    }`}>
+                      {phoneUseSummary.previousPeriod.measuredTrips === 0
+                        ? 'Previous-period comparison unavailable'
+                        : `${Math.abs(phoneUseSummary.trendPct)}% ${phoneUseSummary.trendDirection === 'improving' ? 'lower' : phoneUseSummary.trendDirection === 'worsening' ? 'higher' : 'change'} than the prior 7 days`}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={!phoneUseSummary.worstMoment?.tripId}
+                    onClick={() => phoneUseSummary.worstMoment?.tripId && navigate(`/trips/${phoneUseSummary.worstMoment.tripId}`)}
+                    className="rounded-2xl border border-border p-4 text-left transition hover:bg-secondary/50 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    <div className="text-xs text-muted-foreground">Highest-risk moment</div>
+                    <div className="mt-1 text-lg font-semibold">
+                      {phoneUseSummary.worstMoment
+                        ? `${formatPhoneDuration(phoneUseSummary.worstMoment.durationSeconds)} at ${Math.round(phoneUseSummary.worstMoment.speedKmh || 0)} km/h`
+                        : 'Detailed event unavailable'}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {phoneUseSummary.worstMoment?.activityLabel || 'Newly recorded trips retain a compact worst-moment summary'}
+                    </div>
+                  </button>
+
+                  <div className="rounded-2xl border border-border p-4">
+                    <div className="text-xs text-muted-foreground">Usage Access coverage</div>
+                    <div className="mt-1 text-lg font-semibold">{phoneUseSummary.coveragePct}%</div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {phoneUseSummary.unmeasuredTrips > 0
+                        ? `${phoneUseSummary.unmeasuredTrips} driver trip${phoneUseSummary.unmeasuredTrips === 1 ? '' : 's'} could not be evaluated`
+                        : 'All driver trips were measurable'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-border p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold">Four-week trend</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">Phone-use seconds per measured trip</div>
+                    </div>
+                    <TrendingUp className="h-4 w-4 text-primary" />
+                  </div>
+                  <div className="mt-4 grid grid-cols-4 gap-2">
+                    {phoneUseSummary.weeklyTrend.map((week) => {
+                      const maxRate = Math.max(1, ...phoneUseSummary.weeklyTrend.map((item) => item.secondsPerMeasuredTrip));
+                      const heightPct = week.secondsPerMeasuredTrip > 0
+                        ? Math.max(6, Math.round((week.secondsPerMeasuredTrip / maxRate) * 100))
+                        : 0;
+                      return (
+                        <div key={week.label} className="text-center">
+                          <div className="flex h-20 items-end justify-center rounded-lg bg-secondary/40 px-2">
+                            <div
+                              className="w-full rounded-t bg-red-500"
+                              style={{ height: `${heightPct}%` }}
+                              title={`${formatPhoneDuration(week.secondsPerMeasuredTrip)} per measured trip`}
+                            />
+                          </div>
+                          <div className="mt-1 text-[11px] font-medium">{week.label}</div>
+                          <div className="text-[10px] text-muted-foreground">{formatPhoneDuration(week.secondsPerMeasuredTrip)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-border p-4">
+                  <div className="text-sm font-semibold">Recorded activity mix</div>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {phoneUseSummary.activityBreakdown.length > 0 ? phoneUseSummary.activityBreakdown.map((activity) => (
+                      <div key={activity.key} className="rounded-xl bg-secondary/50 px-3 py-2">
+                        <div className="text-sm font-medium">{activity.label}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {activity.windows} window{activity.windows === 1 ? '' : 's'} · {formatPhoneDuration(activity.seconds)}
+                        </div>
+                      </div>
+                    )) : (
+                      <div className="text-xs text-muted-foreground sm:col-span-2">
+                        Activity categories require retained detailed events or the compact summary saved with newly recorded trips.
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    Unlock-only checks are shown separately only when Android explicitly identifies them; Usage Access alone cannot reliably infer every unlock.
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t border-border bg-secondary/25 lg:border-l lg:border-t-0">
+                <img
+                  src={phoneUseRiskImage}
+                  alt="Driver reaching toward a phone while brake lights and a pedestrian crossing sign are visible ahead"
+                  className="h-56 w-full object-cover lg:h-full"
+                />
+              </div>
+            </div>
+
+            <div className="border-t border-border p-5">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold">What can go wrong</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">NHTSA describes phone use as visual, manual, and cognitive distraction.</p>
+                </div>
+                <a
+                  href="https://www.nhtsa.gov/campaign/distracted-driving"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
+                >
+                  NHTSA 2024 data
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {phoneUseHazards.map((hazard) => (
+                    <div key={hazard} className="rounded-2xl bg-secondary/50 p-3 text-sm font-medium">
+                      {hazard}
+                    </div>
+                  ))}
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {nhtsaDistractedDrivingFacts.map((fact) => (
+                    <div key={fact.label} className="rounded-2xl border border-border bg-background/70 p-3">
+                      <div className="font-grotesk text-2xl font-bold text-red-500">{fact.value}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">{fact.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </section>
 

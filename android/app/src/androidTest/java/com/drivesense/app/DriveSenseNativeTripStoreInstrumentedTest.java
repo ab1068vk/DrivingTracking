@@ -101,6 +101,25 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     }
 
     @Test
+    public void completedTripsUpsertBySharedManualTripId() throws Exception {
+        JSONObject first = new JSONObject();
+        first.put("id", "manual-trip-shared");
+        first.put("route_points", new JSONArray().put(new JSONObject().put("sample", 1)));
+        DriveSenseNativeTripStore.addCompletedTrip(context, first);
+
+        JSONObject richer = new JSONObject();
+        richer.put("id", "manual-trip-shared");
+        richer.put("route_points", new JSONArray()
+            .put(new JSONObject().put("sample", 1))
+            .put(new JSONObject().put("sample", 2)));
+        DriveSenseNativeTripStore.addCompletedTrip(context, richer);
+
+        JSONArray trips = DriveSenseNativeTripStore.getCompletedTrips(context);
+        assertEquals(1, trips.length());
+        assertEquals(2, trips.getJSONObject(0).getJSONArray("route_points").length());
+    }
+
+    @Test
     public void diagnosticEventsArePrependedAndCapped() throws Exception {
         for (int i = 0; i < 125; i++) {
             JSONObject event = new JSONObject();

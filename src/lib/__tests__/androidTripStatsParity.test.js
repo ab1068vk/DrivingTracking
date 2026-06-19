@@ -138,6 +138,30 @@ describe('Android auto-tracking stats parity', () => {
     expect(source).not.toContain('trip.put("score_overall", 100');
   });
 
+  it('supports confirmed native manual trips for background alerts', () => {
+    const serviceSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
+    const pluginSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseActivityRecognitionPlugin.java', import.meta.url), 'utf8');
+    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+
+    expect(serviceSource).toContain('ACTION_START_MANUAL_TRIP');
+    expect(serviceSource).toContain('nativeTripStartSource = "native_manual";');
+    expect(serviceSource).toContain('candidateTrip = false;');
+    expect(serviceSource).toContain('trip.put("start_source", completedStartSource);');
+    expect(pluginSource).toContain('startNativeManualTrip');
+    expect(pluginSource).toContain('hasNativeManualTripPermissions');
+    expect(dashboardSource).toContain('startNativeManualTrip({ startTime })');
+    expect(dashboardSource).toContain('const needsManualForegroundConfirmation = false;');
+    expect(dashboardSource).toContain('manual_background_tracking_fallback_foreground');
+  });
+
+  it('keeps native speed voice independent from speed notification settings', () => {
+    const serviceSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
+
+    expect(serviceSource).toContain('isSettingEnabled("speed_warning_enabled", true)');
+    expect(serviceSource).toContain('shouldTriggerSpeedAlert(speedKmh, speedLimitKmh, speedMarginKmh)');
+    expect(serviceSource).not.toContain('isSettingEnabled("notif_speeding_alert_enabled", true)');
+  });
+
   it('records native location permission loss as a trip data quality flag', () => {
     const source = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
 

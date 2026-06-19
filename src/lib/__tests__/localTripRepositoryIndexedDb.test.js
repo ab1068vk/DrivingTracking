@@ -800,6 +800,69 @@ describe('localTripRepository IndexedDB migrations', () => {
     });
   });
 
+  it('immediately re-scores eligible completed trips and reports skipped history', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-18T12:00:00.000Z'));
+    vi.stubGlobal('indexedDB', undefined);
+    const values = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    const currentProvenance = {
+      scoring_version: SCORING_VERSION,
+      constants_snapshot: buildScoreConstantsSnapshot(DEFAULT_THRESHOLDS),
+    };
+    values.set('drivesense_trips', JSON.stringify([
+      {
+        id: 'eligible',
+        status: 'completed',
+        start_time: '2026-06-17T12:00:00.000Z',
+        end_time: '2026-06-17T12:05:00.000Z',
+        route_points: [
+          { lat: 43.65, lng: -79.38, speed_kmh: 35, timestamp: '2026-06-17T12:00:00.000Z' },
+          { lat: 43.66, lng: -79.39, speed_kmh: 38, timestamp: '2026-06-17T12:05:00.000Z' },
+        ],
+        score_overall: 1,
+        score_safety: 1,
+        score_smoothness: 1,
+        score_eco: 1,
+        score_provenance: currentProvenance,
+        schema_version: TRIP_SCHEMA_VERSION,
+      },
+      {
+        id: 'expired',
+        status: 'completed',
+        start_time: '2026-01-01T12:00:00.000Z',
+        end_time: '2026-01-01T12:05:00.000Z',
+        route_points: [],
+        route_data_expired_at: '2026-06-01T12:00:00.000Z',
+        score_overall: 75,
+        score_provenance: currentProvenance,
+        schema_version: TRIP_SCHEMA_VERSION,
+      },
+    ]));
+
+    const result = await localTripRepository.rescoreCompletedTrips();
+    const rescored = await localTripRepository.getById('eligible');
+
+    expect(result).toMatchObject({
+      requested: 2,
+      eligible: 1,
+      completed: 1,
+      changed: 1,
+      unchanged: 0,
+      skipped: 1,
+      failed: 0,
+    });
+    expect(result.skippedTrips).toContainEqual({ id: 'expired', reason: 'route_data_expired' });
+    expect(rescored.score_overall).not.toBe(1);
+    expect(rescored.needs_rescore).toBe(false);
+    expect(rescored.score_provenance.scoring_version).toBe(SCORING_VERSION);
+  });
+
   it('renames retired lane-change events once before listing stored trips', async () => {
     vi.stubGlobal('indexedDB', undefined);
     const values = new Map();

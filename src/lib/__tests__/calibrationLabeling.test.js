@@ -59,7 +59,7 @@ describe('calibration labeling pipeline', () => {
     const serialized = JSON.stringify(payload);
 
     expect(payload).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       anonymousInstallIdHash: 'install_hash',
       scoringModelVersion: SCORING_VERSION,
       createdAt: '2026-05-26T18:00:00.000Z',
@@ -118,6 +118,23 @@ describe('calibration labeling pipeline', () => {
     expect(short.eligibleForCalibration).toBe(false);
     expect(short.dataQualityFlags).toEqual(expect.arrayContaining(['distance_too_short', 'duration_too_short', 'sample_count_low']));
     expect(dataQualityFlagsForCalibration(completedTrip, passenger.surveyLabel)).toContain('passenger_trip');
+  });
+
+  it('builds a trip-specific score review without requiring an unrelated feeling rating', () => {
+    const payload = buildCalibrationLabelPayload(completedTrip, {
+      scoreAccuracy: 'too_low',
+      scoreIssueTypes: ['harsh_brake', 'speeding'],
+      wasDriver: 'yes',
+      contextTags: ['traffic'],
+    });
+
+    expect(payload.surveyLabel).toMatchObject({
+      question: 'Did Road Sage score this trip fairly?',
+      scoreAccuracy: 'too_low',
+      scoreIssueTypes: ['harsh_brake', 'speeding'],
+      targetScore: 92,
+      wasDriver: 'yes',
+    });
   });
 
   it('can skip the survey without creating a calibration label', async () => {

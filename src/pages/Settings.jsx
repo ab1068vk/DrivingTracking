@@ -96,7 +96,7 @@ import { rescoreTripForQueue } from '@/lib/rescoringWorker';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth';
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
-import { testVoiceAlert } from '@/lib/voiceAlerts';
+import { getVoiceAlertDeliveryStatus, testVoiceAlert } from '@/lib/voiceAlerts';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { checkOsrmEndpointHealth, clearMapMatchingCache } from '@/lib/mapMatching';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
@@ -696,6 +696,9 @@ export default function Settings() {
   const [activeSettingsSection, setActiveSettingsSection] = useState('overview');
   const [rescoreStatus, setRescoreStatus] = useState('');
   const [rescoreProgress, setRescoreProgress] = useState(null);
+  const [rescoreConfirmOpen, setRescoreConfirmOpen] = useState(false);
+  const [rescoreBusy, setRescoreBusy] = useState(false);
+  const [rescoreResult, setRescoreResult] = useState(null);
   const [headingEventMigrationNoteVisible, setHeadingEventMigrationNoteVisible] = useState(false);
   const [osrmConsentOpen, setOsrmConsentOpen] = useState(false);
   const [osrmConsentChecked, setOsrmConsentChecked] = useState(false);
@@ -751,6 +754,10 @@ export default function Settings() {
     auto_rescore_threshold_ratio: AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO,
     auto_rescore_recommended: false,
     unavailable_score_count: 0,
+    rescore_eligible_count: 0,
+    rescore_ineligible_count: 0,
+    mismatch_rescore_eligible_count: 0,
+    mismatch_rescore_ineligible_count: 0,
     event_migration_version: 0,
     trips: [],
   } } = useQuery({
@@ -1366,6 +1373,53 @@ export default function Settings() {
     }
   };
 
+  const refreshTripScoreQueries = async () => {
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ['settings-trips'] }),
+      qc.invalidateQueries({ queryKey: ['score-migration-summary'] }),
+      qc.invalidateQueries({ queryKey: ['trip-summaries'] }),
+      qc.invalidateQueries({ queryKey: ['map-trips'] }),
+      qc.invalidateQueries({ queryKey: ['trips'] }),
+    ]);
+  };
+
+  const runCompletedTripRescore = async ({ onlyProvenanceMismatch = false, reason = 'manual' } = {}) => {
+    setRescoreBusy(true);
+    setRescoreResult(null);
+    setRescoreStatus('Preparing stored trip data for re-scoring.');
+    try {
+      const result = await tripService.rescoreCompletedTrips({ onlyProvenanceMismatch, reason });
+      await refreshTripScoreQueries();
+      setRescoreResult(result);
+      if (result.queued > 0) {
+        setRescoreStatus(`${result.queued} trip${result.queued === 1 ? '' : 's'} queued on the server.`);
+      } else if (result.completed === 0) {
+        setRescoreStatus(result.skipped > 0
+          ? `No eligible trips were updated. ${result.skipped} lacked retained route data.`
+          : 'No trips needed re-scoring.');
+      } else {
+        setRescoreStatus(
+          `${result.completed} trip${result.completed === 1 ? '' : 's'} updated: ` +
+          `${result.changed} score${result.changed === 1 ? '' : 's'} changed, ` +
+          `${result.unchanged} stayed the same` +
+          `${result.skipped ? `, ${result.skipped} skipped` : ''}` +
+          `${result.failed ? `, ${result.failed} failed` : ''}.`
+        );
+      }
+      return result;
+    } catch (error) {
+      setRescoreStatus('Trip scores could not be updated. Your existing scores were kept.');
+      toast({
+        title: 'Re-score failed',
+        description: error instanceof Error ? error.message : 'The trip history could not be recalculated.',
+        variant: 'destructive',
+      });
+      return null;
+    } finally {
+      setRescoreBusy(false);
+    }
+  };
+
   const applyCalibration = async () => {
     const updated = await applyCalibrationProfile(calibProfile, cfg, async (next) => {
       const current = localSettings.get();
@@ -1375,9 +1429,7 @@ export default function Settings() {
       const verified = Object.keys(patch).length ? localSettings.update(patch) : current;
       setCfg(verified);
     });
-    const count = await tripService.markCompletedForRescore().catch(() => 0);
-    await qc.invalidateQueries();
-    setRescoreStatus(count ? `${count} completed trips queued for re-score.` : 'Calibration applied.');
+    await runCompletedTripRescore({ reason: 'calibration_applied' });
     setCfg(updated);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
@@ -1387,12 +1439,8 @@ export default function Settings() {
   const rescoreTrips = async () => {
     await getPermissionStatus().catch(() => null);
     const onlyProvenanceMismatch = (scoreMigrationSummary.mismatch_count || 0) > 0;
-    const count = await tripService.markCompletedForRescore({ onlyProvenanceMismatch });
-    await qc.invalidateQueries();
-    setRescoreStatus(onlyProvenanceMismatch
-      ? `${count} outdated trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`
-      : `${count} completed trip${count === 1 ? '' : 's'} queued. Open Trips to refresh scores.`);
-    setTimeout(() => setRescoreStatus(''), 5000);
+    setRescoreConfirmOpen(false);
+    await runCompletedTripRescore({ onlyProvenanceMismatch, reason: 'manual' });
   };
 
   const dismissCalibration = async () => {
@@ -2302,7 +2350,8 @@ export default function Settings() {
         const normalizedTargetLabel = String(targetLabel || '').trim().toLowerCase();
         const settingTarget = normalizedTargetLabel
           ? Array.from(document.querySelectorAll('[data-setting-label]')).find(
-              (element) => String(element.dataset.settingLabel || '').trim().toLowerCase() === normalizedTargetLabel
+              (element) => element instanceof HTMLElement &&
+                String(element.dataset.settingLabel || '').trim().toLowerCase() === normalizedTargetLabel
             )
           : null;
         (settingTarget || document.getElementById(sectionId))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2315,6 +2364,13 @@ export default function Settings() {
     ? Math.min(100, Math.round((rescoreCompleted / rescoreTotal) * 100))
     : 0;
   const autoRescoreVisible = scoreMigrationSummary.auto_rescore_recommended || rescoreProgress?.reason === 'auto_provenance';
+  const rescoreOnlyProvenanceMismatch = (scoreMigrationSummary.mismatch_count || 0) > 0;
+  const rescoreCandidateCount = rescoreOnlyProvenanceMismatch
+    ? Number(scoreMigrationSummary.mismatch_rescore_eligible_count) || 0
+    : Number(scoreMigrationSummary.rescore_eligible_count) || 0;
+  const rescoreIneligibleCount = rescoreOnlyProvenanceMismatch
+    ? Number(scoreMigrationSummary.mismatch_rescore_ineligible_count) || 0
+    : Number(scoreMigrationSummary.rescore_ineligible_count) || 0;
   const privacyRescoreActive = isPrivacyRescoreReason(rescoreProgress?.reason) &&
     (rescoreProgress?.status === 'pending' || rescoreProgress?.status === 'running');
   const privacyNativeSyncFailed = cfg.privacy_zones_native_sync_status === NATIVE_PRIVACY_SYNC_STATUS_FAILED;
@@ -2330,6 +2386,12 @@ export default function Settings() {
     : privacyZoneOverlaps.length
     ? `${privacyZoneOverlaps.length} overlap${privacyZoneOverlaps.length === 1 ? '' : 's'} to review`
     : 'Protected';
+  const voiceDeliveryStatus = getVoiceAlertDeliveryStatus({
+    settings: cfg,
+    isAndroidPlatform: isAndroid(),
+    nativeStatus: nativeTrackingStatus,
+    tracking: false,
+  });
 
   return (
     <div className="space-y-4 pb-6">
@@ -3243,6 +3305,15 @@ export default function Settings() {
                     )}.
                   </div>
                   <div className="mt-1">{calibProfile.surveySummary.recommendation}</div>
+                  {calibProfile.surveyThresholdSignals?.length > 0 && (
+                    <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
+                      {calibProfile.surveyThresholdSignals.map((signal) => (
+                        <div key={signal.thresholdKey}>
+                          {signal.responseCount} consistent {signal.issueType.replace(/_/g, ' ')} reviews influenced this suggestion.
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="mt-2 flex flex-wrap gap-2">
                     <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold">Confidence: {calibProfile.surveySummary.confidence}</span>
                     <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold">Accurate: {calibProfile.surveySummary.scoreAccuracy?.accurate || 0}</span>
@@ -3280,13 +3351,39 @@ export default function Settings() {
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={rescoreTrips}
+              onClick={() => setRescoreConfirmOpen(true)}
+              disabled={rescoreBusy}
               className="rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary"
             >
-              {scoreMigrationSummary.mismatch_count > 0 ? 'Re-score outdated trips' : 'Re-score completed trips'}
+              {rescoreBusy
+                ? 'Updating historical scores...'
+                : scoreMigrationSummary.mismatch_count > 0
+                ? 'Update outdated scores'
+                : 'Recalculate historical scores'}
             </button>
             {rescoreStatus && <span className="text-xs text-muted-foreground">{rescoreStatus}</span>}
           </div>
+          {rescoreResult && (
+            <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
+              <div className="font-semibold">Historical score update complete</div>
+              <div className="mt-1">
+                {rescoreResult.completed} updated · {rescoreResult.changed} changed · {rescoreResult.unchanged} unchanged
+                {rescoreResult.skipped ? ` · ${rescoreResult.skipped} skipped` : ''}
+                {rescoreResult.failed ? ` · ${rescoreResult.failed} failed` : ''}
+              </div>
+              {rescoreResult.changes?.slice(0, 4).map((change) => (
+                <div key={change.id} className="mt-2 flex items-center justify-between gap-3 rounded-lg bg-card/70 px-2 py-1">
+                  <span className="truncate">{change.nickname || (change.start_time ? new Date(change.start_time).toLocaleDateString() : 'Trip')}</span>
+                  <span className="shrink-0 font-mono">
+                    {change.before.overall ?? '—'} → {change.after.overall ?? '—'}
+                  </span>
+                </div>
+              ))}
+              {rescoreResult.changes?.length > 4 && (
+                <div className="mt-1">+{rescoreResult.changes.length - 4} more changed scores</div>
+              )}
+            </div>
+          )}
           {(rescoreProgress?.status === 'running' || autoRescoreVisible) && (
             <div className="mt-3 rounded-xl border border-border bg-card p-3 text-xs">
               <div className="flex items-center justify-between gap-3">
@@ -3530,7 +3627,9 @@ export default function Settings() {
           <SettingRow
             icon={Volume2}
             label="Live voice alerts"
-            sublabel="Speaks during active trips for live coaching, phone use, speeding, heading drift beta, long-drive, repeated-event-area, and incident alerts"
+            sublabel={isAndroid()
+              ? 'Manual Android trips use a native background service for speech. Alerts can continue while minimized, but force-closing the app can stop them.'
+              : 'Speaks during active trips for live coaching, phone use, speeding, heading drift beta, long-drive, repeated-event-area, and incident alerts'}
           >
             <div className="flex items-center gap-2">
               <button
@@ -3554,6 +3653,9 @@ export default function Settings() {
               {voiceTestStatus}
             </div>
           )}
+          <div className="px-1 pb-3 text-xs text-muted-foreground">
+            <span className="font-semibold text-foreground">{voiceDeliveryStatus.label}:</span> {voiceDeliveryStatus.detail}
+          </div>
           <SettingRow
             icon={Bluetooth}
             label="OBD-II Bluetooth"
@@ -3834,7 +3936,7 @@ export default function Settings() {
         <SettingRow
           icon={Gauge}
           label="Estimated speed check margin (km/h)"
-          sublabel="Voice only. Estimated road-type, learned, and regional checks speak only after this many km/h over the estimated limit; visual checks can appear sooner."
+          sublabel="Voice only. Estimated, regional, learned, and GPS-inferred checks speak only after this many km/h over the estimated limit; visual checks still use confidence-based margins."
         >
           <input
             type="number"
@@ -3844,22 +3946,6 @@ export default function Settings() {
             value={numberDraftValue(cfg.estimated_voice_margin_kmh, 12)}
             placeholder="12"
             onChange={event => updateOptionalNumberDraft(updateCfg, 'estimated_voice_margin_kmh', event.target.value)}
-            className="w-20 rounded-lg border border-border bg-background px-2 py-1 text-sm"
-          />
-        </SettingRow>
-        <SettingRow
-          icon={Gauge}
-          label="Inferred speed check margin (km/h)"
-          sublabel="Voice only. GPS-inferred checks are least certain, so this separate margin controls when those spoken checks happen."
-        >
-          <input
-            type="number"
-            min={0}
-            max={80}
-            step={1}
-            value={numberDraftValue(cfg.inferred_voice_margin_kmh, 20)}
-            placeholder="20"
-            onChange={event => updateOptionalNumberDraft(updateCfg, 'inferred_voice_margin_kmh', event.target.value)}
             className="w-20 rounded-lg border border-border bg-background px-2 py-1 text-sm"
           />
         </SettingRow>
@@ -4678,6 +4764,48 @@ export default function Settings() {
         className="hidden"
         onChange={handleImportBackup}
       />
+
+      <Dialog open={rescoreConfirmOpen} onOpenChange={(open) => {
+        if (!rescoreBusy) setRescoreConfirmOpen(open);
+      }}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {rescoreOnlyProvenanceMismatch ? 'Update outdated trip scores?' : 'Recalculate historical trip scores?'}
+            </DialogTitle>
+            <DialogDescription>
+              Road Sage will recalculate {rescoreCandidateCount} eligible completed trip{rescoreCandidateCount === 1 ? '' : 's'} immediately using the current scoring model and detection settings.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 rounded-xl border border-border bg-secondary/40 p-3 text-sm">
+            <div>Stored Safety, Smoothness, Eco and Overall scores may increase, decrease or stay the same.</div>
+            <div>Reviewed events marked wrong will be removed from scoring.</div>
+            {rescoreIneligibleCount > 0 && (
+              <div className="text-amber-700 dark:text-amber-300">
+                {rescoreIneligibleCount} trip{rescoreIneligibleCount === 1 ? '' : 's'} will be skipped because retained route data is unavailable or the trip is summary-only.
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setRescoreConfirmOpen(false)}
+              disabled={rescoreBusy}
+              className="rounded-xl border border-border px-4 py-2 text-sm font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={rescoreTrips}
+              disabled={rescoreBusy || rescoreCandidateCount === 0}
+              className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {rescoreBusy ? 'Updating...' : `Update ${rescoreCandidateCount} trip${rescoreCandidateCount === 1 ? '' : 's'}`}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(privacyDeleteZone)} onOpenChange={(open) => {
         if (privacyDeleteBusy) return;

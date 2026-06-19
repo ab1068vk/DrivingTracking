@@ -50,9 +50,26 @@ class DriveSenseNativeTripStore {
     }
 
     static void addCompletedTrip(Context context, JSONObject trip) {
-        JSONArray trips = getCompletedTrips(context);
-        trips.put(trip);
-        saveCompletedTrips(context, trips.toString());
+        JSONArray current = getCompletedTrips(context);
+        JSONArray next = new JSONArray();
+        String tripId = trip == null ? "" : trip.optString("id", "");
+        boolean replaced = false;
+        for (int i = 0; i < current.length(); i++) {
+            JSONObject existing = current.optJSONObject(i);
+            if (
+                !replaced &&
+                existing != null &&
+                !tripId.isEmpty() &&
+                tripId.equals(existing.optString("id", ""))
+            ) {
+                next.put(trip);
+                replaced = true;
+            } else if (existing != null) {
+                next.put(existing);
+            }
+        }
+        if (!replaced && trip != null) next.put(trip);
+        saveCompletedTrips(context, next.toString());
     }
 
     static void clearCompletedTrips(Context context) {

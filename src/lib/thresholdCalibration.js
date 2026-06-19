@@ -48,6 +48,12 @@ const feedbackThresholdMap = {
   sharp_turn: { key: 'threshold_sharp_turn_g_medium', margin: 0.05, min: 0.25, max: 0.70 },
 };
 
+const surveyThresholdMap = {
+  harsh_brake: { key: 'threshold_harsh_brake_ms2', baseNudge: 0.2, step: 0.1, maxNudge: 0.6, min: 3.0, max: 7.0 },
+  rapid_acceleration: { key: 'threshold_rapid_accel_ms2', baseNudge: 0.2, step: 0.1, maxNudge: 0.6, min: 2.0, max: 6.0 },
+  sharp_turn: { key: 'threshold_sharp_turn_g_medium', baseNudge: 0.03, step: 0.01, maxNudge: 0.09, min: 0.25, max: 0.70 },
+};
+
 const summarizeEventFeedback = (trips = []) => {
   const byType = {};
   for (const trip of trips) {
@@ -83,6 +89,9 @@ export function summarizeCalibrationSurveyLabels(labels = []) {
         target,
         rating,
         scoreAccuracy: survey.scoreAccuracy ?? survey.score_accuracy ?? null,
+        scoreIssueTypes: Array.isArray(survey.scoreIssueTypes ?? survey.score_issue_types)
+          ? (survey.scoreIssueTypes ?? survey.score_issue_types)
+          : [],
         wasDriver: survey.wasDriver ?? survey.was_driver ?? 'unsure',
         eligible: label?.eligibleForCalibration ?? label?.eligible_for_calibration ?? false,
         uploadStatus: label?.upload_status ?? label?.uploadStatus ?? 'local_only',
@@ -106,8 +115,16 @@ export function summarizeCalibrationSurveyLabels(labels = []) {
   const tooLow = rows.filter((label) => label.scoreAccuracy === 'too_low').length;
   const accurate = rows.filter((label) => label.scoreAccuracy === 'accurate').length;
   const tagCounts = {};
+  const issueCounts = {};
+  const tooHarshIssueCounts = {};
   for (const label of rows) {
     for (const tag of label.contextTags) tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+    for (const issue of label.scoreIssueTypes) {
+      issueCounts[issue] = (issueCounts[issue] || 0) + 1;
+      if (label.scoreAccuracy === 'too_low') {
+        tooHarshIssueCounts[issue] = (tooHarshIssueCounts[issue] || 0) + 1;
+      }
+    }
   }
   const topContextTags = Object.entries(tagCounts)
     .sort((a, b) => b[1] - a[1])
@@ -143,6 +160,8 @@ export function summarizeCalibrationSurveyLabels(labels = []) {
     recommendation,
     confidence: count >= 20 ? 'medium' : count >= 5 ? 'low' : 'very low',
     scoreAccuracy: { accurate, tooHigh, tooLow },
+    issueCounts,
+    tooHarshIssueCounts,
     topContextTags,
     uploadStatus: { uploaded: uploadedCount, localOnly: localOnlyCount, pendingUpload: pendingUploadCount },
   };
@@ -207,8 +226,9 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
   const feedbackSummary = summarizeEventFeedback(completed);
   const surveySummary = summarizeCalibrationSurveyLabels(options.surveyLabels || []);
   const surveyCoverage = summarizeSurveyCoverage(options.surveyLabels || []);
+  const consistentSurveyIssueCount = Math.max(0, ...Object.values(surveySummary.tooHarshIssueCounts || {}));
 
-  if (tripsAnalyzed < 15 && kmAnalyzedRaw < 200 && feedbackSummary.total < 3) {
+  if (tripsAnalyzed < 15 && kmAnalyzedRaw < 200 && feedbackSummary.total < 3 && consistentSurveyIssueCount < 3) {
     return {
       insufficient: true,
       tripsNeeded: Math.max(0, 15 - tripsAnalyzed),
@@ -275,6 +295,24 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
     suggested[config.key] = Math.max(Number(suggested[config.key] || current[config.key]), feedbackTarget);
   }
 
+  const surveyThresholdSignals = [];
+  for (const [issueType, count] of Object.entries(surveySummary.tooHarshIssueCounts || {})) {
+    const config = surveyThresholdMap[issueType];
+    if (!config || count < 3) continue;
+    const nudge = Math.min(config.maxNudge, config.baseNudge + Math.max(0, count - 3) * config.step);
+    const target = roundThreshold(
+      config.key,
+      clamp(Number(current[config.key]) + nudge, config.min, config.max)
+    );
+    suggested[config.key] = Math.max(Number(suggested[config.key] || current[config.key]), target);
+    surveyThresholdSignals.push({
+      issueType,
+      responseCount: count,
+      thresholdKey: config.key,
+      suggestedValue: suggested[config.key],
+    });
+  }
+
   const delta = Object.fromEntries(Object.entries(suggested).map(([key, value]) => [
     key,
     value == null ? null : roundThreshold(key, value - current[key]),
@@ -300,6 +338,7 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
     feedbackSummary,
     surveySummary,
     surveyCoverage,
+    surveyThresholdSignals,
     appliedAt: null,
   };
 }

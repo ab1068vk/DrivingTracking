@@ -16,7 +16,7 @@ export const migrateLegacyAuthTokens = () => {
   }
 };
 
-// TODO: Implement /auth/me and a matching login flow if you want cloud auth.
+// Road Sage is local-first. These backend hooks exist only for optional API deployments.
 export const authService = {
   me: () => apiClient.get("/auth/me"),
 
@@ -28,7 +28,6 @@ export const authService = {
   },
 
   redirectToLogin: (returnTo = window.location.href) => {
-    // TODO: Replace with your backend login route when authentication is implemented.
     const loginUrl = new URL("/login", window.location.origin);
     loginUrl.searchParams.set("returnTo", returnTo);
     window.location.assign(loginUrl.toString());

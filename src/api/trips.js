@@ -89,6 +89,25 @@ export const tripService = {
     return completed.length;
   },
 
+  rescoreCompletedTrips: async (options = {}) => {
+    const local = repository();
+    if (local?.rescoreCompletedTrips) return local.rescoreCompletedTrips(options);
+    const requested = await tripService.markCompletedForRescore(options);
+    return {
+      requested,
+      eligible: requested,
+      completed: 0,
+      changed: 0,
+      unchanged: 0,
+      skipped: 0,
+      failed: 0,
+      queued: requested,
+      changes: [],
+      skippedTrips: [],
+      failures: [],
+    };
+  },
+
   getScoreMigrationSummary: async () => {
     const local = repository();
     if (local?.getScoreMigrationSummary) return local.getScoreMigrationSummary();
@@ -103,6 +122,10 @@ export const tripService = {
       auto_rescore_threshold_ratio: 0.2,
       auto_rescore_recommended: false,
       unavailable_score_count: 0,
+      rescore_eligible_count: 0,
+      rescore_ineligible_count: 0,
+      mismatch_rescore_eligible_count: 0,
+      mismatch_rescore_ineligible_count: 0,
       trips: [],
     };
   },

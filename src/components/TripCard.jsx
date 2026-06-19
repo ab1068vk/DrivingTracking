@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Star, StickyNote, Moon } from 'lucide-react';
+import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Star, StickyNote, Moon, Smartphone } from 'lucide-react';
 import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed, getTripComponentScore } from '@/lib/tripEngine';
 import {
   buildScoreExplanation,
@@ -29,6 +29,7 @@ export default function TripCard({
   const phoneUsePermissionRequired = trip.phone_use_score_status === 'usage_access_required';
   const unavailableScore = overallScore.value == null;
   const privateTrip = trip.privacy_mode === 'summary_only';
+  const routeDataExpired = Boolean(trip.route_data_expired_at);
   const scoreUnavailableMessage = privateTrip
     ? 'Score unavailable because this private trip saved no route data'
     : SCORE_UNAVAILABLE_MESSAGE;
@@ -40,6 +41,13 @@ export default function TripCard({
   const displayTags = trip.night_driving && !tags.includes('night') ? [...tags, 'night'] : tags;
   const title = getTripDisplayName(trip);
   const openTrip = () => navigate(`/trips/${trip.id}`);
+  const confirmedPhoneUseEvents = [
+    ...(Array.isArray(trip.phone_use_events) ? trip.phone_use_events : []),
+    ...(Array.isArray(trip.driving_events) ? trip.driving_events.filter((event) => event?.type === 'phone_use') : []),
+  ].filter((event) => event?.source === 'android_usage_access' || (event?.type === 'phone_use' && event?.diagnostic_only !== true && event?.source !== 'gps_proxy'));
+  const confirmedPhoneUseCount = trip.phone_use_score_available === true || trip.phone_use_score_status === 'android_usage_access'
+    ? Math.max(Number(trip.phone_use_window_count) || 0, confirmedPhoneUseEvents.length)
+    : 0;
 
   return (
     <motion.div
@@ -125,6 +133,16 @@ export default function TripCard({
             </div>
           )}
 
+          {routeDataExpired && !privateTrip && (
+            <div
+              className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-300"
+              title="Raw GPS retention removed the route coordinates. The trip summary, score, distance, and duration are still saved."
+            >
+              <ShieldAlert className="h-3.5 w-3.5" />
+              Route expired - summary kept
+            </div>
+          )}
+
           {displayTags.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {displayTags.map((tagId) => {
@@ -139,7 +157,7 @@ export default function TripCard({
             </div>
           )}
 
-          {(trip.harsh_brakes_count > 0 || trip.rapid_accel_count > 0 || trip.sharp_turns_count > 0 || trip.speeding_events_count > 0) && (
+          {(trip.harsh_brakes_count > 0 || trip.rapid_accel_count > 0 || trip.sharp_turns_count > 0 || trip.speeding_events_count > 0 || confirmedPhoneUseCount > 0) && (
             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
               {trip.harsh_brakes_count > 0 && (
                 <span className="text-xs bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/40 px-1.5 py-0.5 rounded-md">
@@ -159,6 +177,11 @@ export default function TripCard({
               {trip.speeding_events_count > 0 && (
                 <span className="text-xs bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-800/40 px-1.5 py-0.5 rounded-md">
                   {trip.speeding_events_count} speed
+                </span>
+              )}
+              {confirmedPhoneUseCount > 0 && (
+                <span title={`${confirmedPhoneUseCount} confirmed phone-use window${confirmedPhoneUseCount > 1 ? 's' : ''}`} className="inline-flex items-center gap-1 text-xs bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/40 px-1.5 py-0.5 rounded-md">
+                  <Smartphone className="w-3 h-3" /> {confirmedPhoneUseCount} phone
                 </span>
               )}
             </div>

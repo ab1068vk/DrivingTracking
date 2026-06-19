@@ -1,4 +1,5 @@
 import { geohashEncode } from '@/lib/localSpeedKnowledge';
+import { buildRoadSectionIdentity, isPublicPoint } from '@/lib/roadSectionIdentity';
 
 const POSTED_SPEED_LIMIT_SOURCES = new Set([
   'openstreetmap',
@@ -25,14 +26,7 @@ function pointLimit(point = {}) {
 }
 
 function validPublicPoint(point = {}) {
-  const lat = Number(point.lat);
-  const lng = Number(point.lng);
-  return Number.isFinite(lat) &&
-    Number.isFinite(lng) &&
-    point.privacy_export_placeholder !== true &&
-    point.masked_for_privacy !== true &&
-    point.privacy_gap !== true &&
-    point.privacy_live_redacted !== true;
+  return isPublicPoint(point);
 }
 
 function mostCommon(values = []) {
@@ -98,6 +92,7 @@ export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {})
     if (hasPostedSource && !nativeDeferred) continue;
     if (!hasEstimatedSource && !hasMissingLimit && !nativeDeferred) continue;
 
+    const identity = buildRoadSectionIdentity(trip, group.geohash);
     candidates.push({
       geohash: group.geohash,
       lat: group.sampleLat,
@@ -114,6 +109,7 @@ export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {})
       tripReview: true,
       conflict: false,
       reviewReason: reviewReasonForTrip(trip, hasMissingLimit, hasEstimatedSource),
+      ...(identity || {}),
     });
   }
 

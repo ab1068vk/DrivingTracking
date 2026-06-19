@@ -9,6 +9,7 @@ import {
   prepareMapRoutePoints,
   restoreOriginalRouteGeometry,
   routeDistanceAtPlaybackPosition,
+  selectMapRoutePoints,
 } from '@/lib/mapPlaybackInsights';
 
 const point = (index, speed = 40, extra = {}) => ({
@@ -20,6 +21,23 @@ const point = (index, speed = 40, extra = {}) => ({
 });
 
 describe('mapPlaybackInsights', () => {
+  it('keeps plausible recorded breadcrumbs when strict scoring cleanup collapses the map route', () => {
+    const start = Date.UTC(2026, 5, 17, 20, 0, 0);
+    const recorded = Array.from({ length: 12 }, (_, index) => ({
+      lat: 43.36 + index * 0.0001,
+      lng: -80.31 + index * 0.0001,
+      speed_kmh: 25,
+      accuracy: 12,
+      timestamp: new Date(start + index * 2000).toISOString(),
+    }));
+    const strict = [recorded[0], recorded[6], recorded[11]];
+
+    const selection = selectMapRoutePoints(strict, recorded);
+
+    expect(selection.usedRecordedFallback).toBe(true);
+    expect(selection.points).toHaveLength(12);
+  });
+
   it('builds a playback timeline with segments, events, stops, and violations', () => {
     const points = [
       point(0, 20, { speed_limit_kmh: 50 }),

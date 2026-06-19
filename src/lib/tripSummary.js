@@ -1,4 +1,5 @@
 import { routeKeyForTrip } from '@/lib/commuteMatching';
+import { buildCompactPhoneUseSummary } from '@/lib/phoneUseSummary';
 
 export const TRIP_SUMMARY_VERSION = 1;
 
@@ -33,6 +34,7 @@ export function buildTripSummary(trip = {}) {
 
   return {
     ...summary,
+    phone_use_summary: buildCompactPhoneUseSummary(trip),
     route_key: trip.route_key || routeKeyForTrip(trip),
     route_replay_available: trip.route_replay_available === true || hasReplayableRoute(trip),
     summary_version: TRIP_SUMMARY_VERSION,

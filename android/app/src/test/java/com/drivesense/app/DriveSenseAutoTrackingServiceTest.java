@@ -161,6 +161,12 @@ public class DriveSenseAutoTrackingServiceTest {
             DriveSenseAutoTrackingService.calculateLateralG(40d, 50d, 2_000L),
             0.001d
         );
+        assertEquals(
+            0d,
+            DriveSenseAutoTrackingService.calculateAngularStdDev(new double[]{ 358d, 0d, 2d }),
+            2.0d
+        );
+        assertTrue(DriveSenseAutoTrackingService.calculateAngularStdDev(new double[]{ 350d, 10d, 40d }) > 15d);
     }
 
     @Test

@@ -27,9 +27,9 @@ describe('Android phone usage access merge', () => {
       MEDIUM_SPEED_KMH: 50,
     });
     expect(PHONE_USE_PENALTY_POINTS).toMatchObject({
-      high: 20,
-      medium: 10,
-      low: 4,
+      high: 65,
+      medium: 35,
+      low: 15,
     });
   });
 

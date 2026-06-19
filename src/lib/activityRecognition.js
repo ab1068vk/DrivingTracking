@@ -125,6 +125,76 @@ export async function startNativeAutoTracking() {
   }
 }
 
+export async function startNativeManualTrip({ startTime = null, tripId = null } = {}) {
+  if (!isAndroid()) return false;
+  if (nativePrivacyZoneSyncBlocked()) {
+    recordSystemEvent('android_native_manual_trip_blocked_privacy_sync', {
+      reason: 'privacy_zones_native_sync_failed',
+    }, {
+      category: 'privacy',
+      source: 'android',
+      severity: 'warn',
+      title: 'Native manual trip blocked',
+      message: 'Re-save privacy zones before starting Android background manual trips.',
+    });
+    throw new Error('Android privacy-zone sync is not verified. Re-save privacy zones before starting a background manual trip.');
+  }
+  const startMs = startTime ? new Date(startTime).getTime() : Date.now();
+  try {
+    const result = await ActivityRecognition.startNativeManualTrip({
+      startTimeMs: Number.isFinite(startMs) ? startMs : Date.now(),
+      tripId: tripId || undefined,
+    });
+    const enabled = result?.enabled === true;
+    recordSystemEvent('android_native_manual_trip_started', { enabled }, {
+      category: 'background',
+      source: 'android',
+      severity: enabled ? 'info' : 'warn',
+      title: 'Native manual trip start requested',
+    });
+    return enabled;
+  } catch (error) {
+    logSystemFailure('android_native_manual_trip_start', error);
+    throw error;
+  }
+}
+
+export async function discardNativeManualTrip({ keepArmed = false } = {}) {
+  if (!isAndroid()) return false;
+  try {
+    const result = await ActivityRecognition.discardNativeManualTrip({ keepArmed });
+    recordSystemEvent('android_native_manual_trip_discarded', {
+      enabled: result?.enabled === true,
+    }, {
+      category: 'background',
+      source: 'android',
+      title: 'Native manual trip mirror discarded',
+    });
+    return true;
+  } catch (error) {
+    logSystemFailure('android_native_manual_trip_discard', error);
+    throw error;
+  }
+}
+
+export async function endNativeActiveTrip({ keepArmed = false } = {}) {
+  if (!isAndroid()) return false;
+  try {
+    const result = await ActivityRecognition.endNativeActiveTrip({ keepArmed });
+    recordSystemEvent('android_native_active_trip_end_requested', {
+      enabled: result?.enabled === true,
+    }, {
+      category: 'background',
+      source: 'android',
+      title: 'Native active trip end requested',
+    });
+    return true;
+  } catch (error) {
+    logSystemFailure('android_native_active_trip_end', error);
+    throw error;
+  }
+}
+
 export async function stopNativeAutoTracking() {
   if (!isAndroid()) return false;
   try {

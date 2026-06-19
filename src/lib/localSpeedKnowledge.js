@@ -15,6 +15,7 @@ export const SPEED_KNOWLEDGE_CHANGED_EVENT = 'speed-knowledge-changed';
 export const CELL_PRECISION = 6;
 export const FALLBACK_PRECISION = 5;
 const CACHEABLE_SOURCES = new Set(['openstreetmap', 'user_confirmed_posted_sign']);
+const NULL_ISLAND_EPSILON = 0.001;
 
 const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
 
@@ -138,6 +139,16 @@ function correctionConfidence(source) {
 
 function pointSource(point) {
   return point?.source ?? point?.speed_limit_source ?? point?.limitSource ?? null;
+}
+
+function isUsableCoordinate(lat, lng) {
+  return Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180 &&
+    !(Math.abs(lat) < NULL_ISLAND_EPSILON && Math.abs(lng) < NULL_ISLAND_EPSILON);
 }
 
 function timestampForPoint(point) {
@@ -285,11 +296,11 @@ export class LocalSpeedKnowledge {
     }
   }
 
-  async saveUserCorrection(lat, lng, limitKmh, note = '', expiresAt = null, privacyZones = [], source = 'user_entered_estimate') {
+  async saveUserCorrection(lat, lng, limitKmh, note = '', expiresAt = null, privacyZones = [], source = 'user_entered_estimate', metadata = {}) {
     const latitude = Number(lat);
     const longitude = Number(lng);
     const limit = Number(limitKmh);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !Number.isFinite(limit) || limit <= 0) return false;
+    if (!isUsableCoordinate(latitude, longitude) || !Number.isFinite(limit) || limit <= 0) return false;
     if (isInsidePrivacyZone(latitude, longitude, privacyZones)) return false;
 
     try {
@@ -311,6 +322,15 @@ export class LocalSpeedKnowledge {
         source: correctionType,
         appliedAt: new Date().toISOString(),
         expiresAt,
+        roadName: String(metadata.roadName || '').trim(),
+        contextLabel: String(metadata.contextLabel || '').trim(),
+        directionLabel: String(metadata.directionLabel || '').trim(),
+        timeLabel: String(metadata.timeLabel || '').trim(),
+        distanceM: Number(metadata.distanceM) || 0,
+        sectionPoints: (Array.isArray(metadata.sectionPoints) ? metadata.sectionPoints : [])
+          .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng) }))
+          .filter((point) => isUsableCoordinate(point.lat, point.lng))
+          .slice(0, 24),
       });
       await this._store.set(STORAGE_KEY, data);
       recordSpeedKnowledgeEvent('save_correction', { source: correctionType });

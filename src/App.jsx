@@ -13,6 +13,7 @@ import { activeTripStore, applyThemeMode, localSettings } from '@/lib/trackingSt
 import { loadPrivacyZonesFromStorage } from '@/lib/privacyZones';
 import { isAndroid } from '@/lib/nativePlatform';
 import { startNativeAutoTracking } from '@/lib/activityRecognition';
+import { tripQueryKeys } from '@/api/trips';
 import { openExportLocation } from '@/lib/nativeDownloads';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { setScreenCaptureAllowed } from '@/lib/screenSecurity';
@@ -25,6 +26,23 @@ import Layout from '@/components/Layout';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LegalNoticeDialog from '@/components/LegalNoticeDialog';
 import { LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
+
+async function syncNativeCompletedTripsToLocalStore() {
+  if (!isAndroid()) return;
+  const { syncNativeCompletedTrips } = await import('@/lib/localTripRepository');
+  const result = await syncNativeCompletedTrips();
+  if (result.importedTrips.length) {
+    queryClientInstance.invalidateQueries({ queryKey: tripQueryKeys.summaries }).catch(() => {});
+  }
+  recordSystemEvent('native_completed_trips_synced', {
+    trip_count: result.importedTrips.length,
+    matched_active_manual_trip: Boolean(result.matchedActiveTrip),
+  }, {
+    category: 'background',
+    source: 'android',
+    title: 'Native completed trips imported',
+  });
+}
 
 const showDebugRoutes = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEBUG_ROUTES === 'true';
 const Onboarding = lazy(() => import('@/pages/Onboarding'));
@@ -118,6 +136,7 @@ const AuthenticatedApp = () => {
       setAppLocked(lockEnabled);
       await loadPrivacyZonesFromStorage(settings);
       await activeTripStore.hydrate();
+      await syncNativeCompletedTripsToLocalStore();
       notificationService
         .then(({ syncReminderNotifications }) => syncReminderNotifications(settings, { requestPermission: false }))
         .catch((error) => logSystemFailure('reminder_notifications_sync', error));
@@ -193,6 +212,8 @@ const AuthenticatedApp = () => {
 
     CapacitorApp.addListener('appStateChange', ({ isActive }) => {
       if (isActive) {
+        syncNativeCompletedTripsToLocalStore()
+          .catch((error) => logSystemFailure('app_resume_native_completed_trips_sync', error));
         checkAndRotateEncryptionKey()
           .catch((error) => logSystemFailure('app_resume_key_rotation_check', error));
         import('@/lib/roadContextQueue')

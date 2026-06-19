@@ -163,6 +163,29 @@ describe('thresholdCalibration', () => {
     });
   });
 
+  it('uses three consistent too-harsh score reviews to influence a personal threshold suggestion', () => {
+    const surveyLabels = Array.from({ length: 3 }, (_, index) => ({
+      eligibleForCalibration: true,
+      scoreOutput: { overall: 70 + index },
+      surveyLabel: {
+        scoreAccuracy: 'too_low',
+        scoreIssueTypes: ['harsh_brake'],
+        overallDriveRating: 4,
+        targetScore: 80 + index,
+        wasDriver: 'yes',
+      },
+    }));
+    const profile = computeCalibrationProfile([trip(1, 10, [30, 35, 32])], thresholds, { surveyLabels });
+
+    expect(profile.insufficient).toBe(false);
+    expect(profile.surveyThresholdSignals).toContainEqual(expect.objectContaining({
+      issueType: 'harsh_brake',
+      responseCount: 3,
+      thresholdKey: 'threshold_harsh_brake_ms2',
+    }));
+    expect(profile.suggested.threshold_harsh_brake_ms2).toBeGreaterThan(thresholds.HARSH_BRAKE_MS2);
+  });
+
   it('summarizes survey coverage by road type and context', () => {
     const labels = [
       {

@@ -320,7 +320,7 @@ describe('release blocker regressions', () => {
     const expectedImpact = Math.max(1, Math.round((100 - scores.phone_use_score) * PHONE_USE_SAFETY_WEIGHT));
     const tripDetailSource = readFileSync(new URL('../../pages/TripDetail.jsx', import.meta.url), 'utf8');
 
-    expect(expectedImpact).toBe(3);
+    expect(expectedImpact).toBe(12);
     expect(tripDetailSource).toContain('PHONE_USE_SAFETY_WEIGHT');
     expect(tripDetailSource).toContain('phoneUseSafetyImpactPoints');
     expect(tripDetailSource).toContain(`Phone use reduced your Safety score by about {phoneUseSafetyImpactPoints}`);
@@ -849,7 +849,7 @@ describe('release blocker regressions', () => {
 
     expect(appSource).toContain('context="trip_detail_page"');
     expect(tripDetailSource).toContain('context="trip_detail_score_overview"');
-    expect(tripDetailSource).toContain('<TripScoreOverview trip={trip} />');
+    expect(tripDetailSource).toContain('<TripScoreOverview trip={trip} speedLimitSourceBreakdown={speedLimitSourceBreakdown} />');
     expect(dashboardSource).toContain('context="dashboard_risk_panel"');
     expect(dashboardSource).toContain('<DashboardRiskPanel');
     expect(tripMapSource).toContain('context="trip_map"');
@@ -910,12 +910,37 @@ describe('release blocker regressions', () => {
     const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
     const settingsSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
     const onboardingSource = readFileSync(new URL('../../pages/Onboarding.jsx', import.meta.url), 'utf8');
+    const liveCoachSource = readFileSync(new URL('../../components/LiveCoachOverlay.jsx', import.meta.url), 'utf8');
+    const nativeServiceSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
 
     expect(dashboardSource).toContain('Foreground GPS only');
     expect(dashboardSource).toContain('recording notification is visible');
     expect(dashboardSource).toContain('fully close or force-stop');
     expect(dashboardSource).toContain('force-stopped, GPS may pause');
+    expect(dashboardSource).toContain("voice_alert_owner: nativeManualBackground ? 'native_android' : 'webview'");
+    expect(dashboardSource).toContain('shouldMuteDashboardWebViewVoice');
+    expect(dashboardSource).toContain('getVoiceAlertDeliveryStatus');
+    expect(liveCoachSource).toContain('voiceMuted = false');
+    expect(liveCoachSource).toContain('!normalized.silent && !voiceMuted');
+    expect(nativeServiceSource).toContain('speakTrackingReadyOnce');
+    expect(nativeServiceSource).toContain('TRACKING_READY_ALERT_RETRY_MS');
+    expect(nativeServiceSource).toContain('trackingReadyAlertPending = false');
+    expect(nativeServiceSource).toContain('recordNativeVoiceAlertAccepted');
+    expect(nativeServiceSource).toContain('voice_alert_spoken');
+    expect(nativeServiceSource).toContain('Native voice alert accepted.');
+    expect(nativeServiceSource).toContain('JSONObject usage = DriveSensePhoneUsageTracker.queryTripUsage(this, queryStartMs, nowMs);');
+    expect(nativeServiceSource).not.toContain('nowMs - ANDROID_USAGE_ACCESS_LOOKBACK_MS');
+    expect(nativeServiceSource).toContain('SPEED_ALERT_ESTIMATED_COOLDOWN_MS');
+    expect(nativeServiceSource).toContain('inferred_voice_margin_kmh');
+    expect(nativeServiceSource).toContain('CLOSE_MANOEUVRE_ALERT_COOLDOWN_MS');
+    expect(nativeServiceSource).toContain('STOP_START_ALERT_CYCLES');
+    expect(nativeServiceSource).toContain('HEADING_DRIFT_HIGHWAY_SHARE');
+    expect(nativeServiceSource).toContain('Close manoeuvre detected. Create space, then review conditions when safe.');
+    expect(nativeServiceSource).toContain('Repeated stop-start pattern recorded. Add space ahead and keep inputs smooth.');
+    expect(nativeServiceSource).toContain('Attention pattern recorded. Keep your eyes up and plan a break if you feel tired.');
     expect(settingsSource).toContain('force-closing can still stop Android tracking');
+    expect(settingsSource).toContain('Manual Android trips use a native background service for speech');
+    expect(settingsSource).toContain('voiceDeliveryStatus.label');
     expect(onboardingSource).toContain('Do not force-close the app during a drive');
   });
 

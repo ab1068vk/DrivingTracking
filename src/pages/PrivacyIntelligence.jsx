@@ -283,6 +283,7 @@ export default function PrivacyIntelligence() {
 function OverviewTab({ data, onOpenTab, onOpenSettings }) {
   const score = data?.score || {};
   const zoneSummary = data?.zoneSummary || {};
+  const drivingReadout = data?.drivingReadout || {};
   const transmissions = data?.transmissions || {};
   const recommendations = data?.recommendations || [];
   const actionPlan = data?.actionPlan || {};
@@ -380,20 +381,31 @@ function OverviewTab({ data, onOpenTab, onOpenSettings }) {
 
       <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard icon={EyeOff} label="Protected today" value={(zoneSummary.pointsToday || 0) + (zoneSummary.eventsToday || 0)} detail={`${zoneSummary.pointsToday || 0} GPS samples, ${zoneSummary.eventsToday || 0} events`} />
-        <SummaryCard icon={Radio} label="Requests this week" value={transmissions.weekTotal || 0} detail={`${transmissions.protectedTotal || 0} protected, ${transmissions.totalRawCoords || 0} raw, ${transmissions.claimedButUnverifiedCount || 0} unverified`} tone={(transmissions.totalRawCoords || transmissions.claimedButUnverifiedCount) ? 'warn' : 'default'} onClick={() => onOpenTab('transmissions')} />
+        <SummaryCard icon={MapPin} label="Recent trip coverage" value={drivingReadout.recentProtectionRate == null ? 'N/A' : `${drivingReadout.recentProtectionRate}%`} detail={`${drivingReadout.recentProtectedTripCount || 0}/${drivingReadout.recentTripCount || 0} recent trips touched a zone`} tone={drivingReadout.recentTripCount && !drivingReadout.recentProtectedTripCount && zoneSummary.zoneCount ? 'warn' : 'default'} onClick={() => onOpenTab('zones')} />
+        <SummaryCard icon={Radio} label="Outbound confidence" value={`${transmissions.outboundReadout?.confidence ?? 0}`} detail={`${transmissions.weekTotal || 0} requests this week · ${transmissions.totalRawCoords || 0} raw · ${transmissions.claimedButUnverifiedCount || 0} unverified`} tone={transmissions.outboundReadout?.tone === 'error' ? 'error' : transmissions.outboundReadout?.tone === 'warn' ? 'warn' : 'default'} onClick={() => onOpenTab('transmissions')} />
         <SummaryCard icon={ShieldCheck} label="Protections active" value={data?.protectionSummary?.active || 0} detail={`${data?.protectionSummary?.warnings || 0} warnings, ${data?.protectionSummary?.errors || 0} errors`} onClick={() => onOpenTab('protections')} />
-        <SummaryCard icon={History} label="Audit integrity" value={data?.chainResult?.valid ? 'Verified' : 'Needs review'} detail={`${data?.chain?.length || 0} chained entries`} tone={data?.chainResult?.valid ? 'ok' : 'error'} onClick={() => onOpenTab('audit')} />
       </div>
 
       <div className="grid min-w-0 gap-4 lg:grid-cols-2">
         <section className="min-w-0 rounded-2xl border border-border bg-card p-4 shadow-sm">
-          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><h2 className="font-semibold">Protected activity</h2><p className="mt-1 break-words text-xs text-muted-foreground">Derived from saved redacted trip records, not screen views.</p></div><button type="button" onClick={() => onOpenTab('zones')} className="shrink-0 text-xs font-semibold text-primary">View zones</button></div>
+          <div className="flex min-w-0 flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><h2 className="font-semibold">Driving privacy readout</h2><p className="mt-1 break-words text-xs text-muted-foreground">Derived from saved trips, redacted records, and configured zone guards.</p></div><button type="button" onClick={() => onOpenTab('zones')} className="shrink-0 text-xs font-semibold text-primary">View zones</button></div>
           <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2">
+            <MiniMetric label="Trips analyzed" value={drivingReadout.tripCount || 0} />
+            <MiniMetric label="Trips with private endpoints" value={drivingReadout.privateEndpointTripCount || 0} />
             <MiniMetric label="GPS samples this week" value={zoneSummary.pointsWeek || 0} />
             <MiniMetric label="Events this week" value={zoneSummary.eventsWeek || 0} />
             <MiniMetric label="Active zones" value={`${zoneSummary.activeZoneCount || 0}/${zoneSummary.zoneCount || 0}`} />
             <MiniMetric label="Latest protection" value={zoneSummary.latestAt ? formatRelativeTime(zoneSummary.latestAt) : 'None yet'} />
           </div>
+          {(drivingReadout.recommendedChecks || []).length > 0 && (
+            <div className="mt-3 space-y-2">
+              {drivingReadout.recommendedChecks.slice(0, 3).map((item) => (
+                <button key={item} type="button" onClick={() => onOpenTab('zones')} className="w-full rounded-xl border border-amber-200 bg-amber-50 p-3 text-left text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                  {item}
+                </button>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="min-w-0 rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -409,6 +421,7 @@ function OverviewTab({ data, onOpenTab, onOpenSettings }) {
           </div>
         </section>
       </div>
+      <SummaryCard icon={History} label="Audit integrity" value={data?.chainResult?.valid ? 'Verified' : 'Needs review'} detail={`${data?.chain?.length || 0} chained entries`} tone={data?.chainResult?.valid ? 'ok' : 'error'} onClick={() => onOpenTab('audit')} />
       <button type="button" onClick={() => setShowThreatModel(true)} className="w-full text-center text-xs text-muted-foreground underline underline-offset-4">
         Local privacy activity and protection checks - not an external security audit.
       </button>
@@ -466,6 +479,7 @@ function MiniMetric({ label, value }) {
 
 function TransmissionsTab({ data, onClear }) {
   const entries = data?.transmissions?.entries || [];
+  const outboundReadout = data?.transmissions?.outboundReadout || {};
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');
   const [service, setService] = useState('all');
@@ -483,12 +497,50 @@ function TransmissionsTab({ data, onClear }) {
 
   return (
     <div className="space-y-4">
+      <section className={`rounded-2xl border p-4 shadow-sm ${actionToneClass[outboundReadout.tone] || actionToneClass.unknown}`}>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="text-xs font-bold uppercase tracking-wide opacity-70">Outbound privacy confidence</div>
+            <h2 className="mt-1 break-words text-lg font-semibold">{outboundReadout.headline || 'Outbound privacy evidence unavailable'}</h2>
+            <p className="mt-1 break-words text-sm opacity-85">This judges retained local records for what left the app. It is stronger than a count, but still depends on app-recorded metadata rather than packet capture.</p>
+          </div>
+          <div className="shrink-0 rounded-xl bg-background/70 px-4 py-3 text-center shadow-sm">
+            <div className="font-grotesk text-3xl font-bold">{outboundReadout.confidence ?? 0}</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">confidence</div>
+          </div>
+        </div>
+        {(outboundReadout.findings || []).length > 0 && (
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            {outboundReadout.findings.map((item) => (
+              <div key={item.id} className="rounded-xl border border-current/20 bg-background/55 p-3">
+                <div className="text-sm font-semibold">{item.title}</div>
+                <div className="mt-1 text-xs opacity-80">{item.detail}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard icon={ShieldCheck} label="Verified transforms" value={data?.transmissions?.protectedTotal || 0} detail={`${data?.transmissions?.claimedButUnverifiedCount || 0} unverified claim${data?.transmissions?.claimedButUnverifiedCount === 1 ? '' : 's'}`} />
         <SummaryCard icon={Ban} label="Blocked requests" value={data?.transmissions?.blockedTotal || 0} detail="Nothing was sent" />
         <SummaryCard icon={AlertTriangle} label="Raw-coordinate sends" value={data?.transmissions?.totalRawCoords || 0} detail={`${rawWithConsent} consented, ${rawWithoutConsent} missing consent evidence`} tone={rawWithoutConsent ? 'error' : data?.transmissions?.totalRawCoords ? 'warn' : 'default'} />
         <SummaryCard icon={Database} label="Outbound metadata" value={formatBytes(data?.transmissions?.totalBytesOut)} detail="Retained locally for 30 days" />
       </div>
+
+      {(outboundReadout.serviceSummaries || []).length > 0 && (
+        <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+          <div className="flex flex-col gap-1">
+            <h2 className="font-semibold">What can leave the app</h2>
+            <p className="text-xs text-muted-foreground">Service policies are compared with retained transmission records so missing evidence and risky raw sends stand out.</p>
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            {outboundReadout.serviceSummaries.map((service) => (
+              <ServicePrivacyCard key={service.service} service={service} />
+            ))}
+          </div>
+        </section>
+      )}
 
       {(rawWithoutConsent || rawWithConsent || unverifiedClaims) > 0 && (
         <div className={`rounded-2xl border p-4 text-sm shadow-sm ${rawWithoutConsent ? statusClass.error : statusClass.warn}`}>
@@ -518,6 +570,35 @@ function TransmissionsTab({ data, onClear }) {
       <div className="text-xs text-muted-foreground">Showing {filtered.length} of {entries.length} retained record{entries.length === 1 ? '' : 's'}</div>
       {filtered.length === 0 ? <EmptyState text={entries.length ? 'No transmissions match these filters.' : 'No outbound data records yet.'} /> : filtered.map((entry) => <TransmissionCard key={entry.id} entry={entry} />)}
     </div>
+  );
+}
+
+function ServicePrivacyCard({ service }) {
+  const toneClass = actionToneClass[service.tone] || actionToneClass.unknown;
+  const disclosureText = service.worstDisclosure === 'none'
+    ? service.expectedDisclosure || 'none'
+    : service.worstDisclosure;
+  return (
+    <article className={`rounded-2xl border p-4 shadow-sm ${toneClass}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="break-words font-semibold">{service.label}</div>
+          <div className="mt-1 break-words text-xs opacity-80">{service.usefulFor}</div>
+        </div>
+        <span className="rounded-full bg-background/70 px-2 py-1 text-[11px] font-bold uppercase tracking-wide">{service.verdict}</span>
+      </div>
+      <div className="mt-3 rounded-xl bg-background/55 p-3 text-xs">
+        <div><span className="font-semibold">Expected safe shape:</span> {service.safeShape}</div>
+        <div className="mt-1"><span className="font-semibold">Retained evidence:</span> {service.retainedCount} record{service.retainedCount === 1 ? '' : 's'} · worst shape {disclosureText}</div>
+        <div className="mt-1"><span className="font-semibold">Latest:</span> {service.latestAt ? formatTime(service.latestAt) : service.enabled ? 'No retained record yet' : 'Disabled or manual only'}</div>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-4">
+        <ZoneMetric label="Protected" value={service.protectedCount} />
+        <ZoneMetric label="Raw" value={service.rawCount} />
+        <ZoneMetric label="Blocked" value={service.blockedCount} />
+        <ZoneMetric label="Bytes out" value={formatBytes(service.bytesOut)} />
+      </div>
+    </article>
   );
 }
 
@@ -589,7 +670,15 @@ function ProtectionsTab({ data, onOpenSettings }) {
 function ZonesTab({ data }) {
   const zones = data?.zones || [];
   const summary = data?.zoneSummary || {};
-  if (!zones.length) return <EmptyState text="No privacy zones are configured. Add one in Settings to hide sensitive route areas." />;
+  const drivingReadout = data?.drivingReadout || {};
+  if (!zones.length) {
+    return (
+      <div className="space-y-4">
+        <EmptyState text={drivingReadout.tripCount ? `No privacy zones are configured, but ${drivingReadout.tripCount} trip${drivingReadout.tripCount === 1 ? '' : 's'} were found. Add home, work, or sensitive-place zones in Settings so endpoint GPS can be hidden.` : 'No privacy zones are configured. Add one in Settings to hide sensitive route areas.'} />
+        <SummaryCard icon={Activity} label="Trips analyzed" value={drivingReadout.tripCount || 0} detail={drivingReadout.latestTripAt ? `Latest trip ${formatRelativeTime(drivingReadout.latestTripAt)}` : 'No completed trips found'} />
+      </div>
+    );
+  }
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -597,25 +686,54 @@ function ZonesTab({ data }) {
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard icon={MapPin} label="Configured zones" value={summary.zoneCount || 0} detail={`${summary.activeZoneCount || 0} have protected trip activity`} />
+        <SummaryCard icon={Activity} label="Trips analyzed" value={drivingReadout.tripCount || 0} detail={`${drivingReadout.tripsWithProtectedActivity || 0} with protected activity`} />
+        <SummaryCard icon={Lock} label="Private endpoints" value={drivingReadout.privateEndpointTripCount || 0} detail="Trips starting or ending inside a zone" />
         <SummaryCard icon={EyeOff} label="GPS samples today" value={summary.pointsToday || 0} detail={`${summary.pointsWeek || 0} this week`} />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard icon={Activity} label="Events today" value={summary.eventsToday || 0} detail={`${summary.eventsWeek || 0} this week`} />
         <SummaryCard icon={Clock3} label="Latest protection" value={summary.latestAt ? formatRelativeTime(summary.latestAt) : 'None'} detail={summary.latestAt ? formatTime(summary.latestAt) : 'No saved trip has crossed a zone'} />
+        <SummaryCard icon={AlertTriangle} label="Untouched zones" value={drivingReadout.untouchedZoneCount || 0} detail={`${drivingReadout.staleZoneCount || 0} stale for 90+ days`} tone={drivingReadout.untouchedZoneCount ? 'warn' : 'default'} />
+        <SummaryCard icon={XCircle} label="Raw points in zones" value={drivingReadout.rawPointInsideZoneCount || 0} detail="Saved samples that still match zone guards" tone={drivingReadout.rawPointInsideZoneCount ? 'error' : 'default'} />
       </div>
+      {(drivingReadout.recommendedChecks || []).length > 0 && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+          <div className="font-semibold">Zone checks to make this useful</div>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {drivingReadout.recommendedChecks.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </section>
+      )}
       <div className="grid gap-3 lg:grid-cols-2">
-        {zones.map((zone) => (
-          <article key={zone.id} className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-3"><div><div className="font-semibold">{zone.label}</div><div className="mt-1 text-xs text-muted-foreground">{Math.round(zone.radius_m)} m mask radius</div></div><span className={`rounded-full px-2 py-1 text-xs font-semibold ${zone.lastActive ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100' : 'bg-secondary text-muted-foreground'}`}>{zone.lastActive ? 'Protected activity' : 'Ready'}</span></div>
-            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
-              <ZoneMetric label="GPS today" value={zone.today.hidden} />
-              <ZoneMetric label="Events today" value={zone.today.events} />
-              <ZoneMetric label="GPS this week" value={zone.week.hidden} />
-              <ZoneMetric label="Events this week" value={zone.week.events} />
-              <ZoneMetric label="GPS all time" value={zone.allTime.hidden} />
-              <ZoneMetric label="Events all time" value={zone.allTime.events} />
-            </div>
-            <div className="mt-3 text-xs text-muted-foreground">Last protected record: {zone.lastActive ? formatTime(zone.lastActive) : 'No saved suppression record yet'}</div>
-          </article>
-        ))}
+        {zones.map((zone) => {
+          const zoneReadout = (drivingReadout.zoneSummaries || []).find((item) => item.id === zone.id) || {};
+          const zoneVerdict = zoneReadout.lastActive
+            ? `${zoneReadout.protectedRecords || 0} protected records`
+            : drivingReadout.tripCount
+              ? 'Configured but not matched'
+              : 'Ready for future trips';
+          return (
+            <article key={zone.id} className={`rounded-2xl border p-4 shadow-sm ${zone.lastActive ? statusClass.ok : 'border-border bg-card'}`}>
+              <div className="flex items-start justify-between gap-3"><div><div className="font-semibold">{zone.label}</div><div className="mt-1 text-xs opacity-80">{Math.round(zone.radius_m)} m mask radius - {zoneVerdict}</div></div><span className={`rounded-full px-2 py-1 text-xs font-semibold ${zone.lastActive ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100' : 'bg-secondary text-muted-foreground'}`}>{zone.lastActive ? 'Protecting' : 'Ready'}</span></div>
+              <div className="mt-3 rounded-xl bg-background/55 p-3 text-xs opacity-85">
+                {zone.lastActive
+                  ? `Last matched a saved trip ${formatRelativeTime(zone.lastActive)}. Route samples or events were hidden for this zone.`
+                  : drivingReadout.tripCount
+                    ? 'No saved trip has matched this zone yet. Check the radius or whether this is actually where trips start, end, or pass through.'
+                    : 'This zone is configured and will be checked when trips are saved.'}
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <ZoneMetric label="GPS today" value={zone.today.hidden} />
+                <ZoneMetric label="Events today" value={zone.today.events} />
+                <ZoneMetric label="GPS this week" value={zone.week.hidden} />
+                <ZoneMetric label="Events this week" value={zone.week.events} />
+                <ZoneMetric label="GPS all time" value={zone.allTime.hidden} />
+                <ZoneMetric label="Events all time" value={zone.allTime.events} />
+              </div>
+              <div className="mt-3 text-xs opacity-80">Last protected record: {zone.lastActive ? formatTime(zone.lastActive) : 'No saved suppression record yet'}</div>
+            </article>
+          );
+        })}
       </div>
     </div>
   );

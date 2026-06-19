@@ -20,6 +20,8 @@ export const localCalibrationLabelRepository = {
       await this.markTripSubmitted(tripId, {
         label_id: record.id,
         rating: record.surveyLabel?.overallDriveRating ?? null,
+        score_accuracy: record.surveyLabel?.scoreAccuracy ?? null,
+        score_issue_types: record.surveyLabel?.scoreIssueTypes ?? [],
         wasDriver: record.surveyLabel?.wasDriver ?? null,
         submitted_at: record.createdAt ?? record.stored_at,
         eligible_for_calibration: record.eligibleForCalibration ?? record.eligible_for_calibration ?? false,

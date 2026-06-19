@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Gauge, MapPin, Pencil, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Gauge, MapPin, Pencil, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 import { refreshTripsCrossingLocalSpeedCell } from '@/lib/localSpeedScoreRefresh';
+import { correctionSectionIdentity } from '@/lib/roadSectionIdentity';
+import RoadSectionPreview from '@/components/RoadSectionPreview';
+import { tripService } from '@/api/trips';
 import { getJson, setJson } from '@/lib/mobileStorage';
 
 const knowledgeStore = {
@@ -22,8 +25,10 @@ const sourceLabel = (source) => {
 };
 
 const formatDate = (value) => {
-  const date = new Date(value || 0);
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : 'Unknown time';
+  if (value == null || value === '') return 'Unknown time';
+  const date = new Date(value);
+  const time = date.getTime();
+  return Number.isFinite(time) && time > 0 ? date.toLocaleString() : 'Unknown time';
 };
 
 const formatCoordinate = (value) => {
@@ -37,6 +42,8 @@ const coordinateLabel = (source) => (
     : 'Driven route point'
 );
 
+const SPEEDS_PER_PAGE = 10;
+
 export default function SpeedLimits() {
   const [searchParams] = useSearchParams();
   const tripId = searchParams.get('tripId');
@@ -46,6 +53,13 @@ export default function SpeedLimits() {
   const [loading, setLoading] = useState(true);
   const [busyGeohash, setBusyGeohash] = useState(null);
   const [status, setStatus] = useState('');
+  const [linkedTrip, setLinkedTrip] = useState(null);
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(rows.length / SPEEDS_PER_PAGE));
+  const visibleRows = rows.slice(
+    (page - 1) * SPEEDS_PER_PAGE,
+    page * SPEEDS_PER_PAGE
+  );
 
   const loadRows = useCallback(async () => {
     setLoading(true);
@@ -70,6 +84,28 @@ export default function SpeedLimits() {
   useEffect(() => {
     loadRows();
   }, [loadRows]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, pageCount));
+  }, [pageCount]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!tripId) {
+      setLinkedTrip(null);
+      return undefined;
+    }
+    tripService.getById(tripId)
+      .then((trip) => {
+        if (!cancelled) setLinkedTrip(trip || null);
+      })
+      .catch(() => {
+        if (!cancelled) setLinkedTrip(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tripId]);
 
   useEffect(() => {
     const onKnowledgeChanged = () => loadRows();
@@ -198,21 +234,26 @@ export default function SpeedLimits() {
         </div>
       ) : (
         <div className="space-y-3">
-          {rows.map((row) => {
+          {visibleRows.map((row) => {
             const draft = drafts[row.geohash] || {};
             const disabled = busyGeohash === row.geohash;
+            const identity = correctionSectionIdentity(row, linkedTrip);
             return (
               <article key={row.geohash} className="rounded-xl border border-border bg-card p-3 shadow-sm">
-                <div className="grid gap-3 lg:grid-cols-[1fr_16rem_13rem] lg:items-center">
+                <div className="grid gap-3 lg:grid-cols-[1fr_16rem_13rem] lg:items-start">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold text-foreground">
                         <MapPin className="h-3.5 w-3.5" />
-                        {row.geohash}
+                        {identity.title}
                       </span>
-                      <span className="text-xs text-muted-foreground">
-                        {coordinateLabel(row.coordinateSource)}: {formatCoordinate(row.lat)}, {formatCoordinate(row.lng)}
-                      </span>
+                    </div>
+                    <div className="mt-2">
+                      <RoadSectionPreview
+                        identity={identity}
+                        routePoints={linkedTrip?.route_points || []}
+                        legacyApproximate={row.coordinateSource === 'geohash_cell_center_legacy'}
+                      />
                     </div>
                     <div className="mt-2 grid gap-2 sm:grid-cols-3">
                       <div className="rounded-lg bg-secondary/60 px-3 py-2">
@@ -228,6 +269,12 @@ export default function SpeedLimits() {
                         <div className="truncate font-semibold">{formatDate(row.appliedAt)}</div>
                       </div>
                     </div>
+                    <details className="mt-2 text-xs text-muted-foreground">
+                      <summary className="cursor-pointer font-medium">Saved location reference</summary>
+                      <div className="mt-1">
+                        {coordinateLabel(row.coordinateSource)}: {formatCoordinate(row.lat)}, {formatCoordinate(row.lng)}; cell {row.geohash}
+                      </div>
+                    </details>
                   </div>
 
                   <div className="grid gap-2">
@@ -284,6 +331,39 @@ export default function SpeedLimits() {
               </article>
             );
           })}
+          {pageCount > 1 && (
+            <nav
+              className="flex items-center justify-between gap-3 border-t border-border pt-3"
+              aria-label="Saved road speed pages"
+            >
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                disabled={page === 1}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-card text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-40"
+                title="Previous page"
+                aria-label="Previous page"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <div className="text-center text-xs text-muted-foreground">
+                <div className="font-semibold text-foreground">Page {page} of {pageCount}</div>
+                <div>
+                  Showing {(page - 1) * SPEEDS_PER_PAGE + 1}-{Math.min(page * SPEEDS_PER_PAGE, rows.length)} of {rows.length}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
+                disabled={page === pageCount}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-card text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-40"
+                title="Next page"
+                aria-label="Next page"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </nav>
+          )}
         </div>
       )}
     </div>

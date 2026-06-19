@@ -148,6 +148,10 @@ vi.mock('@/components/TripMap', () => ({
   default: () => <div>Trip map placeholder</div>,
 }));
 
+vi.mock('@/components/TripPlayback', () => ({
+  default: () => <div>Trip playback placeholder</div>,
+}));
+
 vi.mock('@/components/TripCard', () => ({
   default: ({ trip }) => <article>{trip.id}</article>,
 }));
@@ -352,6 +356,10 @@ describe('core page component renders', () => {
     expect(html).toContain('What shaped this score');
     expect(html).toContain('does not reconstruct exact point deductions');
     expect(html).toContain('Braking efficiency');
+    expect(html).toContain('Does this trip score look fair?');
+    expect(html).toContain('>Review<');
+    expect(html).not.toContain('What made the score seem too harsh?');
+    expect(html).not.toContain('Three consistent eligible reviews');
     expect(html).not.toContain('Focus Score');
   });
 
@@ -473,6 +481,45 @@ describe('core page component renders', () => {
     expect(html).not.toContain('Snap route to roads');
     expect(html).toContain('Share route samples with OSRM?');
     expect(html).toContain('Personal-use informational estimates only');
+  });
+
+  it('explains map trips hidden by raw GPS retention using the retention count', async () => {
+    const expiredByRetention = {
+      ...sampleTrip,
+      id: 'expired-by-retention-1',
+      route_points: [],
+      route_points_raw_count: 72,
+      route_data_expired_at: '2026-06-01T00:00:00.000Z',
+      route_data_expiration_reason: 'raw_gps_retention_policy',
+    };
+    const secondExpiredByRetention = {
+      ...expiredByRetention,
+      id: 'expired-by-retention-2',
+      route_points_raw_count: 48,
+    };
+    const summaryOnlyWithoutRetention = {
+      ...sampleTrip,
+      id: 'summary-only-without-retention',
+      route_points: [],
+      route_points_raw_count: 0,
+      route_data_expired_at: undefined,
+      route_data_expiration_reason: undefined,
+    };
+    queryData.set(JSON.stringify(['map-trips']), [
+      sampleTrip,
+      expiredByRetention,
+      secondExpiredByRetention,
+      summaryOnlyWithoutRetention,
+    ]);
+
+    const { default: MapScreen } = await import('@/pages/MapScreen');
+    const html = renderToStaticMarkup(<MapScreen />);
+
+    expect(html).toContain('Showing 1 filtered route');
+    expect(html).toContain('2 completed trip summaries are hidden from map/playback because raw GPS retention removed route coordinates.');
+    expect(html).toContain('2 completed trip summaries are not shown here because raw GPS retention removed route coordinates for map/playback. Summaries stay saved in Trip History.');
+    expect(html).not.toContain('because route GPS is unavailable');
+    expect(html).not.toContain('3 completed trip summaries are hidden');
   });
 
   it('renders Diagnostics recovery compatibility as read-only identity facts', async () => {

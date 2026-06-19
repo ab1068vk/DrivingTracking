@@ -153,7 +153,12 @@ const plainText = (message) => {
   return 'Road Sage safety alert';
 };
 
-export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvents = [], tripStartTime }) {
+export default function LiveCoachOverlay({
+  currentRoutePoints = [],
+  currentEvents = [],
+  tripStartTime,
+  voiceMuted = false,
+}) {
   const [message, setMessage] = useState(null);
   const [dismissed, setDismissed] = useState(false);
   const visibleRef = useRef(false);
@@ -172,7 +177,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     const next = queueRef.current.shift();
     const normalized = typeof next === 'string' ? { text: next, tone: 'default' } : next;
     const settings = localSettings.get();
-    if (!normalized.silent) {
+    if (!normalized.silent && !voiceMuted) {
       const voiceText = plainText(normalized.voiceText ?? normalized.text);
       const speak = normalized.voiceKey
         ? speakSafetyAlertOnce(
@@ -375,7 +380,7 @@ export default function LiveCoachOverlay({ currentRoutePoints = [], currentEvent
     const interval = setInterval(evaluate, CHECK_INTERVAL_MS);
     evaluate();
     return () => clearInterval(interval);
-  }, [currentRoutePoints, tripStartTime, dismissed]);
+  }, [currentRoutePoints, tripStartTime, dismissed, voiceMuted]);
 
   if (dismissed) return null;
 

@@ -74,16 +74,22 @@ final class DriveSenseSpeechController {
     }
 
     void shutdown() {
-        pending.clear();
-        activeUtterances.clear();
-        abandonAudioFocus();
+        stop();
         if (textToSpeech != null) {
-            textToSpeech.stop();
             textToSpeech.shutdown();
             textToSpeech = null;
         }
         ready = false;
         initializing = false;
+    }
+
+    void stop() {
+        pending.clear();
+        activeUtterances.clear();
+        abandonAudioFocus();
+        if (textToSpeech != null) {
+            textToSpeech.stop();
+        }
     }
 
     private void initializeIfNeeded() {

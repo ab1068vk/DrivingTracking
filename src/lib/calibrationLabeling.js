@@ -5,10 +5,10 @@ import {
   surveyRatingToTargetScore,
 } from '@/lib/calibrationFitting';
 
-export const CALIBRATION_LABEL_SCHEMA_VERSION = 1;
+export const CALIBRATION_LABEL_SCHEMA_VERSION = 2;
 export const CALIBRATION_LABEL_TARGET_COUNT = MIN_CALIBRATION_LABEL_COUNT;
 export const CALIBRATION_LABEL_COLLECTION = 'trip_calibration_labels';
-export const POST_TRIP_SURVEY_QUESTION = 'How did this drive feel? (1 risky - 5 excellent)';
+export const POST_TRIP_SURVEY_QUESTION = 'Did Road Sage score this trip fairly?';
 export const ANONYMOUS_INSTALL_ID_KEY = 'road_sage_anonymous_install_id';
 export const SURVEY_RATING_OPTIONS = Object.freeze([
   { value: 1, label: 'Risky' },
@@ -18,6 +18,14 @@ export const SURVEY_RATING_OPTIONS = Object.freeze([
   { value: 5, label: 'Excellent' },
 ]);
 export const SCORE_ACCURACY_OPTIONS = Object.freeze(['accurate', 'too_high', 'too_low']);
+export const SCORE_REVIEW_ISSUE_OPTIONS = Object.freeze([
+  'harsh_brake',
+  'rapid_acceleration',
+  'sharp_turn',
+  'speeding',
+  'phone_use',
+  'other',
+]);
 export const WAS_DRIVER_OPTIONS = Object.freeze(['yes', 'no', 'unsure']);
 export const TRIP_CONTEXT_TAG_OPTIONS = Object.freeze([
   'traffic',
@@ -89,9 +97,8 @@ function normalizeRating(value, { optional = false } = {}) {
   return normalized;
 }
 
-function normalizeSurveyLabel(input = {}) {
+function normalizeSurveyLabel(input = {}, trip = {}) {
   const source = typeof input === 'number' ? { overallDriveRating: input } : input || {};
-  const overallDriveRating = normalizeRating(source.overallDriveRating ?? source.rating);
   const scoreAccuracy = source.scoreAccuracy || null;
   const wasDriver = source.wasDriver || 'unsure';
   const tripDifficulty = normalizeRating(source.tripDifficulty, { optional: true });
@@ -105,14 +112,32 @@ function normalizeSurveyLabel(input = {}) {
 
   const contextTags = [...new Set((Array.isArray(source.contextTags) ? source.contextTags : [])
     .filter((tag) => TRIP_CONTEXT_TAG_OPTIONS.includes(tag)))];
+  const scoreIssueTypes = [...new Set((Array.isArray(source.scoreIssueTypes) ? source.scoreIssueTypes : [])
+    .filter((type) => SCORE_REVIEW_ISSUE_OPTIONS.includes(type)))];
+  const explicitRating = source.overallDriveRating ?? source.rating;
+  const tripScore = numberOrNull(trip?.score_overall);
+  const inferredTargetScore = tripScore == null || scoreAccuracy == null
+    ? null
+    : Math.max(0, Math.min(100, tripScore + (scoreAccuracy === 'too_low' ? 10 : scoreAccuracy === 'too_high' ? -10 : 0)));
+  const explicitTargetScore = numberOrNull(source.targetScore ?? source.target_score);
+  const targetScore = explicitTargetScore ?? (
+    explicitRating != null ? surveyRatingToTargetScore(normalizeRating(explicitRating)) : inferredTargetScore
+  );
+  if (targetScore == null) {
+    throw new Error('Choose whether the trip score was accurate, too high, or too low.');
+  }
+  const overallDriveRating = explicitRating != null
+    ? normalizeRating(explicitRating)
+    : Math.max(1, Math.min(5, Math.round(targetScore / 25) + 1));
 
   return {
     question: POST_TRIP_SURVEY_QUESTION,
     overallDriveRating,
     rating: overallDriveRating,
-    targetScore: surveyRatingToTargetScore(overallDriveRating),
-    target_score: surveyRatingToTargetScore(overallDriveRating),
+    targetScore,
+    target_score: targetScore,
     scoreAccuracy,
+    scoreIssueTypes,
     wasDriver,
     tripDifficulty,
     contextTags,
@@ -264,7 +289,7 @@ export async function getAnonymousInstallIdHash() {
 }
 
 export function buildCalibrationLabelPayload(trip = {}, surveyInput, options = {}) {
-  const surveyLabel = normalizeSurveyLabel(surveyInput);
+  const surveyLabel = normalizeSurveyLabel(surveyInput, trip);
   const tripFeatureSummary = buildTripFeatureSummary(trip);
   const scoreOutput = buildScoreOutputSummary(trip);
   const dataQualityFlags = dataQualityFlagsForCalibration(trip, surveyLabel, tripFeatureSummary);

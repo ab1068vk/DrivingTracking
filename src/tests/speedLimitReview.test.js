@@ -78,6 +78,23 @@ describe('speed-limit parked review', () => {
     expect(cells[0].reviewReason).toContain('Background tracking cannot confirm posted signs');
   });
 
+  it('ignores null-island route samples when building parked-review cells', () => {
+    const trip = {
+      start_source: 'native_auto',
+      speed_limit_review_required: true,
+      route_points: [
+        point({ lat: 0, lng: 0 }),
+        point({ lat: 43.6501, lng: -79.3801 }),
+      ],
+    };
+
+    const cells = buildTripSpeedLimitReviewCells(trip);
+
+    expect(cells).toHaveLength(1);
+    expect(cells[0].lat).toBeCloseTo(43.6501);
+    expect(cells[0].lng).toBeCloseTo(-79.3801);
+  });
+
   it('recognizes summary records flagged for speed-limit review', () => {
     expect(speedLimitReviewNeededForTrip({
       id: 'summary-native',

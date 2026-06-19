@@ -6,10 +6,12 @@ import { tripQueryKeys, tripService } from '@/api/trips';
 import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers, ChevronLeft, ChevronRight, Shield } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
-import { formatDistance, formatDate, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
+import { formatDistance, formatDate, getScoreColor, getTripComponentScore, prefetchLocalKnowledge } from '@/lib/tripEngine';
 import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
 import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
+import { getJson, setJson } from '@/lib/mobileStorage';
+import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 import { identifyCommutePatterns } from '@/lib/tripInsights';
 import { saveDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
@@ -65,6 +67,12 @@ const tripPointSummary = (trip) => {
     : `${mapPoints} GPS points`;
 };
 
+const completedTripSummaryLabel = (count) => (
+  `${count} completed trip summar${count === 1 ? 'y' : 'ies'}`
+);
+
+const hasPlayableRouteGps = (trip) => (trip?.route_points?.length || 0) > 1;
+
 export default function MapScreen() {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -86,6 +94,8 @@ export default function MapScreen() {
   const [showAllDangerZones, setShowAllDangerZones] = useState(false);
   const [osmFetchStatus, setOsmFetchStatus] = useState('');
   const [tripListPage, setTripListPage] = useState(0);
+  const [speedLimitKnowledgeRevision, setSpeedLimitKnowledgeRevision] = useState(0);
+  const [speedLimitLocalKnowledgeResults, setSpeedLimitLocalKnowledgeResults] = useState([]);
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
   const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
@@ -129,10 +139,17 @@ export default function MapScreen() {
     },
   });
 
-  const allCompleted = useMemo(
-    () => trips.filter(t => t.status === 'completed' && t.route_points?.length > 1),
+  const completedSummaries = useMemo(
+    () => trips.filter(t => t.status === 'completed'),
     [trips]
   );
+  const allCompleted = useMemo(
+    () => completedSummaries.filter(hasPlayableRouteGps),
+    [completedSummaries]
+  );
+  const retentionRemovedRouteCount = completedSummaries.filter(t => (
+    t.route_data_expired_at && !hasPlayableRouteGps(t)
+  )).length;
   const completed = useMemo(() => allCompleted.filter(t => {
     if (mapFilter === 'night') return t.night_driving;
     if (mapFilter === 'harsh_braking') return (t.harsh_brakes_count || 0) > 0;
@@ -152,10 +169,42 @@ export default function MapScreen() {
       : (selectedTrip?.driving_events || [])
   ), [selectedTrip, settings.phone_use_show_on_map]);
   const selectedSpeedLimitCoverage = selectedTrip?.speed_limit_context?.coverage ?? 0;
-  const selectedHasSpeedLimits = (selectedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
+  const selectedHasTripSpeedLimits = (selectedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
+  const selectedHasLocalSpeedLimits = speedLimitLocalKnowledgeResults.some((item) => Number(item?.limitKmh) > 0);
+  const selectedHasSpeedLimits = selectedHasTripSpeedLimits || selectedHasLocalSpeedLimits;
   const selectedSpeedLimitStatus = selectedTrip?.speed_limit_context?.status || 'not_fetched';
   const selectedMapMatchingStatus = selectedTrip?.map_matching_context?.status || 'not_fetched';
   const speedLimitLookupEnabled = settings.speed_limit_lookup_enabled !== false;
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadLocalSpeedKnowledge = async () => {
+      const points = Array.isArray(selectedTrip?.route_points) ? selectedTrip.route_points : [];
+      if (!points.length) {
+        if (!cancelled) setSpeedLimitLocalKnowledgeResults([]);
+        return;
+      }
+      const knowledge = new LocalSpeedKnowledge({
+        get: (key) => getJson(key, null),
+        set: (key, value) => setJson(key, value),
+      });
+      const results = await prefetchLocalKnowledge(points, knowledge).catch(() => points.map(() => null));
+      if (!cancelled) setSpeedLimitLocalKnowledgeResults(results);
+    };
+    loadLocalSpeedKnowledge();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTrip?.id, selectedTrip?.route_points, speedLimitKnowledgeRevision]);
+
+  useEffect(() => {
+    const onSpeedKnowledgeChanged = () => {
+      setSpeedLimitKnowledgeRevision((value) => value + 1);
+    };
+    window.addEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, onSpeedKnowledgeChanged);
+    return () => window.removeEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, onSpeedKnowledgeChanged);
+  }, []);
+
   const selectedLayerEffect = !selectedTrip
     ? 'Select a trip to get road data.'
     : selectedHasSpeedLimits
@@ -324,6 +373,11 @@ export default function MapScreen() {
         <h1 className="text-2xl font-grotesk font-bold">Map</h1>
         <p className="text-muted-foreground text-sm mt-1">
           {selectedTrip ? 'Focused route view' : `Showing ${completed.length} filtered route${completed.length === 1 ? '' : 's'}`}
+          {!selectedTrip && retentionRemovedRouteCount > 0 && (
+            <span className="block text-xs">
+              {completedTripSummaryLabel(retentionRemovedRouteCount)} {retentionRemovedRouteCount === 1 ? 'is' : 'are'} hidden from map/playback because raw GPS retention removed route coordinates.
+            </span>
+          )}
         </p>
       </motion.div>
 
@@ -388,6 +442,7 @@ export default function MapScreen() {
               showRouteRisk={showRouteRisk && Boolean(selectedTrip)}
               routeRiskSegments={selectedRiskSegments}
               showSpeedLimits={showSpeedLimits && Boolean(selectedTrip)}
+              speedLimitKnowledgeResults={speedLimitLocalKnowledgeResults}
               rawPointCount={selectedTrip?.route_points_raw_count}
               height="400px"
             />
@@ -482,7 +537,9 @@ export default function MapScreen() {
               <div className="mt-1 font-normal">
                 {!selectedTrip
                   ? 'Select a trip first'
-                  : selectedHasSpeedLimits
+                  : selectedHasLocalSpeedLimits
+                    ? 'Saved local speeds available - tap to show or hide'
+                    : selectedHasSpeedLimits
                     ? `${selectedSpeedLimitCoverage}% coverage - tap to show or hide`
                     : !speedLimitLookupEnabled
                       ? 'OpenStreetMap speed-limit lookup is off in Settings'
@@ -661,12 +718,22 @@ export default function MapScreen() {
         </div>
 
         {completed.length === 0 ? (
-          <div className="flex flex-col items-center py-10 text-center">
+          <div className="flex flex-col items-center rounded-2xl border border-dashed border-border bg-secondary/30 px-5 py-10 text-center">
             <Car className="w-10 h-10 text-muted-foreground mb-3" />
-            <div className="text-muted-foreground text-sm">No trips with GPS data yet</div>
+            <div className="text-sm font-semibold text-foreground">No trips with playable route GPS</div>
+            <div className="mt-1 max-w-md text-xs text-muted-foreground">
+              {completedSummaries.length > 0
+                ? `${completedTripSummaryLabel(completedSummaries.length)} ${completedSummaries.length === 1 ? 'is' : 'are'} still saved. ${retentionRemovedRouteCount > 0 ? `${retentionRemovedRouteCount} reached raw GPS retention, so map and playback are intentionally unavailable.` : 'Some trips may be summary-only or too sparse to draw safely.'}`
+                : 'Recorded trips will appear here after they save enough route coordinates for map and playback.'}
+            </div>
           </div>
         ) : (
           <div className="space-y-2">
+            {retentionRemovedRouteCount > 0 && (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-300">
+                {completedTripSummaryLabel(retentionRemovedRouteCount)} {retentionRemovedRouteCount === 1 ? 'is' : 'are'} not shown here because raw GPS retention removed route coordinates for map/playback. Summaries stay saved in Trip History.
+              </div>
+            )}
             <button
               onClick={() => setSelectedTripId(null)}
               className={`w-full p-3 rounded-xl border text-sm text-left transition-all ${

@@ -17,6 +17,7 @@ import {
   cleanRoutePoints,
   calculateTripStats, detectDrivingEvents, calculateTripScores,
   inferSpeedZones,
+  prefetchLocalKnowledge,
   resolveEffectiveSpeedLimitForIndex,
   getTripComponentScore,
   getScoreProvenanceStatus,
@@ -44,7 +45,9 @@ import { getPermissionStatus, requestActivityRecognitionPermission, requestBackg
 import {
   startActivityRecognition,
   startNativeAutoTracking,
-  stopNativeAutoTracking,
+  startNativeManualTrip,
+  discardNativeManualTrip,
+  endNativeActiveTrip,
   getAndroidBatteryOptimizationStatus,
   getNativeAutoTrackingStatus,
   openAndroidBatteryOptimizationSettings,
@@ -60,6 +63,7 @@ import {
   mergePhoneUseEventsIntoDrivingEvents,
   mergePhoneUseSignals,
 } from '@/lib/phoneUsageAccess';
+import { isDriverMetricEligible } from '@/lib/phoneUseSummary';
 import ScoreRing from '@/components/ScoreRing';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import StatCard from '@/components/StatCard';
@@ -100,8 +104,18 @@ import {
 import { LocalSpeedKnowledge } from '@/lib/localSpeedKnowledge';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { buildTripSpeedLimitReviewCells, speedLimitReviewNeededForTrip } from '@/lib/speedLimitReview';
+import {
+  DASHBOARD_SCORE_REVIEW_DISMISSAL_KEY,
+  buildDashboardScoreReviewFingerprint,
+} from '@/lib/dashboardScoreReview';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
-import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
+import {
+  getVoiceAlertDeliveryStatus,
+  shouldMuteWebViewVoiceForTrip,
+  speakSafetyAlert,
+  speakSafetyAlertOnce,
+  stopSafetyAlerts,
+} from '@/lib/voiceAlerts';
 import { buildSpeedingMessage, buildVoiceAlertMessage } from '@/lib/voiceAlertMessages';
 import {
   buildSensorFusionSummary,
@@ -115,7 +129,7 @@ import { isExternalContextAutoFetchEnabled } from '@/lib/openSourceTripContext';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
-import { injectTimestampGapMarkers, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
+import { injectTimestampGapMarkers, prepareMapRoutePoints, selectMapRoutePoints } from '@/lib/mapPlaybackInsights';
 import {
   getPrivacyZones,
   isInsidePrivacyZone,
@@ -130,17 +144,13 @@ import {
   isPrivateTrip,
   processPrivateTripPoint,
 } from '@/lib/privateTripMode';
-
-// CHANGES (session):
-// - Added tier-aware speed alert imports and helpers for Dashboard live warnings.
-// - Modified Dashboard live speed alert to use tier-keyed cooldowns and buildSpeedingMessage.
-// - Modified Dashboard live speed badge to show tier-aware text and styles.
-// - Added long-press speed-limit correction sheet backed by LocalSpeedKnowledge.
-// - Added speed-limit conflict review banner hook after trip save.
-// - Renamed regional default badge wording away from legal certainty.
-// - Treat user-confirmed speed corrections as POSTED for badge and alert semantics.
-// - Split speed correction UI into posted-sign, estimate, and temporary/construction confirmations.
-// - Wired live speed check visual and voice behavior to speed estimate and tier voice settings.
+import { syncNativeCompletedTrips } from '@/lib/localTripRepository';
+import {
+  NATIVE_MANUAL_TRIP_FINALIZED_EVENT,
+  createNativeManualTripId,
+  findNativeManualCompletion,
+  isNativeManualCompletionForActiveTrip,
+} from '@/lib/nativeManualTripIdentity';
 
 const TripMap = lazy(() => import('@/components/TripMap'));
 
@@ -149,6 +159,33 @@ const AUTO_START_TRIGGER_SECONDS = 2;
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const ROUTE_RISK_IS_APPROXIMATE = hasProvisionalCalibration(['route_risk_score']);
 const READINESS_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['pre_trip_readiness_score']);
+const LIVE_SPEED_ALERT_MIN_SECONDS = 30;
+const LIVE_SPEED_ALERT_MIN_POINTS = 3;
+
+function tripElapsedSeconds(trip, nowValue = Date.now()) {
+  const startMs = new Date(trip?.start_time || 0).getTime();
+  const nowMs = typeof nowValue === 'number' ? nowValue : new Date(nowValue || Date.now()).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(nowMs) || nowMs < startMs) return 0;
+  return Math.round((nowMs - startMs) / 1000);
+}
+
+function isFreshTripPoint(point, trip) {
+  const pointMs = new Date(point?.timestamp || 0).getTime();
+  const startMs = new Date(trip?.start_time || 0).getTime();
+  if (!Number.isFinite(pointMs) || !Number.isFinite(startMs)) return true;
+  return pointMs >= startMs - 5000;
+}
+
+function hasLiveSpeedEvidence(trip, routePoints = [], point = null, nowValue = Date.now()) {
+  if (!trip) return false;
+  if (!isFreshTripPoint(point, trip)) return false;
+  if ((Array.isArray(routePoints) ? routePoints.length : 0) < LIVE_SPEED_ALERT_MIN_POINTS) return false;
+  return tripElapsedSeconds(trip, nowValue) >= LIVE_SPEED_ALERT_MIN_SECONDS;
+}
+
+function shouldMuteDashboardWebViewVoice(trip) {
+  return shouldMuteWebViewVoiceForTrip(trip, { isAndroidPlatform: isAndroid() });
+}
 
 function createTierAwareSpeedLimitContext(context, settings = {}) {
   const limitKmh = context?.limitKmh ?? context?.effectiveLimitKmh ?? null;
@@ -213,7 +250,7 @@ function speedLimitBadgeForResolved(resolved) {
   return badgeByTier[tier] || badgeByTier.UNKNOWN;
 }
 
-function checkAndSpeakSpeedAlert(speed, resolved, settings, onAlert) {
+function checkAndSpeakSpeedAlert(speed, resolved, settings, onAlert, { voiceMuted = false } = {}) {
   if (speed < 1) return;
   const warning = shouldWarnForSpeed({ speedKmh: speed, candidate: resolved, settings });
   if (!warning) return;
@@ -221,7 +258,7 @@ function checkAndSpeakSpeedAlert(speed, resolved, settings, onAlert) {
   if (warning.visual) {
     onAlert?.();
   }
-  if (!warning.voice) return;
+  if (voiceMuted || !warning.voice) return;
 
   const message = buildSpeedingMessage({
     speedKmh: speed,
@@ -251,9 +288,21 @@ function isRecoverableActiveTrip(trip) {
   return RECOVERABLE_TRIP_STATES.has(trip.trip_state);
 }
 
+function waitForTripEndingFeedbackPaint() {
+  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(resolve);
+    });
+  });
+}
+
 export default function Dashboard() {
   const [activeTrip, setActiveTrip] = useState(null);
   const [tracking, setTracking] = useState(false);
+  const [endingTrip, setEndingTrip] = useState(false);
   const [currentLocation, setCurrentLocation] = useState(null);
   const [elapsed, setElapsed] = useState(0);
   const [locationError, setLocationError] = useState(null);
@@ -283,6 +332,8 @@ export default function Dashboard() {
   const inferredSpeedZonesRef = useRef([]);
   const privateTripRuntimeRef = useRef(null);
   const gpsPointWarningLoggedRef = useRef(false);
+  const localSpeedKnowledgeRef = useRef(null);
+  const nativeManualReconcileInFlightRef = useRef(false);
   const [settings, setSettings] = useState(() => localSettings.get());
   const [fatigueDialogOpen, setFatigueDialogOpen] = useState(false);
   const [speedLimitConflictReview, setSpeedLimitConflictReview] = useState(null);
@@ -292,6 +343,8 @@ export default function Dashboard() {
   const [pendingManualForegroundStartOptions, setPendingManualForegroundStartOptions] = useState(null);
   const [hazardMessage, setHazardMessage] = useState(null);
   const [readinessDismissed, setReadinessDismissed] = useState(false);
+  const [dismissedScoreReviewFingerprint, setDismissedScoreReviewFingerprint] = useState('');
+  const [scoreReviewDismissalLoaded, setScoreReviewDismissalLoaded] = useState(false);
   const [parkedLocation, setParkedLocation] = useState(null);
   const [dangerZones, setDangerZones] = useState([]);
   const [trackingStatusContext, setTrackingStatusContext] = useState({
@@ -323,6 +376,16 @@ export default function Dashboard() {
       batteryStatus,
       diagnostics,
     });
+  }, []);
+
+  const getLocalSpeedKnowledge = useCallback(() => {
+    if (!localSpeedKnowledgeRef.current) {
+      localSpeedKnowledgeRef.current = new LocalSpeedKnowledge({
+        get: (key) => getJson(key, null),
+        set: (key, value) => setJson(key, value),
+      });
+    }
+    return localSpeedKnowledgeRef.current;
   }, []);
 
   useEffect(() => {
@@ -416,9 +479,11 @@ export default function Dashboard() {
       notifyStayAlert().catch((error) => {
         logError('heading_drift_notification', error);
       });
-      speakSafetyAlert(buildVoiceAlertMessage('heading_drift_beta'), cfg).catch((error) => {
-        logError('heading_drift_voice_alert', error);
-      });
+      if (!shouldMuteDashboardWebViewVoice(activeTripRef.current || activeTrip)) {
+        speakSafetyAlert(buildVoiceAlertMessage('heading_drift_beta'), cfg).catch((error) => {
+          logError('heading_drift_voice_alert', error);
+        });
+      }
     }
   }, [activeTrip, tracking]);
 
@@ -433,6 +498,10 @@ export default function Dashboard() {
   });
 
   const completedTrips = useMemo(() => recentTrips.filter(t => t.status === 'completed'), [recentTrips]);
+  const driverCompletedTrips = useMemo(
+    () => completedTrips.filter(isDriverMetricEligible),
+    [completedTrips]
+  );
   useEffect(() => {
     let cancelled = false;
     const loadSpeedLimitReviewSummary = async () => {
@@ -467,6 +536,35 @@ export default function Dashboard() {
     () => completedTrips.filter((trip) => getTripComponentScore(trip, 'overall').value == null),
     [completedTrips]
   );
+  const scoreReviewFingerprint = useMemo(
+    () => buildDashboardScoreReviewFingerprint({
+      mismatchTrips: scoreModelMismatchTrips,
+      unavailableTrips: unavailableScoreTrips,
+    }),
+    [scoreModelMismatchTrips, unavailableScoreTrips]
+  );
+  const showScoreReviewWarning = scoreReviewDismissalLoaded
+    && scoreReviewFingerprint
+    && dismissedScoreReviewFingerprint !== scoreReviewFingerprint;
+
+  useEffect(() => {
+    let cancelled = false;
+    getJson(DASHBOARD_SCORE_REVIEW_DISMISSAL_KEY, '').then((fingerprint) => {
+      if (cancelled) return;
+      setDismissedScoreReviewFingerprint(typeof fingerprint === 'string' ? fingerprint : '');
+      setScoreReviewDismissalLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dismissScoreReviewWarning = useCallback(() => {
+    setDismissedScoreReviewFingerprint(scoreReviewFingerprint);
+    setJson(DASHBOARD_SCORE_REVIEW_DISMISSAL_KEY, scoreReviewFingerprint).catch((error) => {
+      logError('dashboard_score_review_dismissal_save', error);
+    });
+  }, [scoreReviewFingerprint]);
   const habitProfile = useMemo(
     () => (completedTrips.length >= 5 ? buildHabitProfile(completedTrips) : null),
     [completedTrips.length, completedTrips[completedTrips.length - 1]?.id]
@@ -540,10 +638,149 @@ export default function Dashboard() {
     }
   };
 
+  const clearNativeManualTripUi = useCallback(async (trip, completedTrip = null) => {
+    trackingRef.current = false;
+    await stopSafetyAlerts().catch((error) => {
+      logError('native_manual_trip_completion_stop_voice_alerts', error, {
+        tripId: completedTrip?.id || trip?.id || null,
+      });
+    });
+    await locationService.current?.stop();
+    locationService.current = null;
+    sensorFusionRef.current?.stop();
+    sensorFusionRef.current = null;
+    await activityStopRef.current?.();
+    activityStopRef.current = null;
+    latestActivityRef.current = null;
+    stopTimer();
+    await cancelLongTripReminder();
+
+    const storedActiveTrip = activeTripStore.get();
+    if (
+      !storedActiveTrip ||
+      !completedTrip ||
+      isNativeManualCompletionForActiveTrip(completedTrip, storedActiveTrip)
+    ) {
+      activeTripStore.clear();
+      await activeTripStore.flush();
+    }
+    activeTripRef.current = null;
+    autoEndingTripRef.current = false;
+    endingTripRef.current = false;
+    locationPermissionEndingRef.current = false;
+    setEndingTrip(false);
+    setActiveTrip(null);
+    setTracking(false);
+    setElapsed(0);
+    setCurrentLocation(null);
+    refreshTrackingStatusContext();
+    refetch();
+  }, [refreshTrackingStatusContext, refetch]);
+
+  const reconcileNativeManualTripCompletion = useCallback(async (reason = 'dashboard_native_manual_reconcile') => {
+    const trip = activeTripRef.current;
+    if (!isAndroid() || !trip || trip.native_manual_background !== true) return false;
+    if (endingTripRef.current || nativeManualReconcileInFlightRef.current) return false;
+
+    nativeManualReconcileInFlightRef.current = true;
+    try {
+      const syncResult = await syncNativeCompletedTrips();
+      let completedNativeTrip = syncResult.matchedActiveTrip ||
+        findNativeManualCompletion(syncResult.importedTrips, trip);
+      if (!completedNativeTrip && trip.id) {
+        completedNativeTrip = await tripService.getById(trip.id).catch(() => null);
+        if (
+          completedNativeTrip &&
+          !isNativeManualCompletionForActiveTrip(completedNativeTrip, trip)
+        ) {
+          completedNativeTrip = null;
+        }
+      }
+      if (!completedNativeTrip && !activeTripStore.get()) {
+        const storedTrips = await tripService.listAll({ sort: '-start_time' }).catch(() => []);
+        completedNativeTrip = findNativeManualCompletion(storedTrips, trip);
+      }
+      if (!completedNativeTrip) return false;
+
+      endingTripRef.current = true;
+      setEndingTrip(true);
+      recordTrackingDiagnostic({
+        type: 'trip_ended',
+        title: 'Native manual trip saved',
+        reason,
+        tripId: completedNativeTrip.id,
+        duration_seconds: Math.round(completedNativeTrip.duration_seconds || 0),
+        distance_km: completedNativeTrip.distance_km || 0,
+        route_points_raw_count: Array.isArray(completedNativeTrip.route_points)
+          ? completedNativeTrip.route_points.length
+          : 0,
+      });
+      await clearNativeManualTripUi(trip, completedNativeTrip);
+      return true;
+    } catch (error) {
+      logError('native_manual_trip_dashboard_reconcile', error, {
+        tripId: trip.id || null,
+        start_source: trip.start_source || null,
+      });
+      return false;
+    } finally {
+      nativeManualReconcileInFlightRef.current = false;
+    }
+  }, [clearNativeManualTripUi]);
+
+  useEffect(() => {
+    const onNativeManualTripFinalized = (event) => {
+      if (endingTripRef.current) return;
+      const trip = activeTripRef.current;
+      const completedTrip = event.detail?.completedTrip;
+      if (!trip || !isNativeManualCompletionForActiveTrip(completedTrip, trip)) return;
+      endingTripRef.current = true;
+      void clearNativeManualTripUi(trip, completedTrip);
+    };
+    window.addEventListener(NATIVE_MANUAL_TRIP_FINALIZED_EVENT, onNativeManualTripFinalized);
+    return () => window.removeEventListener(NATIVE_MANUAL_TRIP_FINALIZED_EVENT, onNativeManualTripFinalized);
+  }, [clearNativeManualTripUi]);
+
+  useEffect(() => {
+    if (!isAndroid() || activeTrip?.native_manual_background !== true) return undefined;
+
+    const reconcile = (reason) => {
+      reconcileNativeManualTripCompletion(reason).catch((error) => {
+        logError('native_manual_trip_dashboard_reconcile_schedule', error, { reason });
+      });
+    };
+    const handleFocus = () => reconcile('dashboard_focus_native_manual_reconcile');
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        reconcile('dashboard_visibility_native_manual_reconcile');
+      }
+    };
+
+    reconcile('dashboard_mount_native_manual_reconcile');
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+    const interval = window.setInterval(
+      () => reconcile('dashboard_poll_native_manual_reconcile'),
+      5000
+    );
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.clearInterval(interval);
+    };
+  }, [activeTrip?.id, activeTrip?.native_manual_background, reconcileNativeManualTripCompletion]);
+
   const discardCandidateTrip = useCallback(async (trip, decision) => {
     const cfg = localSettings.get();
     endingTripRef.current = true;
     trackingRef.current = false;
+    await stopSafetyAlerts().catch((error) => {
+      logError('trip_end_stop_voice_alerts', error, {
+        start_source: trip?.start_source || null,
+        native_manual_background: trip?.native_manual_background === true,
+      });
+    });
     await locationService.current?.stop();
     locationService.current = null;
     sensorFusionRef.current?.stop();
@@ -681,6 +918,14 @@ export default function Dashboard() {
       cfg.background_tracking_enabled ||
       cfg.tracking_mode === 'background_auto'
     );
+    if (forceForeground && locationService.current?.isActive?.()) {
+      await locationService.current.stop().catch((error) => {
+        logError('tracking_service_foreground_restart', error, {
+          reason: 'manual_background_fallback',
+        });
+      });
+      locationService.current = null;
+    }
     if (!locationService.current) {
       locationService.current = createDrivingTrackingService({
         background: useBackground,
@@ -762,6 +1007,7 @@ export default function Dashboard() {
           return;
         }
         const isCandidateTrip = tripBeforePoint?.trip_state === TRIP_STATES.CANDIDATE;
+        const webViewVoiceMuted = shouldMuteDashboardWebViewVoice(tripBeforePoint);
         const latestPrivacyZones = getPrivacyZones(latestSettings);
         const pointInPrivacyZone = isInsidePrivacyZone(point.lat, point.lng, latestPrivacyZones);
         const storedPoint = redactRoutePointForPrivacyStorage(point, latestPrivacyZones);
@@ -785,15 +1031,17 @@ export default function Dashboard() {
                 distance_m: Math.round(zone.distanceM || 0),
               });
             });
-            speakSafetyAlert(buildVoiceAlertMessage('repeated_event_area', {
-              dominantType: typeLabel,
-              distanceM: zone.distanceM,
-            }), latestSettings).catch((error) => {
-              logError('repeated_event_area_voice_alert', error, {
-                zone_id: zone.id,
-                distance_m: Math.round(zone.distanceM || 0),
+            if (!webViewVoiceMuted) {
+              speakSafetyAlert(buildVoiceAlertMessage('repeated_event_area', {
+                dominantType: typeLabel,
+                distanceM: zone.distanceM,
+              }), latestSettings).catch((error) => {
+                logError('repeated_event_area_voice_alert', error, {
+                  zone_id: zone.id,
+                  distance_m: Math.round(zone.distanceM || 0),
+                });
               });
-            });
+            }
           }
         }
         const routePointsWithLatest = [...(tripBeforePoint?.route_points || []), storedPoint];
@@ -806,14 +1054,22 @@ export default function Dashboard() {
         const speed = Number(point.speed_kmh) || 0;
         const thresholds = buildDrivingThresholds(latestSettings);
         inferredSpeedZonesRef.current = inferSpeedZones(routePointsForLiveContext, thresholds);
+        const pointTimestampMs = new Date(point.timestamp || Date.now()).getTime();
+        const localKnowledge = pointInPrivacyZone
+          ? null
+          : await getLocalSpeedKnowledge().getForPoint(
+            point.lat,
+            point.lng,
+            Number.isFinite(pointTimestampMs) ? pointTimestampMs : Date.now()
+          ).catch(() => null);
         const speedLimitContext = resolveEffectiveSpeedLimitForIndex(
           routePointsForLiveContext,
           routePointsForLiveContext.length - 1,
           thresholds,
-          { inferredZones: inferredSpeedZonesRef.current, settings: latestSettings }
+          { inferredZones: inferredSpeedZonesRef.current, localKnowledge, settings: latestSettings }
         );
         const resolved = createTierAwareSpeedLimitContext(speedLimitContext, latestSettings);
-        if (!isCandidateTrip) {
+        if (!isCandidateTrip && hasLiveSpeedEvidence(tripBeforePoint, routePointsForLiveContext, point)) {
           checkAndSpeakSpeedAlert(speed, resolved, latestSettings, () => {
             const badge = speedLimitBadgeForResolved(resolved);
             const alertLabel = resolved?.tier === 'POSTED' ? 'Speed warning' : 'Speed check';
@@ -821,7 +1077,7 @@ export default function Dashboard() {
               body: `${alertLabel}: ${Math.round(speed)} km/h over ${badge.text}`,
               at: Date.now(),
             });
-          });
+          }, { voiceMuted: webViewVoiceMuted });
         }
         if (tripBeforePoint) {
           const updated = { ...tripBeforePoint, route_points: routePointsWithLatest };
@@ -878,14 +1134,16 @@ export default function Dashboard() {
               emergency_workflow: emergencyWorkflow,
             });
           });
-          speakSafetyAlert(buildVoiceAlertMessage('possible_incident', {
-            emergencyWorkflow,
-          }), latestSettings, { interrupt: true }).catch((error) => {
-            logError('possible_incident_voice_alert', error, {
-              severity: incident.severity,
-              emergency_workflow: emergencyWorkflow,
+          if (!webViewVoiceMuted) {
+            speakSafetyAlert(buildVoiceAlertMessage('possible_incident', {
+              emergencyWorkflow,
+            }), latestSettings, { interrupt: true }).catch((error) => {
+              logError('possible_incident_voice_alert', error, {
+                severity: incident.severity,
+                emergency_workflow: emergencyWorkflow,
+              });
             });
-          });
+          }
           setActiveTrip(prev => {
             if (!prev) return prev;
             const updated = {
@@ -972,7 +1230,7 @@ export default function Dashboard() {
     );
     setTrackingServiceMode(status || null);
     return status || null;
-  }, [discardCandidateTrip, handleLocationTrackingError, promoteCandidateTrip]);
+  }, [discardCandidateTrip, getLocalSpeedKnowledge, handleLocationTrackingError, promoteCandidateTrip]);
 
   const handleStartTrip = useCallback(async ({
     autoStarted = false,
@@ -989,6 +1247,10 @@ export default function Dashboard() {
     autoEndingTripRef.current = false;
     endingTripRef.current = false;
     locationPermissionEndingRef.current = false;
+    setCurrentLocation(null);
+    setHazardMessage(null);
+    setGpsPointWarning(false);
+    gpsPointWarningLoggedRef.current = false;
 
     const cfg = localSettings.get();
     if (!autoStarted && !bypassFatigueWarning && dailyFatigue.shouldWarnBeforeTrip) {
@@ -1022,13 +1284,8 @@ export default function Dashboard() {
     const manualBackgroundReady = manualAndroidTrip &&
       cfg.background_location_granted === true &&
       cfg.notification_permission_granted === true;
-    const useBackground = forceBackgroundTracking || configuredBackground || manualBackgroundReady;
-    const needsManualForegroundConfirmation = !autoStarted &&
-      !candidate &&
-      !summaryOnlyPrivateTrip &&
-      !configuredBackground &&
-      !manualBackgroundReady &&
-      isAndroid();
+    const useBackground = manualAndroidTrip || forceBackgroundTracking || configuredBackground || manualBackgroundReady;
+    const needsManualForegroundConfirmation = false;
     if (manualBackgroundReady && !forceBackgroundTracking && !configuredBackground) {
       recordTrackingDiagnostic({
         type: 'manual_background_tracking_auto_selected',
@@ -1059,14 +1316,7 @@ export default function Dashboard() {
     }
 
     let pausedNativeAuto = false;
-    if (!autoStarted && configuredBackground && isAndroid()) {
-      await stopNativeAutoTracking().catch((error) => {
-        logError('native_auto_tracking_pause_for_manual_trip', error, {
-          tracking_mode: cfg.tracking_mode,
-        });
-      });
-      pausedNativeAuto = true;
-    }
+    pausedNativeAuto = false;
 
     if ((autoStarted || cfg.auto_tracking_enabled || cfg.tracking_mode !== 'manual') && isAndroid()) {
       const activityGranted = await requestActivityRecognitionPermission();
@@ -1114,7 +1364,51 @@ export default function Dashboard() {
       return;
     }
 
+    if (manualAndroidTrip) {
+      const notificationGranted = await requestNotificationPermission();
+      if (!notificationGranted) {
+        recordTrackingDiagnostic({
+          type: 'manual_background_tracking_blocked',
+          title: 'Manual background trip blocked',
+          reason: 'notification_permission_denied',
+          background_tracking: true,
+        });
+        refreshTrackingStatusContext();
+        setLocationError('Android manual trips need notification permission so Road Sage can keep background voice alerts running.');
+        return;
+      }
+    }
+
     const startTime = initialPoint?.timestamp || new Date().toISOString();
+    const nativeManualBackground = manualAndroidTrip;
+    const nativeManualTripId = nativeManualBackground
+      ? createNativeManualTripId(new Date(startTime).getTime())
+      : null;
+    if (nativeManualBackground) {
+      try {
+        await startNativeManualTrip({ startTime, tripId: nativeManualTripId });
+        recordTrackingDiagnostic({
+          type: 'manual_native_background_started',
+          title: 'Native manual background tracking started',
+          reason: 'manual_button',
+          background_tracking: true,
+        });
+      } catch (error) {
+        logError('native_manual_background_start', error, {
+          tracking_mode: cfg.tracking_mode,
+        });
+        recordTrackingDiagnostic({
+          type: 'manual_background_tracking_blocked',
+          title: 'Manual background trip blocked',
+          reason: 'native_manual_service_failed',
+          error: error?.message || 'Native manual service failed to start',
+          background_tracking: true,
+        });
+        refreshTrackingStatusContext();
+        setLocationError(error?.message || 'Android background manual tracking could not start. Check background location and notification permission.');
+        return;
+      }
+    }
     const storedInitialPoint = initialPoint && !summaryOnlyPrivateTrip
       ? redactRoutePointForPrivacyStorage(initialPoint, getPrivacyZones(cfg))
       : null;
@@ -1123,6 +1417,10 @@ export default function Dashboard() {
       : null;
     const phoneUsageAccessGrantedAtStart = phoneUsageAccessStatus?.usageAccessGranted === true;
     const tripData = {
+      ...(nativeManualTripId ? {
+        id: nativeManualTripId,
+        manual_session_id: nativeManualTripId,
+      } : {}),
       start_time: startTime,
       status: 'active',
       trip_state: candidate ? TRIP_STATES.CANDIDATE : TRIP_STATES.CONFIRMED,
@@ -1142,6 +1440,8 @@ export default function Dashboard() {
       } : {}),
       background_tracking: useBackground,
       start_source: autoStarted ? 'auto' : 'manual',
+      native_manual_background: nativeManualBackground,
+      voice_alert_owner: nativeManualBackground ? 'native_android' : 'webview',
       resume_native_auto: !autoStarted && configuredBackground && isAndroid(),
       candidate_started_at: candidate ? startTime : null,
       candidate_first_point: candidate && storedInitialPoint ? storedInitialPoint : null,
@@ -1206,8 +1506,27 @@ export default function Dashboard() {
     }
     startTimer(new Date(startTime));
     let tripForNotifications = tripData;
-    let manualForegroundFallback = false;
-    const trackingStartStatus = await startGPS();
+    let trackingStartStatus = null;
+    try {
+      trackingStartStatus = await startGPS();
+    } catch (error) {
+      if (!nativeManualBackground) throw error;
+      logError('manual_web_background_watcher_start', error, {
+        background_tracking: true,
+        native_manual_background: true,
+      });
+      recordTrackingDiagnostic({
+        type: 'manual_web_background_watcher_unavailable',
+        title: 'Manual WebView background watcher failed; native service remains active',
+        reason: error?.message || 'webview_background_watcher_failed',
+        background_tracking: true,
+      });
+      setTrackingServiceMode({
+        mode: 'background',
+        watcher_type: 'native_android_service',
+        reason: 'native_manual_trip_service',
+      });
+    }
     if (
       manualAndroidTrip &&
       useBackground &&
@@ -1215,64 +1534,31 @@ export default function Dashboard() {
       trackingStartStatus?.mode !== 'background'
     ) {
       recordTrackingDiagnostic({
-        type: 'manual_background_tracking_failed',
-        title: 'Manual background tracking did not start',
+        type: 'manual_web_background_watcher_unavailable',
+        title: 'Manual WebView background watcher unavailable; native service remains active',
         reason: trackingStartStatus?.reason || 'background_watcher_not_started',
         expected_mode: 'background',
         actual_mode: trackingStartStatus?.mode || 'not_started',
         watcher_type: trackingStartStatus?.watcher_type || null,
         background_tracking: true,
       });
-      await locationService.current?.stop();
-      locationService.current = null;
-      setTrackingServiceMode(null);
-      const foregroundTripData = {
-        ...(activeTripRef.current || tripData),
-        background_tracking: false,
-        resume_native_auto: false,
-        timeline: [
-          ...((activeTripRef.current || tripData).timeline || []),
-          {
-            type: 'manual_background_fallback_foreground',
-            timestamp: new Date().toISOString(),
-            reason: trackingStartStatus?.reason || 'background_watcher_not_started',
-          },
-        ],
-      };
-      activeTripStore.set(foregroundTripData);
-      activeTripRef.current = foregroundTripData;
-      setActiveTrip(foregroundTripData);
-      tripForNotifications = foregroundTripData;
-
+      setTrackingServiceMode({
+        mode: 'background',
+        watcher_type: 'native_android_service',
+        reason: 'native_manual_trip_service',
+      });
       const foregroundStatus = await startGPS({ forceForeground: true });
-      if (foregroundStatus?.mode === 'foreground') {
-        manualForegroundFallback = true;
-        recordTrackingDiagnostic({
-          type: 'manual_background_tracking_fallback_foreground',
-          title: 'Manual trip fell back to foreground GPS',
-          reason: trackingStartStatus?.reason || 'background_watcher_not_started',
-          expected_mode: 'background',
-          actual_mode: 'foreground',
-          watcher_type: foregroundStatus?.watcher_type || null,
-          background_tracking: false,
-        });
-      } else {
-        stopTimer();
-        activeTripStore.clear();
-        await activeTripStore.flush();
-        activeTripRef.current = null;
-        trackingRef.current = false;
-        setActiveTrip(null);
-        setTracking(false);
-        setElapsed(0);
-        setTrackingServiceMode(null);
-        setManualForegroundWarning(false);
-        setLocationError('GPS did not start, so this trip was not recorded. Keep Road Sage open and check location permission before starting again.');
-        refreshTrackingStatusContext();
-        return;
-      }
+      trackingStartStatus = foregroundStatus || trackingStartStatus;
+      recordTrackingDiagnostic({
+        type: 'manual_background_tracking_fallback_foreground',
+        title: 'Manual trip fell back to foreground GPS',
+        reason: foregroundStatus?.reason || trackingStartStatus?.reason || 'background_watcher_not_started',
+        expected_mode: 'background',
+        actual_mode: foregroundStatus?.mode || 'not_started',
+        background_tracking: true,
+      });
     }
-    if ((needsManualForegroundConfirmation && !useBackground) || manualForegroundFallback) {
+    if (needsManualForegroundConfirmation && !useBackground) {
       setManualForegroundWarning(true);
       notifyForegroundManualTrackingWarning(tripForNotifications).catch((error) => {
         logError('manual_foreground_tracking_warning_notification', error, {
@@ -1290,6 +1576,21 @@ export default function Dashboard() {
           background_tracking: tripForNotifications.background_tracking,
         });
       });
+      if (!shouldMuteDashboardWebViewVoice(tripForNotifications)) {
+        speakSafetyAlertOnce(
+          'tracking_ready',
+          buildVoiceAlertMessage('tracking_ready'),
+          cfg,
+          5 * 60 * 1000,
+          undefined,
+          { interrupt: true }
+        ).catch((error) => {
+          logError('tracking_ready_voice_alert', error, {
+            start_source: tripForNotifications.start_source,
+            background_tracking: tripForNotifications.background_tracking,
+          });
+        });
+      }
       Promise.resolve(scheduleLongTripReminder(tripForNotifications.start_time)).catch((error) => {
         logError('long_trip_reminder_schedule', error, {
           start_source: tripForNotifications.start_source,
@@ -1394,6 +1695,10 @@ export default function Dashboard() {
     const endingForLocationPermissionLoss = locationPermissionEndingRef.current;
 
     endingTripRef.current = true;
+    setEndingTrip(true);
+    await waitForTripEndingFeedbackPaint();
+
+    try {
     trackingRef.current = false;
     await locationService.current?.stop();
     locationService.current = null;
@@ -1403,6 +1708,64 @@ export default function Dashboard() {
 
     let endTime = new Date().toISOString();
     const cfg = localSettings.get();
+    let nativeManualEndRequested = false;
+    if (tripToEnd.native_manual_background === true) {
+      let completedNativeTrip = null;
+      try {
+        await endNativeActiveTrip({ keepArmed: false });
+        nativeManualEndRequested = true;
+        for (let attempt = 0; attempt < 30 && !completedNativeTrip; attempt += 1) {
+          const syncResult = await syncNativeCompletedTrips();
+          completedNativeTrip = syncResult.matchedActiveTrip ||
+            findNativeManualCompletion(syncResult.importedTrips, tripToEnd);
+          if (!completedNativeTrip && tripToEnd.id) {
+            completedNativeTrip = await tripService.getById(tripToEnd.id).catch(() => null);
+            if (
+              completedNativeTrip &&
+              !isNativeManualCompletionForActiveTrip(completedNativeTrip, tripToEnd)
+            ) {
+              completedNativeTrip = null;
+            }
+          }
+          if (!completedNativeTrip) {
+            await new Promise((resolve) => window.setTimeout(resolve, 100));
+          }
+        }
+        if (!completedNativeTrip && !tripToEnd.id) {
+          const storedTrips = await tripService.listAll({ sort: '-start_time' }).catch(() => []);
+          completedNativeTrip = findNativeManualCompletion(storedTrips, tripToEnd);
+        }
+      } catch (error) {
+        logError('native_manual_trip_dashboard_end', error, {
+          tripId: tripToEnd.id || null,
+          route_point_count: Array.isArray(tripToEnd.route_points) ? tripToEnd.route_points.length : 0,
+        });
+      }
+
+      if (completedNativeTrip) {
+        recordTrackingDiagnostic({
+          type: 'trip_ended',
+          title: 'Native manual trip saved',
+          reason: 'dashboard_end_native_authoritative',
+          tripId: completedNativeTrip.id,
+          duration_seconds: Math.round(completedNativeTrip.duration_seconds || 0),
+          distance_km: completedNativeTrip.distance_km || 0,
+          route_points_raw_count: Array.isArray(completedNativeTrip.route_points)
+            ? completedNativeTrip.route_points.length
+            : 0,
+        });
+        await clearNativeManualTripUi(tripToEnd, completedNativeTrip);
+        return;
+      }
+
+      recordTrackingDiagnostic({
+        type: 'native_manual_trip_fallback',
+        title: 'Native manual completion was not available in time',
+        reason: nativeManualEndRequested ? 'native_completion_import_timeout' : 'native_end_request_failed',
+        tripId: tripToEnd.id || null,
+        route_points_raw_count: Array.isArray(tripToEnd.route_points) ? tripToEnd.route_points.length : 0,
+      });
+    }
     if (isPrivateTrip(tripToEnd)) {
       const completedTrip = buildPrivateTripRecord(tripToEnd, endTime);
       const savedTrip = await tripService.create(completedTrip);
@@ -1604,6 +1967,7 @@ export default function Dashboard() {
       ? !manualSaveReview.shouldSave
       : preliminaryStats.distance_km < DEFAULT_THRESHOLDS.MIN_TRIP_DISTANCE_KM ||
         preliminaryStats.duration_seconds < DEFAULT_THRESHOLDS.MIN_TRIP_DURATION_SECONDS;
+    let nativeManualMirrorReleased = false;
 
     if (manualSaveReview?.shouldSave && manualSaveReview.reason !== 'manual_distance_confirmed') {
       recordTrackingDiagnostic({
@@ -1631,6 +1995,13 @@ export default function Dashboard() {
         start_source: tripToEnd.start_source ?? 'unknown',
         background_tracking: tripToEnd.background_tracking ?? false,
       });
+      if (tripToEnd.native_manual_background === true) {
+        await endNativeActiveTrip({ keepArmed: false }).catch((error) => {
+          logError('native_manual_trip_end_after_js_discard', error, {
+            reason: isManualTrip ? manualSaveReview?.reason : 'auto_too_short',
+          });
+        });
+      }
       await activityStopRef.current?.();
       activityStopRef.current = null;
       latestActivityRef.current = null;
@@ -1654,9 +2025,28 @@ export default function Dashboard() {
       }
       refreshTrackingStatusContext();
       setLocationError(isManualTrip
-        ? 'Trip was not saved because Road Sage did not detect real movement. Start again when you begin driving.'
+        ? tripToEnd.native_manual_background === true
+          ? 'The foreground trip had too little WebView GPS data, so Road Sage asked the native background service to finish and save its recording.'
+          : 'Trip was not saved because Road Sage did not detect real movement. Start again when you begin driving.'
         : 'Auto-detected trip was ignored because it was too short.');
       return;
+    }
+
+    if (tripToEnd.native_manual_background === true && !nativeManualEndRequested) {
+      await discardNativeManualTrip({ keepArmed: false }).then(() => {
+        nativeManualMirrorReleased = true;
+        recordTrackingDiagnostic({
+          type: 'manual_native_background_released',
+          title: 'Native manual mirror stopped before JavaScript save',
+          reason: 'javascript_trip_save_confirmed',
+          background_tracking: true,
+        });
+      }).catch((error) => {
+        logError('native_manual_trip_mirror_release_before_js_save', error, {
+          route_points_raw_count: rawPoints.length,
+          route_points_clean_count: cleanedPoints.length,
+        });
+      });
     }
 
     const shouldAutoFetchExternalContext = isExternalContextAutoFetchEnabled(cfg);
@@ -1685,8 +2075,10 @@ export default function Dashboard() {
           query_count: 0,
           fallback_country: speedLimitDefaultCountryKey(cfg),
           error: null,
-        };
+    };
     pts = speedLimitContext.routePoints || pts;
+    const speedKnowledge = getLocalSpeedKnowledge();
+    const localKnowledgeResults = await prefetchLocalKnowledge(pts, speedKnowledge);
     let stats = calculateTripStats(pts, tripToEnd.start_time, endTime, thresholds, {
       ...tripToEnd,
       raw_route_points: cleanedPoints,
@@ -1722,7 +2114,10 @@ export default function Dashboard() {
         };
 
     const tripPrivacyZones = getPrivacyZones(cfg);
-    const { events: detectedEvents, phoneUse: gpsPhoneUse } = detectDrivingEvents(pts, thresholds, endTime, tripPrivacyZones);
+    const { events: detectedEvents, phoneUse: gpsPhoneUse } = detectDrivingEvents(pts, thresholds, endTime, tripPrivacyZones, {
+      localKnowledgeResults,
+      settings: cfg,
+    });
     const activeIncidentEvents = (tripToEnd.driving_events || []).filter((event) => event.type === 'possible_crash');
     const events = enrichEventsWithSensorContext([...detectedEvents, ...activeIncidentEvents], sensorFusionRef.current?.getSamples?.() || []);
     const startMs = new Date(tripToEnd.start_time).getTime();
@@ -1742,6 +2137,8 @@ export default function Dashboard() {
       privacyZones: tripPrivacyZones,
       motionSamples,
       orientationCalibration: sensorFusionSummary.phone_orientation,
+      localKnowledgeResults,
+      settings: cfg,
     });
     scores = applyWeatherRiskToScores(scores, weatherContext);
     const tripEvents = maskEventsForPrivacy(
@@ -1763,14 +2160,30 @@ export default function Dashboard() {
       statsRecord.score_confidence_flag ||
       (uniqueDataQualityFlags.includes('location_permission_loss') || uniqueDataQualityFlags.includes('manual_sparse_gps_distance_estimate') ? 'data_gap_detected' : null);
 
+    const mapRouteSelection = selectMapRoutePoints(pts, rawPoints);
+    if (mapRouteSelection.usedRecordedFallback) {
+      uniqueDataQualityFlags.push('map_used_recorded_gps_fallback');
+      recordTrackingDiagnostic({
+        type: 'manual_route_geometry_review',
+        title: 'Recorded GPS retained for map geometry',
+        reason: 'scoring_cleaner_collapsed_route',
+        route_points_raw_count: rawPoints.length,
+        route_points_clean_count: mapRouteSelection.strictPointCount,
+        route_points_visual_count: mapRouteSelection.recordedVisualPointCount,
+      });
+    }
+    const mapRoutePoints = mapRouteSelection.points;
+
     const completedTrip = {
       ...stats,
+      ...(tripToEnd.id ? { id: tripToEnd.id } : {}),
+      ...(tripToEnd.manual_session_id ? { manual_session_id: tripToEnd.manual_session_id } : {}),
       start_time: tripToEnd.start_time,
       end_time: endTime,
       vehicle_id: completedVehicle?.id || null,
-      route_points: pts,
+      route_points: mapRoutePoints,
       route_points_raw_count: rawPoints.length,
-      route_points_map_count: pts.length,
+      route_points_map_count: mapRoutePoints.length,
       ...scores,
       driving_events: tripEvents,
       speed_limit_context: {
@@ -1799,6 +2212,7 @@ export default function Dashboard() {
       trip_state: TRIP_STATES.SAVED,
       background_tracking: tripToEnd.background_tracking,
       start_source: tripToEnd.start_source || 'manual',
+      native_manual_background: tripToEnd.native_manual_background === true,
       candidate_started_at: tripToEnd.candidate_started_at || null,
       candidate_confirmed_at: tripToEnd.candidate_confirmed_at || null,
       candidate_first_point: tripToEnd.candidate_first_point || null,
@@ -1824,6 +2238,17 @@ export default function Dashboard() {
       tracking_timeline: Array.isArray(tripToEnd.timeline) ? tripToEnd.timeline : [],
     };
     const savedTrip = await tripService.create(completedTrip);
+    if (
+      tripToEnd.native_manual_background === true &&
+      !nativeManualMirrorReleased &&
+      !nativeManualEndRequested
+    ) {
+      await discardNativeManualTrip({ keepArmed: false }).catch((error) => {
+        logError('native_manual_trip_mirror_discard_after_js_save', error, {
+          tripId: savedTrip?.id || completedTrip.id,
+        });
+      });
+    }
     const knowledge = new LocalSpeedKnowledge({
       get: (key) => getJson(key, null),
       set: (key, value) => setJson(key, value),
@@ -1944,6 +2369,30 @@ export default function Dashboard() {
     }
     refreshTrackingStatusContext();
     refetch();
+    } catch (error) {
+      const currentActiveTrip = activeTripRef.current || activeTripStore.get();
+      const hasActiveTrip = Boolean(currentActiveTrip);
+      logError('dashboard_end_trip', error, {
+        tripId: tripToEnd?.id || null,
+        start_source: tripToEnd?.start_source || null,
+        native_manual_background: tripToEnd?.native_manual_background === true,
+        active_trip_still_present: hasActiveTrip,
+      });
+      endingTripRef.current = false;
+      locationPermissionEndingRef.current = false;
+      trackingRef.current = hasActiveTrip;
+      if (hasActiveTrip && !activeTripRef.current) {
+        activeTripRef.current = currentActiveTrip;
+        setActiveTrip(currentActiveTrip);
+      }
+      setTracking(hasActiveTrip);
+      setLocationError(hasActiveTrip
+        ? 'Trip ending hit a problem. Your trip data is still on this device; try End Trip again.'
+        : 'Trip ending finished, but cleanup hit a problem. Check Trip History if the trip does not appear right away.');
+      refreshTrackingStatusContext();
+    } finally {
+      setEndingTrip(false);
+    }
   };
 
   useEffect(() => {
@@ -2112,9 +2561,9 @@ export default function Dashboard() {
   // Stats
   const totalTrips = completedTrips.length;
   const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-  const weekTrips = completedTrips.filter(t => new Date(t.start_time) >= weekAgo);
+  const weekTrips = driverCompletedTrips.filter(t => new Date(t.start_time) >= weekAgo);
   const weekDistance = weekTrips.reduce((s, t) => s + (t.distance_km || 0), 0);
-  const scoredTrips = completedTrips.slice(0, 10)
+  const scoredTrips = driverCompletedTrips.slice(0, 10)
     .map((trip) => ({ trip, component: getTripComponentScore(trip, 'overall') }))
     .filter(({ component }) => component.value != null);
   const totalScoredKm = scoredTrips.reduce((sum, { trip }) => sum + (Number(trip.distance_km) || 0), 0);
@@ -2130,14 +2579,14 @@ export default function Dashboard() {
         : 'high';
   const latestTrip = completedTrips[0];
   const activeSpeedLimitReview = speedLimitConflictReview || speedLimitReviewSummary;
-  const scoreTrend = completedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: getTripComponentScore(t, 'overall').value }));
-  const tips = buildScoreTips(completedTrips);
-  const weeklyGoals = calculateWeeklyDrivingGoals(completedTrips, settings);
-  const brakingImprovement = calculateRecentBrakingImprovement(completedTrips);
+  const scoreTrend = driverCompletedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: getTripComponentScore(t, 'overall').value }));
+  const tips = buildScoreTips(driverCompletedTrips);
+  const weeklyGoals = calculateWeeklyDrivingGoals(driverCompletedTrips, settings);
+  const brakingImprovement = calculateRecentBrakingImprovement(driverCompletedTrips);
   const parkingReminder = formatParkingReminder(parkedLocation);
-  const noHarshBrakeStreak = calculateNoHarshBrakeStreak(completedTrips);
+  const noHarshBrakeStreak = calculateNoHarshBrakeStreak(driverCompletedTrips);
   const fatigueRisk = calculateFatigueRisk(weekTrips, settings);
-  const baseline = computePersonalBaseline(completedTrips);
+  const baseline = computePersonalBaseline(driverCompletedTrips);
   const baselineRangeLabel = baseline.baseline_includes_older_scores
     ? baseline.baseline_label
     : baseline.baseline_confidence_interval_label;
@@ -2148,7 +2597,7 @@ export default function Dashboard() {
       : baseline.delta == null
         ? `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). Record a trip this week for a comparison.`
         : `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta}.`;
-  const peakStress = calculatePeakHourStress(completedTrips);
+  const peakStress = calculatePeakHourStress(driverCompletedTrips);
   const activeFatigueAlert = tracking && elapsed > 90 * 60 && (() => {
     const points = activeTrip?.route_points || [];
     if (points.length < 12) return false;
@@ -2273,11 +2722,13 @@ export default function Dashboard() {
       },
       {
         label: 'Native service',
-        ready: !isAndroid() || mode !== 'background_auto' || trackingStatusContext.nativeStatus?.enabled === true,
+        ready: !isAndroid() || (mode !== 'background_auto' && mode !== 'manual') || trackingStatusContext.nativeStatus?.enabled === true || tracking,
         action: 'native',
         detail: isAndroid() && mode === 'background_auto'
           ? trackingStatusContext.nativeStatus?.enabled ? 'Native auto tracking is armed.' : 'Start the native service so Android can detect drives while the app sleeps.'
-          : 'Native service is only used for Android background auto.',
+          : isAndroid() && mode === 'manual'
+            ? tracking ? 'Native manual background tracking is active.' : 'Manual trips start the native background service when you press Start Trip.'
+            : 'Native service is only used for Android background tracking.',
       },
     ];
     const blockers = checks.filter((item) => !item.ready);
@@ -2303,6 +2754,20 @@ export default function Dashboard() {
     currentActivity: latestActivityRef.current,
     isAndroidPlatform: isAndroid(),
   });
+  const voiceDeliveryStatus = getVoiceAlertDeliveryStatus({
+    settings,
+    trip: activeTrip,
+    isAndroidPlatform: isAndroid(),
+    nativeStatus: trackingStatusContext.nativeStatus,
+    tracking,
+  });
+  const voiceDeliveryTone = {
+    disabled: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-950/30 dark:text-slate-200',
+    native: 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-200',
+    armed: 'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900/50 dark:bg-blue-950/20 dark:text-blue-200',
+    webview: 'border-cyan-200 bg-cyan-50 text-cyan-800 dark:border-cyan-900/50 dark:bg-cyan-950/20 dark:text-cyan-200',
+    ready: 'border-border bg-background/70 text-muted-foreground',
+  }[voiceDeliveryStatus.status] || 'border-border bg-background/70 text-muted-foreground';
   const explanationTone = {
     good: 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/20',
     warn: 'border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20',
@@ -2349,6 +2814,10 @@ export default function Dashboard() {
                 {fact}
               </span>
             ))}
+          </div>
+          <div className={`mt-3 rounded-xl border px-3 py-2 text-xs ${voiceDeliveryTone}`}>
+            <div className="font-semibold">{voiceDeliveryStatus.label}</div>
+            <div className="mt-0.5 opacity-90">{voiceDeliveryStatus.detail}</div>
           </div>
         </div>
       </div>
@@ -2423,21 +2892,32 @@ export default function Dashboard() {
         )}
       </AnimatePresence>
 
-      {(scoreModelMismatchTrips.length > 0 || unavailableScoreTrips.length > 0) && (
-        <a
-          href="/settings?section=settings-detection-thresholds"
-          className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100 dark:hover:bg-amber-950/50"
-        >
-          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
-          <div>
-            <div className="text-sm font-semibold">Trip scores need review</div>
-            <div className="mt-0.5 text-xs">
-              {scoreModelMismatchTrips.length > 0
-                ? `${scoreModelMismatchTrips.length} completed trip${scoreModelMismatchTrips.length === 1 ? '' : 's'} used an older scoring model. Tap to open re-scoring.`
-                : `${unavailableScoreTrips.length} trip${unavailableScoreTrips.length === 1 ? ' has' : 's have'} unavailable scores. Tap to re-score from Settings.`}
+      {showScoreReviewWarning && (
+        <div className="flex items-start rounded-2xl border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100">
+          <a
+            href="/settings?section=settings-detection-thresholds"
+            className="flex min-w-0 flex-1 items-start gap-3 rounded-l-2xl p-4 transition-colors hover:bg-amber-100 dark:hover:bg-amber-950/50"
+          >
+            <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+            <div>
+              <div className="text-sm font-semibold">Trip scores need review</div>
+              <div className="mt-0.5 text-xs">
+                {scoreModelMismatchTrips.length > 0
+                  ? `${scoreModelMismatchTrips.length} completed trip${scoreModelMismatchTrips.length === 1 ? '' : 's'} used an older scoring model. Tap to open re-scoring.`
+                  : `${unavailableScoreTrips.length} trip${unavailableScoreTrips.length === 1 ? ' has' : 's have'} unavailable scores. Tap to re-score from Settings.`}
+              </div>
             </div>
-          </div>
-        </a>
+          </a>
+          <button
+            type="button"
+            onClick={dismissScoreReviewWarning}
+            aria-label="Dismiss trip score review warning"
+            title="Dismiss"
+            className="m-2 rounded-full p-2 transition-colors hover:bg-amber-200/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 dark:hover:bg-amber-900/60"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       )}
 
       {activeSpeedLimitReview && (
@@ -2547,7 +3027,7 @@ export default function Dashboard() {
                 <div>
                   <h2 className="font-semibold">Keep the app open for this trip</h2>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Foreground GPS records reliably only while Road Sage stays open onscreen. Background GPS lets you minimize the app while its recording notification is visible, but fully closing or force-stopping the app can still stop recording on Android.
+                    Foreground GPS only records reliably while Road Sage stays open onscreen. Background GPS lets you minimize the app while its recording notification is visible, but fully closing or force-stopping the app can still stop recording on Android. If Road Sage is force-stopped, GPS may pause.
                   </p>
                 </div>
               </div>
@@ -2627,7 +3107,7 @@ export default function Dashboard() {
             marginBottom: 8,
           }}
         >
-          Foreground GPS only records reliably while Road Sage stays open onscreen. Minimize only after Background GPS is active; fully closing or force-stopping the app can stop recording.
+          Background GPS is required for Android manual trips. Minimize only after Background GPS is active; fully closing or force-stopping the app can stop recording.
         </div>
       )}
 
@@ -2658,7 +3138,7 @@ export default function Dashboard() {
                 <div className="flex items-center gap-2 mb-1">
                   <span className="w-2.5 h-2.5 bg-red-400 rounded-full animate-pulse" />
                   <span className="text-white/80 text-sm font-medium">
-                    {activeTripIsCandidate ? 'Checking Movement' : activeTripIsPrivate ? 'Private Trip Active' : 'Trip Active'}
+                    {endingTrip ? 'Saving Trip' : activeTripIsCandidate ? 'Checking Movement' : activeTripIsPrivate ? 'Private Trip Active' : 'Trip Active'}
                   </span>
                   {activeTripIsBackgroundTracking && (
                     <span className="rounded-full border border-emerald-200/50 bg-emerald-300/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-100">
@@ -2716,14 +3196,22 @@ export default function Dashboard() {
                 : null;
               const resolved = createTierAwareSpeedLimitContext(speedLimitContext, settings);
               const badge = speedLimitBadgeForResolved(resolved);
-              const speedWarning = shouldWarnForSpeed({ speedKmh: spd, candidate: resolved, settings });
+              const liveSpeedReady = hasLiveSpeedEvidence(activeTrip, routePointsForBadge, currentLocation);
+              const speedWarning = liveSpeedReady
+                ? shouldWarnForSpeed({ speedKmh: spd, candidate: resolved, settings })
+                : null;
               const isOverWarn = speedWarning?.visual === true;
-              const reviewAfterTrip = resolved?.tier && resolved.tier !== 'POSTED' && resolved.tier !== 'UNKNOWN';
+              const reviewAfterTrip = liveSpeedReady && resolved?.tier && resolved.tier !== 'POSTED' && resolved.tier !== 'UNKNOWN';
               return (
                 <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
                   <MapPin className="w-3.5 h-3.5 text-white/70" />
                   <span className={`font-semibold ${isOverWarn ? 'text-red-300 animate-pulse' : 'text-white/70'}`}>
+                    {!liveSpeedReady && 'GPS settling'}
+                    {liveSpeedReady && (
+                      <>
                     {formatSpeed(spd, units)}{isOverWarn ? ' ⚠️ Over limit!' : ''}
+                      </>
+                    )}
                   </span>
                   <span className="opacity-50 text-white/70">·</span>
                   <span
@@ -2755,6 +3243,18 @@ export default function Dashboard() {
               </div>
             )}
 
+            {endingTrip && (
+              <div className="mb-4 flex items-start gap-2 rounded-xl border border-white/20 bg-white/15 px-3 py-2 text-sm text-white/90">
+                <RefreshCw className="mt-0.5 h-4 w-4 flex-shrink-0 animate-spin" />
+                <div>
+                  <div className="font-semibold">Saving your trip</div>
+                  <div className="mt-0.5 text-xs text-white/70">
+                    This can take a few seconds while Road Sage finishes GPS sync and scoring.
+                  </div>
+                </div>
+              </div>
+            )}
+
             {activeTrip?.start_source === 'manual' && !activeTripIsPrivate && (
               <div className={`mb-4 flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${
                 activeTripIsBackgroundTracking
@@ -2772,14 +3272,14 @@ export default function Dashboard() {
                       ? 'Background GPS active'
                       : activeTripIsStartingBackground
                         ? 'Waiting for Background GPS'
-                        : 'Foreground GPS only'}
+                        : 'Background GPS not active'}
                   </div>
                   <div className="mt-0.5 text-xs opacity-85">
                     {activeTripIsBackgroundTracking
                       ? 'You can minimize Road Sage while the recording notification is visible. Do not fully close or force-stop the app; Android may stop recording.'
                       : activeTripIsStartingBackground
                         ? 'Keep Road Sage open until Background GPS active appears. Do not minimize, close, or force-stop yet.'
-                        : 'Keep Road Sage open onscreen for the whole drive. If minimized, closed, or force-stopped, GPS may pause.'}
+                        : 'Background GPS is required for Android manual trips. Check permissions before driving.'}
                   </div>
                 </div>
               </div>
@@ -2794,6 +3294,7 @@ export default function Dashboard() {
                     showCurrentLocation
                     parkedLocation={activeTripIsCandidate ? parkedLocation : null}
                     smoothRoute={false}
+                    showIncompleteRouteWarning={false}
                     height="220px"
                   />
                 </Suspense>
@@ -2848,7 +3349,8 @@ export default function Dashboard() {
               {activeTripIsPrivate && (
                 <button
                   onClick={handleDiscardPrivateTrip}
-                  className="flex min-w-0 items-center justify-center gap-2 rounded-xl border border-white/20 bg-slate-950/25 px-3 py-3 font-semibold text-white/85 transition-colors hover:bg-slate-950/40"
+                  disabled={endingTrip}
+                  className="flex min-w-0 items-center justify-center gap-2 rounded-xl border border-white/20 bg-slate-950/25 px-3 py-3 font-semibold text-white/85 transition-colors hover:bg-slate-950/40 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Trash2 className="h-4 w-4 flex-shrink-0" />
                   <span className="min-w-0 truncate">Discard</span>
@@ -2856,11 +3358,16 @@ export default function Dashboard() {
               )}
               <button
                 onClick={handleEndTrip}
-                className={`${activeTripIsPrivate ? 'px-3 text-sm leading-tight sm:text-base' : ''} flex w-full min-w-0 items-center justify-center gap-2 rounded-xl bg-white/15 py-3 font-semibold transition-colors hover:bg-white/25 backdrop-blur`}
+                disabled={endingTrip}
+                className={`${activeTripIsPrivate ? 'px-3 text-sm leading-tight sm:text-base' : ''} flex w-full min-w-0 items-center justify-center gap-2 rounded-xl bg-white/15 py-3 font-semibold transition-colors hover:bg-white/25 backdrop-blur disabled:cursor-not-allowed disabled:opacity-75`}
               >
-                <Square className="h-4 w-4 flex-shrink-0" />
+                {endingTrip ? (
+                  <RefreshCw className="h-4 w-4 flex-shrink-0 animate-spin" />
+                ) : (
+                  <Square className="h-4 w-4 flex-shrink-0" />
+                )}
                 <span className={activeTripIsPrivate ? 'min-w-0 whitespace-nowrap' : ''}>
-                  {activeTripIsPrivate ? 'Save Summary' : 'End Trip'}
+                  {endingTrip ? (activeTripIsPrivate ? 'Saving...' : 'Saving Trip...') : activeTripIsPrivate ? 'Save Summary' : 'End Trip'}
                 </span>
               </button>
             </div>
@@ -2902,12 +3409,12 @@ export default function Dashboard() {
                     <div className="text-sm font-semibold">
                       {androidManualBackgroundReady
                         ? 'Manual trips will use Background GPS'
-                        : 'Manual trips are foreground-only right now'}
+                        : 'Manual background setup needed'}
                     </div>
                     <div className="mt-0.5 text-xs opacity-85">
                       {androidManualBackgroundReady
                         ? 'You can minimize Road Sage after starting while the recording notification is visible. Do not fully close or force-stop the app.'
-                        : 'Keep Road Sage open onscreen while driving, or enable Background Tracking before you start. Minimized or closed foreground trips may stop recording.'}
+                        : 'Enable Background Tracking before you start. Manual Android trips are intended to run through the native background service.'}
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-medium">
                       <span className="rounded-full bg-background/60 px-2 py-1">Location: {foregroundLocationReady ? 'ready' : 'needed'}</span>
@@ -3235,6 +3742,7 @@ export default function Dashboard() {
           currentRoutePoints={activeTrip?.route_points || []}
           currentEvents={activeTrip?.driving_events || []}
           tripStartTime={activeTrip?.start_time}
+          voiceMuted={shouldMuteDashboardWebViewVoice(activeTrip)}
         />
       )}
     </div>

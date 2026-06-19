@@ -1691,6 +1691,8 @@ function calculateRouteDistanceKm(points = [], thresholds = DEFAULT_THRESHOLDS) 
  * Manual trips can have very sparse GPS on Android while the screen is locked.
  * The coordinate-displacement fallback intentionally skips the short segment
  * cap used by normal route distance, but still rejects impossible GPS jumps.
+ *
+ * @param {{points?: Array<Record<string, any>>, stats?: Record<string, any>, startTime?: string|number|Date, endTime?: string|number|Date, thresholds?: any}} params
  */
 export function reviewManualTripSave({ points = [], stats = {}, startTime, endTime, thresholds = DEFAULT_THRESHOLDS } = {}) {
   const startMs = new Date(startTime).getTime();
@@ -4444,6 +4446,12 @@ export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thres
   if (localKnowledge?.source === 'user_confirmed_posted_sign' && Number(localKnowledge.limitKmh) > 0) {
     effectiveLimitKmh = Number(localKnowledge.limitKmh);
     source = 'user_confirmed_posted_sign';
+  } else if (localKnowledge && Number(localKnowledge.limitKmh) > 0 && Number(localKnowledge.confidence) >= 0.55) {
+    effectiveLimitKmh = Number(localKnowledge.limitKmh);
+    source = localKnowledge.source === 'user_entered_estimate' || localKnowledge.source === 'user_correction'
+      ? 'user_entered_estimate'
+      : 'learned_local';
+    learnedLocalConfidence = Number(localKnowledge.confidence);
   } else if (actualLimitKmh != null) {
     effectiveLimitKmh = actualLimitKmh;
     source = actualSource;
@@ -4459,12 +4467,6 @@ export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thres
         ? Math.min(regionalDefaultEstimate, fallbackLimitKmh)
         : regionalDefaultEstimate;
       source = 'region_default_estimate';
-    } else if (localKnowledge && Number(localKnowledge.limitKmh) > 0 && Number(localKnowledge.confidence) >= 0.55) {
-      effectiveLimitKmh = Number(localKnowledge.limitKmh);
-      source = localKnowledge.source === 'user_entered_estimate' || localKnowledge.source === 'user_correction'
-        ? 'user_entered_estimate'
-        : 'learned_local';
-      learnedLocalConfidence = Number(localKnowledge.confidence);
     }
   }
 
@@ -4520,7 +4522,7 @@ export function getInferredLimitForPoint(routePoints = [], point = null, thresho
  * @param {Array<{lat:number,lng:number,timestamp:string,speed_kmh?:number}>} routePoints - Ordered GPS route points.
  * @param {Object} stats - Trip stats, optionally including speed_zones.
  * @param {Object} thresholds - Driving thresholds for speed-over-limit tolerance.
- * @returns {{highway_compliance:Object|null,urban_compliance:Object|null,residential_compliance:Object|null,overall_compliance_score:number}} Compliance fields.
+ * @returns {{highway_compliance:Object|null,urban_compliance:Object|null,residential_compliance:Object|null,overall_compliance_score:number|null,speed_penalty_totals:{totalRawPenalty:number,totalWeightedPenalty:number,totalPostedWeight:number}}} Compliance fields.
  * @example
  * const compliance = calculateSpeedLimitCompliance(points, stats, DEFAULT_THRESHOLDS);
  */
@@ -5878,6 +5880,14 @@ function sanitizePrivateIntersectionStats(stats = {}, removeCoordinates = false)
   };
 }
 
+/**
+ * @param {Array<Record<string, any>>} points
+ * @param {string|number|Date} startTime
+ * @param {string|number|Date} [endTime]
+ * @param {*} [thresholds]
+ * @param {Record<string, any>} [context]
+ * @returns {Record<string, any>}
+ */
 export function calculateTripStats(points, startTime, endTime, thresholds = DEFAULT_THRESHOLDS, context = {}) {
   const routePoints = (points || []).filter(hasValidCoordinates);
   const intersectionPoints = intersectionScoringPoints(points, context);
@@ -6089,12 +6099,13 @@ export function calculateTripStats(points, startTime, endTime, thresholds = DEFA
  * - Start with 100 points
  * - Deduct for each risky event (severity-weighted)
  * - Apply bonuses for clean driving
- * - Sub-scores: Safety, Smoothness, Eco
- * - Overall = weighted average of sub-scores
+ * - Sub-scores: Safety, Smoothness, Intersection, and separately reported Eco
+ * - Overall = weighted driving average; Eco is not blended into the headline score
  *
- * Safety (40%):    based on harsh brakes, speeding, sharp turns
- * Smoothness (35%): based on rapid accel, harsh brakes, turn smoothness
- * Eco (25%):        based on speeding, rapid accel, idle time
+ * Safety (55%):      based on harsh brakes, speeding, sharp turns, phone use, fatigue, and related safety signals
+ * Smoothness (30%):  based on rapid accel, harsh brakes, turn smoothness, jerk, and speed variability
+ * Intersection (15%): based on traffic-stop approach behavior when evidence is available
+ * Eco:               calculated and displayed separately
  *
  * @param {Array} events - Detected driving events
  * @param {Object} stats - Trip statistics (distance, duration, etc.)

@@ -56,6 +56,7 @@ import {
   speedLimitDefaultCountryKey,
 } from '@/lib/speedLimitSource';
 import { buildPhoneUsageAccessProvenance, buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
+import { summarizeTripPhoneUse } from '@/lib/phoneUseSummary';
 import {
   TRIP_TAG_OPTIONS,
   buildScoreExplanation,
@@ -80,9 +81,8 @@ import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 import { getAndroidUsageAccessStatus } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 import {
-  CALIBRATION_LABEL_TARGET_COUNT,
+  SCORE_REVIEW_ISSUE_OPTIONS,
   SCORE_ACCURACY_OPTIONS,
-  SURVEY_RATING_OPTIONS,
   TRIP_CONTEXT_TAG_OPTIONS,
   WAS_DRIVER_OPTIONS,
 } from '@/lib/calibrationLabeling';
@@ -535,7 +535,22 @@ export default function TripDetail() {
     mutationFn: ({ surveyInput, replaceExisting = false }) => (
       calibrationLabelService.submitTripSurveyLabel(trip, surveyInput, { replaceExisting })
     ),
-    onSuccess: async (record) => {
+    onSuccess: async (record, variables) => {
+      const wasDriver = record?.surveyLabel?.wasDriver ?? variables?.surveyInput?.wasDriver ?? null;
+      if (wasDriver) {
+        try {
+          const updatedTrip = await tripService.update(trip.id, {
+            was_driver: wasDriver,
+            passenger_trip: wasDriver === 'no',
+            excluded_from_driver_score: wasDriver === 'no',
+            updated_at: new Date().toISOString(),
+          });
+          if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
+          invalidateTripLists();
+        } catch {
+          // The local calibration label remains authoritative for this detail view.
+        }
+      }
       const [marker, count] = await Promise.all([
         calibrationLabelService.getTripSurveyStatus(trip.id),
         calibrationLabelService.countLocalLabels(),
@@ -786,16 +801,30 @@ export default function TripDetail() {
     speedLimitContext,
     speedLimitLocalKnowledgeResults
   );
+  const hasPostedSpeedLimitEvidence = speedLimitSourceBreakdown.rows.some((row) => (
+    ['openstreetmap', 'user_confirmed_posted_sign'].includes(row.source)
+  ));
+  const onlyGpsInferredSpeedLimits = speedLimitSourceBreakdown.rows.length > 0 && speedLimitSourceBreakdown.rows.every((row) => (
+    ['inferred', 'unknown'].includes(row.source)
+  ));
+  const speedLimitEstimateWarning = onlyGpsInferredSpeedLimits
+    ? 'This entire compliance score is based on GPS-inferred limits. Enable auto-fetch in Settings, or tap Get Road Data for this trip, to use posted OpenStreetMap limits when available.'
+    : 'No posted speed-limit source is available for this trip. Compliance uses the estimates shown above; check posted signs for school zones, construction zones, temporary limits, and local exceptions.';
   const mapMatchingContext = trip.map_matching_context || null;
   const mapMatchedViaPublicOsrmDemo = mapMatchingContext?.isOsrmDemoUrl === true &&
     ['matched', 'partial_matched', 'cache_hit'].includes(mapMatchingContext?.status);
-  const osmSpeedLimitPoints = (trip.route_points || []).filter((point) => (
+  const rawSpeedLimitPoints = (trip.route_points || []).filter((point) => (
     ['openstreetmap', 'osm_highway_default'].includes(point.speed_limit_source) &&
     Number.isFinite(Number(point.speed_limit_kmh))
   ));
   const hasLocalSpeedLimitKnowledge = speedLimitLocalKnowledgeResults.some((item) => Number(item?.limitKmh) > 0);
-  const hasSpeedLimitLayerData = osmSpeedLimitPoints.length > 0 || hasLocalSpeedLimitKnowledge;
-  const osmSpeedLimits = [...new Set(osmSpeedLimitPoints.map((point) => Number(point.speed_limit_kmh)).filter(Number.isFinite))]
+  const hasSpeedLimitLayerData = rawSpeedLimitPoints.length > 0 || hasLocalSpeedLimitKnowledge;
+  const effectiveSpeedLimits = [...new Set(
+    speedLimitSourceBreakdown.rows
+      .flatMap((row) => row.limits || [])
+      .map(Number)
+      .filter(Number.isFinite)
+  )]
     .sort((a, b) => a - b);
   const speedLimitCoverage = (() => {
     const points = trip.route_points || [];
@@ -816,7 +845,10 @@ export default function TripDetail() {
   const osmCoveragePct = Number.isFinite(Number(speedLimitContext?.coverage))
     ? Number(speedLimitContext.coverage)
     : speedLimitCoverage.mapDerivedPct;
-  const showLowSpeedLimitCoverageBanner = speedLimitLookupEnabled && speedLimitCoverage.sampleCount > 0 && osmCoveragePct < 20;
+  const showLowSpeedLimitCoverageBanner = speedLimitLookupEnabled &&
+    !hasLocalSpeedLimitKnowledge &&
+    speedLimitCoverage.sampleCount > 0 &&
+    osmCoveragePct < 20;
   const speedLimitDefaultCountries = [...new Set([
     speedLimitContext?.fallback_country,
     ...(trip.route_points || []).map((point) => point.fallback_country),
@@ -868,10 +900,14 @@ export default function TripDetail() {
     ? `${brakeOnsetSequenceCount} of ${brakeOnsetMinimumSequences} qualifying brake events recorded`
     : null;
   const phoneUseWindows = displayPhoneUse.phone_use_events || [];
+  const phoneUseInsights = summarizeTripPhoneUse(trip, {
+    wasDriver: calibrationSurveyStatus?.wasDriver ?? calibrationSurveyStatus?.was_driver,
+  });
+  const phoneUseTimeline = phoneUseInsights.timeline || [];
   const phoneUseRisk = displayPhoneUse.phone_use_risk || trip.phone_use_risk || 'none';
   const hasPhoneUsageAccess = displayPhoneUse.phone_use_score_available === true;
   const phoneUsePermissionRequired = trip.phone_use_score_status === 'usage_access_required';
-  const showPhoneUse = hasPhoneUsageAccess || phoneUseWindows.length > 0 || phoneUseRisk !== 'none';
+  const showPhoneUse = hasPhoneUsageAccess || phoneUseWindows.length > 0 || phoneUseRisk !== 'none' || phoneUsePermissionRequired;
   const phoneUseScoreForImpactRaw = displayPhoneUse.phone_use_score ?? trip.phone_use_score ?? null;
   const phoneUseScoreForImpact = Number.isFinite(Number(phoneUseScoreForImpactRaw)) ? Math.max(0, Math.min(100, Number(phoneUseScoreForImpactRaw))) : null;
   // Keep this estimate aligned with calculateTripScores' phoneUseScoreForSafety blend.
@@ -887,6 +923,10 @@ export default function TripDetail() {
     low: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60',
     none: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60',
   }[phoneUseRisk] || 'bg-secondary text-muted-foreground border-border';
+  const phoneUseComparisonMax = Math.max(
+    1,
+    ...(phoneUseInsights.scoreComparison || []).map((row) => Number(row.referencePoints) || 0)
+  );
   const laneChangeEvents = Array.isArray(trip.lane_change_events) ? trip.lane_change_events : [];
   const rawDrivingEvents = uniqueTripEvents([...(trip.driving_events || []), ...laneChangeEvents]);
   const displayEvents = mergePhoneUseEventsIntoDrivingEvents(rawDrivingEvents, displayPhoneUse)
@@ -1317,7 +1357,7 @@ export default function TripDetail() {
                 </span>
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
-                {describeOsmSpeedLimitStatus(speedLimitContext)} {osmSpeedLimits.length ? `Matched posted/estimated values: ${osmSpeedLimits.join(', ')} km/h.` : 'GPS fallback thresholds fill gaps.'}
+                {describeOsmSpeedLimitStatus(speedLimitContext)} {effectiveSpeedLimits.length ? `Effective posted/estimated values: ${effectiveSpeedLimits.join(', ')} km/h.` : 'GPS fallback thresholds fill gaps.'}
               </div>
               {speedLimitContext.error && (
                 <div className="mt-1 text-xs text-orange-600 dark:text-orange-300">{speedLimitContext.error}</div>
@@ -1399,55 +1439,111 @@ export default function TripDetail() {
             </span>
           </div>
 
-          {phoneUseRisk === 'none' ? (
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            <div className="rounded-xl border border-border bg-secondary/40 p-3">
+              <div className="text-xs text-muted-foreground">Evidence coverage</div>
+              <div className="mt-1 text-sm font-semibold capitalize">
+                {phoneUseInsights.dataQuality.replace(/_/g, ' ')}
+              </div>
+            </div>
+            <div className="rounded-xl border border-border bg-secondary/40 p-3">
+              <div className="text-xs text-muted-foreground">Detection source</div>
+              <div className="mt-1 text-sm font-semibold">
+                {hasPhoneUsageAccess ? 'Android Usage Access' : 'Not measured'}
+              </div>
+            </div>
+            <div className="rounded-xl border border-border bg-secondary/40 p-3">
+              <div className="text-xs text-muted-foreground">Map display</div>
+              <div className="mt-1 flex items-center gap-1.5 text-sm font-semibold">
+                <Smartphone className="h-4 w-4 text-red-500" />
+                {settings.phone_use_show_on_map === false ? 'Hidden in Settings' : 'Phone icons enabled'}
+              </div>
+            </div>
+          </div>
+
+          {phoneUseInsights.isPassenger && (
+            <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800/60 dark:bg-blue-950/30 dark:text-blue-200">
+              <div className="font-semibold">Passenger trip</div>
+              <div className="mt-1 text-xs">
+                Phone-use evidence is retained for review, but this trip is excluded from driver phone-use trends and should not be interpreted as driver behavior.
+              </div>
+            </div>
+          )}
+
+          {!hasPhoneUsageAccess && (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-200">
+              Phone use was not measured for this trip because confirmed Android Usage Access evidence was unavailable.
+            </div>
+          )}
+
+          {phoneUseRisk === 'none' && hasPhoneUsageAccess ? (
             <div className="mt-4 rounded-2xl bg-emerald-50 p-3 text-sm font-medium text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
               No confirmed phone-use events recorded this trip.
             </div>
-          ) : (
+          ) : phoneUseInsights.hasConfirmedUse ? (
             <div className="mt-4 space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-2xl bg-secondary/50 p-3">
                   <Smartphone className="mb-2 h-4 w-4 text-red-500" />
-                  <div className="font-grotesk text-2xl font-bold">{displayPhoneUse.phone_use_window_count || trip.phone_use_window_count || phoneUseWindows.length}</div>
+                  <div className="font-grotesk text-2xl font-bold">{phoneUseInsights.windowCount}</div>
                   <div className="text-xs text-muted-foreground">windows recorded</div>
                 </div>
                 <div className="rounded-2xl bg-secondary/50 p-3">
                   <Clock className="mb-2 h-4 w-4 text-orange-500" />
-                  <div className="font-grotesk text-2xl font-bold">{Math.round(displayPhoneUse.phone_use_total_seconds || trip.phone_use_total_seconds || 0)}s</div>
+                  <div className="font-grotesk text-2xl font-bold">{Math.round(phoneUseInsights.totalSeconds)}s</div>
                   <div className="text-xs text-muted-foreground">estimated duration</div>
                 </div>
                 <div className="rounded-2xl bg-secondary/50 p-3">
                   <Gauge className="mb-2 h-4 w-4 text-blue-500" />
-                  <div className="font-grotesk text-2xl font-bold">{avgPhoneUseSpeed || '-'}</div>
+                  <div className="font-grotesk text-2xl font-bold">{phoneUseInsights.avgSpeedKmh || avgPhoneUseSpeed || '-'}</div>
                   <div className="text-xs text-muted-foreground">avg km/h during detection</div>
                 </div>
                 <div className="rounded-2xl bg-secondary/50 p-3">
                   <Focus className="mb-2 h-4 w-4 text-violet-500" />
-                  <div className="font-grotesk text-2xl font-bold">{Math.round((displayPhoneUse.phone_use_pct_of_trip || trip.phone_use_pct_of_trip || 0) * 10) / 10}%</div>
+                  <div className="font-grotesk text-2xl font-bold">{Math.round(phoneUseInsights.pctOfTrip * 10) / 10}%</div>
                   <div className="text-xs text-muted-foreground">of trip time</div>
                 </div>
               </div>
 
+              <div className="rounded-xl border border-border bg-secondary/30 p-3">
+                <div className="text-xs font-semibold uppercase text-muted-foreground">Coaching</div>
+                <div className="mt-1 text-sm">{phoneUseInsights.coachingMessage}</div>
+              </div>
+
+              {phoneUseInsights.worstEvent && (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3 dark:border-red-800/60 dark:bg-red-950/30">
+                  <div className="text-xs font-semibold uppercase text-red-700 dark:text-red-300">Highest-risk moment</div>
+                  <div className="mt-1 text-sm font-semibold text-red-800 dark:text-red-200">
+                    {phoneUseInsights.worstEvent.activityLabel || 'Foreground app activity'} for {Math.round(phoneUseInsights.worstEvent.durationSeconds || 0)}s at {Math.round(phoneUseInsights.worstEvent.speedKmh || 0)} km/h
+                  </div>
+                  {phoneUseInsights.worstEvent.contextLabels?.length > 0 && (
+                    <div className="mt-1 text-xs text-red-700 dark:text-red-300">
+                      {phoneUseInsights.worstEvent.contextLabels.join(' · ')}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <details className="rounded-2xl bg-secondary/50 p-3">
-                <summary className="cursor-pointer list-none text-sm font-semibold">Window breakdown</summary>
+                <summary className="cursor-pointer list-none text-sm font-semibold">Phone-use timeline</summary>
                 <div className="mt-3 space-y-2">
-                  {phoneUseWindows.map((event, index) => (
+                  {phoneUseTimeline.map((event, index) => (
                     <div key={`${event.startTime || event.timestamp}-${index}`} className="rounded-xl bg-card p-3 text-sm">
                       <div className="flex items-center justify-between gap-2">
                         <div className="font-semibold">
-                          Window {index + 1} - {event.startTime ? new Date(event.startTime).toLocaleTimeString() : 'time unknown'}
+                          {event.activityLabel} · {event.startTime ? new Date(event.startTime).toLocaleTimeString() : 'time unknown'}
                         </div>
                         <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold uppercase">
-                          {event.confidence_level || 'medium'}
+                          {event.severity || event.confidence_level || 'medium'}
                         </span>
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">
-                        {Math.round(event.durationS ?? event.duration_seconds ?? 0)} seconds - {Math.round(event.speed_kmh || 0)} km/h
+                        {Math.round(event.durationSeconds)} seconds · {Math.round(event.speedKmh)} km/h
+                        {event.offsetSeconds != null ? ` · ${formatDuration(event.offsetSeconds)} into trip` : ''}
                       </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        Signals: {(event.signals_triggered || []).join(', ') || 'combined GPS behaviour'}
-                        {event.source === 'android_usage_access' ? ' - confirmed foreground app activity' : ''}
-                      </div>
+                      {event.contextLabels?.length > 0 && (
+                        <div className="mt-1 text-xs text-muted-foreground">{event.contextLabels.join(' · ')}</div>
+                      )}
                       <button
                         type="button"
                         onClick={() => document.querySelector('.map-container')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
@@ -1457,16 +1553,65 @@ export default function TripDetail() {
                       </button>
                     </div>
                   ))}
+                  {phoneUseTimeline.length === 0 && (
+                    <div className="rounded-xl bg-card p-3 text-xs text-muted-foreground">
+                      A confirmed summary was saved, but detailed windows are not present in this lightweight record. Open a newly recorded trip to see per-window timing and context.
+                    </div>
+                  )}
                 </div>
               </details>
 
-              {hasPhoneUsageAccess && settings.phone_use_affects_score !== false && phoneUseScoreForImpact != null && phoneUseScoreForImpact < 95 && (
+              <div className="rounded-xl border border-border p-3">
+                <div className="text-sm font-semibold">Activity classification</div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {phoneUseInsights.activityBreakdown.map((activity) => (
+                    <div key={activity.key} className="rounded-lg bg-secondary/50 px-3 py-2">
+                      <div className="text-sm font-medium">{activity.label}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {activity.windows} window{activity.windows === 1 ? '' : 's'} · {Math.round(activity.seconds)}s
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {!phoneUseInsights.unlockClassificationAvailable && (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    Android Usage Access does not reliably distinguish an unlock-only screen check from other foreground app activity unless the native event explicitly identifies it.
+                  </div>
+                )}
+              </div>
+
+              {phoneUseInsights.scoreComparison.length > 0 && (
+                <div className="rounded-xl border border-border p-3">
+                  <div className="text-sm font-semibold">Event severity comparison</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Product reference points compare event severity; the final trip score uses weighted component scoring.
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {phoneUseInsights.scoreComparison.slice(0, 5).map((row) => (
+                      <div key={row.type}>
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <span className="font-medium">{row.label} ({row.count})</span>
+                          <span className="text-muted-foreground">{row.referencePoints} reference pts</span>
+                        </div>
+                        <div className="mt-1 h-2 overflow-hidden rounded-full bg-secondary">
+                          <div
+                            className={`h-full rounded-full ${row.type === 'phone_use' ? 'bg-red-500' : 'bg-primary'}`}
+                            style={{ width: `${Math.max(4, Math.round((row.referencePoints / phoneUseComparisonMax) * 100))}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!phoneUseInsights.isPassenger && hasPhoneUsageAccess && settings.phone_use_affects_score !== false && phoneUseScoreForImpact != null && phoneUseScoreForImpact < 95 && (
                 <div className="rounded-xl bg-red-50 p-3 text-xs font-medium text-red-700 dark:bg-red-950/30 dark:text-red-300">
                   Phone use reduced your Safety score by about {phoneUseSafetyImpactPoints} point{phoneUseSafetyImpactPoints === 1 ? '' : 's'}.
                 </div>
               )}
             </div>
-          )}
+          ) : null}
         </motion.div>
       )}
 
@@ -1754,10 +1899,10 @@ export default function TripDetail() {
         message="Something went wrong while preparing this trip's score summary. Reload to try again."
         resetKey={trip.id}
       >
-        <TripScoreOverview trip={trip} />
+        <TripScoreOverview trip={trip} speedLimitSourceBreakdown={speedLimitSourceBreakdown} />
       </SectionErrorBoundary>
       <PostTripCalibrationSurvey
-        tripId={trip.id}
+        trip={trip}
         status={calibrationSurveyStatus}
         labelCount={calibrationLabelCount}
         isPending={calibrationSurveyMutation.isPending}
@@ -1933,9 +2078,9 @@ export default function TripDetail() {
                 ))}
               </div>
             )}
-            {speedLimitCoverage.mapDerivedPct === 0 && (
+            {!hasPostedSpeedLimitEvidence && speedLimitSourceBreakdown.rows.length > 0 && (
               <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2 font-medium text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-                This entire compliance score is based on inferred limits. Enable auto-fetch in Settings, or tap Get Road Data for this trip, to use posted OpenStreetMap limits when available.
+                {speedLimitEstimateWarning}
               </div>
             )}
           </div>
@@ -2438,6 +2583,86 @@ function componentEvidenceText(evidence) {
   return 'high evidence';
 }
 
+function scoreConfidenceMeta(component = {}) {
+  const evidence = component?.evidence;
+  const sampleCount = Number(component?.sampleCount);
+  const sampleText = Number.isFinite(sampleCount) && sampleCount > 0
+    ? `${sampleCount.toLocaleString()} route sample${sampleCount === 1 ? '' : 's'}`
+    : null;
+
+  if (component?.value == null || evidence === 'unavailable') {
+    return {
+      label: 'Score unavailable',
+      description: 'Not enough reliable evidence was stored to score this trip.',
+      sampleText,
+      className: 'border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300',
+    };
+  }
+
+  if (evidence === 'high') {
+    return {
+      label: 'High confidence',
+      description: 'Score is based on enough stored route evidence and supporting signals.',
+      sampleText,
+      className: 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300',
+    };
+  }
+
+  if (evidence === 'developing') {
+    return {
+      label: 'Developing confidence',
+      description: 'Score is usable, but some supporting signals are missing or still collecting.',
+      sampleText,
+      className: 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200',
+    };
+  }
+
+  return {
+    label: componentEvidenceText(evidence) || 'Limited confidence',
+    description: 'Treat this score as directional because the evidence is limited.',
+    sampleText,
+    className: 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200',
+  };
+}
+
+function scoreDriverReason(driver = {}) {
+  if (driver.kind === 'event') {
+    const category = String(driver.category || 'score').toLowerCase();
+    return `${driver.count} recorded event${driver.count === 1 ? '' : 's'} affected the ${category} part of the score.`;
+  }
+
+  const scoreText = Number.isFinite(Number(driver.score)) ? `${driver.score}/100` : 'below full credit';
+  const deficitText = Number.isFinite(Number(driver.deficit)) && driver.deficit > 0
+    ? `, about ${driver.deficit} point${driver.deficit === 1 ? '' : 's'} below perfect`
+    : '';
+  const prefix = `This scored ${scoreText}${deficitText}.`;
+
+  switch (driver.factor) {
+    case 'speed_limit_compliance':
+      return `${prefix} Speeding penalties depend on the limit source shown for this trip.`;
+    case 'braking_efficiency':
+      return `${prefix} Abrupt or uneven full-stop braking lowered Safety.`;
+    case 'lane_changing':
+      return `${prefix} Frequent lane changes or braking during lane changes lowered Safety.`;
+    case 'phone_use':
+      return `${prefix} Confirmed Android Usage Access phone-use evidence lowered Safety.`;
+    case 'smoothness_index':
+      return `${prefix} Sudden acceleration or braking changes lowered Smoothness.`;
+    case 'speed_variability':
+      return `${prefix} Uneven moving speed lowered Smoothness.`;
+    case 'brake_onset_smoothness':
+      return `${prefix} Abrupt brake application lowered Smoothness.`;
+    case 'cornering_consistency':
+      return `${prefix} Variable or high-G cornering lowered Smoothness.`;
+    case 'eco_driving':
+    case 'fuel_band':
+    case 'engine_stress':
+      return `${prefix} This affects the Eco component, which is displayed separately from the headline score.`;
+    default:
+      return prefix;
+  }
+}
+
 function shouldShowComponentEvidenceBadge(evidence) {
   return Boolean(evidence) && evidence !== 'high';
 }
@@ -2478,9 +2703,18 @@ function usesInferredSpeedLimitScoring(trip = {}) {
 }
 
 const SCORE_ACCURACY_LABELS = {
-  accurate: 'Accurate',
-  too_high: 'Too high',
-  too_low: 'Too low',
+  accurate: 'Yes, it looks fair',
+  too_low: 'No, the score is too harsh',
+  too_high: 'No, the score is too generous',
+};
+
+const SCORE_REVIEW_ISSUE_LABELS = {
+  harsh_brake: 'Braking',
+  rapid_acceleration: 'Acceleration',
+  sharp_turn: 'Cornering',
+  speeding: 'Speeding',
+  phone_use: 'Phone use',
+  other: 'Something else',
 };
 
 const WAS_DRIVER_LABELS = {
@@ -2510,35 +2744,42 @@ const shouldPromptForCalibrationSurvey = (tripId, labelCount, status) => {
   return hash % 3 === 0;
 };
 
-function PostTripCalibrationSurvey({ tripId, status, labelCount, isPending, isSkipping, error, onSubmit, onSkip }) {
+function PostTripCalibrationSurvey({ trip, status, labelCount, isPending, isSkipping, error, onSubmit, onSkip }) {
   const [draft, setDraft] = useState({
-    overallDriveRating: null,
     scoreAccuracy: '',
+    scoreIssueTypes: [],
     wasDriver: 'yes',
-    tripDifficulty: '',
     contextTags: [],
     freeTextNote: '',
   });
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [editing, setEditing] = useState(false);
-  const submittedRating = Number(status?.rating);
-  const submitted = Number.isInteger(submittedRating) && submittedRating >= 1 && submittedRating <= 5;
+  const submitted = Boolean(status?.score_accuracy || status?.rating);
   const skipped = status?.skipped === true;
-  const shouldPrompt = shouldPromptForCalibrationSurvey(status?.trip_id || tripId, labelCount, status);
+  const shouldPrompt = shouldPromptForCalibrationSurvey(status?.trip_id || trip?.id, labelCount, status);
   const progressText = Number.isFinite(Number(labelCount))
-    ? `${Math.min(Number(labelCount), CALIBRATION_LABEL_TARGET_COUNT).toLocaleString()} / ${CALIBRATION_LABEL_TARGET_COUNT.toLocaleString()} labeled trips`
-    : `Target: ${CALIBRATION_LABEL_TARGET_COUNT.toLocaleString()} labeled trips`;
+    ? `${Number(labelCount).toLocaleString()} local score review${Number(labelCount) === 1 ? '' : 's'}`
+    : 'Saved only on this device';
   const statusText = submitted
-    ? 'Rating saved.'
+    ? 'Score review saved for personal calibration.'
     : isPending
-      ? 'Saving rating...'
-      : 'Local rating only.';
+      ? 'Saving score review...'
+      : 'Tell Road Sage what it got right or wrong about this trip.';
   const disabled = isPending || isSkipping || (submitted && !editing) || skipped;
-  const canSubmit = Number.isInteger(Number(draft.overallDriveRating)) &&
-    Number(draft.overallDriveRating) >= 1 &&
-    Number(draft.overallDriveRating) <= 5 &&
+  const needsIssue = draft.scoreAccuracy === 'too_low' || draft.scoreAccuracy === 'too_high';
+  const canSubmit = SCORE_ACCURACY_OPTIONS.includes(draft.scoreAccuracy) &&
+    (!needsIssue || draft.scoreIssueTypes.length > 0) &&
     WAS_DRIVER_OPTIONS.includes(draft.wasDriver) &&
     !disabled;
+  const toggleScoreIssue = (type) => {
+    setDraft((current) => ({
+      ...current,
+      scoreIssueTypes: current.scoreIssueTypes.includes(type)
+        ? current.scoreIssueTypes.filter((item) => item !== type)
+        : [...current.scoreIssueTypes, type],
+    }));
+  };
   const toggleContextTag = (tag) => {
     setDraft((current) => ({
       ...current,
@@ -2550,16 +2791,16 @@ function PostTripCalibrationSurvey({ tripId, status, labelCount, isPending, isSk
   const submit = () => {
     if (!canSubmit) return;
     onSubmit({
-      overallDriveRating: Number(draft.overallDriveRating),
-      scoreAccuracy: draft.scoreAccuracy || null,
+      scoreAccuracy: draft.scoreAccuracy,
+      scoreIssueTypes: draft.scoreIssueTypes,
       wasDriver: draft.wasDriver,
-      tripDifficulty: draft.tripDifficulty ? Number(draft.tripDifficulty) : null,
       contextTags: draft.contextTags,
       freeTextNote: draft.freeTextNote,
     }, {
       replaceExisting: submitted && editing,
     });
     setEditing(false);
+    setReviewOpen(false);
   };
 
   if (skipped) return null;
@@ -2570,36 +2811,65 @@ function PostTripCalibrationSurvey({ tripId, status, labelCount, isPending, isSk
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.16 }}
-      className="bg-card border border-border rounded-xl p-3 shadow-sm sm:p-4"
+      className={`rounded-xl border transition-colors ${
+        reviewOpen || editing
+          ? 'border-border bg-card p-3 shadow-sm'
+          : 'border-border/60 bg-secondary/20 px-3 py-2'
+      }`}
     >
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold">How did this drive feel?</h2>
-          <div className="mt-0.5 text-xs text-muted-foreground">{statusText}</div>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold">
+              Score {trip?.score_overall ?? '—'}
+            </span>
+            <h2 className="truncate text-xs font-semibold">
+              {submitted ? 'Your score review is saved' : 'Does this trip score look fair?'}
+            </h2>
+          </div>
+          {(reviewOpen || editing) && (
+            <div className="mt-1 text-xs text-muted-foreground">{statusText}</div>
+          )}
         </div>
-        <div className="text-xs font-medium text-muted-foreground sm:text-right">{progressText}</div>
+        <div className="flex shrink-0 items-center gap-2">
+          {(reviewOpen || editing) && (
+            <span className="hidden text-[11px] text-muted-foreground sm:inline">{progressText}</span>
+          )}
+          {!editing && (
+            <button
+              type="button"
+              onClick={() => setReviewOpen((open) => !open)}
+              className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold"
+            >
+              {reviewOpen ? 'Close' : submitted ? 'View' : 'Review'}
+            </button>
+          )}
+        </div>
       </div>
 
+      {(reviewOpen || editing) && (
+      <>
       <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="grid grid-cols-5 gap-1.5 sm:max-w-lg sm:gap-2">
-          {SURVEY_RATING_OPTIONS.map((option) => {
-            const selected = submitted ? submittedRating === option.value : Number(draft.overallDriveRating) === option.value;
+        <div className="grid gap-2 sm:grid-cols-3 sm:max-w-3xl">
+          {SCORE_ACCURACY_OPTIONS.map((option) => {
+            const selected = draft.scoreAccuracy === option;
             return (
               <button
-                key={option.value}
+                key={option}
                 type="button"
                 disabled={disabled}
-                onClick={() => setDraft((current) => ({ ...current, overallDriveRating: option.value }))}
-                title={`${option.value} - ${option.label}`}
-                aria-label={`${option.value} - ${option.label}`}
-                className={`min-h-11 rounded-lg border px-1.5 py-1.5 text-center transition-colors ${
+                onClick={() => setDraft((current) => ({
+                  ...current,
+                  scoreAccuracy: option,
+                  scoreIssueTypes: option === 'accurate' ? [] : current.scoreIssueTypes,
+                }))}
+                className={`min-h-12 rounded-lg border px-3 py-2 text-left text-xs font-semibold transition-colors ${
                   selected
                     ? 'border-primary bg-primary text-primary-foreground'
                     : 'border-border bg-secondary/50 hover:bg-secondary disabled:opacity-60'
                 }`}
               >
-                <div className="text-base font-bold leading-none">{option.value}</div>
-                <div className="mt-0.5 text-[10px] font-medium leading-tight">{option.label}</div>
+                {SCORE_ACCURACY_LABELS[option]}
               </button>
             );
           })}
@@ -2610,12 +2880,17 @@ function PostTripCalibrationSurvey({ tripId, status, labelCount, isPending, isSk
             <button
               type="button"
               onClick={() => {
-                setDraft((current) => ({ ...current, overallDriveRating: submittedRating }));
+                setDraft((current) => ({
+                  ...current,
+                  scoreAccuracy: status?.score_accuracy || '',
+                  scoreIssueTypes: Array.isArray(status?.score_issue_types) ? status.score_issue_types : [],
+                }));
                 setEditing(true);
+                setReviewOpen(true);
               }}
               className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
             >
-              Edit rating
+              Edit review
             </button>
           </div>
         )}
@@ -2628,7 +2903,7 @@ function PostTripCalibrationSurvey({ tripId, status, labelCount, isPending, isSk
               onClick={() => setDetailsOpen((open) => !open)}
               className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
             >
-              {detailsOpen ? 'Hide details' : 'Details'}
+              {detailsOpen ? 'Hide context' : 'Add context'}
             </button>
             <button
               type="button"
@@ -2636,7 +2911,7 @@ function PostTripCalibrationSurvey({ tripId, status, labelCount, isPending, isSk
               onClick={onSkip}
               className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
             >
-              {isSkipping ? 'Skipping...' : 'Skip'}
+              {isSkipping ? 'Skipping...' : 'Not now'}
             </button>
             <button
               type="button"
@@ -2644,31 +2919,53 @@ function PostTripCalibrationSurvey({ tripId, status, labelCount, isPending, isSk
               onClick={submit}
               className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
             >
-              Save
+              Save score review
             </button>
           </div>
         )}
       </div>
 
+      {(!submitted || editing) && needsIssue && (
+        <div className="mt-4">
+          <div className="text-xs font-semibold">
+            {draft.scoreAccuracy === 'too_low'
+              ? 'What made the score seem too harsh?'
+              : 'What risk or problem did the score seem to miss?'}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {SCORE_REVIEW_ISSUE_OPTIONS.map((type) => {
+              const selected = draft.scoreIssueTypes.includes(type);
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => toggleScoreIssue(type)}
+                  className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                    selected
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-secondary/50 text-muted-foreground hover:bg-secondary'
+                  }`}
+                >
+                  {SCORE_REVIEW_ISSUE_LABELS[type]}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {(!submitted || editing) && (
+        <div className="mt-4 rounded-xl border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
+          This review does not silently rewrite this trip. Three consistent eligible reviews about braking, acceleration, or cornering can influence a suggested personal threshold in Settings. You still choose whether to apply it.
+        </div>
+      )}
+
       {(!submitted || editing) && detailsOpen && (
         <div className="mt-4 space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-xs font-medium text-muted-foreground">
-              Score accuracy
-              <select
-                value={draft.scoreAccuracy}
-                disabled={disabled}
-                onChange={(event) => setDraft((current) => ({ ...current, scoreAccuracy: event.target.value }))}
-                className="mt-1 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
-              >
-                <option value="">Optional</option>
-                {SCORE_ACCURACY_OPTIONS.map((option) => (
-                  <option key={option} value={option}>{SCORE_ACCURACY_LABELS[option]}</option>
-                ))}
-              </select>
-            </label>
-            <label className="text-xs font-medium text-muted-foreground">
-              Was driver
+              Were you the driver?
               <select
                 value={draft.wasDriver}
                 disabled={disabled}
@@ -2680,24 +2977,10 @@ function PostTripCalibrationSurvey({ tripId, status, labelCount, isPending, isSk
                 ))}
               </select>
             </label>
-            <label className="text-xs font-medium text-muted-foreground">
-              Trip difficulty
-              <select
-                value={draft.tripDifficulty}
-                disabled={disabled}
-                onChange={(event) => setDraft((current) => ({ ...current, tripDifficulty: event.target.value }))}
-                className="mt-1 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
-              >
-                <option value="">Optional</option>
-                {SURVEY_RATING_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.value}</option>
-                ))}
-              </select>
-            </label>
           </div>
 
           <div>
-            <div className="text-xs font-medium text-muted-foreground">Context tags</div>
+            <div className="text-xs font-medium text-muted-foreground">Did any context affect this trip?</div>
             <div className="mt-2 flex flex-wrap gap-2">
               {TRIP_CONTEXT_TAG_OPTIONS.map((tag) => {
                 const selected = draft.contextTags.includes(tag);
@@ -2721,7 +3004,7 @@ function PostTripCalibrationSurvey({ tripId, status, labelCount, isPending, isSk
           </div>
 
           <label className="block text-xs font-medium text-muted-foreground">
-            Note
+            What did Road Sage misunderstand?
             <textarea
               value={draft.freeTextNote}
               disabled={disabled}
@@ -2738,11 +3021,13 @@ function PostTripCalibrationSurvey({ tripId, status, labelCount, isPending, isSk
           {error.message || 'Could not save this rating.'}
         </div>
       )}
+      </>
+      )}
     </motion.div>
   );
 }
 
-function TripScoreOverview({ trip }) {
+function TripScoreOverview({ trip, speedLimitSourceBreakdown = null }) {
   const overallScore = getTripComponentScore(trip, 'overall');
   const unavailableOverallScore = overallScore.value == null;
   const scoreProvenance = trip.score_provenance;
@@ -2759,6 +3044,11 @@ function TripScoreOverview({ trip }) {
   const inferredSpeedLimitScoring = usesInferredSpeedLimitScoring(trip);
   const phoneUsePermissionRequired = trip.phone_use_score_status === 'usage_access_required';
   const scoreDrivers = explainTripScoreDrivers(trip);
+  const scoreConfidence = scoreConfidenceMeta(overallScore);
+  const speedLimitSourceRows = Array.isArray(speedLimitSourceBreakdown?.rows)
+    ? speedLimitSourceBreakdown.rows
+    : [];
+  const topSpeedLimitSourceRows = speedLimitSourceRows.slice(0, 3);
   const componentSummaryRows = [
     { label: 'Aggression', metricKey: 'aggressive_driving_score', component: getTripComponentScore(trip, 'aggressive_driving'), grade: trip.aggressive_grade },
     { label: 'Defensive Driving Estimate', metricKey: 'defensive_driving_score', component: getTripComponentScore(trip, 'defensive_driving'), grade: trip.defensive_grade, qualifier: 'GPS + stop-behaviour proxy' },
@@ -2783,15 +3073,26 @@ function TripScoreOverview({ trip }) {
       className="bg-card border border-border rounded-3xl p-5 shadow-sm"
     >
       <div className="flex items-center gap-6">
-        <ScoreRing
-          score={overallScore.value}
-          size={100}
-          strokeWidth={8}
-          sublabel="overall"
-          title={confidenceTitle}
-          evidence={overallScore.evidence}
-          scoreProvenance={scoreProvenance}
-        />
+        <div className="shrink-0 text-center">
+          <ScoreRing
+            score={overallScore.value}
+            size={100}
+            strokeWidth={8}
+            sublabel="overall"
+            title={confidenceTitle}
+            evidence={overallScore.evidence}
+            scoreProvenance={scoreProvenance}
+          />
+          <div
+            title={scoreConfidence.description}
+            className={`mt-2 inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${scoreConfidence.className}`}
+          >
+            {scoreConfidence.label}
+          </div>
+          {scoreConfidence.sampleText && (
+            <div className="mt-1 text-[10px] text-muted-foreground">{scoreConfidence.sampleText}</div>
+          )}
+        </div>
         <div className="grid flex-1 grid-cols-3 gap-3">
           {headlineScores.map(({ label, key, component }) => {
             const unavailable = component.value == null || component.evidence === 'unavailable';
@@ -2831,7 +3132,7 @@ function TripScoreOverview({ trip }) {
       )}
       {lowScoreConfidence && (
         <p className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
-          Score based on limited available evidence. Short city trips often have enough GPS data to score, but not enough distance or supporting signals to call the score high confidence yet.
+          {scoreConfidence.description} Short city trips often have enough GPS data to score, but not enough distance or supporting signals to call the score high confidence yet.
         </p>
       )}
       {inferredSpeedLimitScoring && (
@@ -2842,29 +3143,68 @@ function TripScoreOverview({ trip }) {
       {phoneUsePermissionRequired && (
         <PhoneUsePermissionBanner className="mt-3" />
       )}
+      {topSpeedLimitSourceRows.length > 0 && (
+        <div className="mt-3 rounded-xl border border-border bg-secondary/30 p-3 text-xs">
+          <div className="flex items-start gap-2">
+            <Tag className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-foreground">Speed-limit sources used for scoring</div>
+              <div className="mt-1 text-muted-foreground">
+                Speeding penalties depend on where the app got the limit. Posted and confirmed sources are strongest; estimates are clearly marked.
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {topSpeedLimitSourceRows.map((row) => (
+                  <span
+                    key={row.key}
+                    title={`${row.detail} ${row.limits.length ? `Limits used: ${row.limits.join(', ')} km/h.` : ''}`}
+                    className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-1 font-semibold text-foreground"
+                  >
+                    <span className={`h-2 w-2 rounded-full ${row.tone}`} />
+                    {row.percent}% {row.label}
+                  </span>
+                ))}
+              </div>
+              {speedLimitSourceRows.length > topSpeedLimitSourceRows.length && (
+                <div className="mt-1 text-muted-foreground">
+                  See Speed Zones below for all {speedLimitSourceRows.length} source types.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="mt-4 rounded-2xl border border-border bg-secondary/30 p-4">
         <div className="flex items-start gap-2">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <div>
-            <h3 className="text-sm font-semibold">What shaped this score</h3>
+            <h3 className="text-sm font-semibold">Your score changed because...</h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              Read-only explanation based on stored component scores and recorded events. This ranks weaker evidence; it does not reconstruct exact point deductions.
+              Top 3 read-only drivers from stored component scores and recorded events. This explains the main direction of the score without rewriting the trip.
             </p>
           </div>
         </div>
         {scoreDrivers.length > 0 ? (
           <div className="mt-3 space-y-2">
-            {scoreDrivers.map((driver) => (
-              <div key={driver.factor} className="flex items-center justify-between gap-3 rounded-xl bg-background/70 px-3 py-2 text-xs">
-                <div className="min-w-0">
-                  <div className="font-semibold text-foreground">{driver.label}</div>
-                  <div className="text-muted-foreground">
-                    {driver.category}
-                    {['low', 'developing'].includes(driver.evidence) ? ' - limited evidence' : ''}
+            {scoreDrivers.map((driver, index) => (
+              <div key={driver.factor} className="rounded-xl bg-background/70 px-3 py-2 text-xs">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground">
+                        #{index + 1}
+                      </span>
+                      <div className="font-semibold text-foreground">{driver.label}</div>
+                    </div>
+                    <div className="mt-1 text-muted-foreground">{scoreDriverReason(driver)}</div>
+                  </div>
+                  <div className="shrink-0 font-grotesk text-sm font-bold text-foreground">
+                    {driver.kind === 'component' ? `~${driver.score}` : `${driver.count}x`}
                   </div>
                 </div>
-                <div className="shrink-0 font-grotesk text-sm font-bold text-foreground">
-                  {driver.kind === 'component' ? `~${driver.score}` : `${driver.count}x`}
+                <div className="mt-1 text-muted-foreground">
+                  {driver.category}
+                  {['low', 'developing'].includes(driver.evidence) ? ' - limited evidence' : ''}
+                  {driver.note ? ` - ${driver.note}` : ''}
                 </div>
               </div>
             ))}

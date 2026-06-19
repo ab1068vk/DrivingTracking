@@ -6,6 +6,10 @@ const mockState = vi.hoisted(() => ({
     speak: undefined,
     speakText: vi.fn(),
   },
+  systemLog: {
+    logSystemFailure: vi.fn(),
+    recordSystemEvent: vi.fn(),
+  },
 }));
 
 vi.mock('@/lib/nativePlatform', () => ({
@@ -16,13 +20,18 @@ vi.mock('@/lib/driveSenseNativePlugin', () => ({
   default: mockState.nativeSpeech,
 }));
 
+vi.mock('@/lib/systemLog', () => mockState.systemLog);
+
 import {
   canSpeakSafetyAlert,
+  getVoiceAlertDeliveryStatus,
   isVoiceAlertEnabled,
   markSafetyAlertSpoken,
   resetSafetyAlertCooldowns,
+  shouldMuteWebViewVoiceForTrip,
   speakSafetyAlert,
   speakSafetyAlertOnce,
+  stopSafetyAlerts,
   testVoiceAlert,
 } from '@/lib/voiceAlerts';
 
@@ -50,6 +59,9 @@ describe('voice alert cooldowns', () => {
     mockState.isNative = false;
     mockState.nativeSpeech.speak = undefined;
     mockState.nativeSpeech.speakText = vi.fn();
+    mockState.nativeSpeech.stopSpeech = undefined;
+    mockState.systemLog.logSystemFailure.mockReset();
+    mockState.systemLog.recordSystemEvent.mockReset();
     vi.unstubAllGlobals();
   });
 
@@ -72,6 +84,43 @@ describe('voice alert cooldowns', () => {
     expect(isVoiceAlertEnabled({ voice_alerts_enabled: 'false' })).toBe(false);
     expect(isVoiceAlertEnabled({ voice_alerts_enabled: 'undefined' })).toBe(true);
     expect(isVoiceAlertEnabled({})).toBe(true);
+  });
+
+  it('mutes WebView speech when Android native tracking owns trip voice', () => {
+    expect(shouldMuteWebViewVoiceForTrip(
+      { native_manual_background: true },
+      { isAndroidPlatform: true }
+    )).toBe(true);
+    expect(shouldMuteWebViewVoiceForTrip(
+      { voice_alert_owner: 'native_android' },
+      { isAndroidPlatform: true }
+    )).toBe(true);
+    expect(shouldMuteWebViewVoiceForTrip(
+      { native_manual_background: true },
+      { isAndroidPlatform: false }
+    )).toBe(false);
+  });
+
+  it('reports the current voice alert delivery owner', () => {
+    expect(getVoiceAlertDeliveryStatus({
+      settings: { voice_alerts_enabled: false },
+    }).status).toBe('disabled');
+    expect(getVoiceAlertDeliveryStatus({
+      settings: { voice_alerts_enabled: true },
+      trip: { native_manual_background: true },
+      isAndroidPlatform: true,
+      tracking: true,
+    })).toMatchObject({ status: 'native', label: 'Android native voice' });
+    expect(getVoiceAlertDeliveryStatus({
+      settings: { voice_alerts_enabled: true },
+      nativeStatus: { enabled: true },
+      isAndroidPlatform: true,
+      tracking: false,
+    }).status).toBe('armed');
+    expect(getVoiceAlertDeliveryStatus({
+      settings: { voice_alerts_enabled: true },
+      tracking: true,
+    }).status).toBe('webview');
   });
 
   it('records cooldowns at enqueue time when requested', () => {
@@ -104,6 +153,11 @@ describe('voice alert cooldowns', () => {
     expect(utterance.volume).toBe(0.8);
     expect(utterance.lang).toBe('en-US');
     expect(speechSynthesis.cancel).not.toHaveBeenCalled();
+    expect(mockState.systemLog.recordSystemEvent).toHaveBeenCalledWith(
+      'voice_alert_spoken',
+      expect.objectContaining({ channel: 'web_speech', message_length: 'Ease back.'.length }),
+      expect.objectContaining({ category: 'notification', title: 'Voice alert queued' })
+    );
   });
 
   it('only interrupts browser speech when requested', async () => {
@@ -132,6 +186,11 @@ describe('voice alert cooldowns', () => {
       interrupt: false,
       queueMode: 'add',
     });
+    expect(mockState.systemLog.recordSystemEvent).toHaveBeenCalledWith(
+      'voice_alert_spoken',
+      expect.objectContaining({ channel: 'native_plugin', message_length: 'Eyes on the road.'.length }),
+      expect.objectContaining({ category: 'notification', title: 'Voice alert queued' })
+    );
   });
 
   it('prefers the Android speakText bridge when present', async () => {
@@ -160,6 +219,11 @@ describe('voice alert cooldowns', () => {
     expect(await speakSafetyAlert('Eyes on the road.', { voice_alerts_enabled: true })).toBe(false);
     expect(mockState.nativeSpeech.speakText).toHaveBeenCalledTimes(1);
     expect(speechSynthesis.speak).not.toHaveBeenCalled();
+    expect(mockState.systemLog.logSystemFailure).toHaveBeenCalledWith(
+      'voice_alert_speech_output',
+      expect.any(Error),
+      expect.objectContaining({ native_platform: true })
+    );
   });
 
   it('does not consume keyed cooldowns when native Android speech fails', async () => {
@@ -188,5 +252,16 @@ describe('voice alert cooldowns', () => {
       interrupt: true,
       queueMode: 'flush',
     });
+  });
+
+  it('stops queued native and browser speech immediately', async () => {
+    mockState.isNative = true;
+    mockState.nativeSpeech.stopSpeech = vi.fn().mockResolvedValue();
+    const speechSynthesis = stubSpeechSynthesis();
+
+    await stopSafetyAlerts();
+
+    expect(mockState.nativeSpeech.stopSpeech).toHaveBeenCalledTimes(1);
+    expect(speechSynthesis.cancel).toHaveBeenCalledTimes(1);
   });
 });

@@ -90,6 +90,22 @@ describe('LocalSpeedKnowledge', () => {
     expect(result.limitKmh).toBe(40);
   });
 
+  it('does not save null-island user corrections or section points', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+
+    await expect(lsk.saveUserCorrection(0, 0, 50, 'Bad GPS', null, [])).resolves.toBe(false);
+    await expect(lsk.saveUserCorrection(43.65, -79.38, 50, '', null, [], 'user_entered_estimate', {
+      sectionPoints: [
+        { lat: 43.65, lng: -79.38 },
+        { lat: 0, lng: 0 },
+      ],
+    })).resolves.toBe(true);
+
+    const [saved] = await lsk.listUserCorrections();
+    expect(saved.sectionPoints).toEqual([{ lat: 43.65, lng: -79.38 }]);
+  });
+
   it('prune removes stale low-confidence cells', async () => {
     const store = new MockStore({
       [STORAGE_KEY]: {

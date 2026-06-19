@@ -28,6 +28,7 @@ import { exportMonthlyReportPDF, exportUBIReportPDF } from '@/lib/pdfExport';
 import { computeUBIReport } from '@/lib/ubiReport';
 import { notifyExportSaved } from '@/lib/notificationService';
 import { toast } from '@/components/ui/use-toast';
+import { isDriverMetricEligible } from '@/lib/phoneUseSummary';
 import {
   analyzeDayOfWeek,
   analyzeTimeOfDay,
@@ -83,7 +84,7 @@ export default function Reports() {
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
   });
 
-  const completed = allTrips.filter(t => t.status === 'completed');
+  const completed = allTrips.filter(t => t.status === 'completed' && isDriverMetricEligible(t));
   const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle]));
 
   // Filter by period

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Gauge, MapPin, RefreshCw, ShieldCheck } from 'lucide-react';
+import RoadSectionPreview from '@/components/RoadSectionPreview';
 import { LocalSpeedKnowledge, geohashCenter, geohashEncode } from '@/lib/localSpeedKnowledge';
 import { buildTripSpeedLimitReviewCells } from '@/lib/speedLimitReview';
 import { getJson, setJson } from '@/lib/mobileStorage';
@@ -46,8 +47,10 @@ const formatLimit = (value) => {
 };
 
 const formatDate = (value) => {
-  const date = new Date(value || 0);
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : 'Unknown time';
+  if (value == null || value === '') return 'Unknown time';
+  const date = new Date(value);
+  const time = date.getTime();
+  return Number.isFinite(time) && time > 0 ? date.toLocaleString() : 'Unknown time';
 };
 
 const sortedNumbers = (values = []) => [...new Set(values
@@ -244,19 +247,40 @@ function countBlockingReviewCells(items = []) {
   return items.filter((cell) => !cell?.existingLocalCorrection).length;
 }
 
+function captureScrollRestorer() {
+  if (typeof window === 'undefined') return () => {};
+  const top = window.scrollY;
+  const left = window.scrollX;
+  return () => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.scrollTo({ top, left, behavior: 'auto' });
+      });
+    });
+  };
+}
+
 export default function SpeedLimitConflictReview({ trip = null, reviewMode = false, onResolved = null }) {
   const [cells, setCells] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [loading, setLoading] = useState(true);
   const [busyGeohash, setBusyGeohash] = useState(null);
   const [status, setStatus] = useState('');
+  const cellsRef = useRef([]);
+  const onResolvedRef = useRef(onResolved);
+  const reportedCompleteKeyRef = useRef(null);
   const settings = useLocalSettings();
 
   const knowledge = useMemo(() => new LocalSpeedKnowledge(knowledgeStore), []);
   const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
 
-  const loadConflicts = useCallback(async ({ notifyComplete = false } = {}) => {
-    setLoading(true);
+  useEffect(() => {
+    onResolvedRef.current = onResolved;
+  }, [onResolved]);
+
+  const loadConflicts = useCallback(async ({ notifyComplete = false, preserveContent = false } = {}) => {
+    const showBlockingLoading = !preserveContent || cellsRef.current.length === 0;
+    if (showBlockingLoading) setLoading(true);
     const conflicted = await knowledge.getConflictedCells().catch(() => []);
     const conflictedGeohashes = new Set(conflicted.map((cell) => cell.geohash));
     const tripReviewCells = reviewMode && trip
@@ -280,6 +304,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
       ...conflicted.map((cell) => ({ ...cell, tripReview: false })),
       ...tripReviewCells.filter(Boolean),
     ];
+    cellsRef.current = nextCells;
     setCells(nextCells);
     setDrafts((current) => {
       const next = { ...current };
@@ -293,18 +318,30 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
       return next;
     });
     setLoading(false);
-    if (notifyComplete && reviewMode && trip?.id && trip.speed_limit_review_required === true && countBlockingReviewCells(nextCells) === 0) {
-      onResolved?.({
-        remainingCount: 0,
-        tripReviewComplete: true,
-      });
+    const remainingCount = countBlockingReviewCells(nextCells);
+    if (remainingCount > 0) {
+      reportedCompleteKeyRef.current = null;
+    }
+    if (notifyComplete && reviewMode && trip?.id && trip.speed_limit_review_required === true && remainingCount === 0) {
+      const completeKey = String(trip.id);
+      if (reportedCompleteKeyRef.current !== completeKey) {
+        reportedCompleteKeyRef.current = completeKey;
+        onResolvedRef.current?.({
+          remainingCount: 0,
+          tripReviewComplete: true,
+        });
+      }
     }
     return nextCells;
-  }, [knowledge, onResolved, reviewMode, trip]);
+  }, [knowledge, reviewMode, trip]);
 
   useEffect(() => {
-    loadConflicts({ notifyComplete: true });
+    loadConflicts({ notifyComplete: true, preserveContent: true });
   }, [loadConflicts]);
+
+  useEffect(() => {
+    cellsRef.current = cells;
+  }, [cells]);
 
   if (!reviewMode && !loading && cells.length === 0) return null;
 
@@ -324,7 +361,15 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
         note,
         null,
         privacyZones,
-        source
+        source,
+        {
+          roadName: cell.roadName || cell.roads?.[0] || '',
+          contextLabel: cell.contextLabel || '',
+          directionLabel: cell.directionLabel || '',
+          timeLabel: cell.timeLabel || '',
+          distanceM: cell.distanceM || 0,
+          sectionPoints: cell.sectionPoints || [],
+        }
       ).catch(() => false)
       : knowledge.resolveConflict(
         cell.geohash,
@@ -340,6 +385,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
       setStatus('Enter a valid speed limit before saving.');
       return;
     }
+    const restoreScroll = captureScrollRestorer();
     setBusyGeohash(draftKey);
     const uniqueCells = [...new Map(targetCells.map((cell) => [cell.geohash, cell])).values()];
     const results = await Promise.all(uniqueCells.map((cell) => saveCellLimit(cell, source, limitKmh)));
@@ -349,14 +395,15 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
       setStatus(source === 'user_confirmed_posted_sign'
         ? `Saved as a posted-sign confirmation for future speed checks. Updated ${savedCount} ${label}.`
         : `Saved as a local estimate for future speed checks. Updated ${savedCount} ${label}.`);
-      const remainingCells = await loadConflicts();
+      const remainingCells = await loadConflicts({ preserveContent: true });
       const remainingCount = countBlockingReviewCells(remainingCells);
-      onResolved?.({
+      onResolvedRef.current?.({
         geohash: uniqueCells[0]?.geohash,
         source,
         remainingCount,
         tripReviewComplete: Boolean(trip?.id) && remainingCount === 0,
       });
+      restoreScroll();
     } else {
       setStatus('Could not save that speed-limit review.');
     }
@@ -377,7 +424,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
         </div>
         <button
           type="button"
-          onClick={loadConflicts}
+          onClick={() => loadConflicts()}
           disabled={loading}
           className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-300 bg-background/70 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-background disabled:opacity-60 dark:border-amber-800 dark:text-amber-100"
         >
@@ -446,7 +493,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
             <div className="rounded-xl border border-amber-200 bg-background/80 p-3 shadow-sm dark:border-amber-900/60 dark:bg-background/70">
               <h3 className="text-sm font-semibold">Save by road</h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                Use these when one road label used the same posted limit across multiple GPS cells.
+                This applies one value to every listed area on that road. Inspect the highlighted sections below before using a bulk save.
               </p>
               <div className="mt-3 space-y-2">
                 {reviewGroups.map((group) => {
@@ -456,7 +503,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                       <div className="min-w-0">
                         <div className="truncate font-semibold text-foreground">{group.label}</div>
                         <div className="text-muted-foreground">
-                          {group.cells.length} area{group.cells.length === 1 ? '' : 's'}; {group.sampleCount} route sample{group.sampleCount === 1 ? '' : 's'}; sources {formatSourceList(group.sources)}
+                          Applies to {group.cells.length} highlighted area{group.cells.length === 1 ? '' : 's'}; {group.sampleCount} route sample{group.sampleCount === 1 ? '' : 's'}; sources {formatSourceList(group.sources)}
                         </div>
                       </div>
                       <label className="flex items-center gap-2 font-semibold text-foreground">
@@ -520,7 +567,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                         {cell.geohash}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        {displayCoordinateText}
+                        Driven section
                       </span>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-3">
@@ -534,7 +581,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                       </div>
                       <div className="rounded-lg bg-secondary/60 px-3 py-2">
                         <div className="text-[11px] text-muted-foreground">Detected</div>
-                        <div className="font-semibold">{formatDate(cell.conflictDetails?.detectedAt || cell.lastUpdatedAt)}</div>
+                        <div className="font-semibold">{formatDate(cell.conflictDetails?.detectedAt || cell.lastUpdatedAt || cell.sampleTimestamp)}</div>
                       </div>
                     </div>
                     <div className="text-xs text-muted-foreground">
@@ -542,6 +589,22 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                         ? cell.reviewReason
                         : `Current source: ${sourceLabel(cell.source)}; confidence ${Math.round((Number(cell.confidence) || 0) * 100)}%; ${Number(cell.tripCount) || 0} matching trip${Number(cell.tripCount) === 1 ? '' : 's'}.`}
                     </div>
+                    {cell.tripReview && (
+                      <RoadSectionPreview
+                        identity={{
+                          title: cell.title || primaryRoadLabel(cell.roads, cell.geohash),
+                          roadName: cell.roadName || cell.roads?.[0] || '',
+                          contextLabel: cell.contextLabel || 'from this recorded trip',
+                          directionLabel: cell.directionLabel || 'along the route',
+                          timeLabel: cell.timeLabel || '',
+                          distanceM: cell.distanceM || 0,
+                          sampleLat: displayLat,
+                          sampleLng: displayLng,
+                          sectionPoints: cell.sectionPoints || [],
+                        }}
+                        routePoints={trip?.route_points || []}
+                      />
+                    )}
                     {evidence && (
                       <div className="rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
                         <div className="font-semibold text-foreground">{cell.tripReview ? 'Trip review evidence' : 'Opened trip evidence'}</div>
@@ -554,10 +617,16 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                           <div className="mt-1">Road labels: {evidenceRoads.join(', ')}</div>
                         ) : (
                           <div className="mt-1 font-medium text-amber-800 dark:text-amber-100">
-                            Road name unavailable. This point is from the driven route; tap Get Road Data before saving if you need a road label.
+                            Road name unavailable. Use Show section to inspect the highlighted driven portion before saving.
                           </div>
                         )}
                       </div>
+                    )}
+                    {!cell.tripReview && (
+                      <details className="text-xs text-muted-foreground">
+                        <summary className="cursor-pointer font-medium">Technical location details</summary>
+                        <div className="mt-1">{displayCoordinateText}</div>
+                      </details>
                     )}
                   </div>
                   <div className="w-full shrink-0 space-y-2 lg:w-64">

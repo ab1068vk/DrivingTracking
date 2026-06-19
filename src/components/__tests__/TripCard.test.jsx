@@ -54,4 +54,44 @@ describe('TripCard score provenance display', () => {
 
     expect(html).toContain('Privacy-estimated near protected zones');
   });
+
+  it('labels trips whose route data expired while keeping the summary', () => {
+    const html = renderToStaticMarkup(<TripCard trip={{
+      ...trip('calibrated'),
+      route_data_expired_at: '2026-06-01T00:00:00.000Z',
+      route_data_retention_days: 90,
+    }} />);
+
+    expect(html).toContain('Route expired - summary kept');
+    expect(html).toContain('Raw GPS retention removed the route coordinates');
+  });
+
+  it('shows confirmed phone-use windows in the compact event badges', () => {
+    const html = renderToStaticMarkup(<TripCard trip={{
+      ...trip('calibrated'),
+      phone_use_score_available: true,
+      phone_use_score_status: 'android_usage_access',
+      phone_use_window_count: 1,
+    }} />);
+
+    expect(html).toContain('1 phone');
+    expect(html).toContain('1 confirmed phone-use window');
+  });
+
+  it('does not show diagnostic GPS phone proxy windows as confirmed phone use', () => {
+    const html = renderToStaticMarkup(<TripCard trip={{
+      ...trip('calibrated'),
+      phone_use_score_available: false,
+      phone_use_score_status: 'usage_access_required',
+      phone_use_window_count: 1,
+      phone_use_events: [{
+        type: 'phone_use',
+        source: 'gps_proxy',
+        diagnostic_only: true,
+      }],
+    }} />);
+
+    expect(html).not.toContain('1 phone');
+    expect(html).not.toContain('confirmed phone-use window');
+  });
 });

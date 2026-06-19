@@ -5,21 +5,6 @@ import { pinnedFetch } from '@/lib/pinnedFetch';
 import { logTransmission } from '@/lib/transmissionLog';
 import { enqueueLocationRequest } from '@/lib/requestObfuscator';
 
-// CHANGES (session):
-// - Added tierForSource, confidenceForSource, confidenceToPenaltyWeight, alertMarginForConfidence.
-// - Added regional speed defaults, getRegionDefaultEstimate, roadContextFromOsmType, roadContextFromGpsBehaviour.
-// - Added resolveSpeedLimitWithTier and its tier result helper.
-// - Added VOICE_COOLDOWNS_BY_TIER for tier-keyed live speed alert cooldowns.
-// - Replaced tripEngine haversineDistance import with local distance helper to avoid circular imports.
-// - Added SPEED_LIMIT_CONFIDENCE enum, applySafetyGuards, shouldWarnForSpeed, and alertPolicyForLimit.
-// - Renamed regional default wording to REGION_DEFAULT and kept legacy aliases for old data.
-// - Renamed regional default exports to REGION_SPEED_DEFAULTS and getRegionDefaultEstimate.
-// - Updated resolver chain so user-confirmed corrections are POSTED and estimates use coaching tiers.
-// - Split user corrections into confirmed posted signs and user-entered estimates with separate confidence.
-// - Lowered REGION_DEFAULT scoring strength to 0.45 confidence, 0.55 penalty weight, and +12 km/h alert margin.
-// - Wired speed-estimate and tier-specific voice settings into shared speed warning policy.
-// - Treat blank voice margin drafts as defaults instead of zero while settings inputs are being edited.
-
 const SPEED_LIMIT_CACHE_KEY = 'drivesense_osm_speed_limit_cache_v2';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const FALLBACK_OVERPASS_URLS = [
@@ -326,12 +311,24 @@ export function resolveSpeedLimitWithTier(point, context = {}) {
   const storedLimit = Number(point?.speed_limit_kmh);
   const storedSource = point?.speed_limit_source;
 
-  if (storedSource === 'openstreetmap' && storedLimit > 0) {
-    return tier('POSTED', storedLimit, 1.0, 'openstreetmap', baseMargin);
-  }
-
   if (localKnowledge?.source === 'user_confirmed_posted_sign' && Number(localKnowledge.limitKmh) > 0) {
     return tier('POSTED', Number(localKnowledge.limitKmh), 0.92, 'user_confirmed_posted_sign', baseMargin);
+  }
+
+  if (
+    localKnowledge &&
+    Number(localKnowledge.limitKmh) > 0 &&
+    Number(localKnowledge.confidence) >= 0.55
+  ) {
+    const confidence = Number(localKnowledge.confidence);
+    const source = canonicalSpeedSource(localKnowledge.source) === 'user_entered_estimate'
+      ? 'user_entered_estimate'
+      : 'learned_local';
+    return tier('LEARNED_LOCAL', Number(localKnowledge.limitKmh), confidence, source, baseMargin);
+  }
+
+  if (storedSource === 'openstreetmap' && storedLimit > 0) {
+    return tier('POSTED', storedLimit, 1.0, 'openstreetmap', baseMargin);
   }
 
   if (storedSource === 'osm_highway_default' && storedLimit > 0) {
@@ -348,18 +345,6 @@ export function resolveSpeedLimitWithTier(point, context = {}) {
       ? Math.min(regionalDefaultEstimate, complianceFallbackLimit(roadContext, thresholds))
       : regionalDefaultEstimate;
     return tier('REGION_DEFAULT', limitKmh, 0.45, 'region_default_estimate', baseMargin);
-  }
-
-  if (
-    localKnowledge &&
-    Number(localKnowledge.limitKmh) > 0 &&
-    Number(localKnowledge.confidence) >= 0.55
-  ) {
-    const confidence = Number(localKnowledge.confidence);
-    const source = canonicalSpeedSource(localKnowledge.source) === 'user_entered_estimate'
-      ? 'user_entered_estimate'
-      : 'learned_local';
-    return tier('LEARNED_LOCAL', Number(localKnowledge.limitKmh), confidence, source, baseMargin);
   }
 
   if (Number.isFinite(inferredZoneKmh) && inferredZoneKmh > 0) {
@@ -418,11 +403,9 @@ function alertPolicyForLimit(candidate, settings = {}) {
     const number = Number(value);
     return Number.isFinite(number) ? number : fallback;
   };
-  const voiceMarginKmh = tierName === 'GPS_INFERRED'
-    ? finiteSetting(settings.inferred_voice_margin_kmh, 20)
-    : estimatedTier
-      ? finiteSetting(settings.estimated_voice_margin_kmh, 12)
-      : visualMarginKmh;
+  const voiceMarginKmh = (tierName === 'GPS_INFERRED' || estimatedTier)
+    ? finiteSetting(settings.estimated_voice_margin_kmh, 12)
+    : visualMarginKmh;
   const voiceAllowed =
     settings.voice_alerts_enabled !== false &&
     estimateGuidanceAllowed &&
@@ -447,6 +430,9 @@ function alertPolicyForLimit(candidate, settings = {}) {
   };
 }
 
+/**
+ * @param {{speedKmh?: number, candidate?: {limitKmh?: number, tier?: string, confidence?: number}, settings?: Record<string, any>}} params
+ */
 export function shouldWarnForSpeed({ speedKmh, candidate, settings = {} } = {}) {
   const speed = Number(speedKmh);
   const limit = Number(candidate?.limitKmh);

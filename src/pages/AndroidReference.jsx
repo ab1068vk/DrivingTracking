@@ -644,7 +644,6 @@ class ScoringEngine(private val thresholds: DrivingThresholds = DEFAULT_THRESHOL
 
             // ── Speeding (fallback — no speed limit data)
             // When speed limit data is unavailable, use road-context fallback limits instead of one blanket threshold.
-            // TODO: Integrate OpenStreetMap speed limit data for accurate detection.
             if (spd2 > thresholds.speedingFallbackKmh) {
                 events.add(DrivingEventEntity(
                     tripId = tripId,
@@ -685,11 +684,12 @@ class ScoringEngine(private val thresholds: DrivingThresholds = DEFAULT_THRESHOL
      * Calculate trip scores from events and stats.
      *
      * Methodology:
-     * - Safety (40%): harsh_brake, speeding, sharp_turn, night driving
-     * - Smoothness (35%): harsh_brake, rapid_acceleration, sharp_turn
-     * - Eco (25%): speeding, rapid_acceleration, idle
+     * - Safety (55%): harsh_brake, speeding, sharp_turn, night driving
+     * - Smoothness (30%): harsh_brake, rapid_acceleration, sharp_turn
+     * - Intersection behavior (15% in the JavaScript trip scorer when evidence is available)
+     * - Eco is calculated separately and does not affect the headline trip score
      * - Penalties are per-event, severity-weighted, normalized per km
-     * - Overall = 0.40*safety + 0.35*smooth + 0.25*eco
+     * - Overall = 0.55*safety + 0.30*smoothness + 0.15*intersection, renormalized when intersection evidence is unavailable
      */
     fun score(events: List<DrivingEventEntity>, distanceKm: Float, durationSec: Long, nightDriving: Boolean): TripScores {
         data class Penalty(val low: Int, val med: Int, val high: Int)
@@ -717,7 +717,7 @@ class ScoringEngine(private val thresholds: DrivingThresholds = DEFAULT_THRESHOL
         val safety = normalize(safetyP)
         val smooth = normalize(smoothP)
         val eco = normalize(ecoP)
-        val overall = (safety * 0.4f + smooth * 0.35f + eco * 0.25f).toInt()
+        val overall = ((safety * 0.55f + smooth * 0.30f) / 0.85f).toInt()
 
         return TripScores(overall, safety, smooth, eco)
     }

@@ -6,6 +6,7 @@ import {
   shouldWarnForSpeed,
   tierForSource,
 } from '@/lib/speedLimitSource';
+import { DEFAULT_THRESHOLDS, resolveEffectiveSpeedLimitForIndex } from '@/lib/tripEngine';
 
 // CHANGES (session):
 // - Added Category A tier resolution tests for resolveSpeedLimitWithTier.
@@ -27,6 +28,16 @@ describe('resolveSpeedLimitWithTier', () => {
     expect(r.tier).toBe('POSTED');
     expect(r.confidence).toBe(1.0);
     expect(r.limitKmh).toBe(60);
+  });
+
+  it('uses user-entered local labels before OSM data', () => {
+    const r = resolveSpeedLimitWithTier(
+      { speed_limit_kmh: 60, speed_limit_source: 'openstreetmap' },
+      { localKnowledge: { limitKmh: 40, source: 'user_entered_estimate', confidence: 0.75 } }
+    );
+    expect(r.tier).toBe('LEARNED_LOCAL');
+    expect(r.limitKmh).toBe(40);
+    expect(r.source).toBe('user_entered_estimate');
   });
 
   it('returns MAP_ESTIMATED for osm_highway_default', () => {
@@ -60,7 +71,7 @@ describe('resolveSpeedLimitWithTier', () => {
     expect(r.confidence).toBe(0.75);
   });
 
-  it('does not let learned local estimates raise a conservative global road default', () => {
+  it('uses learned local estimates before conservative global road defaults', () => {
     const r = resolveSpeedLimitWithTier(
       {},
       {
@@ -68,8 +79,8 @@ describe('resolveSpeedLimitWithTier', () => {
         localKnowledge: { limitKmh: 70, source: 'learned_local', confidence: 0.8 },
       }
     );
-    expect(r.tier).toBe('REGION_DEFAULT');
-    expect(r.limitKmh).toBe(60);
+    expect(r.tier).toBe('LEARNED_LOCAL');
+    expect(r.limitKmh).toBe(70);
   });
 
   it('normal user-entered correction does not become POSTED', () => {
@@ -134,6 +145,21 @@ describe('resolveSpeedLimitWithTier', () => {
     const r = resolveSpeedLimitWithTier({}, {});
     expect(r.tier).toBe('UNKNOWN');
     expect(r.limitKmh).toBeNull();
+  });
+});
+
+describe('resolveEffectiveSpeedLimitForIndex priority', () => {
+  it('uses local user labels before OSM and inferred fallbacks for live/manual checks', () => {
+    const points = [
+      { lat: 43.65, lng: -79.38, speed_kmh: 52, speed_limit_kmh: 60, speed_limit_source: 'openstreetmap', timestamp: '2026-01-01T12:00:00.000Z' },
+      { lat: 43.6501, lng: -79.38, speed_kmh: 54, speed_limit_kmh: 60, speed_limit_source: 'openstreetmap', timestamp: '2026-01-01T12:00:05.000Z' },
+    ];
+    const resolved = resolveEffectiveSpeedLimitForIndex(points, 1, DEFAULT_THRESHOLDS, {
+      localKnowledge: { limitKmh: 40, source: 'user_entered_estimate', confidence: 0.75 },
+    });
+    expect(resolved.limitKmh).toBe(40);
+    expect(resolved.tier).toBe('LEARNED_LOCAL');
+    expect(resolved.limitSource).toBe('user_entered_estimate');
   });
 });
 
@@ -278,21 +304,22 @@ describe('live speed warning settings policy', () => {
     expect(warning).toBeNull();
   });
 
-  it('uses the configured inferred voice margin for GPS-only checks', () => {
+  it('uses the estimated voice margin for GPS-only checks', () => {
     const r = resolveSpeedLimitWithTier(
       {},
       { countryCode: 'DE', inferredZone: { inferredZoneKmh: 120 }, thresholds: { SPEED_OVER_KMH: 5, SPEEDING_FALLBACK_KMH: 100 } }
     );
     const warning = shouldWarnForSpeed({
-      speedKmh: 116,
+      speedKmh: 113,
       candidate: r,
       settings: {
         speak_estimated_speed_checks: true,
-        inferred_voice_margin_kmh: 15,
+        estimated_voice_margin_kmh: 12,
+        inferred_voice_margin_kmh: 99,
       },
     });
     expect(warning.visual).toBe(false);
     expect(warning.voice).toBe(true);
-    expect(warning.voiceMarginKmh).toBe(15);
+    expect(warning.voiceMarginKmh).toBe(12);
   });
 });

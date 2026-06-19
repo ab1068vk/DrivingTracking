@@ -9,6 +9,8 @@ vi.mock('@/lib/transmissionLog', () => ({
 }));
 
 import {
+  buildDrivingPrivacyReadout,
+  buildOutboundPrivacyReadout,
   summarizeAudit,
   summarizeZones,
   transmissionPrivacyLevel,
@@ -85,6 +87,72 @@ describe('privacy intelligence summaries', () => {
     });
   });
 
+  it('builds a trip-derived privacy readout for zone usefulness', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-13T16:00:00.000Z'));
+    const protectedAt = '2026-06-13T14:00:00.000Z';
+    const zones = [
+      {
+        id: 'home',
+        label: 'Home',
+        lat: 43.65,
+        lng: -79.38,
+        radius_m: 100,
+        week: { hidden: 1, events: 1 },
+        allTime: { hidden: 3, events: 2 },
+        lastActive: Date.parse(protectedAt),
+      },
+      {
+        id: 'work',
+        label: 'Work',
+        lat: 43.72,
+        lng: -79.42,
+        radius_m: 100,
+        week: { hidden: 0, events: 0 },
+        allTime: { hidden: 0, events: 0 },
+        lastActive: null,
+      },
+    ];
+    const readout = buildDrivingPrivacyReadout([
+      {
+        id: 'private-trip',
+        start_time: protectedAt,
+        route_points: [
+          { lat: null, lng: null, timestamp: protectedAt, masked_for_privacy: true, privacy_gap: true, privacy_zone_id: 'home' },
+          { lat: 43.6532, lng: -79.38, timestamp: protectedAt },
+        ],
+        driving_events: [
+          { type: 'harsh_brake', lat: null, lng: null, timestamp: protectedAt, privacy_event_redacted: true, privacy_zone_id: 'home' },
+        ],
+      },
+      {
+        id: 'raw-local-trip',
+        start_time: protectedAt,
+        route_points: [
+          { lat: 43.65, lng: -79.38, timestamp: protectedAt },
+          { lat: 43.6532, lng: -79.38, timestamp: protectedAt },
+        ],
+      },
+    ], zones);
+
+    expect(readout).toMatchObject({
+      tripCount: 2,
+      recentTripCount: 2,
+      tripsWithProtectedActivity: 2,
+      recentProtectedTripCount: 2,
+      privateEndpointTripCount: 2,
+      protectedPointCount: 1,
+      protectedEventCount: 1,
+      rawPointInsideZoneCount: 1,
+      recentProtectionRate: 100,
+      untouchedZoneCount: 1,
+    });
+    expect(readout.recommendedChecks).toEqual(expect.arrayContaining([
+      '1 zone has not protected a saved trip yet.',
+      '1 saved local route sample still sits inside a configured zone and should be purged or redacted.',
+    ]));
+  });
+
   it('summarizes audit activity without inspecting sensitive payloads', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-13T16:00:00.000Z'));
@@ -139,6 +207,83 @@ describe('privacy intelligence summaries', () => {
     expect(summary.rawWithoutConsentCount).toBe(1);
     expect(summary.claimedButUnverifiedCount).toBe(1);
     expect(summary.warningTotal).toBe(3);
+    expect(summary.outboundReadout.rawWithoutConsentCount).toBe(1);
+    expect(summary.outboundReadout.unverifiedCount).toBe(1);
+  });
+
+  it('judges outbound privacy confidence by service and evidence quality', () => {
+    const readout = buildOutboundPrivacyReadout([
+      {
+        service: 'open-meteo',
+        coordinateDisclosure: 'rounded',
+        privacyLevel: 'protected',
+        privacyTransformVerified: true,
+        status: 'safe',
+        timestamp: 100,
+        bytesOut: 120,
+      },
+      {
+        service: 'osrm',
+        coordinateDisclosure: 'raw',
+        privacyLevel: 'raw',
+        privacyTransformVerified: true,
+        protections: ['explicit consent'],
+        status: 'warning',
+        timestamp: 200,
+        bytesOut: 500,
+      },
+      {
+        service: 'overpass',
+        coordinateDisclosure: 'bounding_box',
+        privacyLevel: 'unverified',
+        privacyTransformVerified: false,
+        status: 'warning',
+        timestamp: 300,
+        bytesOut: 220,
+      },
+    ], {
+      weather_context_enabled: true,
+      speed_limit_lookup_enabled: true,
+      map_matching_enabled: true,
+      osrm_map_matching_url: 'https://osrm.example',
+    }, 400);
+
+    expect(readout.confidence).toBeLessThan(85);
+    expect(readout.rawWithConsent).toBe(1);
+    expect(readout.unverifiedCount).toBe(1);
+    expect(readout.headline).toBe('Raw sharing is visible and needs trust in the endpoint');
+    expect(readout.serviceSummaries.find((item) => item.service === 'open-meteo')).toMatchObject({
+      label: 'Weather context',
+      tone: 'ok',
+      protectedCount: 1,
+    });
+    expect(readout.serviceSummaries.find((item) => item.service === 'osrm')).toMatchObject({
+      tone: 'warn',
+      rawCount: 1,
+      worstDisclosure: 'raw',
+    });
+    expect(readout.findings.map((item) => item.id)).toEqual(expect.arrayContaining([
+      'raw_with_consent',
+      'unverified_protection',
+    ]));
+  });
+
+  it('reports enabled outbound services with no retained evidence', () => {
+    const readout = buildOutboundPrivacyReadout([], {
+      weather_context_enabled: true,
+      speed_limit_lookup_enabled: true,
+      map_matching_enabled: true,
+      osrm_map_matching_url: 'https://osrm.example',
+    }, 400);
+
+    expect(readout.tone).toBe('unknown');
+    expect(readout.enabledWithoutEvidenceCount).toBe(3);
+    expect(readout.findings.map((item) => item.id)).toEqual(expect.arrayContaining([
+      'no_retained_outbound_records',
+      'no_evidence_open-meteo',
+      'no_evidence_overpass',
+      'no_evidence_osrm',
+    ]));
   });
 
   it('builds an actionable privacy plan from the highest-risk findings', () => {

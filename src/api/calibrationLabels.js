@@ -238,6 +238,8 @@ export const calibrationLabelService = {
             label_id: label.id,
             remote_label_id: savedId,
             rating: label.surveyLabel?.overallDriveRating ?? null,
+            score_accuracy: label.surveyLabel?.scoreAccuracy ?? null,
+            score_issue_types: label.surveyLabel?.scoreIssueTypes ?? [],
             wasDriver: label.surveyLabel?.wasDriver ?? null,
             submitted_at: label.createdAt ?? label.stored_at,
             eligible_for_calibration: true,

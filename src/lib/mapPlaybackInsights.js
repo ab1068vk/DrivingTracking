@@ -225,6 +225,25 @@ export function prepareMapRoutePoints(points = [], options = {}) {
   return injectTimestampGapMarkers(downsampleRoutePoints(visualPoints, maxPoints));
 }
 
+export function selectMapRoutePoints(analysisPoints = [], recordedPoints = []) {
+  const strictPoints = prepareMapRoutePoints(analysisPoints, { maxPoints: null, smooth: false });
+  const recordedVisualPoints = prepareMapRoutePoints(recordedPoints, { maxPoints: null, smooth: false });
+  const strictCoverage = recordedVisualPoints.length
+    ? strictPoints.length / recordedVisualPoints.length
+    : 1;
+  const scoringCleanerCollapsedRoute =
+    recordedVisualPoints.length >= 8 &&
+    strictPoints.length >= 2 &&
+    strictCoverage <= 0.25;
+
+  return {
+    points: scoringCleanerCollapsedRoute ? recordedVisualPoints : strictPoints,
+    usedRecordedFallback: scoringCleanerCollapsedRoute,
+    strictPointCount: strictPoints.length,
+    recordedVisualPointCount: recordedVisualPoints.length,
+  };
+}
+
 export function eventIndexForRoute(event, points = []) {
   if (!points.length) return 0;
   const eventMs = new Date(event?.timestamp || event?.startTime || 0).getTime();

@@ -151,6 +151,50 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void startNativeManualTrip(PluginCall call) {
+        if (!hasNativeManualTripPermissions()) {
+            call.reject("Location, background location, and notification permissions are required for native manual trip alerts.");
+            return;
+        }
+
+        double startTimeMsValue = call.getData().optDouble("startTimeMs", System.currentTimeMillis());
+        long startTimeMs = Double.isFinite(startTimeMsValue)
+            ? Math.round(startTimeMsValue)
+            : System.currentTimeMillis();
+        String tripId = call.getString("tripId", "");
+        try {
+            DriveSenseAutoTrackingService.startManualTrip(getContext(), startTimeMs, tripId);
+        } catch (Exception error) {
+            call.reject(error.getMessage());
+            return;
+        }
+        JSObject payload = new JSObject();
+        payload.put("enabled", true);
+        payload.put("manualTripActive", true);
+        payload.put("batteryOptimizationIgnored", isBatteryOptimizationIgnored());
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void discardNativeManualTrip(PluginCall call) {
+        boolean keepArmed = Boolean.TRUE.equals(call.getBoolean("keepArmed", false));
+        DriveSenseAutoTrackingService.discardManualTrip(getContext(), keepArmed);
+        JSObject payload = new JSObject();
+        payload.put("enabled", keepArmed && DriveSenseNativeTripStore.isServiceEnabled(getContext()));
+        payload.put("manualTripActive", false);
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void endNativeActiveTrip(PluginCall call) {
+        boolean keepArmed = Boolean.TRUE.equals(call.getBoolean("keepArmed", false));
+        DriveSenseAutoTrackingService.endActiveTrip(getContext(), keepArmed);
+        JSObject payload = new JSObject();
+        payload.put("enabled", keepArmed && DriveSenseNativeTripStore.isServiceEnabled(getContext()));
+        call.resolve(payload);
+    }
+
+    @PluginMethod
     public void stopNativeAutoTracking(PluginCall call) {
         DriveSenseAutoTrackingService.stop(getContext());
         JSObject payload = new JSObject();
@@ -182,6 +226,13 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
                 call.reject(message);
             }
         });
+    }
+
+    @PluginMethod
+    public void stopSpeech(PluginCall call) {
+        if (speechController != null) speechController.stop();
+        DriveSenseAutoTrackingService.stopSpeech(getContext());
+        call.resolve();
     }
 
     @PluginMethod
@@ -457,6 +508,15 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         boolean notifications = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
         return fineLocation && backgroundLocation && activity && notifications;
+    }
+
+    private boolean hasNativeManualTripPermissions() {
+        boolean fineLocation = ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean backgroundLocation = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(getContext(), Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        boolean notifications = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+        return fineLocation && backgroundLocation && notifications;
     }
 
     private boolean isBatteryOptimizationIgnored() {

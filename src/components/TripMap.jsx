@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Crosshair, Layers, Maximize2 } from 'lucide-react';
+import { Crosshair, Layers, Maximize2, Smartphone } from 'lucide-react';
 import { escapeHtml } from '@/lib/htmlUtils';
 import { buildPlaybackTimeline, injectTimestampGapMarkers, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
 import {
@@ -81,6 +81,54 @@ const RISK_COLORS = {
   high: '#f97316',
   medium: '#eab308',
   low: '#3b82f6',
+};
+
+const speedLimitSourceLabel = (source) => {
+  switch (source) {
+    case 'user_confirmed_posted_sign':
+      return 'Your confirmed posted sign';
+    case 'user_entered_estimate':
+      return 'Your saved estimate';
+    case 'openstreetmap':
+      return 'OpenStreetMap posted limit';
+    case 'osm_highway_default':
+      return 'OSM road-type estimate';
+    case 'region_default_estimate':
+      return 'Regional estimate';
+    case 'learned_local':
+    case 'trip_consensus':
+    case 'time_of_day_bucket':
+      return 'Local learned estimate';
+    case 'inferred':
+      return 'GPS-inferred estimate';
+    default:
+      return source ? String(source).replace(/_/g, ' ') : 'Saved speed data';
+  }
+};
+
+const isUserSpeedLimitSource = (source) => (
+  source === 'user_confirmed_posted_sign' || source === 'user_entered_estimate'
+);
+
+const hasUsableSpeedLimit = (item) => Number(item?.limitKmh) > 0;
+
+const speedKnowledgeTimeKey = (point) => {
+  const ts = timeMs(point?.timestamp ?? point?.time ?? point?.recorded_at ?? point?.timestamp_ms ?? point?.timestampMs);
+  return ts == null ? null : String(ts);
+};
+
+const speedKnowledgeCoordKey = (point) => {
+  const lat = Number(point?.original_lat ?? point?.lat);
+  const lng = Number(point?.original_lng ?? point?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return `${lat.toFixed(5)},${lng.toFixed(5)}`;
+};
+
+const preferUserSpeedLimit = (current, next) => {
+  if (!hasUsableSpeedLimit(next)) return current;
+  if (!hasUsableSpeedLimit(current)) return next;
+  if (isUserSpeedLimitSource(next.source) && !isUserSpeedLimitSource(current.source)) return next;
+  return current;
 };
 
 const privacyZonePopupHtml = (zone) => (
@@ -369,6 +417,7 @@ function TripMapContent({
   showRouteRisk = false,
   routeRiskSegments = EMPTY_ROUTE_RISK_SEGMENTS,
   showSpeedLimits = false,
+  showIncompleteRouteWarning = true,
   speedLimitKnowledgeResults = EMPTY_ROUTE_POINTS,
   rawPointCount = null,
   smoothRoute = true,
@@ -409,6 +458,10 @@ function TripMapContent({
     rawPointCount ?? selectedRoute.rawPointCount ?? selectedRoute.route_points_raw_count
   ) || selectedRoutePoints.length;
   const stopCount = useMemo(() => detectStops(selectedRoutePoints).length, [selectedRoutePoints]);
+  const phoneEventCount = useMemo(
+    () => (events || []).filter((event) => event?.type === 'phone_use' && event?.source === 'android_usage_access').length,
+    [events]
+  );
   const hasRoute = telemetry.pointCount > 1;
   const routeIncomplete = hasRoute && telemetry.pointCount < MIN_POLYLINE_ROUTE_POINTS;
 
@@ -486,6 +539,29 @@ function TripMapContent({
     const routeSets = Array.isArray(routes)
       ? routes
       : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
+    const selectedRawRoute = routeSets.find((route) => route.selected) || routeSets[0] || {};
+    const selectedRawPoints = Array.isArray(selectedRawRoute.route_points) ? selectedRawRoute.route_points : [];
+    const localKnowledgeByTime = new Map();
+    const localKnowledgeByCoord = new Map();
+    selectedRawPoints.forEach((point, index) => {
+      const knowledge = speedLimitKnowledgeResults[index];
+      if (!hasUsableSpeedLimit(knowledge)) return;
+      const timeKey = speedKnowledgeTimeKey(point);
+      if (timeKey) {
+        localKnowledgeByTime.set(timeKey, preferUserSpeedLimit(localKnowledgeByTime.get(timeKey), knowledge));
+      }
+      const coordKey = speedKnowledgeCoordKey(point);
+      if (coordKey) {
+        localKnowledgeByCoord.set(coordKey, preferUserSpeedLimit(localKnowledgeByCoord.get(coordKey), knowledge));
+      }
+    });
+    const localKnowledgeForPoint = (point, index, visualPoints = []) => {
+      const timeKey = speedKnowledgeTimeKey(point);
+      if (timeKey && localKnowledgeByTime.has(timeKey)) return localKnowledgeByTime.get(timeKey);
+      const coordKey = speedKnowledgeCoordKey(point);
+      if (coordKey && localKnowledgeByCoord.has(coordKey)) return localKnowledgeByCoord.get(coordKey);
+      return selectedRawPoints.length === visualPoints.length ? speedLimitKnowledgeResults[index] || null : null;
+    };
     const privacySettings = settings;
     const privacyDisplayReferences = [
       ...routeSets.flatMap((route) => route.route_points || []),
@@ -663,14 +739,15 @@ function TripMapContent({
               const prev = route.route_points[i - 1];
               const curr = route.route_points[i];
               if (isRouteGapSegment(prev, curr)) continue;
-              const currLocal = speedLimitKnowledgeResults[i] || null;
-              const prevLocal = speedLimitKnowledgeResults[i - 1] || null;
-              const confirmedLocal = [currLocal, prevLocal].find((item) => (
-                item?.source === 'user_confirmed_posted_sign' && Number(item.limitKmh) > 0
+              const currLocal = localKnowledgeForPoint(curr, i, route.route_points);
+              const prevLocal = localKnowledgeForPoint(prev, i - 1, route.route_points);
+              const userLocal = [currLocal, prevLocal].find((item) => (
+                isUserSpeedLimitSource(item?.source) &&
+                hasUsableSpeedLimit(item)
               ));
-              const fallbackLocal = [currLocal, prevLocal].find((item) => Number(item?.limitKmh) > 0);
+              const fallbackLocal = [currLocal, prevLocal].find(hasUsableSpeedLimit);
               const tripLimit = Number(curr.speed_limit_kmh ?? prev.speed_limit_kmh);
-              const selectedLimit = confirmedLocal || (
+              const selectedLimit = userLocal || (
                 Number.isFinite(tripLimit) && tripLimit > 0
                   ? { limitKmh: tripLimit, source: curr.speed_limit_source || prev.speed_limit_source || 'openstreetmap' }
                   : fallbackLocal
@@ -682,6 +759,11 @@ function TripMapContent({
               const color = overBy > 10 ? '#ef4444' : overBy > 0 ? '#f97316' : '#22c55e';
               const source = selectedLimit?.source || curr.speed_limit_source || prev.speed_limit_source || 'openstreetmap';
               const roadName = curr.speed_limit_road_name || prev.speed_limit_road_name || 'matched road';
+              const comparison = overBy > 0
+                ? `${Math.round(overBy)} km/h over`
+                : overBy < 0
+                  ? `${Math.round(Math.abs(overBy))} km/h under`
+                  : 'At the saved limit';
               window.L.polyline(
                 [[prev.lat, prev.lng], [curr.lat, curr.lng]],
                 {
@@ -693,7 +775,13 @@ function TripMapContent({
                   lineJoin: 'round',
                 }
               )
-                .bindPopup(`${routeLabelPopupPrefix(route.label)}${escapeHtml(roadName)}<br>Limit: ${escapeHtml(Math.round(limit))} km/h (${escapeHtml(source)})<br>Speed: ${escapeHtml(Math.round(speed))} km/h`)
+                .bindPopup(
+                  `${routeLabelPopupPrefix(route.label)}<b>${escapeHtml(roadName)}</b>` +
+                  `<br>Speed: ${escapeHtml(Math.round(speed))} km/h` +
+                  `<br>Limit: ${escapeHtml(Math.round(limit))} km/h` +
+                  `<br>${escapeHtml(comparison)}` +
+                  `<br>Source: ${escapeHtml(speedLimitSourceLabel(source))}`
+                )
                 .addTo(layers);
             }
           }
@@ -954,7 +1042,7 @@ function TripMapContent({
           )}
         </div>
       )}
-      {routeIncomplete && (
+      {showIncompleteRouteWarning && routeIncomplete && (
         <div className="absolute left-3 top-3 z-10 w-[min(360px,calc(100%-5.5rem))] rounded-2xl border border-amber-200 bg-amber-50/95 p-3 text-xs text-amber-900 shadow backdrop-blur dark:border-amber-800/50 dark:bg-amber-950/90 dark:text-amber-100">
           <div className="font-semibold">Incomplete GPS route</div>
           <div className="mt-1">
@@ -997,6 +1085,12 @@ function TripMapContent({
               <span>{telemetry.avgSpeedKmh} km/h avg</span>
               <span>{recordedPointCount} GPS</span>
               {recordedPointCount !== telemetry.pointCount && <span>{telemetry.pointCount} map pts</span>}
+            </div>
+          )}
+          {phoneEventCount > 0 && (
+            <div className="mt-2 flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700 dark:bg-red-950/30 dark:text-red-300">
+              <Smartphone className="h-3.5 w-3.5" />
+              {phoneEventCount} confirmed phone-use marker{phoneEventCount === 1 ? '' : 's'} shown on the route
             </div>
           )}
         </button>
@@ -1122,6 +1216,14 @@ function OfflineRoutePreview({
         ))}
         {safeEvents.slice(0, 40).map((event, index) => {
           const [cx, cy] = scale(event).split(',').map(Number);
+          if (event.type === 'phone_use') {
+            return (
+              <g key={`${event.timestamp}-${index}`}>
+                <circle cx={cx} cy={cy} r="3.2" fill={phoneUseColor(event)} stroke="white" strokeWidth="0.8" vectorEffect="non-scaling-stroke" />
+                <rect x={cx - 0.9} y={cy - 1.7} width="1.8" height="3.4" rx="0.35" fill="none" stroke="white" strokeWidth="0.55" vectorEffect="non-scaling-stroke" />
+              </g>
+            );
+          }
           return <circle key={`${event.timestamp}-${index}`} cx={cx} cy={cy} r="1.4" fill={EVENT_COLORS[event.type] || '#ef4444'} vectorEffect="non-scaling-stroke" />;
         })}
       </svg>
