@@ -112,6 +112,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final String GEOHASH_BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
     private static final int SPEED_KNOWLEDGE_GEOHASH_PRECISION = 6;
     private static final double SPEED_KNOWLEDGE_MATCH_RADIUS_KM = 0.8d;
+    private static final double SPEED_KNOWLEDGE_SECTION_MATCH_RADIUS_KM = 0.08d;
+    private static final double SPEED_KNOWLEDGE_DIRECTION_TOLERANCE_DEG = 100.0d;
     private static final String NOTIFICATION_PREFS = "drivesense_native_notification_state";
     private static final String KEY_LAST_PHONE_USE_NOTIFICATION_MS = "last_phone_use_notification_ms";
     private static final String KEY_LAST_TRIP_COMPLETED_NOTIFICATION_ID = "last_trip_completed_notification_id";
@@ -1626,6 +1628,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         NativeSpeedLimit localSpeedLimit = resolveLocalSpeedLimit(
             location.getLatitude(),
             location.getLongitude(),
+            location.hasBearing() ? location.getBearing() : Double.NaN,
             now
         );
         double speedLimitKmh = localSpeedLimit != null
@@ -1795,12 +1798,12 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     @Nullable
-    private NativeSpeedLimit resolveLocalSpeedLimit(double lat, double lng, long nowMs) {
+    private NativeSpeedLimit resolveLocalSpeedLimit(double lat, double lng, double headingDeg, long nowMs) {
         try {
             String raw = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE)
                 .getString(SPEED_KNOWLEDGE_KEY, null);
             if (raw == null || raw.trim().isEmpty()) return null;
-            return findLocalSpeedLimit(new JSONObject(raw), lat, lng, nowMs);
+            return findLocalSpeedLimit(new JSONObject(raw), lat, lng, headingDeg, nowMs);
         } catch (Exception error) {
             recordDiagnostic(
                 "local_speed_lookup_failed",
@@ -1816,6 +1819,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     @Nullable
     static NativeSpeedLimit findLocalSpeedLimit(JSONObject data, double lat, double lng, long nowMs) {
+        return findLocalSpeedLimit(data, lat, lng, Double.NaN, nowMs);
+    }
+
+    @Nullable
+    static NativeSpeedLimit findLocalSpeedLimit(JSONObject data, double lat, double lng, double headingDeg, long nowMs) {
         if (data == null || !Double.isFinite(lat) || !Double.isFinite(lng)) return null;
         JSONArray corrections = data.optJSONArray("corrections");
         if (corrections == null) return null;
@@ -1831,10 +1839,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
             long expiresAtMs = parseIsoEpochMs(correction.optString("expiresAt", ""));
             if (expiresAtMs > 0L && expiresAtMs <= nowMs) continue;
-            double[] center = geohashCenter(geohash);
-            if (center == null || haversineKm(center[0], center[1], lat, lng) > SPEED_KNOWLEDGE_MATCH_RADIUS_KM) {
-                continue;
-            }
+            if (!correctionMatchesLocation(correction, geohash, lat, lng, headingDeg, nowMs)) continue;
 
             long appliedAtMs = parseIsoEpochMs(correction.optString("appliedAt", ""));
             if (best != null && appliedAtMs < bestAppliedAtMs) continue;
@@ -1845,6 +1850,149 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             bestAppliedAtMs = appliedAtMs;
         }
         return best;
+    }
+
+    static boolean correctionMatchesLocation(JSONObject correction, String geohash, double lat, double lng, double headingDeg, long nowMs) {
+        if (!correctionActiveAt(correction, nowMs)) return false;
+        if (!correctionMatchesDirection(correction, headingDeg)) return false;
+        JSONArray sectionPoints = correction == null ? null : correction.optJSONArray("sectionPoints");
+        if (sectionPoints != null && sectionPoints.length() >= 2) {
+            JSONObject previous = null;
+            for (int index = 0; index < sectionPoints.length(); index++) {
+                JSONObject current = sectionPoints.optJSONObject(index);
+                if (!isUsableCoordinate(current)) continue;
+                if (previous != null &&
+                    pointToSegmentDistanceKm(lat, lng, previous, current) <= SPEED_KNOWLEDGE_SECTION_MATCH_RADIUS_KM) {
+                    return true;
+                }
+                previous = current;
+            }
+            return false;
+        }
+
+        double[] center = geohashCenter(geohash);
+        return center != null && haversineKm(center[0], center[1], lat, lng) <= SPEED_KNOWLEDGE_MATCH_RADIUS_KM;
+    }
+
+    private static boolean correctionActiveAt(@Nullable JSONObject correction, long nowMs) {
+        JSONObject rule = correction == null ? null : correction.optJSONObject("timeRule");
+        if (rule == null || !rule.optBoolean("enabled", false)) return true;
+        if (nowMs <= 0L) return false;
+        LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli(nowMs), ZoneId.systemDefault());
+        int jsDay = date.getDayOfWeek().getValue() % 7;
+        JSONArray days = rule.optJSONArray("days");
+        boolean dayAllowed = false;
+        if (days != null) {
+            for (int index = 0; index < days.length(); index++) {
+                if (days.optInt(index, -1) == jsDay) {
+                    dayAllowed = true;
+                    break;
+                }
+            }
+        }
+        if (!dayAllowed) return false;
+        int startMinutes = rule.optInt("startMinutes", -1);
+        int endMinutes = rule.optInt("endMinutes", -1);
+        if (startMinutes < 0 || endMinutes < 0) return false;
+        int minutes = date.getHour() * 60 + date.getMinute();
+        if (startMinutes == endMinutes) return true;
+        return startMinutes < endMinutes
+            ? minutes >= startMinutes && minutes <= endMinutes
+            : minutes >= startMinutes || minutes <= endMinutes;
+    }
+
+    private static boolean correctionMatchesDirection(@Nullable JSONObject correction, double headingDeg) {
+        String mode = correction == null ? "both" : correction.optString("directionMode", "both");
+        if (!"forward".equals(mode) && !"reverse".equals(mode)) return true;
+        if (!Double.isFinite(headingDeg)) return false;
+        double bearing = correction.optDouble("directionBearing", Double.NaN);
+        if (!Double.isFinite(bearing)) {
+            bearing = sectionBearing(correction.optJSONArray("sectionPoints"));
+        }
+        if (!Double.isFinite(bearing)) return false;
+        double expected = "reverse".equals(mode) ? normalizeBearing(bearing + 180d) : normalizeBearing(bearing);
+        return angleDiffDeg(headingDeg, expected) <= SPEED_KNOWLEDGE_DIRECTION_TOLERANCE_DEG;
+    }
+
+    private static double sectionBearing(@Nullable JSONArray points) {
+        if (points == null || points.length() < 2) return Double.NaN;
+        JSONObject first = null;
+        JSONObject last = null;
+        for (int index = 0; index < points.length(); index++) {
+            JSONObject point = points.optJSONObject(index);
+            if (!isUsableCoordinate(point)) continue;
+            if (first == null) first = point;
+            last = point;
+        }
+        if (first == null || last == null || first == last) return Double.NaN;
+        return bearingDeg(
+            first.optDouble("lat", Double.NaN),
+            first.optDouble("lng", Double.NaN),
+            last.optDouble("lat", Double.NaN),
+            last.optDouble("lng", Double.NaN)
+        );
+    }
+
+    private static double bearingDeg(double startLat, double startLng, double endLat, double endLng) {
+        if (!Double.isFinite(startLat) || !Double.isFinite(startLng) || !Double.isFinite(endLat) || !Double.isFinite(endLng)) {
+            return Double.NaN;
+        }
+        double startLatRad = Math.toRadians(startLat);
+        double endLatRad = Math.toRadians(endLat);
+        double deltaLngRad = Math.toRadians(endLng - startLng);
+        double y = Math.sin(deltaLngRad) * Math.cos(endLatRad);
+        double x = Math.cos(startLatRad) * Math.sin(endLatRad) -
+            Math.sin(startLatRad) * Math.cos(endLatRad) * Math.cos(deltaLngRad);
+        return normalizeBearing(Math.toDegrees(Math.atan2(y, x)));
+    }
+
+    private static double normalizeBearing(double value) {
+        return ((value % 360d) + 360d) % 360d;
+    }
+
+    private static double angleDiffDeg(double a, double b) {
+        if (!Double.isFinite(a) || !Double.isFinite(b)) return Double.POSITIVE_INFINITY;
+        return Math.abs((((a - b) + 540d) % 360d) - 180d);
+    }
+
+    private static boolean isUsableCoordinate(@Nullable JSONObject point) {
+        if (point == null) return false;
+        double lat = point.optDouble("lat", Double.NaN);
+        double lng = point.optDouble("lng", Double.NaN);
+        return Double.isFinite(lat) &&
+            Double.isFinite(lng) &&
+            lat >= -90d &&
+            lat <= 90d &&
+            lng >= -180d &&
+            lng <= 180d &&
+            !(Math.abs(lat) < 0.001d && Math.abs(lng) < 0.001d);
+    }
+
+    private static double pointToSegmentDistanceKm(double lat, double lng, JSONObject start, JSONObject end) {
+        double startLat = start.optDouble("lat", Double.NaN);
+        double startLng = start.optDouble("lng", Double.NaN);
+        double endLat = end.optDouble("lat", Double.NaN);
+        double endLng = end.optDouble("lng", Double.NaN);
+        if (!Double.isFinite(lat) ||
+            !Double.isFinite(lng) ||
+            !Double.isFinite(startLat) ||
+            !Double.isFinite(startLng) ||
+            !Double.isFinite(endLat) ||
+            !Double.isFinite(endLng)) {
+            return Double.POSITIVE_INFINITY;
+        }
+
+        double meanLat = Math.toRadians((lat + startLat + endLat) / 3d);
+        double kmPerLatDegree = 111.32d;
+        double kmPerLngDegree = Math.max(1d, 111.32d * Math.cos(meanLat));
+        double px = (lng - startLng) * kmPerLngDegree;
+        double py = (lat - startLat) * kmPerLatDegree;
+        double vx = (endLng - startLng) * kmPerLngDegree;
+        double vy = (endLat - startLat) * kmPerLatDegree;
+        double lengthSquared = vx * vx + vy * vy;
+        if (lengthSquared <= 0d) return Math.hypot(px, py);
+        double projection = Math.max(0d, Math.min(1d, (px * vx + py * vy) / lengthSquared));
+        return Math.hypot(px - projection * vx, py - projection * vy);
     }
 
     static String geohashEncode(double lat, double lng, int precision) {

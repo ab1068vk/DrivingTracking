@@ -62,14 +62,14 @@ requireMatch(
 requireMatch(
   'Backup import',
   files.backup,
-  /export const BACKUP_VERSION\s*=\s*9\s*;/,
+  /export const BACKUP_VERSION\s*=\s*10\s*;/,
   'backup version changed; add explicit forward/backward migration tests before updating this contract.'
 );
 requireMatch(
   'Backup import',
   files.backup,
-  /version\s*===\s*8/,
-  'v8 backups must have an explicit migration to the current backup schema.'
+  /version\s*===\s*9/,
+  'v9 backups must have an explicit migration to the current backup schema.'
 );
 requireMatch(
   'Backup import',

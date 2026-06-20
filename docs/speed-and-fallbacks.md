@@ -814,7 +814,7 @@ Speed-limit provenance is preserved in:
 - driving events,
 - `speed_limit_context`,
 - component score data sources,
-- backups,
+- backups, including local speed-knowledge cells and saved user corrections,
 - CSV/PDF/report paths.
 
 Important provenance names:

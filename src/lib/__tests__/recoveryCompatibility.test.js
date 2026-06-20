@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { BACKUP_VERSION, migrateBackup, parseDriveSenseBackup } from '@/lib/dataBackup';
 import { DEFAULT_SETTINGS, localSettings } from '@/lib/trackingStore';
 
 const SETTINGS_KEY = 'drivesense_settings';
@@ -103,5 +104,32 @@ describe('recovery compatibility', () => {
     expect(backupSource).toContain('verifyAndUnwrapExport');
     expect(integritySource).toContain('HMAC-SHA256');
     expect(integritySource).toContain('ds_export_signing_key_v1');
+  });
+
+  it('migrates v9 backups to v10 speed-knowledge backup schema and rejects newer backups', () => {
+    const backupSource = readProjectFile('src/lib/dataBackup.js');
+    const v9 = {
+      app: 'Road Sage',
+      version: 9,
+      vehicles: [],
+      trips: [{ id: 'trip-v9', status: 'completed' }],
+    };
+
+    expect(BACKUP_VERSION).toBe(10);
+    expect(backupSource).toContain('version === 9');
+    expect(migrateBackup(v9, 9)).toMatchObject({
+      version: 10,
+      speed_knowledge: { cells: {}, corrections: [] },
+    });
+    expect(parseDriveSenseBackup(JSON.stringify(v9))).toMatchObject({
+      version: 10,
+      sourceVersion: 9,
+      speed_knowledge: { cells: {}, corrections: [] },
+    });
+    expect(() => parseDriveSenseBackup(JSON.stringify({
+      app: 'Road Sage',
+      version: 11,
+      trips: [],
+    }))).toThrow('newer than this app supports');
   });
 });

@@ -24,6 +24,8 @@ import {
 } from '@/lib/exportIntegrity';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
 import { localCalibrationLabelRepository } from '@/lib/localCalibrationLabelRepository';
+import { STORAGE_KEY as SPEED_KNOWLEDGE_STORAGE_KEY } from '@/lib/localSpeedKnowledge';
+import { getJson, setJson } from '@/lib/mobileStorage';
 import { maskTripForPrivacy } from '@/lib/privacyZones';
 
 vi.mock('@/api/trips', () => ({
@@ -486,6 +488,7 @@ describe('backup schema migrations', () => {
         zone_commitment_count: 0,
       },
       zone_commitments: [],
+      speed_knowledge: { cells: {}, corrections: [] },
     });
   });
 
@@ -532,6 +535,7 @@ describe('backup schema migrations', () => {
         zone_commitment_count: 0,
       },
       zone_commitments: [],
+      speed_knowledge: { cells: {}, corrections: [] },
     });
   });
 
@@ -628,6 +632,122 @@ describe('backup calibration labels', () => {
     });
     expect(labels[0].id).toBe('label-imported');
     expect(marker).toMatchObject({ label_id: 'label-imported', rating: 5 });
+  });
+});
+
+describe('backup speed knowledge', () => {
+  afterEach(async () => {
+    await setJson(SPEED_KNOWLEDGE_STORAGE_KEY, { cells: {}, corrections: [] });
+    vi.clearAllMocks();
+  });
+
+  it('exports and parses local speed knowledge while dropping private-zone corrections', async () => {
+    const settings = {
+      privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 150 }],
+    };
+    const backup = await buildDriveSenseBackup({
+      trips: [],
+      vehicles: [],
+      settings,
+      speedKnowledge: {
+        cells: {
+          dpz83q: {
+            limitKmh: 50,
+            source: 'trip_consensus',
+            confidence: 0.7,
+            tripCount: 3,
+            firstSeenAt: '2026-06-01T12:00:00.000Z',
+            lastUpdatedAt: '2026-06-02T12:00:00.000Z',
+          },
+        },
+        corrections: [
+          {
+            geohash: 'dpz83q',
+            lat: 43.7001,
+            lng: -79.4001,
+            limitKmh: 40,
+            note: 'school zone',
+            source: 'user_confirmed_posted_sign',
+            roadName: 'King Street',
+            sectionPoints: [
+              { lat: 43.7001, lng: -79.4001 },
+              { lat: 43.7003, lng: -79.4003 },
+            ],
+          },
+          {
+            geohash: 'dpz800',
+            lat: 43.65,
+            lng: -79.38,
+            limitKmh: 30,
+            note: 'inside privacy zone',
+            source: 'user_entered_estimate',
+          },
+        ],
+      },
+    });
+
+    expect(backup.privacy_export.no_backup_keys).not.toContain(SPEED_KNOWLEDGE_STORAGE_KEY);
+    expect(backup.speed_knowledge.cells.dpz83q).toMatchObject({
+      limitKmh: 50,
+      source: 'trip_consensus',
+      tripCount: 3,
+    });
+    expect(backup.speed_knowledge.corrections).toHaveLength(1);
+    expect(backup.speed_knowledge.corrections[0]).toMatchObject({
+      geohash: 'dpz83q',
+      limitKmh: 40,
+      source: 'user_confirmed_posted_sign',
+      roadName: 'King Street',
+      note: 'school zone',
+    });
+
+    const parsed = parseDriveSenseBackup(JSON.stringify(backup));
+    expect(parsed.speed_knowledge.corrections).toHaveLength(1);
+    expect(parsed.speed_knowledge.corrections[0].sectionPoints).toHaveLength(2);
+  });
+
+  it('restores speed knowledge during backup import', async () => {
+    const file = {
+      size: 100,
+      text: vi.fn(async () => JSON.stringify({
+        app: 'Road Sage',
+        version: BACKUP_VERSION,
+        vehicles: [],
+        trips: [],
+        speed_knowledge: {
+          cells: {
+            dpz83q: {
+              limitKmh: 50,
+              source: 'trip_consensus',
+              confidence: 0.7,
+              tripCount: 2,
+            },
+          },
+          corrections: [{
+            geohash: 'dpz83r',
+            lat: 43.7001,
+            lng: -79.4001,
+            limitKmh: 40,
+            source: 'user_entered_estimate',
+            note: 'saved estimate',
+          }],
+        },
+      })),
+    };
+
+    const imported = await importDriveSenseBackup(file);
+    const restored = await getJson(SPEED_KNOWLEDGE_STORAGE_KEY, null);
+
+    expect(imported).toMatchObject({
+      speedKnowledgeCells: 1,
+      speedKnowledgeCorrections: 1,
+      speedKnowledgeRestored: true,
+    });
+    expect(restored.corrections[0]).toMatchObject({
+      geohash: 'dpz83r',
+      limitKmh: 40,
+      note: 'saved estimate',
+    });
   });
 });
 

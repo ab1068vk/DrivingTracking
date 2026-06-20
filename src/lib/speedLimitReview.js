@@ -1,6 +1,8 @@
 import { geohashEncode } from '@/lib/localSpeedKnowledge';
 import { buildRoadSectionIdentity, isPublicPoint } from '@/lib/roadSectionIdentity';
 
+export const DASHBOARD_SPEED_LIMIT_REVIEW_DISMISSAL_KEY = 'drivesense_dashboard_speed_limit_review_dismissal';
+
 const POSTED_SPEED_LIMIT_SOURCES = new Set([
   'openstreetmap',
   'user_confirmed_posted_sign',
@@ -50,6 +52,42 @@ function reviewReasonForTrip(trip = {}, hasMissingLimit, hasEstimatedSource) {
 export function speedLimitReviewNeededForTrip(trip = {}) {
   if (trip.speed_limit_review_required === true) return true;
   return buildTripSpeedLimitReviewCells(trip, { maxCells: 1 }).length > 0;
+}
+
+function conflictFingerprint(cell = {}) {
+  const details = cell.conflictDetails || {};
+  return [
+    'cell',
+    cell.geohash || 'unknown-cell',
+    cell.lastUpdatedAt || details.detectedAt || '',
+    Math.round(Number(cell.limitKmh) || 0),
+    Math.round(Number(details.existingLimitKmh) || 0),
+    Math.round(Number(details.newLimitKmh) || 0),
+  ].join(':');
+}
+
+function tripReviewFingerprint(trip = null, reviewCellCount = 0) {
+  if (!trip) return null;
+  return [
+    'trip',
+    trip.id || 'unknown-trip',
+    trip.updated_at || trip.score_provenance?.computed_at || trip.end_time || '',
+    trip.speed_limit_review_required === true ? 'required' : 'derived',
+    Math.max(1, Number(reviewCellCount) || 0),
+  ].join(':');
+}
+
+export function buildDashboardSpeedLimitReviewFingerprint({
+  conflictedCells = [],
+  reviewTrip = null,
+  reviewCellCount = 0,
+} = {}) {
+  const affectedItems = [
+    ...(Array.isArray(conflictedCells) ? conflictedCells.map(conflictFingerprint) : []),
+    tripReviewFingerprint(reviewTrip, reviewCellCount),
+  ].filter(Boolean).sort();
+
+  return affectedItems.length ? affectedItems.join('|') : '';
 }
 
 export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {}) {

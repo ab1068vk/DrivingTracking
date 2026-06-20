@@ -90,6 +90,92 @@ describe('LocalSpeedKnowledge', () => {
     expect(result.limitKmh).toBe(40);
   });
 
+  it('matches a curved saved road section near its traced polyline, not a broad point radius', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+    await lsk.saveUserCorrection(
+      43.6505,
+      -79.3805,
+      40,
+      'Curved road',
+      null,
+      [],
+      'user_confirmed_posted_sign',
+      {
+        sectionPoints: [
+          { lat: 43.6500, lng: -79.3810 },
+          { lat: 43.6504, lng: -79.3806 },
+          { lat: 43.6508, lng: -79.3808 },
+        ],
+      }
+    );
+
+    await expect(lsk.getForPoint(43.65045, -79.38062)).resolves.toMatchObject({
+      limitKmh: 40,
+      source: 'user_confirmed_posted_sign',
+    });
+    await expect(lsk.getForPoint(43.6545, -79.3806)).resolves.toBeNull();
+  });
+
+  it('enforces direction-specific saved road sections when heading is available', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+    await lsk.saveUserCorrection(
+      43.6500,
+      -79.3805,
+      50,
+      'Eastbound only',
+      null,
+      [],
+      'user_confirmed_posted_sign',
+      {
+        directionMode: 'forward',
+        sectionPoints: [
+          { lat: 43.6500, lng: -79.3810 },
+          { lat: 43.6500, lng: -79.3800 },
+        ],
+      }
+    );
+
+    await expect(lsk.getForPoint(43.6500, -79.3805, null, { headingDeg: 90 })).resolves.toMatchObject({
+      limitKmh: 50,
+      source: 'user_confirmed_posted_sign',
+    });
+    await expect(lsk.getForPoint(43.6500, -79.3805, null, { headingDeg: 270 })).resolves.toBeNull();
+  });
+
+  it('enforces active day and time windows for saved road sections', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+    await lsk.saveUserCorrection(
+      43.6500,
+      -79.3805,
+      30,
+      'School hours',
+      null,
+      [],
+      'user_confirmed_posted_sign',
+      {
+        timeRule: {
+          enabled: true,
+          days: [1, 2, 3, 4, 5],
+          startTime: '07:00',
+          endTime: '09:00',
+        },
+        sectionPoints: [
+          { lat: 43.6500, lng: -79.3810 },
+          { lat: 43.6500, lng: -79.3800 },
+        ],
+      }
+    );
+
+    await expect(lsk.getForPoint(43.6500, -79.3805, new Date(2026, 0, 5, 8, 0).getTime())).resolves.toMatchObject({
+      limitKmh: 30,
+    });
+    await expect(lsk.getForPoint(43.6500, -79.3805, new Date(2026, 0, 5, 10, 0).getTime())).resolves.toBeNull();
+    await expect(lsk.getForPoint(43.6500, -79.3805, new Date(2026, 0, 4, 8, 0).getTime())).resolves.toBeNull();
+  });
+
   it('does not save null-island user corrections or section points', async () => {
     const store = new MockStore();
     const lsk = new LocalSpeedKnowledge(store);

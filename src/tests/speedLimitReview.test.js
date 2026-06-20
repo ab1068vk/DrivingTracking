@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildDashboardSpeedLimitReviewFingerprint,
   buildTripSpeedLimitReviewCells,
   speedLimitReviewNeededForTrip,
 } from '@/lib/speedLimitReview';
@@ -100,5 +101,63 @@ describe('speed-limit parked review', () => {
       id: 'summary-native',
       speed_limit_review_required: true,
     })).toBe(true);
+  });
+
+  it('builds a stable dashboard dismissal fingerprint for parked-review work', () => {
+    const trip = {
+      id: 'trip-1',
+      updated_at: '2026-06-20T12:00:00.000Z',
+      speed_limit_review_required: true,
+    };
+    const firstCell = {
+      geohash: 'dpz83x',
+      limitKmh: 50,
+      lastUpdatedAt: '2026-06-20T11:00:00.000Z',
+      conflictDetails: { existingLimitKmh: 50, newLimitKmh: 60 },
+    };
+    const secondCell = {
+      geohash: 'dpz83y',
+      limitKmh: 40,
+      lastUpdatedAt: '2026-06-20T11:30:00.000Z',
+      conflictDetails: { existingLimitKmh: 40, newLimitKmh: 50 },
+    };
+
+    expect(buildDashboardSpeedLimitReviewFingerprint({
+      conflictedCells: [firstCell, secondCell],
+      reviewTrip: trip,
+      reviewCellCount: 3,
+    })).toBe(buildDashboardSpeedLimitReviewFingerprint({
+      conflictedCells: [secondCell, firstCell],
+      reviewTrip: trip,
+      reviewCellCount: 3,
+    }));
+  });
+
+  it('changes the dashboard dismissal fingerprint when speed-review work changes', () => {
+    const dismissed = buildDashboardSpeedLimitReviewFingerprint({
+      reviewTrip: {
+        id: 'trip-1',
+        updated_at: '2026-06-20T12:00:00.000Z',
+        speed_limit_review_required: true,
+      },
+      reviewCellCount: 1,
+    });
+
+    expect(buildDashboardSpeedLimitReviewFingerprint({
+      reviewTrip: {
+        id: 'trip-1',
+        updated_at: '2026-06-20T13:00:00.000Z',
+        speed_limit_review_required: true,
+      },
+      reviewCellCount: 1,
+    })).not.toBe(dismissed);
+    expect(buildDashboardSpeedLimitReviewFingerprint({
+      conflictedCells: [{
+        geohash: 'dpz83x',
+        limitKmh: 50,
+        lastUpdatedAt: '2026-06-20T11:00:00.000Z',
+        conflictDetails: { existingLimitKmh: 50, newLimitKmh: 60 },
+      }],
+    })).not.toBe(dismissed);
   });
 });

@@ -88,6 +88,7 @@ import {
 } from '@/lib/calibrationLabeling';
 import { formatEstimatedScore, formatScoreWithProvenance } from '@/lib/scoreDisplay';
 import { formatDataSourceLabel } from '@/lib/metricRegistry';
+import { tripScoreDeltaSummary } from '@/lib/speedLimitDisplay';
 import useLocalSettings from '@/hooks/useLocalSettings';
 
 // CHANGES (session):
@@ -464,14 +465,16 @@ export default function TripDetail() {
           speed_limit_review_reason: null,
         }
         : {};
-      return refreshTripForLocalSpeedKnowledge(latestTrip, localSettings.get(), reviewPatch);
+      const updatedTrip = await refreshTripForLocalSpeedKnowledge(latestTrip, localSettings.get(), reviewPatch);
+      return { updatedTrip, beforeTrip: latestTrip };
     },
-    onSuccess: (updatedTrip) => {
+    onSuccess: (result) => {
+      const updatedTrip = result?.updatedTrip;
       if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
       qc.invalidateQueries({ queryKey: ['trip', id] });
       invalidateTripLists();
       qc.invalidateQueries({ queryKey: ['map-trips'] });
-      setFeedbackStatus('Saved speed applied. Map colors and trip scores were recalculated locally.');
+      setFeedbackStatus(`Saved road speed. Matching trip was rescored locally. ${tripScoreDeltaSummary(result?.beforeTrip, updatedTrip)}`);
       setTimeout(() => setFeedbackStatus(''), 6000);
     },
     onError: () => {

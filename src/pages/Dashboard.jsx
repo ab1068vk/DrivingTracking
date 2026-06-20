@@ -101,9 +101,14 @@ import {
   speedLimitDefaultCountryKey,
   VOICE_COOLDOWNS_BY_TIER,
 } from '@/lib/speedLimitSource';
-import { LocalSpeedKnowledge } from '@/lib/localSpeedKnowledge';
+import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 import { getJson, setJson } from '@/lib/mobileStorage';
-import { buildTripSpeedLimitReviewCells, speedLimitReviewNeededForTrip } from '@/lib/speedLimitReview';
+import {
+  DASHBOARD_SPEED_LIMIT_REVIEW_DISMISSAL_KEY,
+  buildDashboardSpeedLimitReviewFingerprint,
+  buildTripSpeedLimitReviewCells,
+  speedLimitReviewNeededForTrip,
+} from '@/lib/speedLimitReview';
 import {
   DASHBOARD_SCORE_REVIEW_DISMISSAL_KEY,
   buildDashboardScoreReviewFingerprint,
@@ -345,6 +350,9 @@ export default function Dashboard() {
   const [readinessDismissed, setReadinessDismissed] = useState(false);
   const [dismissedScoreReviewFingerprint, setDismissedScoreReviewFingerprint] = useState('');
   const [scoreReviewDismissalLoaded, setScoreReviewDismissalLoaded] = useState(false);
+  const [dismissedSpeedLimitReviewFingerprint, setDismissedSpeedLimitReviewFingerprint] = useState('');
+  const [speedLimitReviewDismissalLoaded, setSpeedLimitReviewDismissalLoaded] = useState(false);
+  const [speedKnowledgeRevision, setSpeedKnowledgeRevision] = useState(0);
   const [parkedLocation, setParkedLocation] = useState(null);
   const [dangerZones, setDangerZones] = useState([]);
   const [trackingStatusContext, setTrackingStatusContext] = useState({
@@ -503,6 +511,12 @@ export default function Dashboard() {
     [completedTrips]
   );
   useEffect(() => {
+    const onSpeedKnowledgeChanged = () => setSpeedKnowledgeRevision((value) => value + 1);
+    window.addEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, onSpeedKnowledgeChanged);
+    return () => window.removeEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, onSpeedKnowledgeChanged);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     const loadSpeedLimitReviewSummary = async () => {
       const knowledge = new LocalSpeedKnowledge({
@@ -515,18 +529,24 @@ export default function Dashboard() {
         ? Math.max(1, buildTripSpeedLimitReviewCells(reviewTrip, { maxCells: 8 }).length)
         : 0;
       const count = conflictedCells.length + tripReviewCount;
+      const fingerprint = buildDashboardSpeedLimitReviewFingerprint({
+        conflictedCells,
+        reviewTrip,
+        reviewCellCount: tripReviewCount,
+      });
       if (cancelled) return;
       setSpeedLimitReviewSummary(count > 0 ? {
         count,
         tripId: reviewTrip?.id || null,
         hasConflicts: conflictedCells.length > 0,
+        fingerprint,
       } : null);
     };
     loadSpeedLimitReviewSummary();
     return () => {
       cancelled = true;
     };
-  }, [completedTrips]);
+  }, [completedTrips, speedKnowledgeRevision]);
 
   const scoreModelMismatchTrips = useMemo(() => {
     const thresholds = buildDrivingThresholds(settings);
@@ -565,6 +585,26 @@ export default function Dashboard() {
       logError('dashboard_score_review_dismissal_save', error);
     });
   }, [scoreReviewFingerprint]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getJson(DASHBOARD_SPEED_LIMIT_REVIEW_DISMISSAL_KEY, '').then((fingerprint) => {
+      if (cancelled) return;
+      setDismissedSpeedLimitReviewFingerprint(typeof fingerprint === 'string' ? fingerprint : '');
+      setSpeedLimitReviewDismissalLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dismissSpeedLimitReviewWarning = useCallback((fingerprint) => {
+    if (!fingerprint) return;
+    setDismissedSpeedLimitReviewFingerprint(fingerprint);
+    setJson(DASHBOARD_SPEED_LIMIT_REVIEW_DISMISSAL_KEY, fingerprint).catch((error) => {
+      logError('dashboard_speed_limit_review_dismissal_save', error);
+    });
+  }, []);
   const habitProfile = useMemo(
     () => (completedTrips.length >= 5 ? buildHabitProfile(completedTrips) : null),
     [completedTrips.length, completedTrips[completedTrips.length - 1]?.id]
@@ -1060,7 +1100,8 @@ export default function Dashboard() {
           : await getLocalSpeedKnowledge().getForPoint(
             point.lat,
             point.lng,
-            Number.isFinite(pointTimestampMs) ? pointTimestampMs : Date.now()
+            Number.isFinite(pointTimestampMs) ? pointTimestampMs : Date.now(),
+            { headingDeg: point.heading ?? point.bearing ?? point.course ?? null }
           ).catch(() => null);
         const speedLimitContext = resolveEffectiveSpeedLimitForIndex(
           routePointsForLiveContext,
@@ -2258,9 +2299,19 @@ export default function Dashboard() {
       ? Math.max(1, buildTripSpeedLimitReviewCells(completedTrip, { maxCells: 8 }).length)
       : 0;
     if (conflictedCells.length || reviewCellCount) {
+      const reviewTrip = reviewCellCount
+        ? { ...completedTrip, id: savedTrip?.id || completedTrip.id }
+        : null;
+      const fingerprint = buildDashboardSpeedLimitReviewFingerprint({
+        conflictedCells,
+        reviewTrip,
+        reviewCellCount,
+      });
       setSpeedLimitConflictReview({
         count: conflictedCells.length + reviewCellCount,
         tripId: savedTrip?.id || completedTrip.id || null,
+        hasConflicts: conflictedCells.length > 0,
+        fingerprint,
       });
     }
     activeTripStore.clear();
@@ -2578,7 +2629,12 @@ export default function Dashboard() {
         ? 'developing'
         : 'high';
   const latestTrip = completedTrips[0];
-  const activeSpeedLimitReview = speedLimitConflictReview || speedLimitReviewSummary;
+  const activeSpeedLimitReview = speedLimitReviewSummary || speedLimitConflictReview;
+  const activeSpeedLimitReviewFingerprint = activeSpeedLimitReview?.fingerprint || '';
+  const showSpeedLimitReviewWarning = speedLimitReviewDismissalLoaded
+    && activeSpeedLimitReview
+    && activeSpeedLimitReviewFingerprint
+    && dismissedSpeedLimitReviewFingerprint !== activeSpeedLimitReviewFingerprint;
   const scoreTrend = driverCompletedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: getTripComponentScore(t, 'overall').value }));
   const tips = buildScoreTips(driverCompletedTrips);
   const weeklyGoals = calculateWeeklyDrivingGoals(driverCompletedTrips, settings);
@@ -2920,19 +2976,30 @@ export default function Dashboard() {
         </div>
       )}
 
-      {activeSpeedLimitReview && (
-        <a
-          href={activeSpeedLimitReview.tripId ? `/trips/${activeSpeedLimitReview.tripId}?review=speed-limit-conflicts` : '/trips?review=speed-limit-conflicts'}
-          className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100 dark:hover:bg-amber-950/50"
-        >
-          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
-          <div>
-            <div className="text-sm font-semibold">Review speed limits while parked</div>
-            <div className="mt-0.5 text-xs">
-              {activeSpeedLimitReview.count} local speed {activeSpeedLimitReview.count === 1 ? 'area needs' : 'areas need'} parked confirmation before any posted-sign correction is saved.
+      {showSpeedLimitReviewWarning && (
+        <div className="flex overflow-hidden rounded-2xl border border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100">
+          <a
+            href={activeSpeedLimitReview.tripId ? `/trips/${activeSpeedLimitReview.tripId}?review=speed-limit-conflicts` : '/trips?review=speed-limit-conflicts'}
+            className="flex flex-1 items-start gap-3 p-4 transition-colors hover:bg-amber-100 dark:hover:bg-amber-950/50"
+          >
+            <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+            <div>
+              <div className="text-sm font-semibold">Review speed limits while parked</div>
+              <div className="mt-0.5 text-xs">
+                {activeSpeedLimitReview.count} local speed {activeSpeedLimitReview.count === 1 ? 'area needs' : 'areas need'} parked confirmation before any posted-sign correction is saved.
+              </div>
             </div>
-          </div>
-        </a>
+          </a>
+          <button
+            type="button"
+            onClick={() => dismissSpeedLimitReviewWarning(activeSpeedLimitReviewFingerprint)}
+            aria-label="Dismiss parked speed-limit review warning"
+            title="Dismiss"
+            className="m-2 self-start rounded-full p-2 transition-colors hover:bg-amber-200/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 dark:hover:bg-amber-900/60"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       )}
 
       {(brakingImprovement || parkingReminder) && (

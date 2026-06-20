@@ -277,12 +277,6 @@ export function eventIndexForRoute(event, points = []) {
   return bestIndex;
 }
 
-const segmentSpeed = (prev, curr, distanceKm, durationSeconds) => {
-  const reported = finiteNumber(curr.speed_kmh ?? prev.speed_kmh);
-  if (reported != null) return Math.max(0, reported);
-  return durationSeconds > 0 ? (distanceKm / durationSeconds) * 3600 : 0;
-};
-
 const collectStops = (segments = []) => {
   const stops = [];
   /** @type {{ startIndex: number, endIndex: number, durationSeconds: number, distanceKm: number } | null} */
@@ -300,6 +294,19 @@ const collectStops = (segments = []) => {
   });
   if (active?.durationSeconds >= MIN_STOP_SECONDS) stops.push(active);
   return stops;
+};
+
+const segmentDisplaySpeed = (prev, curr, distanceKm, durationSeconds) => {
+  const implied = durationSeconds > 0 ? (distanceKm / durationSeconds) * 3600 : null;
+  const obd = finiteNumber(curr.obd_speed_kmh ?? prev.obd_speed_kmh);
+  if (obd != null) return Math.max(0, obd);
+
+  const reported = finiteNumber(curr.speed_kmh ?? prev.speed_kmh);
+  if (reported == null) return Math.max(0, implied || 0);
+  if (reported <= IDLE_SPEED_KMH && implied != null && implied >= SPEED_BANDS[1].min) {
+    return Math.max(0, implied);
+  }
+  return Math.max(0, reported);
 };
 
 export function buildPlaybackTimeline(points = [], events = []) {
@@ -329,12 +336,19 @@ export function buildPlaybackTimeline(points = [], events = []) {
       continue;
     }
     totalDistanceKm += distanceKm;
-    const speedKmh = segmentSpeed(prev, curr, distanceKm, durationSeconds);
+    const speedKmh = segmentDisplaySpeed(prev, curr, distanceKm, durationSeconds);
     maxSpeedKmh = Math.max(maxSpeedKmh, speedKmh);
 
     const speedLimitKmh = finiteNumber(curr.speed_limit_kmh ?? prev.speed_limit_kmh);
     const overLimitKmh = speedLimitKmh != null ? Math.max(0, speedKmh - speedLimitKmh) : 0;
     const band = speedBandForKmh(speedKmh);
+    const speedLimitColor = speedLimitKmh == null
+      ? null
+      : overLimitKmh > 10
+        ? '#ef4444'
+        : overLimitKmh > 0
+          ? '#f97316'
+          : '#22c55e';
     const heading = calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng);
     const segment = {
       id: `seg-${i - 1}`,
@@ -351,7 +365,9 @@ export function buildPlaybackTimeline(points = [], events = []) {
       roadName: curr.speed_limit_road_name || prev.speed_limit_road_name || null,
       heading,
       band,
-      color: overLimitKmh > 10 ? '#ef4444' : overLimitKmh > 0 ? '#f97316' : band.color,
+      speedBandColor: band.color,
+      speedLimitColor,
+      color: band.color,
       progressStart: progressForTime(prev, firstMs, lastMs, progressForIndex(i - 1, clean.length)),
       progressEnd: progressForTime(curr, firstMs, lastMs, progressForIndex(i, clean.length)),
       startOffsetSeconds: firstMs != null && prevMs != null ? Math.max(0, (prevMs - firstMs) / 1000) : 0,

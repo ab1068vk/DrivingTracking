@@ -31,7 +31,7 @@ import {
 
 // CHANGES (session):
 // - Added Phase 2 speed estimate guidance defaults and validation ranges.
-// - Added speed_knowledge_v1 to backup exclusion list.
+// - Added backup exclusion metadata for local-only storage keys.
 // - Allowed numeric settings drafts to be blank while the user edits an input.
 
 const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
@@ -150,12 +150,10 @@ const dispatchSettingsChanged = (settings, detail = {}) => {
 // ─── Default Settings ──────────────────────────────────────────────────────────
 // CHANGES (session):
 // - Added Phase 2 speed estimate defaults for regional default selection and voice margin controls.
-// - Added BACKUP_EXCLUDED_KEYS with speed_knowledge_v1 excluded from backup.
+// - Added BACKUP_EXCLUDED_KEYS for local-only storage keys.
 // - Allowed combined regional default settings such as CA-ON and US-TX.
 
-export const BACKUP_EXCLUDED_KEYS = Object.freeze([
-  'speed_knowledge_v1',
-]);
+export const BACKUP_EXCLUDED_KEYS = Object.freeze([]);
 
 const STATUTORY_REGION_SETTING_VALUES = Object.freeze([
   'global',

@@ -149,7 +149,7 @@ export default function Layout() {
       {mobileMenuOpen && (
         <>
           <div
-            className="fixed inset-0 z-40 bg-black/40 md:hidden"
+            className="fixed inset-0 z-[1000] bg-black/40 md:hidden"
             onClick={() => setMobileMenuOpen(false)}
           />
           <div
@@ -157,7 +157,7 @@ export default function Layout() {
             role="dialog"
             aria-modal="true"
             aria-label="Navigation menu"
-            className="fixed top-0 right-0 bottom-0 z-50 w-64 bg-card border-l border-border shadow-2xl md:hidden flex flex-col pt-16"
+            className="fixed top-0 right-0 bottom-0 z-[1010] w-64 bg-card border-l border-border shadow-2xl md:hidden flex flex-col pt-16"
           >
             <nav aria-label="Mobile navigation" className="flex flex-col p-4 gap-1">
               {navItems.map(item => {

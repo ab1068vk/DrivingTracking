@@ -219,6 +219,78 @@ public class DriveSenseAutoTrackingServiceTest {
         ));
     }
 
+    @Test
+    public void nativeBackgroundSpeedLookupMatchesTracedCurvedRoadSections() throws Exception {
+        double sectionLat = 43.65320d;
+        double sectionLng = -79.38320d;
+        JSONObject data = new JSONObject()
+            .put("corrections", new JSONArray()
+                .put(new JSONObject()
+                    .put("geohash", DriveSenseAutoTrackingService.geohashEncode(sectionLat, sectionLng, 6))
+                    .put("limitKmh", 40d)
+                    .put("source", "user_confirmed_posted_sign")
+                    .put("appliedAt", "2026-06-17T12:00:00Z")
+                    .put("sectionPoints", new JSONArray()
+                        .put(new JSONObject().put("lat", 43.65300d).put("lng", -79.38400d))
+                        .put(new JSONObject().put("lat", 43.65335d).put("lng", -79.38335d))
+                        .put(new JSONObject().put("lat", 43.65385d).put("lng", -79.38295d)))));
+
+        DriveSenseAutoTrackingService.NativeSpeedLimit nearCurve =
+            DriveSenseAutoTrackingService.findLocalSpeedLimit(
+                data,
+                43.65339d,
+                -79.38332d,
+                Instant.parse("2026-06-17T13:00:00Z").toEpochMilli()
+            );
+
+        assertNotNull(nearCurve);
+        assertEquals(40d, nearCurve.limitKmh, 0.0d);
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(
+            data,
+            43.66100d,
+            -79.38320d,
+            Instant.parse("2026-06-17T13:00:00Z").toEpochMilli()
+        ));
+    }
+
+    @Test
+    public void nativeBackgroundSpeedLookupHonorsDirectionAndTimeRules() throws Exception {
+        double sectionLat = 43.65320d;
+        double sectionLng = -79.38320d;
+        JSONObject timeRule = new JSONObject()
+            .put("enabled", true)
+            .put("days", new JSONArray().put(1).put(2).put(3).put(4).put(5))
+            .put("startMinutes", 7 * 60)
+            .put("endMinutes", 9 * 60);
+        JSONObject data = new JSONObject()
+            .put("corrections", new JSONArray()
+                .put(new JSONObject()
+                    .put("geohash", DriveSenseAutoTrackingService.geohashEncode(sectionLat, sectionLng, 6))
+                    .put("limitKmh", 30d)
+                    .put("source", "user_confirmed_posted_sign")
+                    .put("directionMode", "forward")
+                    .put("timeRule", timeRule)
+                    .put("sectionPoints", new JSONArray()
+                        .put(new JSONObject().put("lat", 43.65320d).put("lng", -79.38400d))
+                        .put(new JSONObject().put("lat", 43.65320d).put("lng", -79.38200d)))));
+        long mondayMorning = LocalDateTime.of(2026, 1, 5, 8, 0)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli();
+        long mondayLate = LocalDateTime.of(2026, 1, 5, 10, 0)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli();
+
+        DriveSenseAutoTrackingService.NativeSpeedLimit matching =
+            DriveSenseAutoTrackingService.findLocalSpeedLimit(data, sectionLat, sectionLng, 90d, mondayMorning);
+
+        assertNotNull(matching);
+        assertEquals(30d, matching.limitKmh, 0.0d);
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(data, sectionLat, sectionLng, 270d, mondayMorning));
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(data, sectionLat, sectionLng, 90d, mondayLate));
+    }
+
     private static JSONObject loadParityFixture() throws Exception {
         try (InputStream stream = DriveSenseAutoTrackingServiceTest.class
             .getClassLoader()

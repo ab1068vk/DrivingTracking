@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Activity, Bell, Car, Check, ChevronRight, Globe2, MapPin, Play, Search, Shield } from 'lucide-react';
+import { Activity, Bell, Car, Check, ChevronRight, Globe2, Map, MapPin, Play, Search, Shield } from 'lucide-react';
 import { localSettings } from '@/lib/trackingStore';
 import {
   getPermissionStatus,
@@ -50,6 +50,15 @@ const STEPS = [
     subtitle: 'Optional but recommended',
     description: 'Get notified when a trip starts or ends, receive your weekly driving report, and get reminders to stay safe on long drives. You can turn these off at any time.',
     color: 'bg-gradient-to-br from-orange-400 to-orange-600',
+    textColor: 'text-white',
+  },
+  {
+    id: 'road_data',
+    icon: Map,
+    title: 'Road Speeds & Online Maps',
+    subtitle: 'Choose local edits, OSM, or both',
+    description: 'Road Sage can keep your own road-speed corrections locally and can optionally use OpenStreetMap for map tiles, road names, and posted maxspeed data. Understanding this choice helps you balance coverage and privacy.',
+    color: 'bg-gradient-to-br from-cyan-500 to-blue-700',
     textColor: 'text-white',
   },
   {
@@ -362,6 +371,29 @@ export default function Onboarding({ onComplete }) {
                   {requesting ? 'Requesting...' : 'Enable Notifications'}
                 </button>
               )}
+            </div>
+          )}
+
+          {currentStep.id === 'road_data' && (
+            <div className="mb-6 space-y-3 text-xs leading-relaxed">
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
+                <div className="font-semibold">Your saved road speeds stay local</div>
+                <p className="mt-1">
+                  Add, review, update, or remove speeds on the Speeds page. Road Sage uses them for nearby trips, warnings, map colors, and local re-scoring. These corrections and notes are not uploaded to OpenStreetMap.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3 text-blue-950 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">
+                <div className="font-semibold">You may continue using OpenStreetMap</div>
+                <p className="mt-1">
+                  Viewing an OSM map downloads tiles, so the tile provider receives the viewed tile area, your IP address, and normal network metadata. Get Road Data sends privacy-filtered public-road bounding boxes to an OSM Overpass service for road names and maxspeed tags—not your saved correction or note.
+                </p>
+                <p className="mt-2">
+                  Automatic road-data lookup is optional and off by default. You can keep it manual, turn OSM speed lookup off later, or use local road speeds alongside OSM.
+                </p>
+              </div>
+              <div className="rounded-2xl bg-secondary/50 p-3 text-muted-foreground">
+                OSRM is a separate optional service for route-line cleanup. If configured and approved, it receives sampled public GPS coordinate pairs with privacy-zone gaps excluded.
+              </div>
             </div>
           )}
 

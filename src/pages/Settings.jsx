@@ -3851,6 +3851,12 @@ export default function Settings() {
         <SettingsSubheading>Online road data</SettingsSubheading>
         <SettingRow
           icon={Gauge}
+          label="Manage your saved road speeds"
+          sublabel="Open the private in-app map to add, review, update, or remove road-section speeds. These edits stay local and re-score matching stored trips."
+          onClick={() => navigate('/speed-limits')}
+        />
+        <SettingRow
+          icon={Gauge}
           label="Speed limits from OpenStreetMap"
           sublabel="On: Get Road Data can add posted OSM maxspeed limits. If OSM has no maxspeed, the app may use a clearly labeled estimate."
         >
@@ -4062,6 +4068,16 @@ export default function Settings() {
                       ? 'On: Get Road Data excludes privacy zones, sends sampled public GPS segments to this OSRM link, and stores snapped road points if OSRM matches them.'
                       : 'Consent needed: save this endpoint and confirm OSRM data sharing before route snapping can run.'
                 : 'Needs link: route snapping is on, but Get Road Data will skip OSRM until an endpoint is set.'}
+          </div>
+        </div>
+        <div className="mx-1 mb-3 rounded-2xl border border-border bg-card p-3 text-xs text-muted-foreground">
+          <div className="font-semibold text-foreground">What leaves the app</div>
+          <div className="mt-2 grid gap-2">
+            <div><span className="font-semibold text-foreground">Local road-speed edits:</span> nothing is sent to OpenStreetMap. The speed, evidence type, road name, and note stay on this device.</div>
+            <div><span className="font-semibold text-foreground">OSM map viewing:</span> tile coordinates for the visible map area plus your IP address and normal network metadata go to the tile provider.</div>
+            <div><span className="font-semibold text-foreground">OSM speed lookup:</span> privacy-filtered public-road bounding boxes plus normal network metadata go to an Overpass service. Saved corrections and notes are not included.</div>
+            <div><span className="font-semibold text-foreground">Weather:</span> one privacy-safe route point and trip date go to Open-Meteo when enabled and requested.</div>
+            <div><span className="font-semibold text-foreground">OSRM:</span> sampled public GPS coordinate pairs go only to the endpoint you save and approve; privacy-zone interiors are excluded.</div>
           </div>
         </div>
         <div className="mx-1 mb-3 rounded-2xl border border-border bg-card p-3 text-xs text-muted-foreground">

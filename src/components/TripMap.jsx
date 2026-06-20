@@ -3,6 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Crosshair, Layers, Maximize2, Smartphone } from 'lucide-react';
 import { escapeHtml } from '@/lib/htmlUtils';
+import { speedLimitSourceLabel } from '@/lib/speedLimitDisplay';
 import { buildPlaybackTimeline, injectTimestampGapMarkers, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
 import {
   buildDangerZonePopupHtml,
@@ -83,34 +84,20 @@ const RISK_COLORS = {
   low: '#3b82f6',
 };
 
-const speedLimitSourceLabel = (source) => {
-  switch (source) {
-    case 'user_confirmed_posted_sign':
-      return 'Your confirmed posted sign';
-    case 'user_entered_estimate':
-      return 'Your saved estimate';
-    case 'openstreetmap':
-      return 'OpenStreetMap posted limit';
-    case 'osm_highway_default':
-      return 'OSM road-type estimate';
-    case 'region_default_estimate':
-      return 'Regional estimate';
-    case 'learned_local':
-    case 'trip_consensus':
-    case 'time_of_day_bucket':
-      return 'Local learned estimate';
-    case 'inferred':
-      return 'GPS-inferred estimate';
-    default:
-      return source ? String(source).replace(/_/g, ' ') : 'Saved speed data';
-  }
-};
-
 const isUserSpeedLimitSource = (source) => (
   source === 'user_confirmed_posted_sign' || source === 'user_entered_estimate'
 );
 
-const hasUsableSpeedLimit = (item) => Number(item?.limitKmh) > 0;
+const speedLimitKmhFrom = (item) => {
+  const limit = Number(item?.limitKmh ?? item?.speedLimitKmh ?? item?.speed_limit_kmh);
+  return Number.isFinite(limit) && limit > 0 ? limit : null;
+};
+
+const speedLimitSourceFrom = (item) => (
+  item?.source ?? item?.speedLimitSource ?? item?.limitSource ?? item?.speed_limit_source ?? null
+);
+
+const hasUsableSpeedLimit = (item) => speedLimitKmhFrom(item) != null;
 
 const speedKnowledgeTimeKey = (point) => {
   const ts = timeMs(point?.timestamp ?? point?.time ?? point?.recorded_at ?? point?.timestamp_ms ?? point?.timestampMs);
@@ -127,7 +114,7 @@ const speedKnowledgeCoordKey = (point) => {
 const preferUserSpeedLimit = (current, next) => {
   if (!hasUsableSpeedLimit(next)) return current;
   if (!hasUsableSpeedLimit(current)) return next;
-  if (isUserSpeedLimitSource(next.source) && !isUserSpeedLimitSource(current.source)) return next;
+  if (isUserSpeedLimitSource(speedLimitSourceFrom(next)) && !isUserSpeedLimitSource(speedLimitSourceFrom(current))) return next;
   return current;
 };
 
@@ -220,6 +207,122 @@ const splitRoutePointSegments = (points = []) => {
 const routePointSegmentsToLatLngs = (segments = []) => (
   segments.map((segment) => segment.map((point) => [point.lat, point.lng]))
 );
+
+const routeFitKey = (routes = []) => routes.map((route) => {
+  const points = Array.isArray(route.route_points) ? route.route_points : [];
+  const first = points[0] || {};
+  const middle = points[Math.floor(points.length / 2)] || {};
+  const last = points[points.length - 1] || {};
+  return [
+    route.id || route.label || 'route',
+    route.selected ? '1' : '0',
+    points.length,
+    first.timestamp || first.time || '',
+    last.timestamp || last.time || '',
+    Number(first.lat).toFixed(5),
+    Number(first.lng).toFixed(5),
+    Number(middle.lat).toFixed(5),
+    Number(middle.lng).toFixed(5),
+    Number(last.lat).toFixed(5),
+    Number(last.lng).toFixed(5),
+  ].join(':');
+}).join('|');
+
+const formatSpeedRange = (min, max) => {
+  const low = Math.round(Number(min) || 0);
+  const high = Math.round(Number(max) || 0);
+  return low === high ? `${low} km/h` : `${low}-${high} km/h`;
+};
+
+const buildSpeedLimitOverlayRuns = (route, localKnowledgeForPoint) => {
+  const points = Array.isArray(route?.route_points) ? route.route_points : [];
+  const runs = [];
+  let active = null;
+
+  const finish = () => {
+    if (active && active.positions.length >= 2) runs.push(active);
+    active = null;
+  };
+
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    if (isRouteGapSegment(prev, curr)) {
+      finish();
+      continue;
+    }
+
+    const currLocal = localKnowledgeForPoint(curr, i, points);
+    const prevLocal = localKnowledgeForPoint(prev, i - 1, points);
+    const userLocal = [currLocal, prevLocal].find((item) => (
+      isUserSpeedLimitSource(speedLimitSourceFrom(item)) &&
+      hasUsableSpeedLimit(item)
+    ));
+    const fallbackLocal = [currLocal, prevLocal].find(hasUsableSpeedLimit);
+    const tripLimit = Number(curr.speed_limit_kmh ?? prev.speed_limit_kmh);
+    const selectedLimit = userLocal || (
+      Number.isFinite(tripLimit) && tripLimit > 0
+        ? { limitKmh: tripLimit, source: curr.speed_limit_source || prev.speed_limit_source || 'openstreetmap' }
+        : fallbackLocal
+    );
+    const limit = speedLimitKmhFrom(selectedLimit);
+    if (!Number.isFinite(limit) || limit <= 0) {
+      finish();
+      continue;
+    }
+
+    const speed = Number(curr.speed_kmh ?? prev.speed_kmh) || 0;
+    const overBy = speed - limit;
+    const color = overBy > 10 ? '#ef4444' : overBy > 0 ? '#f97316' : '#22c55e';
+    const source = speedLimitSourceFrom(selectedLimit) || curr.speed_limit_source || prev.speed_limit_source || 'openstreetmap';
+    const roadName = curr.speed_limit_road_name || prev.speed_limit_road_name || 'matched road';
+    const key = `${color}:${Math.round(limit)}:${source}:${roadName}`;
+
+    if (!active || active.key !== key) {
+      finish();
+      active = {
+        key,
+        positions: [[prev.lat, prev.lng], [curr.lat, curr.lng]],
+        color,
+        limit,
+        source,
+        roadName,
+        minSpeed: speed,
+        maxSpeed: speed,
+        minOverBy: overBy,
+        maxOverBy: overBy,
+        segmentCount: 1,
+      };
+      continue;
+    }
+
+    active.positions.push([curr.lat, curr.lng]);
+    active.minSpeed = Math.min(active.minSpeed, speed);
+    active.maxSpeed = Math.max(active.maxSpeed, speed);
+    active.minOverBy = Math.min(active.minOverBy, overBy);
+    active.maxOverBy = Math.max(active.maxOverBy, overBy);
+    active.segmentCount += 1;
+  }
+
+  finish();
+  return runs;
+};
+
+const speedLimitOverlayPopupHtml = (route, run) => {
+  const maxOver = Number(run.maxOverBy) || 0;
+  const minOver = Number(run.minOverBy) || 0;
+  const comparison = maxOver > 0
+    ? `${Math.round(maxOver)} km/h max over`
+    : minOver < 0
+      ? `${Math.round(Math.abs(minOver))} km/h under`
+      : 'At the saved limit';
+  return `${routeLabelPopupPrefix(route.label)}<b>${escapeHtml(run.roadName)}</b>` +
+    `<br>Speed: ${escapeHtml(formatSpeedRange(run.minSpeed, run.maxSpeed))}` +
+    `<br>Limit: ${escapeHtml(Math.round(run.limit))} km/h` +
+    `<br>${escapeHtml(comparison)}` +
+    `<br>Source: ${escapeHtml(speedLimitSourceLabel(run.source))}` +
+    `<br>${escapeHtml(run.segmentCount)} merged segment${run.segmentCount === 1 ? '' : 's'}`;
+};
 
 const routeTelemetry = (points = []) => {
   const clean = points.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
@@ -429,6 +532,7 @@ function TripMapContent({
   const layersRef = useRef(null);
   const tileLayerRef = useRef(null);
   const lastBoundsRef = useRef(null);
+  const lastFitRouteKeyRef = useRef('');
   const [ready, setReady] = useState(false);
   const [mapFailed, setMapFailed] = useState(false);
   const [tileStyle, setTileStyle] = useState('standard');
@@ -506,6 +610,7 @@ function TripMapContent({
         layersRef.current = null;
         tileLayerRef.current = null;
         lastBoundsRef.current = null;
+        lastFitRouteKeyRef.current = '';
       }
     };
   }, []);
@@ -602,6 +707,43 @@ function TripMapContent({
     };
     const safeCurrentLocation = currentLocation && !isPrivatePoint(currentLocation) ? currentLocation : null;
     const safeParkedLocation = parkedLocation && !isPrivatePoint(parkedLocation) ? parkedLocation : null;
+    const speedLimitInfoForSegment = (segment, route) => {
+      const routeSegmentPoints = Array.isArray(route?.route_points) ? route.route_points : [];
+      const from = segment?.from;
+      const to = segment?.to;
+      const fromIndex = Number.isInteger(segment?.fromIndex) ? segment.fromIndex : routeSegmentPoints.indexOf(from);
+      const toIndex = Number.isInteger(segment?.toIndex) ? segment.toIndex : routeSegmentPoints.indexOf(to);
+      const fromLocal = route?.selected && fromIndex >= 0
+        ? localKnowledgeForPoint(from, fromIndex, routeSegmentPoints)
+        : null;
+      const toLocal = route?.selected && toIndex >= 0
+        ? localKnowledgeForPoint(to, toIndex, routeSegmentPoints)
+        : null;
+      const localItems = [toLocal, fromLocal];
+      const userLocal = localItems.find((item) => (
+        isUserSpeedLimitSource(speedLimitSourceFrom(item)) &&
+        hasUsableSpeedLimit(item)
+      ));
+      const fallbackLocal = localItems.find(hasUsableSpeedLimit);
+      const segmentLimit = speedLimitKmhFrom(segment);
+      const pointLimit = speedLimitKmhFrom(to) ?? speedLimitKmhFrom(from);
+      const routeLimit = segmentLimit ?? pointLimit;
+      const selected = userLocal || (
+        routeLimit != null
+          ? {
+            limitKmh: routeLimit,
+            source: segment?.speedLimitSource || speedLimitSourceFrom(to) || speedLimitSourceFrom(from),
+          }
+          : fallbackLocal
+      );
+      const limitKmh = speedLimitKmhFrom(selected);
+      if (limitKmh == null) return null;
+      return {
+        limitKmh,
+        source: speedLimitSourceFrom(selected) || segment?.speedLimitSource || speedLimitSourceFrom(to) || speedLimitSourceFrom(from),
+        roadName: segment?.roadName || to?.speed_limit_road_name || from?.speed_limit_road_name || null,
+      };
+    };
     const drawPrivacyZones = (bounds = null) => {
       displayPrivacyZones.forEach((zone) => {
         const circle = window.L.circle([Number(zone.lat), Number(zone.lng)], {
@@ -709,9 +851,20 @@ function TripMapContent({
           speedSegments.forEach((segment) => {
             const from = segment.from;
             const to = segment.to;
-            const color = segment.color || segment.band?.color;
             const label = segment.band?.label || segment.label || 'Segment';
             const speedKmh = segment.speedKmh ?? segment.speed_kmh ?? 0;
+            const speedLimitInfo = speedLimitInfoForSegment(segment, route);
+            const speedLimitKmh = speedLimitInfo?.limitKmh ?? null;
+            const overLimitKmh = speedLimitKmh != null ? Math.max(0, Number(speedKmh) - speedLimitKmh) : (segment.overLimitKmh || 0);
+            const displaySegment = {
+              ...segment,
+              speedKmh,
+              speedLimitKmh,
+              overLimitKmh,
+              speedLimitSource: speedLimitInfo?.source || segment.speedLimitSource || null,
+              roadName: speedLimitInfo?.roadName || segment.roadName || null,
+            };
+            const color = segment.speedBandColor || segment.color || segment.band?.color || route.color;
             window.L.polyline(
               [[from.lat, from.lng], [to.lat, to.lng]],
               {
@@ -727,47 +880,19 @@ function TripMapContent({
                 routeLabel: route.label,
                 label,
                 speedKmh,
-                speedLimitKmh: segment.speedLimitKmh,
+                speedLimitKmh,
               }))
               .on('click', () => {
-                if (segment.band) setSelectedSegment(segment);
+                if (segment.band) setSelectedSegment(displaySegment);
               })
               .addTo(layers);
           });
           if (showSpeedLimits && route.selected) {
-            for (let i = 1; i < route.route_points.length; i++) {
-              const prev = route.route_points[i - 1];
-              const curr = route.route_points[i];
-              if (isRouteGapSegment(prev, curr)) continue;
-              const currLocal = localKnowledgeForPoint(curr, i, route.route_points);
-              const prevLocal = localKnowledgeForPoint(prev, i - 1, route.route_points);
-              const userLocal = [currLocal, prevLocal].find((item) => (
-                isUserSpeedLimitSource(item?.source) &&
-                hasUsableSpeedLimit(item)
-              ));
-              const fallbackLocal = [currLocal, prevLocal].find(hasUsableSpeedLimit);
-              const tripLimit = Number(curr.speed_limit_kmh ?? prev.speed_limit_kmh);
-              const selectedLimit = userLocal || (
-                Number.isFinite(tripLimit) && tripLimit > 0
-                  ? { limitKmh: tripLimit, source: curr.speed_limit_source || prev.speed_limit_source || 'openstreetmap' }
-                  : fallbackLocal
-              );
-              const limit = Number(selectedLimit?.limitKmh);
-              if (!Number.isFinite(limit) || limit <= 0) continue;
-              const speed = Number(curr.speed_kmh ?? prev.speed_kmh) || 0;
-              const overBy = speed - limit;
-              const color = overBy > 10 ? '#ef4444' : overBy > 0 ? '#f97316' : '#22c55e';
-              const source = selectedLimit?.source || curr.speed_limit_source || prev.speed_limit_source || 'openstreetmap';
-              const roadName = curr.speed_limit_road_name || prev.speed_limit_road_name || 'matched road';
-              const comparison = overBy > 0
-                ? `${Math.round(overBy)} km/h over`
-                : overBy < 0
-                  ? `${Math.round(Math.abs(overBy))} km/h under`
-                  : 'At the saved limit';
+            buildSpeedLimitOverlayRuns(route, localKnowledgeForPoint).forEach((run) => {
               window.L.polyline(
-                [[prev.lat, prev.lng], [curr.lat, curr.lng]],
+                run.positions,
                 {
-                  color,
+                  color: run.color,
                   weight: route.selected ? 8 : 5,
                   opacity: 0.48,
                   smoothFactor: 1.5,
@@ -775,15 +900,9 @@ function TripMapContent({
                   lineJoin: 'round',
                 }
               )
-                .bindPopup(
-                  `${routeLabelPopupPrefix(route.label)}<b>${escapeHtml(roadName)}</b>` +
-                  `<br>Speed: ${escapeHtml(Math.round(speed))} km/h` +
-                  `<br>Limit: ${escapeHtml(Math.round(limit))} km/h` +
-                  `<br>${escapeHtml(comparison)}` +
-                  `<br>Source: ${escapeHtml(speedLimitSourceLabel(source))}`
-                )
+                .bindPopup(speedLimitOverlayPopupHtml(route, run))
                 .addTo(layers);
-            }
+            });
           }
         } else {
           latLngSegments.forEach((segmentLatLngs) => {
@@ -804,7 +923,11 @@ function TripMapContent({
       drawPrivacyZones(bounds);
 
       lastBoundsRef.current = bounds;
-      map.fitBounds(bounds, { padding: [20, 20] });
+      const nextFitKey = routeFitKey(validRoutes);
+      if (nextFitKey && lastFitRouteKeyRef.current !== nextFitKey) {
+        map.fitBounds(bounds, { padding: [20, 20] });
+        lastFitRouteKeyRef.current = nextFitKey;
+      }
 
       const primaryRoute = validRoutes.find((route) => route.selected) || validRoutes[0];
       const latLngs = primaryRoute.route_points.map(p => [p.lat, p.lng]);

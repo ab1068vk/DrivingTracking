@@ -4360,7 +4360,9 @@ export async function prefetchLocalKnowledge(points = [], knowledge = null) {
     const pointTime = timestampMs(point);
     const lookupKey = `${hash}:${Number.isFinite(pointTime) ? timeToBucket(pointTime) : 'none'}`;
     if (!lookupByHash.has(lookupKey)) {
-      lookupByHash.set(lookupKey, knowledge.getForPoint(lat, lng, pointTime).catch(() => null));
+      lookupByHash.set(lookupKey, knowledge.getForPoint(lat, lng, pointTime, {
+        headingDeg: point?.heading ?? point?.bearing ?? point?.course ?? null,
+      }).catch(() => null));
     }
     return lookupKey;
   });

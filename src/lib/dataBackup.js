@@ -2,10 +2,11 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { BACKUP_EXCLUDED_KEYS, localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
-import { createPrivacyExportSalt, getPrivacyZones, maskTripForPrivacyExport } from '@/lib/privacyZones';
+import { createPrivacyExportSalt, getPrivacyZones, isInsidePrivacyZone, maskTripForPrivacyExport } from '@/lib/privacyZones';
 import { commitZoneForExportSync, createExportId } from '@/lib/exportCommitment';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
+import { STORAGE_KEY as SPEED_KNOWLEDGE_STORAGE_KEY } from '@/lib/localSpeedKnowledge';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import {
   CALIBRATION_LABELS_KEY,
@@ -29,7 +30,7 @@ import {
 import { logTransmission } from '@/lib/transmissionLog';
 
 // CHANGES (session):
-// - Added speed knowledge backup exclusion metadata and trip_speed_summary_v1 backup field support.
+// - Added speed knowledge backup support and trip_speed_summary_v1 backup field support.
 
 /*
  * Backup schema history:
@@ -42,11 +43,12 @@ import { logTransmission } from '@/lib/transmissionLog';
  * v7: local post-trip calibration labels and survey markers are preserved.
  * v8: privacy zone cell hashes are omitted from backups; zones must be re-entered after restore.
  * v9: exports include a per-export id and privacy-zone commitments without zone coordinates.
+ * v10: local speed knowledge and user speed-limit corrections are preserved.
  *
  * Every import is migrated one version at a time before it is sanitized and
  * merged. Coordinates omitted for privacy zones are intentionally not restored.
  */
-export const BACKUP_VERSION = 9;
+export const BACKUP_VERSION = 10;
 export const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 export const BACKUP_TOO_LARGE_MESSAGE = 'Backup file is too large. Please choose a Road Sage backup that is 50 MB or smaller.';
 export const BACKUP_SIGNATURE_INVALID_CODE = 'BACKUP_SIGNATURE_INVALID';
@@ -56,6 +58,10 @@ export const MAX_IMPORTED_STRING_LENGTH = 5000;
 export const MAX_IMPORTED_TRIP_NOTES_LENGTH = 10000;
 export const MAX_IMPORTED_CALIBRATION_LABELS = 5000;
 export const MAX_IMPORTED_CALIBRATION_MARKERS = 10000;
+export const MAX_IMPORTED_SPEED_KNOWLEDGE_CELLS = 10000;
+export const MAX_IMPORTED_SPEED_KNOWLEDGE_CORRECTIONS = 5000;
+export const MAX_IMPORTED_SPEED_KNOWLEDGE_SECTION_POINTS = 24;
+export const MAX_IMPORTED_SPEED_KNOWLEDGE_EDIT_HISTORY = 10;
 export { BACKUP_PASSWORD_REQUIRED_CODE, BACKUP_WRONG_PASSWORD_CODE };
 
 const safeFilename = (filename) => filename.replace(/[\\/:*?"<>|]+/g, '-');
@@ -75,6 +81,15 @@ const IMPORTED_STRING_LIMITS_BY_FIELD = {
   message: 500,
   label: 200,
 };
+
+const SPEED_KNOWLEDGE_SOURCES = new Set([
+  'trip_consensus',
+  'user_confirmed_posted_sign',
+  'user_entered_estimate',
+  'time_of_day_bucket',
+]);
+
+const SPEED_KNOWLEDGE_DIRECTION_MODES = new Set(['forward', 'reverse', 'both']);
 
 const IMPORTED_TRIP_FIELDS = new Set([
   'id',
@@ -487,6 +502,153 @@ export const sanitizeCalibrationSurveyMarkers = (markers, warnings = null) => {
   );
 };
 
+const sanitizeSpeedKnowledgeGeohash = (value) => {
+  const geohash = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return /^[0-9bcdefghjkmnpqrstuvwxyz]{1,12}$/.test(geohash) ? geohash : '';
+};
+
+const sanitizeSpeedKnowledgeNumber = (value, min = 0, max = 250) => {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(min, Math.min(max, number));
+};
+
+const sanitizeSpeedKnowledgeString = (value, maxLength = 200) => (
+  typeof value === 'string' ? value.slice(0, maxLength) : ''
+);
+
+const sanitizeSpeedKnowledgeSource = (value, fallback = 'user_entered_estimate') => (
+  SPEED_KNOWLEDGE_SOURCES.has(value) ? value : fallback
+);
+
+const sanitizeSpeedKnowledgeTimeRule = (rule) => {
+  if (!isPlainObject(rule) || rule.enabled !== true) return { enabled: false };
+  const days = Array.isArray(rule.days)
+    ? [...new Set(rule.days.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))]
+      .sort((a, b) => a - b)
+    : [];
+  const startMinutes = sanitizeSpeedKnowledgeNumber(rule.startMinutes, 0, 1439);
+  const endMinutes = sanitizeSpeedKnowledgeNumber(rule.endMinutes, 0, 1439);
+  if (!days.length || startMinutes == null || endMinutes == null) return { enabled: false };
+  return {
+    enabled: true,
+    days,
+    startMinutes: Math.round(startMinutes),
+    endMinutes: Math.round(endMinutes),
+    ...(typeof rule.label === 'string' ? { label: sanitizeSpeedKnowledgeString(rule.label, 120) } : {}),
+  };
+};
+
+const sanitizeSpeedKnowledgePoint = (point, privacyZones = []) => {
+  if (!isPlainObject(point)) return null;
+  const lat = Number(point.lat);
+  const lng = Number(point.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  if (Math.abs(lat) < 0.001 && Math.abs(lng) < 0.001) return null;
+  if (isInsidePrivacyZone(lat, lng, privacyZones)) return null;
+  return { lat, lng };
+};
+
+const sanitizeSpeedKnowledgeCell = (cell, warnings = null) => {
+  if (!isPlainObject(cell)) return null;
+  const limitKmh = sanitizeSpeedKnowledgeNumber(cell.limitKmh);
+  if (limitKmh == null || limitKmh <= 0) return null;
+  const sanitized = {
+    limitKmh: Math.round(limitKmh),
+    source: sanitizeSpeedKnowledgeSource(cell.source, 'trip_consensus'),
+    confidence: sanitizeSpeedKnowledgeNumber(cell.confidence, 0, 1) ?? 0,
+    tripCount: Math.max(0, Math.round(Number(cell.tripCount) || 0)),
+    firstSeenAt: sanitizeSpeedKnowledgeString(cell.firstSeenAt, 80),
+    lastUpdatedAt: sanitizeSpeedKnowledgeString(cell.lastUpdatedAt, 80),
+  };
+  if (cell.conflict === true) sanitized.conflict = true;
+  if (isPlainObject(cell.conflictDetails)) {
+    sanitized.conflictDetails = sanitizeJsonValue(cell.conflictDetails, 0, {
+      maxStringLength: 500,
+      warnings,
+      field: 'speed knowledge conflict',
+    });
+  }
+  if (cell.conflictResolvedAt) sanitized.conflictResolvedAt = sanitizeSpeedKnowledgeString(cell.conflictResolvedAt, 80);
+  if (cell.conflictResolvedSource) sanitized.conflictResolvedSource = sanitizeSpeedKnowledgeSource(cell.conflictResolvedSource);
+  if (cell.conflictResolvedNote) sanitized.conflictResolvedNote = sanitizeSpeedKnowledgeString(cell.conflictResolvedNote, 500);
+  if (isPlainObject(cell.timeOfDayBuckets)) {
+    const buckets = Object.fromEntries(
+      Object.entries(cell.timeOfDayBuckets)
+        .slice(0, 12)
+        .filter(([key]) => /^\d{2}-\d{2}$/.test(key))
+        .map(([key, bucket]) => {
+          const p85Kmh = sanitizeSpeedKnowledgeNumber(bucket?.p85Kmh);
+          return [key, {
+            p85Kmh: p85Kmh == null ? sanitized.limitKmh : Math.round(p85Kmh),
+            count: Math.max(0, Math.round(Number(bucket?.count) || 0)),
+          }];
+        })
+    );
+    if (Object.keys(buckets).length > 0) sanitized.timeOfDayBuckets = buckets;
+  }
+  return sanitized;
+};
+
+const sanitizeSpeedKnowledgeCorrection = (correction, privacyZones = [], warnings = null) => {
+  if (!isPlainObject(correction)) return null;
+  const geohash = sanitizeSpeedKnowledgeGeohash(correction.geohash);
+  const limitKmh = sanitizeSpeedKnowledgeNumber(correction.limitKmh);
+  if (!geohash || limitKmh == null || limitKmh <= 0) return null;
+  const coordinate = sanitizeSpeedKnowledgePoint(correction, privacyZones);
+  const sectionPoints = (Array.isArray(correction.sectionPoints) ? correction.sectionPoints : [])
+    .map((point) => sanitizeSpeedKnowledgePoint(point, privacyZones))
+    .filter(Boolean)
+    .slice(0, MAX_IMPORTED_SPEED_KNOWLEDGE_SECTION_POINTS);
+  if (!coordinate && sectionPoints.length === 0 && Number.isFinite(Number(correction.lat)) && Number.isFinite(Number(correction.lng))) {
+    return null;
+  }
+  const source = sanitizeSpeedKnowledgeSource(correction.source);
+  const directionBearing = sanitizeSpeedKnowledgeNumber(correction.directionBearing, 0, 360);
+  return {
+    geohash,
+    ...(coordinate || {}),
+    coordinateSource: sanitizeSpeedKnowledgeString(correction.coordinateSource || 'driven_route_sample', 80),
+    limitKmh: Math.round(limitKmh),
+    note: sanitizeSpeedKnowledgeString(correction.note, 500),
+    source,
+    appliedAt: sanitizeSpeedKnowledgeString(correction.appliedAt, 80),
+    expiresAt: correction.expiresAt ? sanitizeSpeedKnowledgeString(correction.expiresAt, 80) : null,
+    roadName: sanitizeSpeedKnowledgeString(correction.roadName, 200),
+    contextLabel: sanitizeSpeedKnowledgeString(correction.contextLabel, 300),
+    directionLabel: sanitizeSpeedKnowledgeString(correction.directionLabel, 200),
+    timeLabel: sanitizeSpeedKnowledgeString(correction.timeLabel, 120),
+    distanceM: Math.max(0, Math.round(Number(correction.distanceM) || 0)),
+    directionMode: SPEED_KNOWLEDGE_DIRECTION_MODES.has(correction.directionMode) ? correction.directionMode : 'both',
+    ...(directionBearing == null ? {} : { directionBearing }),
+    timeRule: sanitizeSpeedKnowledgeTimeRule(correction.timeRule),
+    sectionPoints,
+    editHistory: (Array.isArray(correction.editHistory) ? correction.editHistory : [])
+      .slice(-MAX_IMPORTED_SPEED_KNOWLEDGE_EDIT_HISTORY)
+      .map((item) => sanitizeJsonValue(item, 0, {
+        maxStringLength: 500,
+        warnings,
+        field: 'speed knowledge edit history',
+      }))
+      .filter(isPlainObject),
+  };
+};
+
+export const sanitizeSpeedKnowledge = (knowledge, privacyZones = [], warnings = null) => {
+  if (!isPlainObject(knowledge)) return { cells: {}, corrections: [] };
+  const cells = Object.fromEntries(
+    Object.entries(isPlainObject(knowledge.cells) ? knowledge.cells : {})
+      .slice(0, MAX_IMPORTED_SPEED_KNOWLEDGE_CELLS)
+      .map(([geohash, cell]) => [sanitizeSpeedKnowledgeGeohash(geohash), sanitizeSpeedKnowledgeCell(cell, warnings)])
+      .filter(([geohash, cell]) => geohash && cell)
+  );
+  const corrections = (Array.isArray(knowledge.corrections) ? knowledge.corrections : [])
+    .slice(0, MAX_IMPORTED_SPEED_KNOWLEDGE_CORRECTIONS)
+    .map((correction) => sanitizeSpeedKnowledgeCorrection(correction, privacyZones, warnings))
+    .filter(Boolean);
+  return { cells, corrections };
+};
+
 const migrateLaneChangeEventType = (event) => (
   isPlainObject(event) && event.type === 'lane_change'
     ? { ...event, type: 'heading_deviation_legacy', legacy_renamed: true }
@@ -533,6 +695,7 @@ export function buildDriveSenseBackup({
   savedFilters = [],
   calibrationLabels = [],
   calibrationSurveyMarkers = {},
+  speedKnowledge = {},
 } = {}) {
   const savedTripFilters = sanitizeSavedTripFilters(savedFilters);
   const sanitizedCalibrationLabels = sanitizeCalibrationLabels(calibrationLabels);
@@ -541,6 +704,7 @@ export function buildDriveSenseBackup({
   const exportId = createExportId();
   const privacyZones = getPrivacyZones(settings);
   const zoneCommitments = privacyZones.map((zone) => commitZoneForExportSync(zone, exportId));
+  const sanitizedSpeedKnowledge = sanitizeSpeedKnowledge(speedKnowledge, privacyZones);
   const exportSettings = {
     ...settings,
     privacy_zones: privacyZoneExportPlaceholders(privacyZones),
@@ -585,6 +749,7 @@ export function buildDriveSenseBackup({
       labels: sanitizedCalibrationLabels,
       survey_markers: sanitizedCalibrationSurveyMarkers,
     },
+    speed_knowledge: sanitizedSpeedKnowledge,
     vehicles,
     trips: maskedTrips,
   };
@@ -594,10 +759,11 @@ export function buildDriveSenseBackup({
  * @param {{trips?:Array,vehicles?:Array,settings?:Object,filename?:string,passphrase?:string|null}} options
  */
 export async function exportDriveSenseBackup({ trips, vehicles, settings, filename, passphrase = null } = {}) {
-  const [savedFilters, calibrationLabels, calibrationSurveyMarkers] = await Promise.all([
+  const [savedFilters, calibrationLabels, calibrationSurveyMarkers, speedKnowledge] = await Promise.all([
     getJson(SAVED_FILTERS_KEY, []),
     getJson(CALIBRATION_LABELS_KEY, []),
     getJson(CALIBRATION_SURVEY_MARKERS_KEY, {}),
+    getJson(SPEED_KNOWLEDGE_STORAGE_KEY, {}),
   ]);
   const backup = buildDriveSenseBackup({
     trips,
@@ -606,6 +772,7 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
     savedFilters,
     calibrationLabels,
     calibrationSurveyMarkers,
+    speedKnowledge,
   });
   const encrypted = typeof passphrase === 'string' && passphrase.length > 0;
   const requestedName = filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`;
@@ -810,6 +977,13 @@ export function migrateBackup(data, fromVersion = Number(data?.version) || 1) {
         },
         zone_commitments: Array.isArray(migrated.zone_commitments) ? migrated.zone_commitments : [],
       };
+    } else if (version === 9) {
+      migrated = {
+        ...migrated,
+        speed_knowledge: isPlainObject(migrated.speed_knowledge)
+          ? migrated.speed_knowledge
+          : { cells: {}, corrections: [] },
+      };
     }
     version += 1;
   }
@@ -845,6 +1019,7 @@ export function parseDriveSenseBackup(text) {
       labels: sanitizeCalibrationLabels(migrated.calibration?.labels, warnings),
       survey_markers: sanitizeCalibrationSurveyMarkers(migrated.calibration?.survey_markers, warnings),
     },
+    speed_knowledge: sanitizeSpeedKnowledge(migrated.speed_knowledge, [], warnings),
     vehicles: Array.isArray(migrated.vehicles) ? migrated.vehicles : [],
     trips: migrated.trips.map((trip) => sanitizeImportedTrip(trip, warnings)),
     warnings,
@@ -1059,6 +1234,24 @@ export async function importDriveSenseBackup(
     }
   }
 
+  const speedKnowledgeCellCount = Object.keys(backup.speed_knowledge?.cells || {}).length;
+  const speedKnowledgeCorrectionCount = Array.isArray(backup.speed_knowledge?.corrections)
+    ? backup.speed_knowledge.corrections.length
+    : 0;
+  let speedKnowledgeRestored = false;
+  if (speedKnowledgeCellCount > 0 || speedKnowledgeCorrectionCount > 0) {
+    try {
+      await setJson(SPEED_KNOWLEDGE_STORAGE_KEY, backup.speed_knowledge);
+      speedKnowledgeRestored = true;
+    } catch (error) {
+      logSystemFailure('backup_import_speed_knowledge_restore', error, {
+        speed_knowledge_cell_count: speedKnowledgeCellCount,
+        speed_knowledge_correction_count: speedKnowledgeCorrectionCount,
+      });
+      console.warn('Could not restore speed knowledge from backup.', error);
+    }
+  }
+
   recordSystemEvent('backup_import_completed', {
     trip_count: importedTrips.length,
     vehicle_count: importedVehicles.length,
@@ -1067,6 +1260,9 @@ export async function importDriveSenseBackup(
     saved_filters_restored: savedFiltersRestored,
     calibration_label_count: backup.calibration.labels.length,
     calibration_labels_restored: calibrationLabelsRestored,
+    speed_knowledge_cell_count: speedKnowledgeCellCount,
+    speed_knowledge_correction_count: speedKnowledgeCorrectionCount,
+    speed_knowledge_restored: speedKnowledgeRestored,
     warning_count: backup.warnings.length,
     truncated_note_trip_count: backup.truncatedNoteTripCount,
     privacy_zones_need_reconfiguration: privacyZonesNeedReconfiguration,
@@ -1090,6 +1286,9 @@ export async function importDriveSenseBackup(
     savedFiltersRestored,
     calibrationLabels: backup.calibration.labels.length,
     calibrationLabelsRestored,
+    speedKnowledgeCells: speedKnowledgeCellCount,
+    speedKnowledgeCorrections: speedKnowledgeCorrectionCount,
+    speedKnowledgeRestored,
     warnings: backup.warnings,
     truncatedFields: backup.warnings.length,
     truncatedNoteTripCount: backup.truncatedNoteTripCount,

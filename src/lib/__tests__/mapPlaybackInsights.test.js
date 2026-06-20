@@ -39,11 +39,12 @@ describe('mapPlaybackInsights', () => {
   });
 
   it('builds a playback timeline with segments, events, stops, and violations', () => {
+    const stoppedPoint = point(2, 0, { speed_limit_kmh: 50 });
     const points = [
       point(0, 20, { speed_limit_kmh: 50 }),
       point(1, 60, { speed_limit_kmh: 50 }),
-      point(2, 0, { speed_limit_kmh: 50 }),
-      point(9, 0, { speed_limit_kmh: 50 }),
+      stoppedPoint,
+      { ...stoppedPoint, timestamp: point(9).timestamp },
     ];
     const timeline = buildPlaybackTimeline(points, [{
       type: 'speeding',
@@ -58,6 +59,34 @@ describe('mapPlaybackInsights', () => {
     expect(timeline.violations.length).toBeGreaterThan(0);
     expect(timeline.stops[0].durationSeconds).toBeGreaterThanOrEqual(60);
     expect(timeline.story.length).toBeGreaterThan(0);
+  });
+
+  it('keeps speed band colors separate from speed-limit overlay colors', () => {
+    const points = [
+      point(0, 45, { speed_limit_kmh: 30 }),
+      point(1, 45, { speed_limit_kmh: 30 }),
+    ];
+    const timeline = buildPlaybackTimeline(points);
+    const [segment] = timeline.segments;
+
+    expect(segment.band.label).toBe('City');
+    expect(segment.color).toBe('#3b82f6');
+    expect(segment.speedBandColor).toBe('#3b82f6');
+    expect(segment.speedLimitColor).toBe('#ef4444');
+    expect(segment.overLimitKmh).toBe(15);
+  });
+
+  it('uses implied movement speed when GPS reports zero while the route is moving', () => {
+    const points = [
+      point(0, 0, { lat: 43.65, timestamp: '2026-01-01T12:00:00.000Z' }),
+      point(1, 0, { lat: 43.652, timestamp: '2026-01-01T12:00:10.000Z' }),
+    ];
+    const timeline = buildPlaybackTimeline(points);
+    const [segment] = timeline.segments;
+
+    expect(segment.speedKmh).toBeGreaterThan(70);
+    expect(segment.band.label).toBe('Cruise');
+    expect(segment.color).toBe('#22c55e');
   });
 
   it('interpolates playback position by elapsed time', () => {

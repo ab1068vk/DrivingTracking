@@ -1,5 +1,5 @@
 import { tripService } from '@/api/trips';
-import { geohashEncode } from '@/lib/localSpeedKnowledge';
+import { correctionMatchesPoint, geohashEncode } from '@/lib/localSpeedKnowledge';
 import { buildLocalSpeedKnowledgeScorePatch } from '@/lib/openSourceTripContext';
 import { recordSystemEvent } from '@/lib/systemLog';
 import { localSettings } from '@/lib/trackingStore';
@@ -13,6 +13,16 @@ const tripCrossesCell = (trip = {}, geohash = '') => (
       Number.isFinite(lng) &&
       geohashEncode(lat, lng) === geohash;
   })
+);
+
+const tripCrossesCorrection = (trip = {}, correction = null) => (
+  Array.isArray(trip.route_points) &&
+  trip.route_points.some((point) => (
+    correctionMatchesPoint(correction, Number(point?.lat), Number(point?.lng), undefined, {
+      timestampMs: point?.timestampMs ?? point?.timestamp_ms ?? point?.timestamp ?? point?.recorded_at ?? null,
+      headingDeg: point?.heading ?? point?.bearing ?? point?.course ?? null,
+    })
+  ))
 );
 
 export async function refreshTripForLocalSpeedKnowledge(tripOrId, settings = localSettings.get(), extraPatch = {}) {
@@ -58,4 +68,18 @@ export async function refreshTripsCrossingLocalSpeedCell(geohash, settings = loc
   return results;
 }
 
-export { tripCrossesCell };
+export async function refreshTripsCrossingLocalSpeedCorrection(correction, settings = localSettings.get()) {
+  if (!correction) return [];
+  const trips = await tripService.listAll({ sort: '-start_time' });
+  const affectedTrips = trips.filter((trip) => (
+    trip?.status === 'completed' &&
+    tripCrossesCorrection(trip, correction)
+  ));
+  const results = [];
+  for (const trip of affectedTrips) {
+    results.push(await refreshTripForLocalSpeedKnowledge(trip, settings));
+  }
+  return results;
+}
+
+export { tripCrossesCell, tripCrossesCorrection };

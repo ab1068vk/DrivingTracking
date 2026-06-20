@@ -865,6 +865,7 @@ describe('release blocker regressions', () => {
 
     expect(dashboardSource).toContain('Review after trip');
     expect(dashboardSource).toContain('Review speed limits while parked');
+    expect(dashboardSource).toContain('Dismiss parked speed-limit review warning');
     expect(dashboardSource).not.toContain('openSpeedCorrectionSheet');
     expect(dashboardSource).not.toContain('Confirm posted sign');
     expect(reviewSource).toContain('Save posted sign');

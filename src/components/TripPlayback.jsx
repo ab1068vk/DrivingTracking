@@ -3,7 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Activity, Clock, Flag, Gauge, LocateFixed, Pause, Play, Route, SkipBack, SkipForward } from 'lucide-react';
 import { escapeHtml } from '@/lib/htmlUtils';
-import { buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints, routeDistanceAtPlaybackPosition } from '@/lib/mapPlaybackInsights';
+import { SPEED_BANDS, buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints, routeDistanceAtPlaybackPosition } from '@/lib/mapPlaybackInsights';
 import { buildSpeedSegmentPopupHtml, titleCase } from '@/lib/mapPopupHtml';
 import { clamp } from '@/lib/mathUtils';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
@@ -51,6 +51,13 @@ const EVENT_LABELS = {
   close_proximity: '!',
   phone_use: 'P',
   possible_crash: '!!',
+};
+
+const speedBandRangeLabel = (band, index) => {
+  const next = SPEED_BANDS[index + 1];
+  if (!next) return `${band.label} ${band.min}+ km/h`;
+  if (band.min === 0) return `${band.label} <${next.min} km/h`;
+  return `${band.label} ${band.min}-${next.min - 1} km/h`;
 };
 
 const privacyZonePopupHtml = (zone) => (
@@ -787,11 +794,12 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
       </div>
 
       <div className="flex items-center gap-2 text-[10px] text-muted-foreground overflow-x-auto thin-scrollbar pb-1">
-        <span className="flex items-center gap-1 whitespace-nowrap"><span className="w-2 h-2 rounded-full bg-slate-400" />Slow</span>
-        <span className="flex items-center gap-1 whitespace-nowrap"><span className="w-2 h-2 rounded-full bg-blue-500" />City</span>
-        <span className="flex items-center gap-1 whitespace-nowrap"><span className="w-2 h-2 rounded-full bg-green-500" />Cruise</span>
-        <span className="flex items-center gap-1 whitespace-nowrap"><span className="w-2 h-2 rounded-full bg-orange-500" />Fast</span>
-        <span className="flex items-center gap-1 whitespace-nowrap"><span className="w-2 h-2 rounded-full bg-red-500" />Risk</span>
+        {SPEED_BANDS.map((band, index) => (
+          <span key={band.id} className="flex items-center gap-1 whitespace-nowrap">
+            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: band.color }} />
+            {speedBandRangeLabel(band, index)}
+          </span>
+        ))}
       </div>
 
       <div className="relative h-1.5 bg-secondary rounded-full overflow-hidden cursor-pointer"

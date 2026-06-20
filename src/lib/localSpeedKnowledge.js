@@ -16,6 +16,8 @@ export const CELL_PRECISION = 6;
 export const FALLBACK_PRECISION = 5;
 const CACHEABLE_SOURCES = new Set(['openstreetmap', 'user_confirmed_posted_sign']);
 const NULL_ISLAND_EPSILON = 0.001;
+const ROAD_SECTION_MATCH_RADIUS_KM = 0.08;
+const DIRECTION_MATCH_TOLERANCE_DEG = 100;
 
 const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
 
@@ -86,6 +88,138 @@ function distanceKm(lat1, lng1, lat2, lng2) {
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
     Math.sin(dLng / 2) ** 2;
   return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function pointToSegmentDistanceKm(lat, lng, start, end) {
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+  const startLat = Number(start?.lat);
+  const startLng = Number(start?.lng);
+  const endLat = Number(end?.lat);
+  const endLng = Number(end?.lng);
+  if (![latitude, longitude, startLat, startLng, endLat, endLng].every(Number.isFinite)) return Infinity;
+
+  const meanLat = (latitude + startLat + endLat) / 3 * Math.PI / 180;
+  const kmPerLatDegree = 111.32;
+  const kmPerLngDegree = Math.max(1, 111.32 * Math.cos(meanLat));
+  const px = (longitude - startLng) * kmPerLngDegree;
+  const py = (latitude - startLat) * kmPerLatDegree;
+  const vx = (endLng - startLng) * kmPerLngDegree;
+  const vy = (endLat - startLat) * kmPerLatDegree;
+  const lengthSquared = vx * vx + vy * vy;
+  if (lengthSquared <= 0) return Math.hypot(px, py);
+  const projection = Math.max(0, Math.min(1, (px * vx + py * vy) / lengthSquared));
+  return Math.hypot(px - projection * vx, py - projection * vy);
+}
+
+function bearingDeg(start, end) {
+  const startLat = Number(start?.lat) * Math.PI / 180;
+  const endLat = Number(end?.lat) * Math.PI / 180;
+  const deltaLng = (Number(end?.lng) - Number(start?.lng)) * Math.PI / 180;
+  if (![startLat, endLat, deltaLng].every(Number.isFinite)) return null;
+  const y = Math.sin(deltaLng) * Math.cos(endLat);
+  const x = Math.cos(startLat) * Math.sin(endLat) -
+    Math.sin(startLat) * Math.cos(endLat) * Math.cos(deltaLng);
+  const bearing = Math.atan2(y, x) * 180 / Math.PI;
+  return (bearing + 360) % 360;
+}
+
+function angleDiffDeg(a, b) {
+  if (!Number.isFinite(Number(a)) || !Number.isFinite(Number(b))) return Infinity;
+  return Math.abs((((Number(a) - Number(b)) + 540) % 360) - 180);
+}
+
+function directionMode(value) {
+  return ['forward', 'reverse'].includes(value) ? value : 'both';
+}
+
+function sectionBearing(points = []) {
+  const clean = points.filter((point) => isUsableCoordinate(Number(point?.lat), Number(point?.lng)));
+  if (clean.length < 2) return null;
+  return bearingDeg(clean[0], clean[clean.length - 1]);
+}
+
+function correctionBearing(correction = {}) {
+  const stored = Number(correction.directionBearing);
+  if (Number.isFinite(stored)) return ((stored % 360) + 360) % 360;
+  return sectionBearing(Array.isArray(correction.sectionPoints) ? correction.sectionPoints : []);
+}
+
+function correctionMatchesDirection(correction = {}, headingDeg = null) {
+  const mode = directionMode(correction.directionMode);
+  if (mode === 'both') return true;
+  const heading = Number(headingDeg);
+  if (!Number.isFinite(heading)) return false;
+  const bearing = correctionBearing(correction);
+  if (!Number.isFinite(bearing)) return false;
+  const expected = mode === 'reverse' ? (bearing + 180) % 360 : bearing;
+  return angleDiffDeg(heading, expected) <= DIRECTION_MATCH_TOLERANCE_DEG;
+}
+
+function parseTimeMinutes(value) {
+  const match = String(value || '').match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function cleanDays(days) {
+  return [...new Set((Array.isArray(days) ? days : [])
+    .map((day) => Number(day))
+    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))]
+    .sort((a, b) => a - b);
+}
+
+function normalizeTimeRule(rule = null) {
+  if (!rule || rule.enabled !== true) return { enabled: false, days: [], startMinutes: null, endMinutes: null };
+  const startMinutes = Number.isFinite(Number(rule.startMinutes))
+    ? Number(rule.startMinutes)
+    : parseTimeMinutes(rule.startTime);
+  const endMinutes = Number.isFinite(Number(rule.endMinutes))
+    ? Number(rule.endMinutes)
+    : parseTimeMinutes(rule.endTime);
+  const days = cleanDays(rule.days);
+  if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes) || days.length === 0) {
+    return { enabled: false, days: [], startMinutes: null, endMinutes: null };
+  }
+  return {
+    enabled: true,
+    days,
+    startMinutes: Math.max(0, Math.min(1439, Math.round(startMinutes))),
+    endMinutes: Math.max(0, Math.min(1439, Math.round(endMinutes))),
+    label: String(rule.label || '').trim(),
+  };
+}
+
+function correctionActiveAt(correction = {}, timestampMs = null) {
+  const rule = normalizeTimeRule(correction.timeRule);
+  if (!rule.enabled) return true;
+  if (timestampMs == null) return false;
+  const date = new Date(timestampMs);
+  if (!Number.isFinite(date.getTime())) return false;
+  if (!rule.days.includes(date.getDay())) return false;
+  const minutes = date.getHours() * 60 + date.getMinutes();
+  if (rule.startMinutes === rule.endMinutes) return true;
+  return rule.startMinutes < rule.endMinutes
+    ? minutes >= rule.startMinutes && minutes <= rule.endMinutes
+    : minutes >= rule.startMinutes || minutes <= rule.endMinutes;
+}
+
+export function correctionMatchesPoint(correction, lat, lng, radiusKm = ROAD_SECTION_MATCH_RADIUS_KM, options = {}) {
+  if (!correctionActiveAt(correction, options.timestampMs ?? null)) return false;
+  if (!correctionMatchesDirection(correction, options.headingDeg ?? null)) return false;
+  const points = Array.isArray(correction?.sectionPoints)
+    ? correction.sectionPoints.filter((point) => isUsableCoordinate(Number(point?.lat), Number(point?.lng)))
+    : [];
+  if (points.length >= 2) {
+    for (let index = 1; index < points.length; index++) {
+      if (pointToSegmentDistanceKm(lat, lng, points[index - 1], points[index]) <= radiusKm) return true;
+    }
+    return false;
+  }
+  return geohashNeighboursInclude(correction?.geohash, lat, lng, 0.8);
 }
 
 export function geohashNeighboursInclude(geohash, lat, lng, radiusKm) {
@@ -200,12 +334,14 @@ export class LocalSpeedKnowledge {
     return (await this._store.get(STORAGE_KEY)) ?? defaultData();
   }
 
-  async getForPoint(lat, lng, timestampMs = null) {
-    const data = await this._load();
+  _resolveForPoint(data, lat, lng, timestampMs = null, options = {}) {
     const correction = (data.corrections || [])
       .filter((item) => (
         isFreshCorrection(item) &&
-        geohashNeighboursInclude(item.geohash, lat, lng, 0.8)
+        correctionMatchesPoint(item, lat, lng, ROAD_SECTION_MATCH_RADIUS_KM, {
+          timestampMs,
+          headingDeg: options.headingDeg ?? options.heading ?? null,
+        })
       ))
       .sort((a, b) => new Date(b.appliedAt || 0).getTime() - new Date(a.appliedAt || 0).getTime())[0];
     if (correction) {
@@ -224,6 +360,29 @@ export class LocalSpeedKnowledge {
     }
 
     return null;
+  }
+
+  async getForPoint(lat, lng, timestampMs = null, options = {}) {
+    const data = await this._load();
+    return this._resolveForPoint(data, lat, lng, timestampMs, options);
+  }
+
+  async getForPoints(points = []) {
+    const data = await this._load();
+    return (Array.isArray(points) ? points : []).map((point) => {
+      const lat = Number(point?.lat);
+      const lng = Number(point?.lng);
+      if (!isUsableCoordinate(lat, lng)) return null;
+      return this._resolveForPoint(
+        data,
+        lat,
+        lng,
+        point?.timestampMs ?? point?.timestamp_ms ?? point?.timestamp ?? point?.recorded_at ?? null,
+        {
+          headingDeg: point?.headingDeg ?? point?.heading ?? null,
+        }
+      );
+    });
   }
 
   async learnFromTrip(confirmedPoints, privacyZones = []) {
@@ -327,10 +486,16 @@ export class LocalSpeedKnowledge {
         directionLabel: String(metadata.directionLabel || '').trim(),
         timeLabel: String(metadata.timeLabel || '').trim(),
         distanceM: Number(metadata.distanceM) || 0,
+        directionMode: directionMode(metadata.directionMode),
+        directionBearing: Number.isFinite(Number(metadata.directionBearing))
+          ? ((Number(metadata.directionBearing) % 360) + 360) % 360
+          : sectionBearing(Array.isArray(metadata.sectionPoints) ? metadata.sectionPoints : []),
+        timeRule: normalizeTimeRule(metadata.timeRule),
         sectionPoints: (Array.isArray(metadata.sectionPoints) ? metadata.sectionPoints : [])
           .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng) }))
           .filter((point) => isUsableCoordinate(point.lat, point.lng))
           .slice(0, 24),
+        editHistory: [],
       });
       await this._store.set(STORAGE_KEY, data);
       recordSpeedKnowledgeEvent('save_correction', { source: correctionType });
@@ -371,7 +536,7 @@ export class LocalSpeedKnowledge {
     }
   }
 
-  async updateUserCorrection(geohash, limitKmh, source = 'user_entered_estimate', note = '') {
+  async updateUserCorrection(geohash, limitKmh, source = 'user_entered_estimate', note = '', metadata = {}) {
     const limit = Number(limitKmh);
     if (!geohash || !Number.isFinite(limit) || limit <= 0) return false;
     try {
@@ -388,6 +553,30 @@ export class LocalSpeedKnowledge {
         source: correctionType,
         note,
         appliedAt: new Date().toISOString(),
+        ...(metadata.expiresAt !== undefined ? { expiresAt: metadata.expiresAt || null } : {}),
+        ...(metadata.roadName != null ? { roadName: String(metadata.roadName).trim() } : {}),
+        ...(metadata.directionMode != null ? { directionMode: directionMode(metadata.directionMode) } : {}),
+        ...(metadata.directionBearing != null ? {
+          directionBearing: Number.isFinite(Number(metadata.directionBearing))
+            ? ((Number(metadata.directionBearing) % 360) + 360) % 360
+            : data.corrections[index].directionBearing,
+        } : {}),
+        ...(metadata.timeRule != null ? { timeRule: normalizeTimeRule(metadata.timeRule) } : {}),
+        editHistory: [
+          ...(Array.isArray(data.corrections[index].editHistory) ? data.corrections[index].editHistory : []),
+          {
+            changedAt: new Date().toISOString(),
+            previousLimitKmh: data.corrections[index].limitKmh,
+            previousSource: data.corrections[index].source,
+            previousNote: data.corrections[index].note || '',
+          },
+        ].slice(-10),
+        ...(Array.isArray(metadata.sectionPoints) ? {
+          sectionPoints: metadata.sectionPoints
+            .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng) }))
+            .filter((point) => isUsableCoordinate(point.lat, point.lng))
+            .slice(0, 24),
+        } : {}),
       };
       await this._store.set(STORAGE_KEY, data);
       recordSpeedKnowledgeEvent('update_correction', { source: correctionType });
