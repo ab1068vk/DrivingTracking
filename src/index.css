@@ -182,6 +182,15 @@
     background: hsl(var(--background) / 0.96);
   }
 
+  .leaflet-tooltip.speed-limit-map-label-posted {
+    border-color: hsl(152 60% 40% / 0.7);
+    box-shadow: 0 0 0 2px hsl(152 60% 40% / 0.12), 0 6px 18px hsl(220 25% 10% / 0.22);
+  }
+
+  .leaflet-tooltip.speed-limit-map-label-estimate {
+    border-color: hsl(204 80% 48% / 0.65);
+  }
+
   .leaflet-tooltip.speed-limit-map-label-observed {
     background: hsl(204 94% 94% / 0.96);
     border-color: hsl(199 89% 48% / 0.45);
@@ -202,6 +211,26 @@
 
   .leaflet-tooltip.speed-limit-map-label-selected {
     box-shadow: 0 0 0 3px hsl(var(--primary) / 0.25), 0 8px 20px hsl(220 25% 10% / 0.24);
+  }
+
+  .speed-limit-endpoint-handle {
+    align-items: center;
+    background: hsl(var(--primary));
+    border: 3px solid white;
+    border-radius: 9999px;
+    box-shadow: 0 5px 16px hsl(220 25% 10% / 0.3);
+    color: hsl(var(--primary-foreground));
+    cursor: grab;
+    display: flex;
+    font-size: 10px;
+    font-weight: 900;
+    height: 26px;
+    justify-content: center;
+    width: 26px;
+  }
+
+  .speed-limit-endpoint-handle:active {
+    cursor: grabbing;
   }
 
   /* Custom scrollbar */

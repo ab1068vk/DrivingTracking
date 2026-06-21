@@ -183,8 +183,10 @@ export function buildCorrectionImpactPreview(trips = [], correction = {}, nextLi
   };
 }
 
-export function summarizeTripSpeedLimitIntelligence(trip = {}) {
-  const points = (Array.isArray(trip.route_points) ? trip.route_points : []).filter(publicPoint);
+export function summarizeTripSpeedLimitIntelligence(trip = {}, localKnowledgeResults = []) {
+  const points = (Array.isArray(trip.route_points) ? trip.route_points : [])
+    .map((point, sourceIndex) => ({ point, sourceIndex }))
+    .filter(({ point }) => publicPoint(point));
   const sourceCounts = new Map();
   let coveredPointCount = 0;
   let confirmedPointCount = 0;
@@ -193,11 +195,15 @@ export function summarizeTripSpeedLimitIntelligence(trip = {}) {
   let overLimitPointCount = 0;
   let maxOverKmh = 0;
 
-  for (const point of points) {
-    const limit = pointLimit(point);
+  for (const { point, sourceIndex } of points) {
+    const local = localKnowledgeResults[sourceIndex];
+    const localLimit = pointLimit(local || {});
+    const localSource = pointSource(local || {});
+    const preferLocal = localLimit != null && ['user_confirmed_posted_sign', 'user_entered_estimate'].includes(localSource);
+    const limit = preferLocal ? localLimit : pointLimit(point) ?? localLimit;
     if (limit == null) continue;
     coveredPointCount += 1;
-    const source = pointSource(point);
+    const source = preferLocal ? localSource : pointSource(point) !== 'unknown' ? pointSource(point) : localSource;
     const evidence = assessSpeedLimitEvidence({
       source,
       confidence: point.speed_limit_confidence,

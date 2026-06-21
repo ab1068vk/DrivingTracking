@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Gauge, MapPin, RefreshCw, ShieldCheck } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Gauge, MapPin, RefreshCw, ShieldCheck } from 'lucide-react';
 import RoadSectionPreview from '@/components/RoadSectionPreview';
 import { LocalSpeedKnowledge, geohashCenter, geohashEncode } from '@/lib/localSpeedKnowledge';
 import { buildTripSpeedLimitReviewCells } from '@/lib/speedLimitReview';
@@ -14,6 +14,8 @@ import {
   speedLimitReviewPriority,
 } from '@/lib/speedLimitIntelligence';
 import useLocalSettings from '@/hooks/useLocalSettings';
+
+const SpeedLimitEditorMap = lazy(() => import('@/components/SpeedLimitEditorMap'));
 
 const sourceLabel = (source) => speedLimitSourceLabel(source);
 const COMMON_SPEED_LIMITS_KMH = [30, 40, 50, 60, 70, 80, 100];
@@ -306,7 +308,7 @@ function summarizeReviewCells(items = []) {
 }
 
 function filterReviewCells(items = [], filter = 'all') {
-  if (filter === 'all') return items;
+  if (filter === 'all') return items.filter((cell) => reviewCellCategory(cell) !== 'saved');
   return items.filter((cell) => reviewCellCategory(cell) === filter);
 }
 
@@ -344,6 +346,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
   const reportedCompleteKeyRef = useRef(null);
   const [expandedPreviewKeys, setExpandedPreviewKeys] = useState(() => new Set());
   const [reviewFilter, setReviewFilter] = useState('all');
+  const [selectedReviewGeohash, setSelectedReviewGeohash] = useState('');
   const settings = useLocalSettings();
 
   const knowledge = useMemo(() => new LocalSpeedKnowledge(speedKnowledgeStore), []);
@@ -357,7 +360,15 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
   const loadConflicts = useCallback(async ({ notifyComplete = false, preserveContent = false } = {}) => {
     const showBlockingLoading = !preserveContent || cellsRef.current.length === 0;
     if (showBlockingLoading) setLoading(true);
-    const conflicted = await knowledge.getConflictedCells().catch(() => []);
+    const allConflicted = await knowledge.getConflictedCells().catch(() => []);
+    const tripGeohashes = reviewMode && trip
+      ? new Set((trip.route_points || [])
+        .filter(isPublicReviewPoint)
+        .map((point) => geohashEncode(Number(point.lat), Number(point.lng))))
+      : null;
+    const conflicted = tripGeohashes
+      ? allConflicted.filter((cell) => tripGeohashes.has(cell.geohash))
+      : allConflicted;
     const conflictedGeohashes = new Set(conflicted.map((cell) => cell.geohash));
     let tripReviewCells = [];
     if (reviewMode && trip) {
@@ -428,6 +439,41 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
   const roadStatusRows = useMemo(() => buildTripRoadStatusRows(trip, cells), [trip, cells]);
   const reviewStats = useMemo(() => summarizeReviewCells(cells), [cells]);
   const visibleCells = useMemo(() => sortReviewCells(filterReviewCells(cells, reviewFilter)), [cells, reviewFilter]);
+  const reviewMapSections = useMemo(() => visibleCells.map((cell) => {
+    const category = reviewCellCategory(cell);
+    const limitKmh = Number(cell.limitKmh ?? cell.suggestedLimitKmh);
+    const displayLimit = Number.isFinite(limitKmh) && limitKmh > 0 ? Math.round(limitKmh) : null;
+    return {
+      ...cell,
+      sectionKey: cell.geohash,
+      saved: Boolean(cell.existingLocalCorrection),
+      limitKmh: cell.existingLocalCorrection ? displayLimit : null,
+      effectiveLimitKmh: displayLimit,
+      observedLimitKmh: displayLimit,
+      observedSources: cell.sources?.length ? cell.sources : [cell.source].filter(Boolean),
+      conflict: category === 'conflicts'
+        ? {
+          savedLimitKmh: cell.conflictDetails?.existingLimitKmh ?? cell.limitKmh,
+          observedLimitKmh: cell.conflictDetails?.newLimitKmh ?? cell.suggestedLimitKmh,
+          deltaKmh: Math.abs(Number(cell.conflictDetails?.newLimitKmh) - Number(cell.conflictDetails?.existingLimitKmh)) || 0,
+        }
+        : null,
+    };
+  }), [visibleCells]);
+  const selectedMapCell = useMemo(() => (
+    visibleCells.find((cell) => cell.geohash === selectedReviewGeohash) || null
+  ), [selectedReviewGeohash, visibleCells]);
+  const selectedReviewIndex = visibleCells.findIndex((cell) => cell.geohash === selectedReviewGeohash);
+
+  useEffect(() => {
+    if (visibleCells.length === 0) {
+      setSelectedReviewGeohash('');
+      return;
+    }
+    if (!visibleCells.some((cell) => cell.geohash === selectedReviewGeohash)) {
+      setSelectedReviewGeohash(visibleCells[0].geohash);
+    }
+  }, [selectedReviewGeohash, visibleCells]);
 
   const togglePreview = (key) => {
     setExpandedPreviewKeys((current) => {
@@ -436,6 +482,13 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
       else next.add(key);
       return next;
     });
+  };
+
+  const selectRelativeReviewCell = (offset = 1) => {
+    if (!visibleCells.length) return;
+    const currentIndex = selectedReviewIndex >= 0 ? selectedReviewIndex : 0;
+    const nextIndex = (currentIndex + offset + visibleCells.length) % visibleCells.length;
+    setSelectedReviewGeohash(visibleCells[nextIndex].geohash);
   };
 
   if (!reviewMode && !loading && cells.length === 0) return null;
@@ -525,9 +578,9 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
         <div className="flex min-w-0 items-start gap-3">
           <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
           <div>
-            <h2 className="text-sm font-semibold">Speed-limit conflict review</h2>
+            <h2 className="text-sm font-semibold">Trip speed-limit review</h2>
             <p className="mt-1 text-xs opacity-85">
-              Review every trip road area that lacks posted-speed evidence. Save a posted sign only when you saw one while parked or after the trip. Saved values stay local and are used for future trips near the same road area.
+              Review uncertain road areas from this trip. Save a posted sign only when you saw one while parked or after the trip. Saved values stay local and are used for future trips near the same road area.
             </p>
           </div>
         </div>
@@ -570,7 +623,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
           </div>
           <div className="flex flex-wrap gap-2">
             {REVIEW_FILTERS.map(([value, label]) => {
-              const count = value === 'all' ? reviewStats.total : reviewStats[value];
+              const count = value === 'all' ? reviewStats.blocking : reviewStats[value];
               const active = reviewFilter === value;
               return (
                 <button
@@ -596,10 +649,120 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
       ) : cells.length === 0 ? (
         <div className="mt-3 flex items-center gap-2 rounded-xl bg-emerald-50 p-3 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
           <CheckCircle2 className="h-4 w-4" />
-          All local speed-limit conflicts are resolved.
+          This trip has no uncertain speed-limit sections left to review.
         </div>
       ) : (
         <div className="mt-4 space-y-3">
+          {reviewStats.blocking === 0 && (
+            <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+              <CheckCircle2 className="h-4 w-4" />
+              Review complete. Confirmed roads remain available under Already saved.
+            </div>
+          )}
+          {reviewMapSections.length > 0 && (
+            <div className="space-y-3 rounded-xl border border-amber-200 bg-background/80 p-3 shadow-sm dark:border-amber-900/60 dark:bg-background/70">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold">Review directly on the trip map</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Tap a highlighted road section, choose its speed, and save it without leaving this trip.
+                  </p>
+                </div>
+                <span className="text-xs font-semibold text-amber-900 dark:text-amber-100">
+                  Section {Math.max(1, selectedReviewIndex + 1)} of {reviewMapSections.length}
+                </span>
+              </div>
+              <Suspense fallback={(
+                <div className="flex h-[24rem] items-center justify-center rounded-2xl border border-border bg-secondary/40 text-sm text-muted-foreground">
+                  Loading trip speed map...
+                </div>
+              )}>
+                <SpeedLimitEditorMap
+                  preparedSections={reviewMapSections}
+                  selectedGeohash={selectedReviewGeohash}
+                  selectedSectionOverride={reviewMapSections.find((section) => section.geohash === selectedReviewGeohash) || null}
+                  heightClassName="h-[24rem] min-h-[20rem]"
+                  onSelect={(section) => setSelectedReviewGeohash(section.geohash)}
+                />
+              </Suspense>
+              {selectedMapCell && (
+                <div className="grid gap-3 rounded-xl border border-border bg-card p-3 lg:grid-cols-[1fr_14rem_17rem] lg:items-center">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-primary">Selected road section</div>
+                    <div className="mt-1 truncate font-semibold">
+                      {primaryRoadLabel(selectedMapCell.roads, selectedMapCell.geohash)}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {selectedMapCell.reviewReason || buildSpeedLimitRecommendation(selectedMapCell).text}
+                    </div>
+                  </div>
+                  <div className="grid gap-1.5">
+                    <label className="flex items-center gap-2 text-xs font-semibold">
+                      <Gauge className="h-4 w-4 text-muted-foreground" />
+                      <input
+                        type="number"
+                        min="5"
+                        step="5"
+                        value={drafts[selectedMapCell.geohash] ?? ''}
+                        onChange={(event) => setDrafts((current) => ({
+                          ...current,
+                          [selectedMapCell.geohash]: event.target.value,
+                        }))}
+                        className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                      />
+                      <span className="text-muted-foreground">km/h</span>
+                    </label>
+                    <SpeedLimitQuickPicks
+                      value={drafts[selectedMapCell.geohash]}
+                      onPick={(limit) => setDrafts((current) => ({
+                        ...current,
+                        [selectedMapCell.geohash]: limit,
+                      }))}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => resolveCells([selectedMapCell], 'user_confirmed_posted_sign', selectedMapCell.geohash)}
+                      disabled={busyGeohash === selectedMapCell.geohash}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                    >
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      Saw sign
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => resolveCells([selectedMapCell], 'user_entered_estimate', selectedMapCell.geohash)}
+                      disabled={busyGeohash === selectedMapCell.geohash}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary disabled:opacity-60"
+                    >
+                      <Gauge className="h-3.5 w-3.5" />
+                      Estimate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => selectRelativeReviewCell(-1)}
+                      disabled={visibleCells.length < 2}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary disabled:opacity-50"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => selectRelativeReviewCell(1)}
+                      disabled={visibleCells.length < 2}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-secondary px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary/80 disabled:opacity-50"
+                    >
+                      Not sure · Next
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {roadStatusRows.length > 0 && (
             <div className="rounded-xl border border-amber-200 bg-background/80 p-3 shadow-sm dark:border-amber-900/60 dark:bg-background/70">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">

@@ -145,6 +145,31 @@ describe('SpeedLimitEditorMap helpers', () => {
     });
   });
 
+  it('does not call an estimated road-type value a saved-speed conflict', () => {
+    const point = {
+      lat: 43.6501,
+      lng: -79.3801,
+      speed_limit_road_name: 'King Street',
+      speed_limit_kmh: 70,
+      speed_limit_source: 'region_default_estimate',
+    };
+    const geohash = geohashEncode(point.lat, point.lng);
+    const [section] = buildSpeedMapSections([{
+      id: 'trip-estimated-disagreement',
+      status: 'completed',
+      route_points: [point],
+    }], [{
+      geohash,
+      lat: point.lat,
+      lng: point.lng,
+      limitKmh: 50,
+      source: 'user_confirmed_posted_sign',
+    }]);
+
+    expect(section.conflict).toBeNull();
+    expect(section.observedLimitKmh).toBe(70);
+  });
+
   it('does not reopen an acknowledged saved-vs-observed conflict until evidence changes', () => {
     const point = {
       lat: 43.6501,

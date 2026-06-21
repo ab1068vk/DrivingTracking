@@ -162,6 +162,11 @@ const ROW_SORTS = [
   ['road', 'Road name'],
   ['limit', 'Speed limit'],
 ];
+const SPEED_WORKSPACES = [
+  { value: 'map', label: 'Map', Icon: MapIcon },
+  { value: 'review', label: 'Needs review', Icon: AlertTriangle },
+  { value: 'saved', label: 'Saved roads', Icon: SlidersHorizontal },
+];
 
 const distanceMeters = (a, b) => {
   const lat1 = Number(a?.lat) * Math.PI / 180;
@@ -233,6 +238,9 @@ const undoActionText = (action = '') => ({
 export default function SpeedLimits() {
   const [searchParams] = useSearchParams();
   const tripId = searchParams.get('tripId');
+  const initialWorkspace = ['map', 'review', 'saved'].includes(searchParams.get('view'))
+    ? searchParams.get('view')
+    : 'map';
   const knowledge = useMemo(() => new LocalSpeedKnowledge(speedKnowledgeStore), []);
   const [rows, setRows] = useState([]);
   const [drafts, setDrafts] = useState({});
@@ -246,7 +254,7 @@ export default function SpeedLimits() {
   const [addPath, setAddPath] = useState([]);
   const [mapQuery, setMapQuery] = useState('');
   const [mapLayers, setMapLayers] = useState(SPEED_MAP_LAYER_DEFAULTS);
-  const [mapMode, setMapMode] = useState('review');
+  const [activeWorkspace, setActiveWorkspace] = useState(initialWorkspace);
   const [autoSnapTrace, setAutoSnapTrace] = useState(true);
   const [rowQuery, setRowQuery] = useState('');
   const [rowFilter, setRowFilter] = useState('all');
@@ -707,7 +715,6 @@ export default function SpeedLimits() {
 
   const selectMapSection = (section) => {
     setSelectedSection(section);
-    setMapMode(section?.conflict ? 'review' : mapMode);
     setMapDraft({
       limitKmh: mapDraftLimitForSection(section),
       source: mapDraftSourceForSection(section),
@@ -727,7 +734,6 @@ export default function SpeedLimits() {
     setSelectedSection(null);
     setAddPath([]);
     setAddMode(true);
-    setMapMode('edit');
     setMapDraft({
       limitKmh: '',
       source: 'user_confirmed_posted_sign',
@@ -781,8 +787,25 @@ export default function SpeedLimits() {
     });
   };
 
+  const moveSelectedSectionEndpoint = (index, point) => {
+    setSelectedSection((current) => {
+      if (!current) return current;
+      const points = [...(current.sectionPoints || [])];
+      if (!points[index]) return current;
+      points[index] = point;
+      const midpoint = points[Math.floor(points.length / 2)] || point;
+      return {
+        ...current,
+        lat: midpoint.lat,
+        lng: midpoint.lng,
+        sectionPoints: points,
+      };
+    });
+  };
+
   const focusAttentionItem = (item) => {
     if (!item?.section) return;
+    setActiveWorkspace('map');
     selectMapSection(item.section);
     setMapLayers((current) => ({
       ...current,
@@ -1320,6 +1343,40 @@ export default function SpeedLimits() {
         </div>
       </section>
 
+      <nav className="grid grid-cols-3 gap-1 rounded-2xl border border-border bg-card p-1.5 shadow-sm" aria-label="Saved road speed workspace">
+        {SPEED_WORKSPACES.map(({ value, label, Icon }) => {
+          const active = activeWorkspace === value;
+          const count = value === 'review'
+            ? attentionItems.length
+            : value === 'saved'
+              ? rows.length
+              : mapStats.total;
+          return (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setActiveWorkspace(value)}
+              aria-pressed={active}
+              className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold transition-colors ${
+                active
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:bg-secondary hover:text-foreground'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              <span>{label}</span>
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                active ? 'bg-primary-foreground/15' : 'bg-secondary'
+              }`}>
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {activeWorkspace === 'review' && (
+        <>
       <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -1422,7 +1479,10 @@ export default function SpeedLimits() {
           </button>
         </div>
       </section>
+        </>
+      )}
 
+      {activeWorkspace === 'map' && (
       <section className="space-y-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -1435,29 +1495,6 @@ export default function SpeedLimits() {
             </p>
           </div>
           <div className="flex flex-col items-start gap-2 sm:items-end">
-            <div className="inline-flex rounded-xl border border-border bg-secondary/50 p-1">
-              {[
-                ['review', 'Review'],
-                ['edit', 'Edit'],
-              ].map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => {
-                    setMapMode(value);
-                    if (value === 'review') setAddMode(false);
-                  }}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                    mapMode === value
-                      ? 'bg-background text-foreground shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                  aria-pressed={mapMode === value}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
             <div className="flex flex-wrap justify-start gap-2 sm:justify-end">
               {firstConflictSection && (
                 <button
@@ -1476,27 +1513,28 @@ export default function SpeedLimits() {
                   setAddPath([]);
                   setSelectedSection(null);
                 } : startAddingSection}
-                disabled={mapMode !== 'edit' && !addMode}
                 className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold ${
                   addMode ? 'border border-border bg-secondary text-foreground' : 'bg-primary text-primary-foreground'
-                } disabled:opacity-50`}
+                }`}
               >
                 {addMode ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
                 {addMode ? 'Cancel adding' : 'Add road speed'}
               </button>
-              <button
-                type="button"
-                onClick={() => setAutoSnapTrace((value) => !value)}
-                className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold ${
-                  autoSnapTrace
-                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200'
-                    : 'border-border bg-card text-muted-foreground'
-                }`}
-                aria-pressed={autoSnapTrace}
-              >
-                <Magnet className="h-3.5 w-3.5" />
-                Auto snap
-              </button>
+              {addMode && (
+                <button
+                  type="button"
+                  onClick={() => setAutoSnapTrace((value) => !value)}
+                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold ${
+                    autoSnapTrace
+                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200'
+                      : 'border-border bg-card text-muted-foreground'
+                  }`}
+                  aria-pressed={autoSnapTrace}
+                >
+                  <Magnet className="h-3.5 w-3.5" />
+                  Auto snap
+                </button>
+              )}
             </div>
             <label className="relative w-full sm:w-80">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1532,10 +1570,12 @@ export default function SpeedLimits() {
           layers={mapLayers}
           addMode={addMode}
           addPath={addPath}
+          selectedSectionOverride={selectedSection}
           onLayerChange={setMapLayers}
           onSelect={selectMapSection}
           onAddPoint={selectNewMapPoint}
           onMoveAddPoint={moveAddPoint}
+          onMoveSectionPoint={moveSelectedSectionEndpoint}
         />
 
         {addMode && (
@@ -1576,7 +1616,7 @@ export default function SpeedLimits() {
         </details>
 
         {selectedSection && (
-          <div className="rounded-2xl border border-primary/30 bg-card p-4 shadow-sm">
+          <div className="sticky bottom-3 z-[600] max-h-[78vh] overflow-y-auto rounded-2xl border border-primary/30 bg-card/95 p-4 shadow-2xl backdrop-blur sm:static sm:max-h-none sm:overflow-visible sm:bg-card sm:shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-xs font-semibold uppercase tracking-wide text-primary">
@@ -1655,6 +1695,7 @@ export default function SpeedLimits() {
                 onClick={() => {
                   setSelectedSection(null);
                   setAddPath([]);
+                  setAddMode(false);
                 }}
                 className="rounded-lg p-2 text-muted-foreground hover:bg-secondary"
                 aria-label="Close road speed editor"
@@ -1662,41 +1703,7 @@ export default function SpeedLimits() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr]">
-              <div className="rounded-xl border border-border bg-secondary/30 p-3 text-xs">
-                <div className="font-semibold text-foreground">Rule intelligence</div>
-                <div className="mt-1 text-muted-foreground">
-                  {selectedRecommendation?.text || 'Enter a speed limit to calculate a recommendation.'}
-                </div>
-                {selectedImpactPreview && (
-                  <div className="mt-2 grid grid-cols-3 gap-2">
-                    <div>
-                      <div className="text-lg font-bold text-foreground">{selectedImpactPreview.affectedTripCount}</div>
-                      <div className="text-muted-foreground">Trips</div>
-                    </div>
-                    <div>
-                      <div className="text-lg font-bold text-foreground">{selectedImpactPreview.matchedPointCount}</div>
-                      <div className="text-muted-foreground">Matched points</div>
-                    </div>
-                    <div>
-                      <div className="text-lg font-bold text-foreground">{selectedImpactPreview.estimatedEventCount}</div>
-                      <div className="text-muted-foreground">Likely events</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="rounded-xl border border-border bg-background p-3 text-xs">
-                <div className="font-semibold text-foreground">Validation</div>
-                {editorWarnings.length > 0 ? (
-                  <div className="mt-2 space-y-1 text-muted-foreground">
-                    {editorWarnings.map((warning) => <div key={warning}>- {warning}</div>)}
-                  </div>
-                ) : (
-                  <div className="mt-2 text-emerald-700 dark:text-emerald-300">Geometry, evidence, and trip coverage checks passed.</div>
-                )}
-              </div>
-            </div>
-            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[12rem_14rem_1fr_1fr_auto] xl:items-end">
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[14rem_1fr_1fr_auto] xl:items-end">
               <label className="grid gap-1 text-xs font-semibold">
                 Speed limit
                 <div className="flex items-center gap-2">
@@ -1739,7 +1746,7 @@ export default function SpeedLimits() {
                 />
               </label>
               <label className="grid gap-1 text-xs font-semibold">
-                Evidence
+                How do you know?
                 <select
                   value={mapDraft.source}
                   onChange={(event) => setMapDraft((current) => ({ ...current, source: event.target.value }))}
@@ -1749,16 +1756,6 @@ export default function SpeedLimits() {
                   <option value="user_entered_estimate">Estimate</option>
                 </select>
               </label>
-              <label className="grid gap-1 text-xs font-semibold">
-                Optional note
-                <input
-                  type="text"
-                  value={mapDraft.note}
-                  onChange={(event) => setMapDraft((current) => ({ ...current, note: event.target.value }))}
-                  placeholder="School zone, construction, sign changed..."
-                  className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                />
-              </label>
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -1767,7 +1764,7 @@ export default function SpeedLimits() {
                   className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60"
                 >
                   {selectedSection.saved ? <Pencil className="h-3.5 w-3.5" /> : <Gauge className="h-3.5 w-3.5" />}
-                  {selectedSection.saved ? 'Update' : 'Save'}
+                  {selectedSection.saved ? 'Update road speed' : 'Save road speed'}
                 </button>
                 {selectedSection.saved && (
                   <button
@@ -1782,53 +1779,74 @@ export default function SpeedLimits() {
                 )}
               </div>
             </div>
-            <div className="mt-3 grid gap-3 rounded-xl border border-border bg-secondary/30 p-3 md:grid-cols-5">
-              <label className="grid gap-1 text-xs font-semibold">
-                Applies by direction
-                <select
-                  value={mapDraft.directionMode}
-                  onChange={(event) => setMapDraft((current) => ({ ...current, directionMode: event.target.value }))}
-                  className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                >
-                  <option value="both">Both directions</option>
-                  <option value="forward">Drawn direction only</option>
-                  <option value="reverse">Opposite direction only</option>
-                </select>
-              </label>
-              <label className="grid gap-1 text-xs font-semibold">
-                Active days
-                <select
-                  value={mapDraft.timeRuleMode}
-                  onChange={(event) => setMapDraft((current) => ({ ...current, timeRuleMode: event.target.value }))}
-                  className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                >
-                  <option value="always">Always active</option>
-                  <option value="daily">Every day</option>
-                  <option value="weekdays">Weekdays</option>
-                  <option value="weekends">Weekends</option>
-                </select>
-              </label>
-              <label className="grid gap-1 text-xs font-semibold">
-                Start time
-                <input
-                  type="time"
-                  value={mapDraft.startTime}
-                  disabled={mapDraft.timeRuleMode === 'always'}
-                  onChange={(event) => setMapDraft((current) => ({ ...current, startTime: event.target.value }))}
-                  className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50"
-                />
-              </label>
-              <label className="grid gap-1 text-xs font-semibold">
-                End time
-                <input
-                  type="time"
-                  value={mapDraft.endTime}
-                  disabled={mapDraft.timeRuleMode === 'always'}
-                  onChange={(event) => setMapDraft((current) => ({ ...current, endTime: event.target.value }))}
-                  className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50"
-                />
-              </label>
-              <label className="grid gap-1 text-xs font-semibold">
+            {editorWarnings.length > 0 && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                {editorWarnings[0]}
+                {editorWarnings.length > 1 && ` +${editorWarnings.length - 1} more check${editorWarnings.length === 2 ? '' : 's'} in Advanced options.`}
+              </div>
+            )}
+            <details className="mt-3 rounded-xl border border-border bg-secondary/30 p-3">
+              <summary className="cursor-pointer text-xs font-semibold text-foreground">Advanced options</summary>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <label className="grid gap-1 text-xs font-semibold">
+                  Note
+                  <input
+                    type="text"
+                    value={mapDraft.note}
+                    onChange={(event) => setMapDraft((current) => ({ ...current, note: event.target.value }))}
+                    placeholder="School zone, construction, sign changed..."
+                    className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                  />
+                </label>
+                <label className="grid gap-1 text-xs font-semibold">
+                  Applies by direction
+                  <select
+                    value={mapDraft.directionMode}
+                    onChange={(event) => setMapDraft((current) => ({ ...current, directionMode: event.target.value }))}
+                    className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                  >
+                    <option value="both">Both directions</option>
+                    <option value="forward">Drawn direction only</option>
+                    <option value="reverse">Opposite direction only</option>
+                  </select>
+                </label>
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <label className="grid gap-1 text-xs font-semibold">
+                  Active days
+                  <select
+                    value={mapDraft.timeRuleMode}
+                    onChange={(event) => setMapDraft((current) => ({ ...current, timeRuleMode: event.target.value }))}
+                    className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+                  >
+                    <option value="always">Always active</option>
+                    <option value="daily">Every day</option>
+                    <option value="weekdays">Weekdays</option>
+                    <option value="weekends">Weekends</option>
+                  </select>
+                </label>
+                <label className="grid gap-1 text-xs font-semibold">
+                  Start time
+                  <input
+                    type="time"
+                    value={mapDraft.startTime}
+                    disabled={mapDraft.timeRuleMode === 'always'}
+                    onChange={(event) => setMapDraft((current) => ({ ...current, startTime: event.target.value }))}
+                    className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50"
+                  />
+                </label>
+                <label className="grid gap-1 text-xs font-semibold">
+                  End time
+                  <input
+                    type="time"
+                    value={mapDraft.endTime}
+                    disabled={mapDraft.timeRuleMode === 'always'}
+                    onChange={(event) => setMapDraft((current) => ({ ...current, endTime: event.target.value }))}
+                    className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50"
+                  />
+                </label>
+              </div>
+              <label className="mt-3 grid gap-1 text-xs font-semibold md:max-w-xs">
                 Active until
                 <input
                   type="date"
@@ -1837,67 +1855,93 @@ export default function SpeedLimits() {
                   className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
                 />
               </label>
-            </div>
-            {selectedSection.saved && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={snapSelectedSectionToTrips}
-                  disabled={busyGeohash === correctionKey(selectedSection) || (selectedSection.sectionPoints || []).length < 2}
-                  title="Move this saved geometry to nearby recorded trip samples within 80 metres. No online routing service is used."
-                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
-                >
-                  <Magnet className="h-3.5 w-3.5" />
-                  Snap to route
-                </button>
-                <button
-                  type="button"
-                  onClick={splitMapSection}
-                  disabled={busyGeohash === correctionKey(selectedSection) || (selectedSection.sectionPoints || []).length < 3}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
-                >
-                  Split at midpoint
-                </button>
-                {mergeCandidate && (
+              <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                <div className="rounded-xl border border-border bg-background p-3 text-xs">
+                  <div className="font-semibold text-foreground">Rule intelligence</div>
+                  <div className="mt-1 text-muted-foreground">
+                    {selectedRecommendation?.text || 'Enter a speed limit to calculate a recommendation.'}
+                  </div>
+                  {selectedImpactPreview && (
+                    <div className="mt-2">
+                      {selectedImpactPreview.affectedTripCount} affected trip{selectedImpactPreview.affectedTripCount === 1 ? '' : 's'} · {selectedImpactPreview.matchedPointCount} matched points · {selectedImpactPreview.estimatedEventCount} likely events
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-xl border border-border bg-background p-3 text-xs">
+                  <div className="font-semibold text-foreground">Validation</div>
+                  {editorWarnings.length > 0 ? (
+                    <div className="mt-2 space-y-1 text-muted-foreground">
+                      {editorWarnings.map((warning) => <div key={warning}>- {warning}</div>)}
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-emerald-700 dark:text-emerald-300">Geometry, evidence, and trip coverage checks passed.</div>
+                  )}
+                </div>
+              </div>
+              {selectedSection.saved && (
+                <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={prepareMergeWithNearbySection}
-                    disabled={busyGeohash === correctionKey(selectedSection)}
+                    onClick={snapSelectedSectionToTrips}
+                    disabled={busyGeohash === correctionKey(selectedSection) || (selectedSection.sectionPoints || []).length < 2}
+                    title="Move this saved geometry to nearby recorded trip samples within 80 metres. No online routing service is used."
                     className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
                   >
-                    <GitMerge className="h-3.5 w-3.5" />
-                    Merge nearby ({Math.round(mergeCandidate.distanceM)} m)
+                    <Magnet className="h-3.5 w-3.5" />
+                    Snap to route
                   </button>
-                )}
-                {selectedSection.conflict && (
-                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
-                    <span>
-                      Conflict: saved {selectedSection.conflict.savedLimitKmh} km/h, trip data suggests {selectedSection.conflict.observedLimitKmh} km/h
-                    </span>
+                  <button
+                    type="button"
+                    onClick={splitMapSection}
+                    disabled={busyGeohash === correctionKey(selectedSection) || (selectedSection.sectionPoints || []).length < 3}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
+                  >
+                    Split at midpoint
+                  </button>
+                  {mergeCandidate && (
                     <button
                       type="button"
-                      onClick={() => resolveSavedSpeedConflict(selectedSection, selectedSection.conflict, 'use_observed', mapDraft)}
+                      onClick={prepareMergeWithNearbySection}
                       disabled={busyGeohash === correctionKey(selectedSection)}
-                      className="rounded-lg bg-red-600 px-2.5 py-1.5 text-white hover:bg-red-700 disabled:opacity-60"
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
                     >
-                      Use observed {selectedSection.conflict.observedLimitKmh}
+                      <GitMerge className="h-3.5 w-3.5" />
+                      Merge nearby ({Math.round(mergeCandidate.distanceM)} m)
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => resolveSavedSpeedConflict(selectedSection, selectedSection.conflict, 'keep_saved', mapDraft)}
-                      disabled={busyGeohash === correctionKey(selectedSection)}
-                      className="rounded-lg border border-red-200 bg-background px-2.5 py-1.5 text-red-700 hover:bg-red-100 disabled:opacity-60 dark:border-red-900/50 dark:bg-background/80 dark:text-red-300"
-                    >
-                      Keep saved {selectedSection.conflict.savedLimitKmh}
-                    </button>
-                  </div>
-                )}
+                  )}
+                </div>
+              )}
+            </details>
+            {selectedSection.conflict && (
+              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+                <span>
+                  Conflict: saved {selectedSection.conflict.savedLimitKmh} km/h, trip data suggests {selectedSection.conflict.observedLimitKmh} km/h
+                </span>
+                <button
+                  type="button"
+                  onClick={() => resolveSavedSpeedConflict(selectedSection, selectedSection.conflict, 'use_observed', mapDraft)}
+                  disabled={busyGeohash === correctionKey(selectedSection)}
+                  className="rounded-lg bg-red-600 px-2.5 py-1.5 text-white hover:bg-red-700 disabled:opacity-60"
+                >
+                  Use observed {selectedSection.conflict.observedLimitKmh}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => resolveSavedSpeedConflict(selectedSection, selectedSection.conflict, 'keep_saved', mapDraft)}
+                  disabled={busyGeohash === correctionKey(selectedSection)}
+                  className="rounded-lg border border-red-200 bg-background px-2.5 py-1.5 text-red-700 hover:bg-red-100 disabled:opacity-60 dark:border-red-900/50 dark:bg-background/80 dark:text-red-300"
+                >
+                  Keep saved {selectedSection.conflict.savedLimitKmh}
+                </button>
               </div>
             )}
           </div>
         )}
       </section>
+      )}
 
+      {activeWorkspace === 'saved' && (
+        <>
       <section className="space-y-3">
         <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
@@ -2320,6 +2364,8 @@ export default function SpeedLimits() {
             </nav>
           )}
         </div>
+      )}
+        </>
       )}
 
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">

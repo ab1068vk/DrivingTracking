@@ -99,5 +99,20 @@ describe('speed-limit intelligence', () => {
     expect(recommendation.kind).toBe('low_confidence');
     expect(recommendation.text).toContain('estimated');
   });
-});
 
+  it('counts a saved posted-sign rule as verified trip coverage', () => {
+    const summary = summarizeTripSpeedLimitIntelligence({
+      route_points: [
+        { lat: 43.65, lng: -79.38, speed_kmh: 45 },
+        { lat: 43.651, lng: -79.381, speed_kmh: 55, speed_limit_kmh: 60, speed_limit_source: 'region_default_estimate' },
+      ],
+    }, [
+      { limitKmh: 50, source: 'user_confirmed_posted_sign' },
+      null,
+    ]);
+
+    expect(summary.coveragePercent).toBe(100);
+    expect(summary.verifiedCoveragePercent).toBe(50);
+    expect(summary.estimatedPointCount).toBe(1);
+  });
+});

@@ -18,7 +18,7 @@ import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import PhoneUsePermissionBanner from '@/components/PhoneUsePermissionBanner';
 import SpeedLimitConflictReview from '@/components/SpeedLimitConflictReview';
-import { speedLimitReviewNeededForTrip } from '@/lib/speedLimitReview';
+import { buildTripSpeedLimitReviewCells, speedLimitReviewNeededForTrip } from '@/lib/speedLimitReview';
 import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import {
@@ -90,6 +90,7 @@ import {
 import { formatEstimatedScore, formatScoreWithProvenance } from '@/lib/scoreDisplay';
 import { formatDataSourceLabel } from '@/lib/metricRegistry';
 import { tripScoreDeltaSummary } from '@/lib/speedLimitDisplay';
+import { summarizeTripSpeedLimitIntelligence } from '@/lib/speedLimitIntelligence';
 import useLocalSettings from '@/hooks/useLocalSettings';
 
 // CHANGES (session):
@@ -336,10 +337,7 @@ export default function TripDetail() {
     queryKey: ['trip', id],
     queryFn: () => tripService.getById(id),
   });
-  const showSpeedLimitReviewButton = Boolean(trip) && (
-    reviewSpeedLimitConflicts ||
-    speedLimitReviewNeededForTrip(trip)
-  );
+  const showSpeedLimitReviewButton = Boolean(trip);
   const toggleSpeedLimitReview = () => {
     navigate(reviewSpeedLimitConflicts ? `/trips/${id}` : `/trips/${id}?review=speed-limit-conflicts`);
   };
@@ -879,6 +877,16 @@ export default function TripDetail() {
   const speedLimitProvenanceSummary = speedLimitSourceBreakdown.sampleCount
     ? `${speedLimitSourceBreakdown.summary} (${speedLimitSourceBreakdown.sampleCount} moving samples).`
     : legacySpeedLimitProvenanceSummary;
+  const speedLimitIntelligence = summarizeTripSpeedLimitIntelligence(
+    trip,
+    speedLimitLocalKnowledgeResults
+  );
+  const speedLimitReviewCount = buildTripSpeedLimitReviewCells(trip, { maxCells: Infinity }).length;
+  const estimatedCoveragePercent = Math.max(
+    0,
+    speedLimitIntelligence.coveragePercent - speedLimitIntelligence.verifiedCoveragePercent
+  );
+  const missingCoveragePercent = Math.max(0, 100 - speedLimitIntelligence.coveragePercent);
   const dataQualityFlags = Array.isArray(trip.data_quality_flags) ? trip.data_quality_flags : [];
   const hasLocationPermissionLoss = dataQualityFlags.includes('location_permission_loss') ||
     trip.score_confidence_flag === 'data_gap_detected' ||
@@ -1200,7 +1208,9 @@ export default function TripDetail() {
               }`}
             >
               <Gauge className="h-4 w-4" />
-              {reviewSpeedLimitConflicts ? 'Hide speed review' : 'Review speed limits'}
+              {reviewSpeedLimitConflicts ? 'Hide speed review' : (
+                speedLimitReviewNeededForTrip(trip) ? 'Review speed limits' : 'Check speed limits'
+              )}
             </button>
           )}
           {trip && (
@@ -1697,6 +1707,46 @@ export default function TripDetail() {
               >
                 <Route className="h-3.5 w-3.5" />
                 {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get Road Data'}
+              </button>
+            </div>
+          </div>
+        )}
+        {speedLimitIntelligence.pointCount > 0 && (
+          <div className="mb-3 rounded-2xl border border-border bg-card p-3 shadow-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <Gauge className="h-4 w-4 text-primary" />
+                  <div className="font-semibold">Speed-limit coverage for this trip</div>
+                </div>
+                <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-xl bg-emerald-50 px-2 py-2 dark:bg-emerald-950/30">
+                    <div className="text-lg font-bold text-emerald-700 dark:text-emerald-300">{speedLimitIntelligence.verifiedCoveragePercent}%</div>
+                    <div className="text-[10px] font-semibold text-emerald-800/80 dark:text-emerald-200/80">Verified</div>
+                  </div>
+                  <div className="rounded-xl bg-amber-50 px-2 py-2 dark:bg-amber-950/30">
+                    <div className="text-lg font-bold text-amber-700 dark:text-amber-300">{estimatedCoveragePercent}%</div>
+                    <div className="text-[10px] font-semibold text-amber-800/80 dark:text-amber-200/80">Estimated</div>
+                  </div>
+                  <div className="rounded-xl bg-slate-100 px-2 py-2 dark:bg-slate-800">
+                    <div className="text-lg font-bold">{missingCoveragePercent}%</div>
+                    <div className="text-[10px] font-semibold text-muted-foreground">Missing</div>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate(`/trips/${id}?review=speed-limit-conflicts`)}
+                className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold ${
+                  speedLimitReviewCount > 0
+                    ? 'bg-amber-600 text-white hover:bg-amber-700'
+                    : 'border border-border bg-secondary text-foreground hover:bg-secondary/80'
+                }`}
+              >
+                <MapPin className="h-3.5 w-3.5" />
+                {speedLimitReviewCount > 0
+                  ? `Review ${speedLimitReviewCount} section${speedLimitReviewCount === 1 ? '' : 's'} on map`
+                  : 'Review road speeds'}
               </button>
             </div>
           </div>

@@ -20,11 +20,13 @@ const formatLimitLabel = (limitKmh) => {
   return Number.isFinite(limit) && limit > 0 ? `${Math.round(limit)} km/h` : 'Set speed';
 };
 
-const labelClassForSection = ({ selected, conflict, saved, hasDisplayLimit }) => [
+const labelClassForSection = ({ selected, conflict, saved, hasDisplayLimit, source }) => [
   'speed-limit-map-label',
   selected ? 'speed-limit-map-label-selected' : '',
   conflict ? 'speed-limit-map-label-conflict' : '',
   saved ? 'speed-limit-map-label-saved' : '',
+  saved && source === 'user_confirmed_posted_sign' ? 'speed-limit-map-label-posted' : '',
+  saved && source !== 'user_confirmed_posted_sign' ? 'speed-limit-map-label-estimate' : '',
   !saved && hasDisplayLimit ? 'speed-limit-map-label-observed' : '',
   !hasDisplayLimit ? 'speed-limit-map-label-unset' : '',
 ].filter(Boolean).join(' ');
@@ -48,7 +50,7 @@ function useOnlineStatus() {
   return online;
 }
 
-const isLatLng = ([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng);
+const isLatLng = (position = []) => Number.isFinite(position[0]) && Number.isFinite(position[1]);
 
 const sectionPositions = (section = {}) => (
   (section.sectionPoints?.length
@@ -99,6 +101,7 @@ const sectionDisplay = (section = {}, selected = false, showAllPermanentLabels =
     conflict,
     saved: section.saved,
     hasDisplayLimit,
+    source: section.source,
   });
   const labelText = conflict
     ? `! ${formatLimitLabel(displayLimitKmh)}`
@@ -142,6 +145,10 @@ const addSectionToLayer = ({
     .on('click', () => {
       if (!addMode) onSelect?.(section);
     })
+    .on('contextmenu', (event) => {
+      event.originalEvent?.preventDefault?.();
+      if (!addMode) onSelect?.(section);
+    })
     .addTo(layerGroup);
 
   if (display.showPermanentLabel) {
@@ -175,10 +182,13 @@ export default function SpeedLimitEditorMap({
   layers = SPEED_MAP_LAYER_DEFAULTS,
   addMode = false,
   addPath = [],
-  onLayerChange,
-  onSelect,
-  onAddPoint,
-  onMoveAddPoint,
+  selectedSectionOverride = null,
+  heightClassName = 'h-[28rem] min-h-[22rem]',
+  onLayerChange = null,
+  onSelect = null,
+  onAddPoint = null,
+  onMoveAddPoint = null,
+  onMoveSectionPoint = null,
 }) {
   const online = useOnlineStatus();
   const containerRef = useRef(null);
@@ -191,10 +201,12 @@ export default function SpeedLimitEditorMap({
   const onSelectRef = useRef(onSelect);
   const onAddPointRef = useRef(onAddPoint);
   const onMoveAddPointRef = useRef(onMoveAddPoint);
+  const onMoveSectionPointRef = useRef(onMoveSectionPoint);
   addModeRef.current = addMode;
   onSelectRef.current = onSelect;
   onAddPointRef.current = onAddPoint;
   onMoveAddPointRef.current = onMoveAddPoint;
+  onMoveSectionPointRef.current = onMoveSectionPoint;
   const rawSections = useMemo(
     () => Array.isArray(preparedSections) ? preparedSections : buildSpeedMapSections(trips, corrections),
     [corrections, preparedSections, trips]
@@ -348,9 +360,14 @@ export default function SpeedLimitEditorMap({
     if (!selectedLayers) return;
 
     safeLeafletCall(() => selectedLayers.clearLayers());
-    const selectedSection = sections.find((section) => (
+    const selectedSection = (
+      selectedSectionOverride &&
+      (selectedSectionOverride.sectionKey || selectedSectionOverride.geohash) === selectedGeohash
+        ? selectedSectionOverride
+        : sections.find((section) => (
       (section.sectionKey || section.geohash) === selectedGeohash
-    ));
+        ))
+    );
     if (!selectedSection) return;
 
     addSectionToLayer({
@@ -363,7 +380,38 @@ export default function SpeedLimitEditorMap({
         if (!addModeRef.current) onSelectRef.current?.(section);
       },
     });
-  }, [sections, selectedGeohash]);
+
+    const selectedPoints = sectionPositions(selectedSection);
+    if (onMoveSectionPointRef.current && selectedPoints.length >= 2 && !addModeRef.current) {
+      [
+        { index: 0, label: 'Start' },
+        { index: selectedPoints.length - 1, label: 'End' },
+      ].forEach(({ index, label }) => {
+        const marker = L.marker([selectedPoints[index][0], selectedPoints[index][1]], {
+          draggable: true,
+          keyboard: true,
+          title: `${label} of selected road section`,
+          icon: L.divIcon({
+            html: `<div class="speed-limit-endpoint-handle">${label === 'Start' ? 'S' : 'E'}</div>`,
+            className: '',
+            iconSize: [26, 26],
+            iconAnchor: [13, 13],
+          }),
+        }).addTo(selectedLayers);
+        marker.bindTooltip(`Drag ${label.toLowerCase()} to adjust the road section`, {
+          direction: 'top',
+          offset: [0, -10],
+        });
+        marker.on('dragend', (event) => {
+          const nextLatLng = event.target.getLatLng();
+          onMoveSectionPointRef.current?.(index, {
+            lat: nextLatLng.lat,
+            lng: nextLatLng.lng,
+          });
+        });
+      });
+    }
+  }, [sections, selectedGeohash, selectedSectionOverride]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -382,7 +430,7 @@ export default function SpeedLimitEditorMap({
 
   return (
     <div className="relative z-0 isolate overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-      <div className="relative h-[28rem] min-h-[22rem] w-full">
+      <div className={`relative w-full ${heightClassName}`}>
         <div ref={containerRef} className="h-full w-full" />
         {onLayerChange && (
           <div className="absolute right-3 top-3 z-[500] w-[min(21rem,calc(100%-1.5rem))] rounded-xl border border-border bg-background/95 p-2 shadow-lg backdrop-blur">

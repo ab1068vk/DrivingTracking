@@ -18,7 +18,8 @@ export const CELL_PRECISION = 6;
 export const FALLBACK_PRECISION = 5;
 const CACHEABLE_SOURCES = new Set(['openstreetmap', 'user_confirmed_posted_sign']);
 const NULL_ISLAND_EPSILON = 0.001;
-const ROAD_SECTION_MATCH_RADIUS_KM = 0.08;
+const ROAD_SECTION_MATCH_RADIUS_KM = 0.045;
+const LEGACY_CELL_MATCH_RADIUS_KM = 0.35;
 const DIRECTION_MATCH_TOLERANCE_DEG = 60;
 const HISTORY_LIMIT = 20;
 
@@ -257,7 +258,7 @@ export function correctionMatchesPoint(correction, lat, lng, radiusKm = ROAD_SEC
     }
     return false;
   }
-  return geohashNeighboursInclude(correction?.geohash, lat, lng, 0.8);
+  return geohashNeighboursInclude(correction?.geohash, lat, lng, LEGACY_CELL_MATCH_RADIUS_KM);
 }
 
 export function geohashNeighboursInclude(geohash, lat, lng, radiusKm) {

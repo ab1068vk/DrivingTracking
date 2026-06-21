@@ -4,6 +4,10 @@ import { assessSpeedLimitEvidence } from '@/lib/speedLimitConfidence';
 
 const pointRoadName = (point = {}) => String(point.speed_limit_road_name || '').trim();
 const pointSource = (point = {}) => point.speed_limit_source ?? point.limitSource ?? point.speedLimitSource ?? point.source ?? null;
+const CONFIRMED_LIMIT_SOURCES = new Set([
+  'openstreetmap',
+  'user_confirmed_posted_sign',
+]);
 const pointLimit = (point = {}) => {
   const limit = Number(point.speed_limit_kmh ?? point.limitKmh ?? point.speedLimitKmh);
   return Number.isFinite(limit) && limit > 0 ? Math.round(limit) : null;
@@ -138,6 +142,10 @@ const sectionCandidate = (geohash, points, tripId) => {
   if (!geometry.length) return null;
   const center = geometry[Math.floor(geometry.length / 2)];
   const observedLimits = points.map(pointLimit).filter((value) => value != null);
+  const confirmedObservedLimits = points
+    .filter((point) => CONFIRMED_LIMIT_SOURCES.has(pointSource(point)))
+    .map(pointLimit)
+    .filter((value) => value != null);
   const observedSources = [...new Set(points.map(pointSource).filter(Boolean))].sort();
   return {
     geohash,
@@ -146,6 +154,8 @@ const sectionCandidate = (geohash, points, tripId) => {
     sectionPoints: geometry,
     roadName: mode(points.map(pointRoadName)),
     observedLimitKmh: numberMode(observedLimits),
+    confirmedObservedLimitKmh: numberMode(confirmedObservedLimits),
+    confirmedObservedLimits,
     observedLimits,
     observedSources,
     tripId,
@@ -157,6 +167,10 @@ const sectionCandidate = (geohash, points, tripId) => {
 const mergeCandidates = (existing, candidate) => {
   if (!existing) return candidate;
   const observedLimits = [...(existing.observedLimits || []), ...(candidate.observedLimits || [])];
+  const confirmedObservedLimits = [
+    ...(existing.confirmedObservedLimits || []),
+    ...(candidate.confirmedObservedLimits || []),
+  ];
   const useCandidateGeometry = candidate.sectionPoints.length > existing.sectionPoints.length;
   return {
     ...existing,
@@ -169,6 +183,8 @@ const mergeCandidates = (existing, candidate) => {
     roadName: existing.roadName || candidate.roadName,
     observedLimits,
     observedLimitKmh: numberMode(observedLimits),
+    confirmedObservedLimits,
+    confirmedObservedLimitKmh: numberMode(confirmedObservedLimits),
     observedSources: [...new Set([
       ...(existing.observedSources || []),
       ...(candidate.observedSources || []),
@@ -180,8 +196,13 @@ const mergeCandidates = (existing, candidate) => {
 
 function conflictFor(correction, candidate) {
   const savedLimit = Number(correction?.limitKmh);
-  const observedLimit = Number(candidate?.observedLimitKmh);
-  if (!Number.isFinite(savedLimit) || !Number.isFinite(observedLimit)) return null;
+  const observedLimit = Number(candidate?.confirmedObservedLimitKmh);
+  if (
+    !Number.isFinite(savedLimit) ||
+    savedLimit <= 0 ||
+    !Number.isFinite(observedLimit) ||
+    observedLimit <= 0
+  ) return null;
   const deltaKmh = Math.abs(Math.round(savedLimit) - Math.round(observedLimit));
   if (deltaKmh <= 10) return null;
   const resolution = correction?.conflictResolution;
@@ -198,6 +219,7 @@ function conflictFor(correction, candidate) {
     observedLimitKmh: Math.round(observedLimit),
     deltaKmh,
     sources: candidate?.observedSources || [],
+    evidenceKind: 'confirmed_limit',
     tripId: candidate?.tripId || null,
   };
 }

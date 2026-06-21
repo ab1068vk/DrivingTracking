@@ -29,6 +29,11 @@ Saved and observed limits now use a shared evidence contract:
 - Observed driving speed can request review, but it cannot automatically become legal posted-sign evidence.
 - User corrections preserve verification status, evidence count, freshness metadata, and a bounded audit trail.
 - The saved-speed map aggregates evidence across matching trips, supports route snapping, split and compatible-section merge preparation, and previews impact before save.
+- Saved road speeds are organized into Map, Needs review, and Saved roads workspaces so editing, triage, and rule administration do not compete on one screen.
+- Selecting a saved or observed section on the map opens the speed editor directly. Saved geometry exposes draggable start and end handles; manual point-by-point tracing remains available for roads that cannot be selected from recorded trip geometry.
+- Every trip shows verified, estimated, and missing speed-limit coverage. Trip review includes a selectable route map and an inline editor for saving a posted sign or local estimate without leaving the trip.
+- A saved-vs-observed conflict is created only from confirmed limit evidence such as OSM `maxspeed` or a user-confirmed posted sign. Road-type, regional, inferred, and traffic-speed estimates can request review but cannot establish a legal-limit conflict.
+- Traced road matching uses a tighter 45-metre corridor to reduce accidental reuse on nearby parallel roads. Legacy cell-only rules use a smaller compatibility radius than earlier releases.
 - Speed Analysis reports total limit coverage separately from verified coverage and links uncertain sections back to road-speed review.
 - Speed knowledge is stored in the local `drivesense_speed_knowledge` IndexedDB database. Existing `speed_knowledge_v1` local-storage or Capacitor Preference data is migrated automatically and retained as a fallback only when IndexedDB is unavailable.
 - User operations keep a bounded local undo/redo history. Grouped split, merge, conflict-review, and bulk actions undo as one operation.

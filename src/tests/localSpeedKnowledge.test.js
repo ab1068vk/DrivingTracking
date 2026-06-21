@@ -117,6 +117,29 @@ describe('LocalSpeedKnowledge', () => {
     await expect(lsk.getForPoint(43.6545, -79.3806)).resolves.toBeNull();
   });
 
+  it('does not apply a traced road rule to a parallel road more than 45 metres away', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+    await lsk.saveUserCorrection(
+      43.6500,
+      -79.3805,
+      40,
+      'Main road',
+      null,
+      [],
+      'user_confirmed_posted_sign',
+      {
+        sectionPoints: [
+          { lat: 43.6500, lng: -79.3810 },
+          { lat: 43.6500, lng: -79.3800 },
+        ],
+      }
+    );
+
+    await expect(lsk.getForPoint(43.65030, -79.3805)).resolves.toMatchObject({ limitKmh: 40 });
+    await expect(lsk.getForPoint(43.65050, -79.3805)).resolves.toBeNull();
+  });
+
   it('enforces direction-specific saved road sections when heading is available', async () => {
     const store = new MockStore();
     const lsk = new LocalSpeedKnowledge(store);

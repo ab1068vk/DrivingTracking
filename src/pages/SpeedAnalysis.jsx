@@ -400,11 +400,11 @@ export default function SpeedAnalysis() {
             </p>
           </div>
           <Link
-            to={`/speed-limits?tripId=${id}`}
+            to={`/trips/${id}?review=speed-limit-conflicts`}
             className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-background px-3 py-2 text-xs font-semibold hover:bg-secondary"
           >
             <MapPin className="h-3.5 w-3.5" />
-            Review road speeds
+            Review this trip on the map
           </Link>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
