@@ -17,7 +17,7 @@ import {
   SlidersHorizontal,
   Trash2,
 } from 'lucide-react';
-import { tripService } from '@/api/trips';
+import { tripQueryKeys, tripService } from '@/api/trips';
 import { getPermissionStatus } from '@/lib/permissions';
 import {
   clearNativeDiagnostics,
@@ -176,17 +176,25 @@ export default function Diagnostics() {
 
   const { data: trips = [], refetch } = useQuery({
     queryKey: ['diagnostics-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 20 }),
+    queryFn: () => tripService.listSummaries({ sort: '-start_time', limit: 20 }),
+    staleTime: 2 * 60 * 1000,
   });
   const { data: storedTestTrips = [], refetch: refetchStoredTestTrips } = useQuery({
     queryKey: ['diagnostics-local-test-trips'],
     queryFn: async () => {
-      const storedTrips = await tripService.listAll({ sort: '-start_time' });
+      const storedTrips = await tripService.listAllSummaries({ sort: '-start_time' });
       return storedTrips.filter((trip) => String(trip.id || '').startsWith(LOCAL_TEST_TRIP_PREFIX));
     },
     enabled: import.meta.env.DEV,
   });
-  const latestTrip = trips.find((trip) => trip.status === 'completed') || null;
+  const latestTripSummary = trips.find((trip) => trip.status === 'completed') || null;
+  const { data: latestTripDetail } = useQuery({
+    queryKey: latestTripSummary?.id ? tripQueryKeys.detail(latestTripSummary.id) : ['diagnostics-latest-trip-detail', 'none'],
+    queryFn: () => tripService.getById(latestTripSummary.id),
+    enabled: Boolean(latestTripSummary?.id),
+    staleTime: 2 * 60 * 1000,
+  });
+  const latestTrip = latestTripDetail || latestTripSummary;
   const localTestTripCount = storedTestTrips.length;
 
   const refresh = async () => {

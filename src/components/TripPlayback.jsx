@@ -3,7 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Activity, Clock, Flag, Gauge, LocateFixed, Pause, Play, Route, SkipBack, SkipForward } from 'lucide-react';
 import { escapeHtml } from '@/lib/htmlUtils';
-import { SPEED_BANDS, buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints, routeDistanceAtPlaybackPosition } from '@/lib/mapPlaybackInsights';
+import { SPEED_BANDS, buildPlaybackPositionIndex, buildRouteComparison, buildPlaybackTimeline, playbackPositionAtElapsed, prepareMapRoutePoints, routeDistanceAtPlaybackPosition } from '@/lib/mapPlaybackInsights';
 import { buildSpeedSegmentPopupHtml, titleCase } from '@/lib/mapPopupHtml';
 import { clamp } from '@/lib/mathUtils';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
@@ -217,6 +217,14 @@ const resolveInitialMapCenter = (points = [], secondaryPoints = [], settings = {
   DEFAULT_MAP_CENTER
 );
 
+const safeLeafletCall = (callback) => {
+  try {
+    return callback();
+  } catch {
+    return null;
+  }
+};
+
 const persistLastMapCenter = (point, tripId = null) => {
   const center = validLatLng(point?.lat, point?.lng);
   if (!center) return;
@@ -231,11 +239,9 @@ const persistLastMapCenter = (point, tripId = null) => {
 };
 
 const stopLeafletMap = (map) => {
-  try {
-    map?.stop?.();
-  } catch {
-    // Leaflet can throw while a map is already halfway through teardown.
-  }
+  safeLeafletCall(() => map?.stop?.());
+  safeLeafletCall(() => map?.closePopup?.());
+  safeLeafletCall(() => map?.closeTooltip?.());
 };
 
 const carIconHtml = (color, heading, label = '') => `
@@ -261,6 +267,51 @@ const endpointIconHtml = (label, color) => `
   <div style="width:24px;height:24px;border-radius:999px;background:${color};border:3px solid white;box-shadow:0 5px 14px rgba(15,23,42,.28);color:white;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900">${label}</div>
 `;
 
+const sameLatLng = (a, b) => (
+  Array.isArray(a) &&
+  Array.isArray(b) &&
+  Math.abs(a[0] - b[0]) < 0.0000001 &&
+  Math.abs(a[1] - b[1]) < 0.0000001
+);
+
+const buildProgressLatLngs = (segments = [], position = {}) => {
+  const toIndex = Number(position.toIndex ?? position.index ?? 0);
+  const fromIndex = Number(position.fromIndex ?? Math.max(0, toIndex - 1));
+  const currentPoint = validLatLng(position.point?.lat, position.point?.lng);
+  const lines = [];
+  let active = [];
+
+  const finish = () => {
+    if (active.length > 1) lines.push(active);
+    active = [];
+  };
+
+  const addSegment = (from, to) => {
+    const start = validLatLng(from?.lat, from?.lng);
+    const end = validLatLng(to?.lat, to?.lng);
+    if (!start || !end) return;
+    const startLatLng = [start.lat, start.lng];
+    const endLatLng = [end.lat, end.lng];
+    if (active.length && !sameLatLng(active[active.length - 1], startLatLng)) finish();
+    if (!active.length) active.push(startLatLng);
+    active.push(endLatLng);
+  };
+
+  for (const segment of segments) {
+    if (segment.toIndex < toIndex) {
+      addSegment(segment.from, segment.to);
+      continue;
+    }
+    if (segment.fromIndex === fromIndex && segment.toIndex === toIndex) {
+      addSegment(segment.from, currentPoint || segment.to);
+    }
+    break;
+  }
+
+  finish();
+  return lines;
+};
+
 export default function TripPlayback(props) {
   return (
     <SectionErrorBoundary
@@ -274,12 +325,16 @@ export default function TripPlayback(props) {
   );
 }
 
-function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
+function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', colorMode = 'speedBand' }) {
   const mapRef = useRef(null);
   const leafletMapRef = useRef(null);
   const markerRef = useRef(null);
   const secondaryMarkerRef = useRef(null);
   const progressLayersRef = useRef(null);
+  const progressLineRef = useRef(null);
+  const secondaryProgressLineRef = useRef(null);
+  const markerHeadingRef = useRef(null);
+  const secondaryMarkerHeadingRef = useRef(null);
   const animRef = useRef(null);
   const settingsRef = useRef(null);
   const invalidateTimersRef = useRef([]);
@@ -332,12 +387,16 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
     : `${totalPoints} GPS readings`;
   const timeline = useMemo(() => buildPlaybackTimeline(points, events), [events, points]);
   const secondaryTimeline = useMemo(() => buildPlaybackTimeline(secondaryPoints, []), [secondaryPoints]);
+  const playbackPositionIndex = useMemo(() => buildPlaybackPositionIndex(points), [points]);
   const speedSegments = timeline.segments;
   const secondarySegments = secondaryTimeline.segments;
   const stats = timeline.stats;
   const timelineEvents = timeline.events;
   const playbackDurationSeconds = stats.durationSeconds || Math.max(1, totalPoints - 1);
-  const playbackPosition = useMemo(() => playbackPositionAtElapsed(points, playbackElapsedSeconds), [playbackElapsedSeconds, points]);
+  const playbackPosition = useMemo(
+    () => playbackPositionAtElapsed(points, playbackElapsedSeconds, playbackPositionIndex),
+    [playbackElapsedSeconds, playbackPositionIndex, points]
+  );
   const currentPt = playbackPosition.point || points[currentIdx];
   const previousPt = points[Math.max(0, currentIdx - 1)];
   const currentHeading = currentPt && previousPt && currentIdx > 0
@@ -360,6 +419,11 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
   const nextEvent = timelineEvents.find((event) => event.playbackIndex > currentIdx);
   const selectedSegment = speedSegments.find((segment) => segment.id === selectedSegmentId);
   const routeComparison = useMemo(() => buildRouteComparison(trip, secondaryTrip), [secondaryTrip, trip]);
+  const segmentColor = (segment) => (
+    colorMode === 'speedLimit' && segment.speedLimitColor
+      ? segment.speedLimitColor
+      : segment.color
+  );
 
   useEffect(() => {
     setCurrentIdx(0);
@@ -375,11 +439,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
     const timer = window.setTimeout(() => {
       invalidateTimersRef.current = invalidateTimersRef.current.filter((item) => item !== timer);
       if (leafletMapRef.current !== map) return;
-      try {
-        map.invalidateSize();
-      } catch {
-        // Map cleanup can race with browser resize/layout callbacks.
-      }
+      safeLeafletCall(() => map.invalidateSize());
     }, delay);
     invalidateTimersRef.current.push(timer);
   };
@@ -407,7 +467,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
           const onlyPoint = validLatLng(points[0].lat, points[0].lng);
           if (onlyPoint) {
             persistLastMapCenter(onlyPoint, trip?.id);
-            map.setView([onlyPoint.lat, onlyPoint.lng], 15);
+            safeLeafletCall(() => map.setView([onlyPoint.lat, onlyPoint.lng], 15, { animate: false }));
           }
         } else if (points.length > 1) {
           const latLngs = points.map(p => [p.lat, p.lng]);
@@ -425,7 +485,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
             window.L.polyline(
               [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
               {
-                color: segment.color,
+                color: segmentColor(segment),
                 weight: 6,
                 opacity: 0.62,
                 smoothFactor: 1.5,
@@ -473,6 +533,25 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
           }
 
           progressLayersRef.current = window.L.layerGroup().addTo(map);
+          progressLineRef.current = window.L.polyline([], {
+            color: '#2563eb',
+            weight: 8,
+            opacity: 0.96,
+            smoothFactor: 1.5,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }).addTo(progressLayersRef.current);
+          if (secondaryPoints.length > 1) {
+            secondaryProgressLineRef.current = window.L.polyline([], {
+              color: '#f97316',
+              weight: 7,
+              opacity: 0.88,
+              dashArray: '7 7',
+              smoothFactor: 1.5,
+              lineCap: 'round',
+              lineJoin: 'round',
+            }).addTo(progressLayersRef.current);
+          }
 
           const startIcon = window.L.divIcon({
             html: endpointIconHtml('S', '#16a34a'),
@@ -534,12 +613,12 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
             bounds.extend(circle.getBounds());
           });
 
-          map.fitBounds(bounds, { padding: [24, 24] });
+          safeLeafletCall(() => map.fitBounds(bounds, { padding: [24, 24] }));
           scheduleMapInvalidate(map);
         } else {
           resolveFallbackMapCenter(settingsRef.current || {}).then((center) => {
             if (cancelled || !center || !leafletMapRef.current) return;
-            map.setView([center.lat, center.lng], DEFAULT_MAP_ZOOM);
+            safeLeafletCall(() => map.setView([center.lat, center.lng], DEFAULT_MAP_ZOOM, { animate: false }));
           });
         }
       } catch (error) {
@@ -547,7 +626,8 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
         if (!cancelled) setMapFailed(true);
         try {
           stopLeafletMap(leafletMapRef.current);
-          leafletMapRef.current?.remove();
+          safeLeafletCall(() => progressLayersRef.current?.clearLayers?.());
+          safeLeafletCall(() => leafletMapRef.current?.remove());
         } catch {
           // Ignore Leaflet cleanup failures from partially initialized maps.
         }
@@ -555,6 +635,8 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
         markerRef.current = null;
         secondaryMarkerRef.current = null;
         progressLayersRef.current = null;
+        progressLineRef.current = null;
+        secondaryProgressLineRef.current = null;
       }
     }).catch((error) => {
       console.error('Playback map failed to initialize', error);
@@ -567,7 +649,8 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
       if (leafletMapRef.current) {
         try {
           stopLeafletMap(leafletMapRef.current);
-          leafletMapRef.current.remove();
+          safeLeafletCall(() => progressLayersRef.current?.clearLayers?.());
+          safeLeafletCall(() => leafletMapRef.current.remove());
         } catch {
           // Ignore Leaflet cleanup failures from partially initialized maps.
         }
@@ -576,11 +659,16 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
       markerRef.current = null;
       secondaryMarkerRef.current = null;
       progressLayersRef.current = null;
+      progressLineRef.current = null;
+      secondaryProgressLineRef.current = null;
+      markerHeadingRef.current = null;
+      secondaryMarkerHeadingRef.current = null;
     };
-  }, [events, playbackPrivacySettings, points, secondaryPoints, secondarySegments, speedSegments, trip?.id, secondaryTrip?.id, visiblePrivacyZones]);
+  }, [colorMode, events, playbackPrivacySettings, points, secondaryPoints, secondarySegments, speedSegments, trip?.id, secondaryTrip?.id, visiblePrivacyZones]);
 
   useEffect(() => {
-    if (!leafletMapRef.current || !points[currentIdx]) return;
+    const map = leafletMapRef.current;
+    if (!map || !points[currentIdx] || !window.L) return;
     const pt = currentPt || points[currentIdx];
     if (!pt) return;
     const latlng = [pt.lat, pt.lng];
@@ -594,65 +682,61 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
       : Number(pt.heading ?? pt.bearing ?? 0) || 0);
 
     if (markerRef.current) {
-      markerRef.current.setLatLng(latlng);
-      markerRef.current.setIcon(window.L.divIcon({
-        html: carIconHtml('#2563eb', heading),
-        className: '',
-        iconSize: [34, 34],
-        iconAnchor: [17, 17],
-      }));
+      safeLeafletCall(() => {
+        const headingBucket = Math.round(heading / 5) * 5;
+        markerRef.current.setLatLng(latlng);
+        if (markerHeadingRef.current !== headingBucket) {
+          markerRef.current.setIcon(window.L.divIcon({
+            html: carIconHtml('#2563eb', headingBucket),
+            className: '',
+            iconSize: [34, 34],
+            iconAnchor: [17, 17],
+          }));
+          markerHeadingRef.current = headingBucket;
+        }
+      });
     }
     if (secondaryMarkerRef.current && secondaryPt) {
       const secondaryPrev = secondaryPoints[Math.max(0, secondaryIdx - 1)];
       const secondaryHeading = secondaryIdx > 0 && secondaryPrev
         ? calculateBearing(secondaryPrev.lat, secondaryPrev.lng, secondaryPt.lat, secondaryPt.lng)
         : Number(secondaryPt.heading ?? secondaryPt.bearing ?? 0) || 0;
-      secondaryMarkerRef.current.setLatLng([secondaryPt.lat, secondaryPt.lng]);
-      secondaryMarkerRef.current.setIcon(window.L.divIcon({
-        html: carIconHtml('#f97316', secondaryHeading, '2'),
-        className: '',
-        iconSize: [34, 34],
-        iconAnchor: [17, 17],
-      }));
+      safeLeafletCall(() => {
+        const secondaryHeadingBucket = Math.round(secondaryHeading / 5) * 5;
+        secondaryMarkerRef.current.setLatLng([secondaryPt.lat, secondaryPt.lng]);
+        if (secondaryMarkerHeadingRef.current !== secondaryHeadingBucket) {
+          secondaryMarkerRef.current.setIcon(window.L.divIcon({
+            html: carIconHtml('#f97316', secondaryHeadingBucket, '2'),
+            className: '',
+            iconSize: [34, 34],
+            iconAnchor: [17, 17],
+          }));
+          secondaryMarkerHeadingRef.current = secondaryHeadingBucket;
+        }
+      });
     }
     if (followVehicle) {
-      stopLeafletMap(leafletMapRef.current);
-      leafletMapRef.current.panTo(latlng, { animate: false });
+      stopLeafletMap(map);
+      safeLeafletCall(() => map.panTo(latlng, { animate: false }));
     }
-    if (progressLayersRef.current && window.L) {
-      progressLayersRef.current.clearLayers();
-      speedSegments.slice(0, currentIdx).forEach((segment) => {
-        window.L.polyline(
-          [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
-          {
-            color: segment.color,
-            weight: 8,
-            opacity: 0.98,
-            smoothFactor: 1.5,
-            lineCap: 'round',
-            lineJoin: 'round',
-          }
-        ).addTo(progressLayersRef.current);
+    if (progressLineRef.current) {
+      safeLeafletCall(() => {
+        progressLineRef.current.setLatLngs(buildProgressLatLngs(speedSegments, playbackPosition));
       });
-      secondarySegments.slice(0, secondaryIdx).forEach((segment) => {
-        window.L.polyline(
-          [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
-          {
-            color: '#f97316',
-            weight: 7,
-            opacity: 0.90,
-            dashArray: '7 7',
-            smoothFactor: 1.5,
-            lineCap: 'round',
-            lineJoin: 'round',
-          }
-        ).addTo(progressLayersRef.current);
+    }
+    if (secondaryProgressLineRef.current && secondaryPt) {
+      safeLeafletCall(() => {
+        secondaryProgressLineRef.current.setLatLngs(buildProgressLatLngs(secondarySegments, {
+          fromIndex: Math.max(0, secondaryIdx - 1),
+          toIndex: secondaryIdx,
+          point: secondaryPt,
+        }));
       });
     }
 
     const nearEvt = timelineEvents.find((event) => Math.abs(event.playbackIndex - currentIdx) <= 1);
     setCurrentEvent(nearEvt || null);
-  }, [currentIdx, currentPt, followVehicle, playbackPosition.heading, points, secondaryPoints, secondarySegments, speedSegments, timelineEvents, totalPoints]);
+  }, [currentIdx, currentPt, followVehicle, playbackPosition, playbackPosition.heading, points, secondaryPoints, secondarySegments, speedSegments, timelineEvents, totalPoints]);
 
   useEffect(() => {
     if (!playing) { cancelAnimationFrame(animRef.current); return; }
@@ -674,7 +758,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
           setCurrentIdx(totalPoints - 1);
           return totalSeconds;
         }
-        const position = playbackPositionAtElapsed(points, next);
+        const position = playbackPositionAtElapsed(points, next, playbackPositionIndex);
         setCurrentIdx(position.index);
         return next;
       });
@@ -682,7 +766,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
     };
     animRef.current = requestAnimationFrame(step);
     return () => cancelAnimationFrame(animRef.current);
-  }, [playing, points, speedIdx, stats.durationSeconds, totalPoints]);
+  }, [playbackPositionIndex, playing, points, speedIdx, stats.durationSeconds, totalPoints]);
 
   const handleReset = () => {
     setPlaying(false);
@@ -704,7 +788,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
 
   const seekToElapsed = (seconds) => {
     const safeElapsed = clamp(seconds, 0, playbackDurationSeconds);
-    const position = playbackPositionAtElapsed(points, safeElapsed);
+    const position = playbackPositionAtElapsed(points, safeElapsed, playbackPositionIndex);
     setPlaying(false);
     setCurrentIdx(position.index);
     setPlaybackElapsedSeconds(safeElapsed);
@@ -817,7 +901,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px' }) {
             style={{
               left: `${segment.timeProgressStart ?? segment.progressStart}%`,
               width: `${Math.max(0.8, (segment.timeProgressEnd ?? segment.progressEnd) - (segment.timeProgressStart ?? segment.progressStart))}%`,
-              backgroundColor: segment.color,
+              backgroundColor: segmentColor(segment),
               opacity: selectedSegmentId === segment.id ? 1 : 0.42,
             }}
             onClick={(event) => {

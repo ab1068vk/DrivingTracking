@@ -103,6 +103,7 @@ import {
 } from '@/lib/speedLimitSource';
 import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 import { getJson, setJson } from '@/lib/mobileStorage';
+import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import {
   DASHBOARD_SPEED_LIMIT_REVIEW_DISMISSAL_KEY,
   buildDashboardSpeedLimitReviewFingerprint,
@@ -388,10 +389,7 @@ export default function Dashboard() {
 
   const getLocalSpeedKnowledge = useCallback(() => {
     if (!localSpeedKnowledgeRef.current) {
-      localSpeedKnowledgeRef.current = new LocalSpeedKnowledge({
-        get: (key) => getJson(key, null),
-        set: (key, value) => setJson(key, value),
-      });
+      localSpeedKnowledgeRef.current = new LocalSpeedKnowledge(speedKnowledgeStore);
     }
     return localSpeedKnowledgeRef.current;
   }, []);
@@ -519,10 +517,7 @@ export default function Dashboard() {
   useEffect(() => {
     let cancelled = false;
     const loadSpeedLimitReviewSummary = async () => {
-      const knowledge = new LocalSpeedKnowledge({
-        get: (key) => getJson(key, null),
-        set: (key, value) => setJson(key, value),
-      });
+      const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
       const conflictedCells = await knowledge.getConflictedCells().catch(() => []);
       const reviewTrip = completedTrips.find((trip) => speedLimitReviewNeededForTrip(trip));
       const tripReviewCount = reviewTrip
@@ -737,7 +732,7 @@ export default function Dashboard() {
         }
       }
       if (!completedNativeTrip && !activeTripStore.get()) {
-        const storedTrips = await tripService.listAll({ sort: '-start_time' }).catch(() => []);
+        const storedTrips = await tripService.listAllSummaries({ sort: '-start_time' }).catch(() => []);
         completedNativeTrip = findNativeManualCompletion(storedTrips, trip);
       }
       if (!completedNativeTrip) return false;
@@ -1773,7 +1768,7 @@ export default function Dashboard() {
           }
         }
         if (!completedNativeTrip && !tripToEnd.id) {
-          const storedTrips = await tripService.listAll({ sort: '-start_time' }).catch(() => []);
+          const storedTrips = await tripService.listAllSummaries({ sort: '-start_time' }).catch(() => []);
           completedNativeTrip = findNativeManualCompletion(storedTrips, tripToEnd);
         }
       } catch (error) {
@@ -2290,10 +2285,7 @@ export default function Dashboard() {
         });
       });
     }
-    const knowledge = new LocalSpeedKnowledge({
-      get: (key) => getJson(key, null),
-      set: (key, value) => setJson(key, value),
-    });
+    const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
     const conflictedCells = await knowledge.getConflictedCells().catch(() => []);
     const reviewCellCount = speedLimitReviewNeededForTrip(completedTrip)
       ? Math.max(1, buildTripSpeedLimitReviewCells(completedTrip, { maxCells: 8 }).length)

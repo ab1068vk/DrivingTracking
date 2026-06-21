@@ -1,5 +1,7 @@
 import { geohashEncode } from '@/lib/localSpeedKnowledge';
 import { buildRoadSectionIdentity, isPublicPoint } from '@/lib/roadSectionIdentity';
+import { assessSpeedLimitEvidence } from '@/lib/speedLimitConfidence';
+import { speedLimitReviewPriority } from '@/lib/speedLimitIntelligence';
 
 export const DASHBOARD_SPEED_LIMIT_REVIEW_DISMISSAL_KEY = 'drivesense_dashboard_speed_limit_review_dismissal';
 
@@ -71,7 +73,6 @@ function tripReviewFingerprint(trip = null, reviewCellCount = 0) {
   return [
     'trip',
     trip.id || 'unknown-trip',
-    trip.updated_at || trip.score_provenance?.computed_at || trip.end_time || '',
     trip.speed_limit_review_required === true ? 'required' : 'derived',
     Math.max(1, Number(reviewCellCount) || 0),
   ].join(':');
@@ -131,7 +132,12 @@ export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {})
     if (!hasEstimatedSource && !hasMissingLimit && !nativeDeferred) continue;
 
     const identity = buildRoadSectionIdentity(trip, group.geohash);
-    candidates.push({
+    const source = hasMissingLimit ? 'missing_posted_review' : sources[0];
+    const evidence = assessSpeedLimitEvidence({
+      source,
+      sampleCount: group.sampleCount,
+    });
+    const candidate = {
       geohash: group.geohash,
       lat: group.sampleLat,
       lng: group.sampleLng,
@@ -139,7 +145,7 @@ export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {})
       sampleTimestamp: group.sampleTimestamp,
       limitKmh: mostCommon(group.limits),
       suggestedLimitKmh: mostCommon(group.limits),
-      source: hasMissingLimit ? 'missing_posted_review' : sources[0],
+      source,
       sampleCount: group.sampleCount,
       limits: [...new Set(group.limits)].sort((a, b) => a - b),
       sources,
@@ -147,11 +153,18 @@ export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {})
       tripReview: true,
       conflict: false,
       reviewReason: reviewReasonForTrip(trip, hasMissingLimit, hasEstimatedSource),
+      evidence,
       ...(identity || {}),
+    };
+    candidates.push({
+      ...candidate,
+      reviewPriority: speedLimitReviewPriority(candidate, {
+        affectedTripCount: 1,
+      }),
     });
   }
 
   return candidates
-    .sort((a, b) => b.sampleCount - a.sampleCount)
+    .sort((a, b) => b.reviewPriority.score - a.reviewPriority.score || b.sampleCount - a.sampleCount)
     .slice(0, maxCells);
 }

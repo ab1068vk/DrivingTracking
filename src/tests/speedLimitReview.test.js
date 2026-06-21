@@ -137,7 +137,6 @@ describe('speed-limit parked review', () => {
     const dismissed = buildDashboardSpeedLimitReviewFingerprint({
       reviewTrip: {
         id: 'trip-1',
-        updated_at: '2026-06-20T12:00:00.000Z',
         speed_limit_review_required: true,
       },
       reviewCellCount: 1,
@@ -146,10 +145,9 @@ describe('speed-limit parked review', () => {
     expect(buildDashboardSpeedLimitReviewFingerprint({
       reviewTrip: {
         id: 'trip-1',
-        updated_at: '2026-06-20T13:00:00.000Z',
         speed_limit_review_required: true,
       },
-      reviewCellCount: 1,
+      reviewCellCount: 2,
     })).not.toBe(dismissed);
     expect(buildDashboardSpeedLimitReviewFingerprint({
       conflictedCells: [{
@@ -159,5 +157,26 @@ describe('speed-limit parked review', () => {
         conflictDetails: { existingLimitKmh: 50, newLimitKmh: 60 },
       }],
     })).not.toBe(dismissed);
+  });
+
+  it('keeps a dismissed trip review warning hidden when saved trip timestamps change after reload', () => {
+    const dismissed = buildDashboardSpeedLimitReviewFingerprint({
+      reviewTrip: {
+        id: 'trip-1',
+        speed_limit_review_required: true,
+      },
+      reviewCellCount: 1,
+    });
+
+    expect(buildDashboardSpeedLimitReviewFingerprint({
+      reviewTrip: {
+        id: 'trip-1',
+        updated_at: '2026-06-20T13:00:00.000Z',
+        score_provenance: { computed_at: '2026-06-20T12:58:00.000Z' },
+        end_time: '2026-06-20T12:55:00.000Z',
+        speed_limit_review_required: true,
+      },
+      reviewCellCount: 1,
+    })).toBe(dismissed);
   });
 });

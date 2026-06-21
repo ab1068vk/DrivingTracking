@@ -4352,16 +4352,24 @@ export async function prefetchLocalKnowledge(points = [], knowledge = null) {
   if (!knowledge || typeof knowledge.getForPoint !== 'function') return list.map(() => null);
 
   const lookupByHash = new Map();
-  const hashes = list.map((point) => {
+  const hashes = list.map((point, index) => {
     const lat = Number(point?.lat);
     const lng = Number(point?.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
     const hash = geohashEncode(lat, lng, 6);
     const pointTime = timestampMs(point);
-    const lookupKey = `${hash}:${Number.isFinite(pointTime) ? timeToBucket(pointTime) : 'none'}`;
+    const explicitHeading = Number(point?.heading ?? point?.bearing ?? point?.course);
+    const derivedHeading = Number.isFinite(explicitHeading) ? explicitHeading : headingForIndex(list, index);
+    const normalizedHeading = Number.isFinite(derivedHeading)
+      ? ((derivedHeading % 360) + 360) % 360
+      : null;
+    const headingBucket = normalizedHeading == null
+      ? 'none'
+      : Math.round(normalizedHeading / 15) * 15 % 360;
+    const lookupKey = `${hash}:${Number.isFinite(pointTime) ? timeToBucket(pointTime) : 'none'}:${headingBucket}`;
     if (!lookupByHash.has(lookupKey)) {
       lookupByHash.set(lookupKey, knowledge.getForPoint(lat, lng, pointTime, {
-        headingDeg: point?.heading ?? point?.bearing ?? point?.course ?? null,
+        headingDeg: normalizedHeading,
       }).catch(() => null));
     }
     return lookupKey;
@@ -4444,11 +4452,41 @@ export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thres
   let effectiveLimitKmh = actualLimitKmh;
   let source = actualSource;
   let learnedLocalConfidence = null;
+  let speedLimitConflict = null;
 
   if (localKnowledge?.source === 'user_confirmed_posted_sign' && Number(localKnowledge.limitKmh) > 0) {
-    effectiveLimitKmh = Number(localKnowledge.limitKmh);
-    source = 'user_confirmed_posted_sign';
-  } else if (localKnowledge && Number(localKnowledge.limitKmh) > 0 && Number(localKnowledge.confidence) >= 0.55) {
+    const savedLimitKmh = Number(localKnowledge.limitKmh);
+    const conflictDeltaKmh = actualLimitKmh == null ? 0 : Math.abs(savedLimitKmh - actualLimitKmh);
+    const resolution = localKnowledge.conflictResolution;
+    const conflictWasReviewed = (
+      resolution &&
+      Math.round(Number(resolution.savedLimitKmh)) === Math.round(savedLimitKmh) &&
+      Math.round(Number(resolution.observedLimitKmh)) === Math.round(actualLimitKmh) &&
+      resolution.action === 'kept_saved_limit'
+    );
+    if (conflictDeltaKmh > 10 && !conflictWasReviewed) {
+      effectiveLimitKmh = Math.min(savedLimitKmh, actualLimitKmh);
+      source = effectiveLimitKmh === actualLimitKmh ? actualSource : 'user_confirmed_posted_sign';
+      speedLimitConflict = {
+        savedLimitKmh,
+        observedLimitKmh: actualLimitKmh,
+        deltaKmh: conflictDeltaKmh,
+        needsReview: true,
+      };
+    } else {
+      effectiveLimitKmh = savedLimitKmh;
+      source = 'user_confirmed_posted_sign';
+    }
+  } else if (
+    localKnowledge &&
+    Number(localKnowledge.limitKmh) > 0 &&
+    Number(localKnowledge.confidence) >= 0.55 &&
+    (
+      actualLimitKmh == null ||
+      localKnowledge.source === 'user_entered_estimate' ||
+      localKnowledge.source === 'user_correction'
+    )
+  ) {
     effectiveLimitKmh = Number(localKnowledge.limitKmh);
     source = localKnowledge.source === 'user_entered_estimate' || localKnowledge.source === 'user_correction'
       ? 'user_entered_estimate'
@@ -4494,6 +4532,7 @@ export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thres
     tier,
     confidence,
     alertMarginKmh,
+    speedLimitConflict,
     shouldAlert: (speedKmh) => (
       Number.isFinite(Number(speedKmh)) &&
       Number.isFinite(Number(effectiveLimitKmh)) &&

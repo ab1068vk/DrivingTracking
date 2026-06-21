@@ -9,7 +9,8 @@ import { localSettings } from '@/lib/trackingStore';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/speedLimitSource';
 import { LocalSpeedKnowledge } from '@/lib/localSpeedKnowledge';
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { setJson } from '@/lib/mobileStorage';
+import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
@@ -254,10 +255,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     error: error?.message || 'Speed limit lookup unavailable',
   }));
   routePoints = speedLimitContext.routePoints || routePoints;
-  const knowledge = new LocalSpeedKnowledge({
-    get: (key) => getJson(key, null),
-    set: (key, value) => setJson(key, value),
-  });
+  const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
   try {
     const osmConfirmedPoints = routePoints.filter((point) => (
       point?.speed_limit_source === 'openstreetmap' &&
@@ -349,10 +347,7 @@ export async function buildLocalSpeedKnowledgeScorePatch(trip, settings = localS
 
   const thresholds = buildDrivingThresholds(settings);
   const privacyZones = getPrivacyZones(settings);
-  const knowledge = new LocalSpeedKnowledge({
-    get: (key) => getJson(key, null),
-    set: (key, value) => setJson(key, value),
-  });
+  const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
   const localKnowledgeResults = await prefetchLocalKnowledge(routePoints, knowledge);
   const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, {
     ...trip,

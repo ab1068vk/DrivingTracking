@@ -392,24 +392,25 @@ const clusterEvents = (events = []) => {
     .filter((event) => Number.isFinite(Number(event.lat)) && Number.isFinite(Number(event.lng)))
     .forEach((event) => {
       const key = `${Math.round(Number(event.lat) * 1200)},${Math.round(Number(event.lng) * 1200)}`;
-      const group = groups.get(key) || { latSum: 0, lngSum: 0, events: [] };
+      const group = groups.get(key) || { latSum: 0, lngSum: 0, events: [], typeCounts: new Map(), dominant: null };
       group.latSum += Number(event.lat);
       group.lngSum += Number(event.lng);
       group.events.push(event);
+      const typeCount = (group.typeCounts.get(event.type) || 0) + 1;
+      group.typeCounts.set(event.type, typeCount);
+      if (!group.dominant || typeCount > (group.typeCounts.get(group.dominant.type) || 0)) {
+        group.dominant = event;
+      }
       groups.set(key, group);
     });
 
   return [...groups.values()].map((group) => {
-    const dominant = group.events.reduce((best, event) => (
-      group.events.filter((item) => item.type === event.type).length >
-      group.events.filter((item) => item.type === best.type).length ? event : best
-    ), group.events[0]);
     return {
       lat: group.latSum / group.events.length,
       lng: group.lngSum / group.events.length,
       events: group.events,
       count: group.events.length,
-      dominant,
+      dominant: group.dominant || group.events[0],
     };
   });
 };
@@ -490,6 +491,20 @@ function loadLeaflet() {
   return loadPromise;
 }
 
+const safeLeafletCall = (callback) => {
+  try {
+    return callback();
+  } catch {
+    return null;
+  }
+};
+
+const stopLeafletMap = (map) => {
+  safeLeafletCall(() => map?.stop?.());
+  safeLeafletCall(() => map?.closePopup?.());
+  safeLeafletCall(() => map?.closeTooltip?.());
+};
+
 export default function TripMap(props) {
   const resetKey = Array.isArray(props.routes)
     ? props.routes.map((route) => `${route.id || route.label || 'route'}:${route.selected ? '1' : '0'}:${route.route_points?.length || 0}`).join('|')
@@ -550,7 +565,7 @@ function TripMapContent({
   const selectedRoutePoints = useMemo(
     () => {
       const points = prepareMapRoutePoints(selectedRoute.route_points || [], {
-        maxPoints: null,
+        maxPoints: 900,
         smooth: smoothRoute,
       });
       return injectTimestampGapMarkers(points);
@@ -605,7 +620,10 @@ function TripMapContent({
     return () => {
       cancelled = true;
       if (leafletMapRef.current) {
-        leafletMapRef.current.remove();
+        stopLeafletMap(leafletMapRef.current);
+        safeLeafletCall(() => layersRef.current?.clearLayers?.());
+        safeLeafletCall(() => tileLayerRef.current?.remove?.());
+        safeLeafletCall(() => leafletMapRef.current.remove());
         leafletMapRef.current = null;
         layersRef.current = null;
         tileLayerRef.current = null;
@@ -621,7 +639,8 @@ function TripMapContent({
 
     const tileConfig = TILE_STYLES[tileStyle] || TILE_STYLES.standard;
     setTileErrorCount(0);
-    map.removeLayer(tileLayerRef.current);
+    stopLeafletMap(map);
+    safeLeafletCall(() => map.removeLayer(tileLayerRef.current));
     tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
       attribution: tileConfig.attribution,
       maxZoom: tileConfig.maxZoom,
@@ -639,7 +658,8 @@ function TripMapContent({
     const layers = layersRef.current;
     if (!ready || !map || !layers || !window.L) return;
 
-    layers.clearLayers();
+    stopLeafletMap(map);
+    safeLeafletCall(() => layers.clearLayers());
 
     const routeSets = Array.isArray(routes)
       ? routes
@@ -925,7 +945,7 @@ function TripMapContent({
       lastBoundsRef.current = bounds;
       const nextFitKey = routeFitKey(validRoutes);
       if (nextFitKey && lastFitRouteKeyRef.current !== nextFitKey) {
-        map.fitBounds(bounds, { padding: [20, 20] });
+        safeLeafletCall(() => map.fitBounds(bounds, { padding: [20, 20] }));
         lastFitRouteKeyRef.current = nextFitKey;
       }
 
@@ -972,11 +992,11 @@ function TripMapContent({
       const bounds = window.L.latLngBounds([]);
       drawPrivacyZones(bounds);
       lastBoundsRef.current = bounds;
-      map.fitBounds(bounds, { padding: [20, 20] });
+      safeLeafletCall(() => map.fitBounds(bounds, { padding: [20, 20] }));
     } else if (safeCurrentLocation) {
-      map.setView([safeCurrentLocation.lat, safeCurrentLocation.lng], 15);
+      safeLeafletCall(() => map.setView([safeCurrentLocation.lat, safeCurrentLocation.lng], 15));
     } else {
-      map.setView(TORONTO_CENTER, 12);
+      safeLeafletCall(() => map.setView(TORONTO_CENTER, 12));
     }
 
     if (mapEvents && mapEvents.length > 0) {
@@ -1059,13 +1079,17 @@ function TripMapContent({
   useEffect(() => {
     if (!leafletMapRef.current || !showCurrentLocation || !currentLocation) return;
     if (isPointInPrivacyZone(currentLocation, getPrivacyZones(settings))) return;
-    leafletMapRef.current.panTo([currentLocation.lat, currentLocation.lng]);
+    const map = leafletMapRef.current;
+    stopLeafletMap(map);
+    safeLeafletCall(() => map.panTo([currentLocation.lat, currentLocation.lng], { animate: false }));
   }, [currentLocation, showCurrentLocation, settings]);
 
   useEffect(() => {
     if (!leafletMapRef.current || !parkedLocation?.lat || !parkedLocation?.lng) return;
     if (isPointInPrivacyZone(parkedLocation, getPrivacyZones(settings))) return;
-    leafletMapRef.current.setView([parkedLocation.lat, parkedLocation.lng], 17);
+    const map = leafletMapRef.current;
+    stopLeafletMap(map);
+    safeLeafletCall(() => map.setView([parkedLocation.lat, parkedLocation.lng], 17, { animate: false }));
   }, [parkedLocation, settings]);
 
   if (mapFailed) {
@@ -1082,13 +1106,17 @@ function TripMapContent({
 
   const handleFitRoute = () => {
     if (leafletMapRef.current && lastBoundsRef.current) {
-      leafletMapRef.current.fitBounds(lastBoundsRef.current, { padding: [24, 24] });
+      const map = leafletMapRef.current;
+      stopLeafletMap(map);
+      safeLeafletCall(() => map.fitBounds(lastBoundsRef.current, { padding: [24, 24] }));
     }
   };
 
   const handleCenterLive = () => {
     if (leafletMapRef.current && currentLocation) {
-      leafletMapRef.current.setView([currentLocation.lat, currentLocation.lng], 16);
+      const map = leafletMapRef.current;
+      stopLeafletMap(map);
+      safeLeafletCall(() => map.setView([currentLocation.lat, currentLocation.lng], 16, { animate: false }));
     }
   };
 

@@ -452,12 +452,45 @@ export function buildPlaybackTimeline(points = [], events = []) {
   };
 }
 
-export function playbackPositionAtElapsed(points = [], elapsedSeconds = 0) {
+export function buildPlaybackPositionIndex(points = []) {
   const clean = cleanRoutePoints(restoreOriginalRouteGeometry(points));
+  const timesMs = clean.map(pointTimeMs);
+  const hasTimeline = timesMs.length > 1 && timesMs.every((time, index) => (
+    time != null && (index === 0 || time > timesMs[index - 1])
+  ));
+  return {
+    points: clean,
+    timesMs,
+    firstMs: timesMs[0] ?? null,
+    hasTimeline,
+  };
+}
+
+const findPlaybackIndexForTargetMs = (timesMs = [], targetMs = 0) => {
+  let low = 1;
+  let high = timesMs.length - 1;
+  let result = high;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    if (timesMs[mid] >= targetMs) {
+      result = mid;
+      high = mid - 1;
+    } else {
+      low = mid + 1;
+    }
+  }
+
+  return result;
+};
+
+export function playbackPositionAtElapsed(points = [], elapsedSeconds = 0, positionIndex = null) {
+  const indexData = positionIndex?.points ? positionIndex : buildPlaybackPositionIndex(points);
+  const clean = indexData.points;
   if (!clean.length) return { index: 0, point: null, heading: 0, ratio: 0, fromIndex: 0, toIndex: 0 };
   if (clean.length === 1) return { index: 0, point: clean[0], heading: Number(clean[0].heading ?? clean[0].bearing ?? 0) || 0, ratio: 0, fromIndex: 0, toIndex: 0 };
 
-  const firstMs = pointTimeMs(clean[0]);
+  const firstMs = indexData.firstMs ?? pointTimeMs(clean[0]);
   if (firstMs == null) {
     const fallbackIndex = Math.max(0, Math.min(clean.length - 1, Math.round(elapsedSeconds)));
     return { index: fallbackIndex, point: clean[fallbackIndex], heading: 0, ratio: 0, fromIndex: Math.max(0, fallbackIndex - 1), toIndex: fallbackIndex };
@@ -474,18 +507,17 @@ export function playbackPositionAtElapsed(points = [], elapsedSeconds = 0) {
   }
 
   const targetMs = firstMs + Math.max(0, elapsedSeconds) * 1000;
-  let index = clean.length - 1;
-  for (let i = 1; i < clean.length; i++) {
-    const currMs = pointTimeMs(clean[i]);
-    if (currMs == null || currMs < targetMs) continue;
-    index = i;
-    break;
-  }
+  const index = indexData.hasTimeline
+    ? findPlaybackIndexForTargetMs(indexData.timesMs, targetMs)
+    : clean.findIndex((point, pointIndex) => (
+      pointIndex > 0 && (pointTimeMs(point) ?? -Infinity) >= targetMs
+    ));
+  const safeIndex = index > 0 ? index : clean.length - 1;
 
-  const prev = clean[Math.max(0, index - 1)];
-  const curr = clean[index];
-  const prevMs = pointTimeMs(prev);
-  const currMs = pointTimeMs(curr);
+  const prev = clean[Math.max(0, safeIndex - 1)];
+  const curr = clean[safeIndex];
+  const prevMs = indexData.timesMs?.[Math.max(0, safeIndex - 1)] ?? pointTimeMs(prev);
+  const currMs = indexData.timesMs?.[safeIndex] ?? pointTimeMs(curr);
   const ratio = prevMs != null && currMs != null && currMs > prevMs
     ? Math.max(0, Math.min(1, (targetMs - prevMs) / (currMs - prevMs)))
     : 1;
@@ -499,12 +531,12 @@ export function playbackPositionAtElapsed(points = [], elapsedSeconds = 0) {
   };
 
   return {
-    index,
+    index: safeIndex,
     point,
     heading: calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng),
     ratio,
-    fromIndex: Math.max(0, index - 1),
-    toIndex: index,
+    fromIndex: Math.max(0, safeIndex - 1),
+    toIndex: safeIndex,
   };
 }
 

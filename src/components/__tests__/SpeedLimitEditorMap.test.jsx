@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { buildSpeedMapSections, buildSplitCorrections, speedLimitColor } from '@/lib/speedLimitMapSections';
+import {
+  buildSpeedMapSections,
+  buildSplitCorrections,
+  findMergeableSpeedSection,
+  filterSpeedMapSections,
+  mergeSpeedSections,
+  snapSectionPointsToTripRoutes,
+  speedLimitColor,
+  summarizeSpeedMapSections,
+} from '@/lib/speedLimitMapSections';
 import { geohashEncode } from '@/lib/localSpeedKnowledge';
 import { tripCrossesCorrection } from '@/lib/localSpeedScoreRefresh';
 
@@ -25,6 +34,33 @@ describe('SpeedLimitEditorMap helpers', () => {
 
     expect(sections.some((section) => section.geohash === savedHash && section.saved && section.limitKmh === 40)).toBe(true);
     expect(sections.some((section) => !section.saved)).toBe(true);
+  });
+
+  it('keeps opposite-direction saved rules separate on the map', () => {
+    const point = { lat: 43.6501, lng: -79.3801, speed_limit_road_name: 'King Street' };
+    const geohash = geohashEncode(point.lat, point.lng);
+    const sections = buildSpeedMapSections([], [
+      {
+        id: 'eastbound',
+        geohash,
+        ...point,
+        limitKmh: 40,
+        directionMode: 'forward',
+        source: 'user_confirmed_posted_sign',
+      },
+      {
+        id: 'westbound',
+        geohash,
+        ...point,
+        limitKmh: 50,
+        directionMode: 'reverse',
+        source: 'user_confirmed_posted_sign',
+      },
+    ]);
+
+    expect(sections).toHaveLength(2);
+    expect(sections.map((section) => section.sectionKey).sort()).toEqual(['eastbound', 'westbound']);
+    expect(sections.map((section) => section.limitKmh).sort()).toEqual([40, 50]);
   });
 
   it('uses distinct colors for unset, urban, and highway limits', () => {
@@ -109,6 +145,122 @@ describe('SpeedLimitEditorMap helpers', () => {
     });
   });
 
+  it('does not reopen an acknowledged saved-vs-observed conflict until evidence changes', () => {
+    const point = {
+      lat: 43.6501,
+      lng: -79.3801,
+      speed_limit_road_name: 'King Street',
+      speed_limit_kmh: 70,
+      speed_limit_source: 'openstreetmap',
+    };
+    const geohash = geohashEncode(point.lat, point.lng);
+    const [section] = buildSpeedMapSections([{
+      id: 'trip-acknowledged-conflict',
+      status: 'completed',
+      route_points: [point],
+    }], [{
+      geohash,
+      lat: point.lat,
+      lng: point.lng,
+      limitKmh: 50,
+      source: 'user_confirmed_posted_sign',
+      conflictResolution: {
+        savedLimitKmh: 50,
+        observedLimitKmh: 70,
+        deltaKmh: 20,
+        action: 'kept_saved_limit',
+      },
+    }]);
+
+    expect(section.conflict).toBeNull();
+
+    const [changedEvidenceSection] = buildSpeedMapSections([{
+      id: 'trip-reopened-conflict',
+      status: 'completed',
+      route_points: [{ ...point, speed_limit_kmh: 80 }],
+    }], [{
+      geohash,
+      lat: point.lat,
+      lng: point.lng,
+      limitKmh: 50,
+      source: 'user_confirmed_posted_sign',
+      conflictResolution: {
+        savedLimitKmh: 50,
+        observedLimitKmh: 70,
+        deltaKmh: 20,
+        action: 'kept_saved_limit',
+      },
+    }]);
+
+    expect(changedEvidenceSection.conflict).toMatchObject({
+      savedLimitKmh: 50,
+      observedLimitKmh: 80,
+      deltaKmh: 30,
+    });
+  });
+
+  it('limits rendered geometry for dense road sections while retaining endpoints', () => {
+    const points = Array.from({ length: 500 }, (_, index) => ({
+      lat: 43.65 + index * 0.000001,
+      lng: -79.38 + index * 0.000001,
+      speed_limit_road_name: 'Dense Street',
+    }));
+    const [section] = buildSpeedMapSections([{
+      id: 'trip-dense',
+      status: 'completed',
+      route_points: points,
+    }], []);
+
+    expect(section.sectionPoints.length).toBeLessThanOrEqual(80);
+    expect(section.sectionPoints[0]).toEqual({ lat: points[0].lat, lng: points[0].lng });
+    expect(section.sectionPoints.at(-1)).toEqual({ lat: points.at(-1).lat, lng: points.at(-1).lng });
+  });
+
+  it('summarizes and filters advanced map layers', () => {
+    const savedPoint = {
+      lat: 43.6501,
+      lng: -79.3801,
+      speed_limit_road_name: 'King Street',
+      speed_limit_kmh: 70,
+      speed_limit_source: 'openstreetmap',
+    };
+    const observedPoint = {
+      lat: 43.6601,
+      lng: -79.3901,
+      speed_limit_road_name: 'Queen Street',
+      speed_limit_kmh: 40,
+      speed_limit_source: 'region_default_estimate',
+    };
+    const unsetPoint = {
+      lat: 43.6701,
+      lng: -79.4001,
+      speed_limit_road_name: 'Dundas Street',
+    };
+    const sections = buildSpeedMapSections([{
+      id: 'trip-layers',
+      status: 'completed',
+      route_points: [savedPoint, observedPoint, unsetPoint],
+    }], [{
+      geohash: geohashEncode(savedPoint.lat, savedPoint.lng),
+      lat: savedPoint.lat,
+      lng: savedPoint.lng,
+      limitKmh: 50,
+      source: 'user_confirmed_posted_sign',
+    }]);
+
+    expect(summarizeSpeedMapSections(sections)).toMatchObject({
+      total: 3,
+      conflicts: 1,
+      observed: 1,
+      unset: 1,
+      savedRules: 1,
+    });
+    expect(filterSpeedMapSections(sections, {
+      layers: { conflicts: false, saved: false, observed: true, unset: false },
+    }).map((section) => section.roadName)).toEqual(['Queen Street']);
+    expect(filterSpeedMapSections(sections, { query: 'dundas' })).toHaveLength(1);
+  });
+
   it('splits traced saved sections into two child corrections', () => {
     const section = {
       geohash: 'original',
@@ -158,5 +310,50 @@ describe('SpeedLimitEditorMap helpers', () => {
     expect(tripCrossesCorrection({
       route_points: [{ lat: 43.655, lng: -79.3806 }],
     }, correction)).toBe(false);
+  });
+
+  it('snaps traced points to nearby recorded route geometry', () => {
+    const snapped = snapSectionPointsToTripRoutes([
+      { lat: 43.65005, lng: -79.38095 },
+      { lat: 43.65005, lng: -79.38005 },
+    ], [{
+      route_points: [
+        { lat: 43.6500, lng: -79.3810 },
+        { lat: 43.6500, lng: -79.3800 },
+      ],
+    }]);
+
+    expect(snapped).toEqual([
+      { lat: 43.6500, lng: -79.3810 },
+      { lat: 43.6500, lng: -79.3800 },
+    ]);
+  });
+
+  it('finds and merges compatible nearby saved sections', () => {
+    const first = {
+      geohash: 'first',
+      saved: true,
+      roadName: 'King Street',
+      limitKmh: 50,
+      sectionPoints: [
+        { lat: 43.6500, lng: -79.3810 },
+        { lat: 43.6500, lng: -79.3805 },
+      ],
+    };
+    const second = {
+      geohash: 'second',
+      saved: true,
+      roadName: 'King Street',
+      limitKmh: 50,
+      sectionPoints: [
+        { lat: 43.6500, lng: -79.38045 },
+        { lat: 43.6500, lng: -79.3800 },
+      ],
+    };
+
+    expect(findMergeableSpeedSection(first, [first, second])?.candidate.geohash).toBe('second');
+    const merged = mergeSpeedSections(first, second);
+    expect(merged.mergedGeohashes).toEqual(['first', 'second']);
+    expect(merged.sectionPoints.length).toBeGreaterThanOrEqual(3);
   });
 });

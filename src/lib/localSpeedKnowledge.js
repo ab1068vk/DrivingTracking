@@ -1,5 +1,7 @@
 import { isInsidePrivacyZone } from '@/lib/privacyZones';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
+import { assessSpeedLimitEvidence } from '@/lib/speedLimitConfidence';
+import { SPEED_KNOWLEDGE_STORAGE_KEY } from '@/lib/speedKnowledgeRepository';
 
 // CHANGES (session):
 // - Added LocalSpeedKnowledge with geohash-backed local speed cache, user corrections, pruning, and privacy-zone guards.
@@ -10,14 +12,15 @@ import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 // - Split user corrections into confirmed posted signs and user-entered estimates.
 // - Restricted learned-cache writes to OSM maxspeed and user-confirmed posted sign sources.
 
-export const STORAGE_KEY = 'speed_knowledge_v1';
+export const STORAGE_KEY = SPEED_KNOWLEDGE_STORAGE_KEY;
 export const SPEED_KNOWLEDGE_CHANGED_EVENT = 'speed-knowledge-changed';
 export const CELL_PRECISION = 6;
 export const FALLBACK_PRECISION = 5;
 const CACHEABLE_SOURCES = new Set(['openstreetmap', 'user_confirmed_posted_sign']);
 const NULL_ISLAND_EPSILON = 0.001;
 const ROAD_SECTION_MATCH_RADIUS_KM = 0.08;
-const DIRECTION_MATCH_TOLERANCE_DEG = 100;
+const DIRECTION_MATCH_TOLERANCE_DEG = 60;
+const HISTORY_LIMIT = 20;
 
 const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
 
@@ -133,6 +136,10 @@ function directionMode(value) {
   return ['forward', 'reverse'].includes(value) ? value : 'both';
 }
 
+function createCorrectionId() {
+  return `speed-rule-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function sectionBearing(points = []) {
   const clean = points.filter((point) => isUsableCoordinate(Number(point?.lat), Number(point?.lng)));
   if (clean.length < 2) return null;
@@ -193,6 +200,37 @@ function normalizeTimeRule(rule = null) {
   };
 }
 
+function correctionSpecificity(correction = {}) {
+  return (directionMode(correction.directionMode) === 'both' ? 0 : 2) +
+    (normalizeTimeRule(correction.timeRule).enabled ? 1 : 0);
+}
+
+function correctionIdentity(correction = {}) {
+  const mode = directionMode(correction.directionMode);
+  const bearing = correctionBearing(correction);
+  const timeRule = normalizeTimeRule(correction.timeRule);
+  return JSON.stringify({
+    geohash: correction.geohash || '',
+    mode,
+    bearing: mode === 'both' || !Number.isFinite(bearing) ? null : Math.round(bearing / 15) * 15 % 360,
+    timeRule: timeRule.enabled
+      ? {
+        days: timeRule.days,
+        startMinutes: timeRule.startMinutes,
+        endMinutes: timeRule.endMinutes,
+      }
+      : null,
+  });
+}
+
+function correctionMatchesSelector(correction = {}, selector = '') {
+  return Boolean(selector) && (
+    correction.id === selector ||
+    correction.ruleId === selector ||
+    correction.geohash === selector
+  );
+}
+
 function correctionActiveAt(correction = {}, timestampMs = null) {
   const rule = normalizeTimeRule(correction.timeRule);
   if (!rule.enabled) return true;
@@ -229,8 +267,40 @@ export function geohashNeighboursInclude(geohash, lat, lng, radiusKm) {
 }
 
 function defaultData() {
-  return { cells: {}, corrections: [] };
+  return { cells: {}, corrections: [], history: { undo: [], redo: [] } };
 }
+
+const cloneData = (data) => {
+  if (typeof structuredClone === 'function') return structuredClone(data);
+  return JSON.parse(JSON.stringify(data));
+};
+
+const snapshotData = (data) => {
+  const snapshot = cloneData(data || defaultData());
+  delete snapshot.history;
+  return snapshot;
+};
+
+const normalizeData = (data) => ({
+  ...defaultData(),
+  ...(data || {}),
+  cells: data?.cells && typeof data.cells === 'object' ? data.cells : {},
+  corrections: Array.isArray(data?.corrections)
+    ? data.corrections.map((correction, index) => ({
+      ...correction,
+      id: correction?.id || correction?.ruleId || [
+        'legacy-speed-rule',
+        correction?.geohash || 'unknown',
+        directionMode(correction?.directionMode),
+        index,
+      ].join('-'),
+    }))
+    : [],
+  history: {
+    undo: Array.isArray(data?.history?.undo) ? data.history.undo : [],
+    redo: Array.isArray(data?.history?.redo) ? data.history.redo : [],
+  },
+});
 
 function emitSpeedKnowledgeChanged(detail = {}) {
   if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
@@ -269,6 +339,18 @@ function correctionSource(correction) {
 
 function correctionConfidence(source) {
   return source === 'user_confirmed_posted_sign' ? 0.92 : 0.75;
+}
+
+function verificationStatus(source) {
+  return source === 'user_confirmed_posted_sign' ? 'confirmed_posted_sign' : 'user_estimate';
+}
+
+function auditEntry(action, details = {}) {
+  return {
+    action,
+    changedAt: new Date().toISOString(),
+    ...details,
+  };
 }
 
 function pointSource(point) {
@@ -313,15 +395,11 @@ function applyBucketLimit(cell, timestampMs) {
   if (timestampMs == null || !cell?.timeOfDayBuckets) return cell;
   const bucket = cell.timeOfDayBuckets[timeToBucket(timestampMs)];
   const bucketLimit = Number(bucket?.p85Kmh);
-  const baseLimit = Number(cell?.limitKmh);
-  if (!Number.isFinite(bucketLimit) || !Number.isFinite(baseLimit)) return cell;
-  if (baseLimit - bucketLimit <= 10) return cell;
+  if (!Number.isFinite(bucketLimit)) return cell;
   return {
     ...cell,
-    limitKmh: Math.max(5, Math.round(bucketLimit)),
-    source: 'time_of_day_bucket',
     timeOfDayBucket: bucket,
-    baseLimitKmh: baseLimit,
+    observedTimeOfDayP85Kmh: Math.max(0, Math.round(bucketLimit)),
   };
 }
 
@@ -331,7 +409,84 @@ export class LocalSpeedKnowledge {
   }
 
   async _load() {
-    return (await this._store.get(STORAGE_KEY)) ?? defaultData();
+    return normalizeData((await this._store.get(STORAGE_KEY)) ?? defaultData());
+  }
+
+  async _commit(data, previous, action, historyGroup = null) {
+    const history = normalizeData(data).history;
+    const last = history.undo.at(-1);
+    if (!historyGroup || last?.historyGroup !== historyGroup) {
+      history.undo.push({
+        action,
+        changedAt: new Date().toISOString(),
+        historyGroup,
+        data: previous,
+      });
+      history.undo = history.undo.slice(-HISTORY_LIMIT);
+    }
+    history.redo = [];
+    data.history = history;
+    await this._store.set(STORAGE_KEY, data);
+  }
+
+  async exportData() {
+    return snapshotData(await this._load());
+  }
+
+  async replaceData(value, action = 'restore_backup') {
+    const current = await this._load();
+    const next = normalizeData(value);
+    await this._commit(next, snapshotData(current), action);
+    emitSpeedKnowledgeChanged({ action });
+    return true;
+  }
+
+  async getHistoryState() {
+    const data = await this._load();
+    return {
+      canUndo: data.history.undo.length > 0,
+      canRedo: data.history.redo.length > 0,
+      undoLabel: data.history.undo.at(-1)?.action || '',
+      redoLabel: data.history.redo.at(-1)?.action || '',
+    };
+  }
+
+  async undo() {
+    const current = await this._load();
+    const entry = current.history.undo.pop();
+    if (!entry?.data) return false;
+    const restored = normalizeData(entry.data);
+    restored.history.undo = current.history.undo;
+    restored.history.redo = [
+      ...current.history.redo,
+      {
+        action: entry.action,
+        changedAt: new Date().toISOString(),
+        data: snapshotData(current),
+      },
+    ].slice(-HISTORY_LIMIT);
+    await this._store.set(STORAGE_KEY, restored);
+    emitSpeedKnowledgeChanged({ action: 'undo', originalAction: entry.action });
+    return true;
+  }
+
+  async redo() {
+    const current = await this._load();
+    const entry = current.history.redo.pop();
+    if (!entry?.data) return false;
+    const restored = normalizeData(entry.data);
+    restored.history.undo = [
+      ...current.history.undo,
+      {
+        action: entry.action,
+        changedAt: new Date().toISOString(),
+        data: snapshotData(current),
+      },
+    ].slice(-HISTORY_LIMIT);
+    restored.history.redo = current.history.redo;
+    await this._store.set(STORAGE_KEY, restored);
+    emitSpeedKnowledgeChanged({ action: 'redo', originalAction: entry.action });
+    return true;
   }
 
   _resolveForPoint(data, lat, lng, timestampMs = null, options = {}) {
@@ -343,13 +498,30 @@ export class LocalSpeedKnowledge {
           headingDeg: options.headingDeg ?? options.heading ?? null,
         })
       ))
-      .sort((a, b) => new Date(b.appliedAt || 0).getTime() - new Date(a.appliedAt || 0).getTime())[0];
+      .sort((a, b) => (
+        correctionSpecificity(b) - correctionSpecificity(a) ||
+        new Date(b.appliedAt || 0).getTime() - new Date(a.appliedAt || 0).getTime()
+      ))[0];
     if (correction) {
       const source = correctionSource(correction);
+      const evidence = assessSpeedLimitEvidence({
+        ...correction,
+        source,
+        confidence: correctionConfidence(source),
+      });
       return {
         limitKmh: correction.limitKmh,
         source,
-        confidence: correctionConfidence(source),
+        confidence: evidence.confidence,
+        confidenceLevel: evidence.level,
+        verificationStatus: correction.verificationStatus || verificationStatus(source),
+        verifiedAt: correction.verifiedAt || correction.appliedAt || null,
+        evidenceCount: Number(correction.evidenceCount) || 1,
+        stale: evidence.stale,
+        needsReview: evidence.needsReview,
+        geohash: correction.geohash,
+        correctionId: correction.id || correction.ruleId || null,
+        conflictResolution: correction.conflictResolution || null,
       };
     }
 
@@ -411,8 +583,12 @@ export class LocalSpeedKnowledge {
             source: 'trip_consensus',
             confidence: 0.55,
             tripCount: 1,
+            evidenceCount: 1,
             firstSeenAt: now,
             lastUpdatedAt: now,
+            verifiedAt: now,
+            verificationStatus: 'learned_from_confirmed_source',
+            auditTrail: [auditEntry('learned', { limitKmh, pointSource: pointSource(point) })],
           };
           updateTimeOfDayBuckets(cell, point, limitKmh);
           data.cells[geohash] = cell;
@@ -421,8 +597,14 @@ export class LocalSpeedKnowledge {
           const cell = {
             ...existing,
             tripCount: n,
+            evidenceCount: n,
             confidence: Math.min(0.85, 0.50 + n * 0.035),
             lastUpdatedAt: now,
+            verifiedAt: now,
+            auditTrail: [
+              ...(Array.isArray(existing.auditTrail) ? existing.auditTrail : []),
+              auditEntry('evidence_added', { limitKmh, pointSource: pointSource(point) }),
+            ].slice(-25),
           };
           updateTimeOfDayBuckets(cell, point, limitKmh);
           data.cells[geohash] = cell;
@@ -432,6 +614,15 @@ export class LocalSpeedKnowledge {
             ...existing,
             confidence: Math.max(0.25, (Number(existing.confidence) || 0) - 0.12),
             lastUpdatedAt: now,
+            evidenceCount: (Number(existing.evidenceCount ?? existing.tripCount) || 1) + 1,
+            auditTrail: [
+              ...(Array.isArray(existing.auditTrail) ? existing.auditTrail : []),
+              auditEntry('conflict_detected', {
+                existingLimitKmh: Number(existing.limitKmh),
+                observedLimitKmh: limitKmh,
+                pointSource: pointSource(point),
+              }),
+            ].slice(-25),
           };
           updateTimeOfDayBuckets(cell, point, limitKmh);
           if (conflictDelta > 10) {
@@ -464,14 +655,15 @@ export class LocalSpeedKnowledge {
 
     try {
       const data = await this._load();
+      const previous = snapshotData(data);
       data.cells ??= {};
       data.corrections ??= [];
       const correctionType = source === 'user_confirmed_posted_sign'
         ? 'user_confirmed_posted_sign'
         : 'user_entered_estimate';
       const geohash = geohashEncode(latitude, longitude, CELL_PRECISION);
-      data.corrections = data.corrections.filter((correction) => correction?.geohash !== geohash);
-      data.corrections.push({
+      const nextCorrection = {
+        id: createCorrectionId(),
         geohash,
         lat: latitude,
         lng: longitude,
@@ -480,6 +672,9 @@ export class LocalSpeedKnowledge {
         note,
         source: correctionType,
         appliedAt: new Date().toISOString(),
+        verifiedAt: correctionType === 'user_confirmed_posted_sign' ? new Date().toISOString() : null,
+        verificationStatus: verificationStatus(correctionType),
+        evidenceCount: 1,
         expiresAt,
         roadName: String(metadata.roadName || '').trim(),
         contextLabel: String(metadata.contextLabel || '').trim(),
@@ -496,8 +691,17 @@ export class LocalSpeedKnowledge {
           .filter((point) => isUsableCoordinate(point.lat, point.lng))
           .slice(0, 24),
         editHistory: [],
-      });
-      await this._store.set(STORAGE_KEY, data);
+        auditTrail: [
+          auditEntry('created', {
+            limitKmh: limit,
+            source: correctionType,
+          }),
+        ],
+      };
+      const identity = correctionIdentity(nextCorrection);
+      data.corrections = data.corrections.filter((correction) => correctionIdentity(correction) !== identity);
+      data.corrections.push(nextCorrection);
+      await this._commit(data, previous, 'save_correction', metadata.historyGroup || null);
       recordSpeedKnowledgeEvent('save_correction', { source: correctionType });
       emitSpeedKnowledgeChanged({ action: 'save_correction', geohash, source: correctionType });
       return true;
@@ -527,6 +731,12 @@ export class LocalSpeedKnowledge {
               : 'geohash_cell_center_legacy',
             source,
             confidence: correctionConfidence(source),
+            ...assessSpeedLimitEvidence({
+              ...correction,
+              source,
+              confidence: correctionConfidence(source),
+            }),
+            verificationStatus: correction.verificationStatus || verificationStatus(source),
           };
         })
         .sort((a, b) => new Date(b.appliedAt || 0).getTime() - new Date(a.appliedAt || 0).getTime());
@@ -536,41 +746,73 @@ export class LocalSpeedKnowledge {
     }
   }
 
-  async updateUserCorrection(geohash, limitKmh, source = 'user_entered_estimate', note = '', metadata = {}) {
+  async updateUserCorrection(selector, limitKmh, source = 'user_entered_estimate', note = '', metadata = {}) {
     const limit = Number(limitKmh);
-    if (!geohash || !Number.isFinite(limit) || limit <= 0) return false;
+    if (!selector || !Number.isFinite(limit) || limit <= 0) return false;
     try {
       const data = await this._load();
+      const previous = snapshotData(data);
       data.corrections ??= [];
-      const index = data.corrections.findIndex((correction) => correction?.geohash === geohash);
+      const index = data.corrections.findIndex((correction) => correctionMatchesSelector(correction, selector));
       if (index < 0) return false;
       const correctionType = source === 'user_confirmed_posted_sign'
         ? 'user_confirmed_posted_sign'
         : 'user_entered_estimate';
+      const previousCorrection = data.corrections[index];
+      const previousLimit = Number(previousCorrection.limitKmh);
+      const conflictResolution = metadata.conflictResolution && typeof metadata.conflictResolution === 'object'
+        ? {
+          savedLimitKmh: Math.round(Number(metadata.conflictResolution.savedLimitKmh ?? limit)),
+          observedLimitKmh: Math.round(Number(metadata.conflictResolution.observedLimitKmh)),
+          deltaKmh: Math.round(Number(metadata.conflictResolution.deltaKmh)),
+          action: metadata.conflictResolution.action || 'resolved',
+          source: correctionType,
+          note: String(metadata.conflictResolution.note || '').slice(0, 240),
+          resolvedAt: new Date().toISOString(),
+        }
+        : undefined;
       data.corrections[index] = {
-        ...data.corrections[index],
+        ...previousCorrection,
+        id: previousCorrection.id || previousCorrection.ruleId || createCorrectionId(),
         limitKmh: limit,
         source: correctionType,
         note,
         appliedAt: new Date().toISOString(),
+        verifiedAt: correctionType === 'user_confirmed_posted_sign'
+          ? new Date().toISOString()
+          : previousCorrection.verifiedAt || null,
+        verificationStatus: verificationStatus(correctionType),
+        evidenceCount: Math.max(1, Number(previousCorrection.evidenceCount) || 1),
+        ...(conflictResolution ? { conflictResolution } : Number.isFinite(previousLimit) && Math.round(previousLimit) !== Math.round(limit) ? { conflictResolution: null } : {}),
         ...(metadata.expiresAt !== undefined ? { expiresAt: metadata.expiresAt || null } : {}),
         ...(metadata.roadName != null ? { roadName: String(metadata.roadName).trim() } : {}),
         ...(metadata.directionMode != null ? { directionMode: directionMode(metadata.directionMode) } : {}),
         ...(metadata.directionBearing != null ? {
           directionBearing: Number.isFinite(Number(metadata.directionBearing))
             ? ((Number(metadata.directionBearing) % 360) + 360) % 360
-            : data.corrections[index].directionBearing,
+            : previousCorrection.directionBearing,
         } : {}),
         ...(metadata.timeRule != null ? { timeRule: normalizeTimeRule(metadata.timeRule) } : {}),
         editHistory: [
-          ...(Array.isArray(data.corrections[index].editHistory) ? data.corrections[index].editHistory : []),
+          ...(Array.isArray(previousCorrection.editHistory) ? previousCorrection.editHistory : []),
           {
             changedAt: new Date().toISOString(),
-            previousLimitKmh: data.corrections[index].limitKmh,
-            previousSource: data.corrections[index].source,
-            previousNote: data.corrections[index].note || '',
+            previousLimitKmh: previousCorrection.limitKmh,
+            previousSource: previousCorrection.source,
+            previousNote: previousCorrection.note || '',
           },
         ].slice(-10),
+        auditTrail: [
+          ...(Array.isArray(previousCorrection.auditTrail) ? previousCorrection.auditTrail : []),
+          auditEntry(conflictResolution ? 'conflict_resolution_saved' : 'updated', {
+            previousLimitKmh: previousCorrection.limitKmh,
+            nextLimitKmh: limit,
+            previousSource: previousCorrection.source,
+            nextSource: correctionType,
+            conflictAction: conflictResolution?.action || null,
+            observedLimitKmh: conflictResolution?.observedLimitKmh || null,
+          }),
+        ].slice(-25),
         ...(Array.isArray(metadata.sectionPoints) ? {
           sectionPoints: metadata.sectionPoints
             .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng) }))
@@ -578,30 +820,41 @@ export class LocalSpeedKnowledge {
             .slice(0, 24),
         } : {}),
       };
-      await this._store.set(STORAGE_KEY, data);
+      await this._commit(data, previous, 'update_correction', metadata.historyGroup || null);
       recordSpeedKnowledgeEvent('update_correction', { source: correctionType });
-      emitSpeedKnowledgeChanged({ action: 'update_correction', geohash, source: correctionType });
+      emitSpeedKnowledgeChanged({
+        action: 'update_correction',
+        geohash: previousCorrection.geohash,
+        correctionId: data.corrections[index].id,
+        source: correctionType,
+      });
       return true;
     } catch (error) {
-      logSpeedKnowledgeFailure('update_correction', error, { source, has_geohash: Boolean(geohash) });
+      logSpeedKnowledgeFailure('update_correction', error, { source, has_selector: Boolean(selector) });
       throw error;
     }
   }
 
-  async removeUserCorrection(geohash) {
-    if (!geohash) return false;
+  async removeUserCorrection(selector, options = {}) {
+    if (!selector) return false;
     try {
       const data = await this._load();
+      const previous = snapshotData(data);
       data.corrections ??= [];
       const before = data.corrections.length;
-      data.corrections = data.corrections.filter((correction) => correction?.geohash !== geohash);
+      const exactIdMatch = data.corrections.some((correction) => correction.id === selector || correction.ruleId === selector);
+      data.corrections = data.corrections.filter((correction) => (
+        exactIdMatch
+          ? correction.id !== selector && correction.ruleId !== selector
+          : correction.geohash !== selector
+      ));
       if (data.corrections.length === before) return false;
-      await this._store.set(STORAGE_KEY, data);
+      await this._commit(data, previous, 'remove_correction', options.historyGroup || null);
       recordSpeedKnowledgeEvent('remove_correction');
-      emitSpeedKnowledgeChanged({ action: 'remove_correction', geohash });
+      emitSpeedKnowledgeChanged({ action: 'remove_correction', selector });
       return true;
     } catch (error) {
-      logSpeedKnowledgeFailure('remove_correction', error, { has_geohash: Boolean(geohash) });
+      logSpeedKnowledgeFailure('remove_correction', error, { has_selector: Boolean(selector) });
       throw error;
     }
   }
@@ -609,6 +862,7 @@ export class LocalSpeedKnowledge {
   async prune(maxAgeDays = 180) {
     try {
       const data = await this._load();
+      const previous = snapshotData(data);
       data.cells ??= {};
       data.corrections ??= [];
       const cutoff = Date.now() - maxAgeDays * 86400000;
@@ -617,7 +871,7 @@ export class LocalSpeedKnowledge {
         if (!Number.isFinite(updatedAt) || updatedAt < cutoff) delete data.cells[geohash];
       }
       data.corrections = data.corrections.filter(isFreshCorrection);
-      await this._store.set(STORAGE_KEY, data);
+      await this._commit(data, previous, 'prune');
       emitSpeedKnowledgeChanged({ action: 'prune' });
     } catch (error) {
       logSpeedKnowledgeFailure('prune', error, { max_age_days: maxAgeDays });
@@ -632,11 +886,12 @@ export class LocalSpeedKnowledge {
       .map(([geohash, cell]) => ({ geohash, ...cell }));
   }
 
-  async resolveConflict(geohash, confirmedLimitKmh, source = 'user_confirmed_posted_sign', note = '') {
+  async resolveConflict(geohash, confirmedLimitKmh, source = 'user_confirmed_posted_sign', note = '', metadata = {}) {
     const limitKmh = Number(confirmedLimitKmh);
     if (!geohash || !Number.isFinite(limitKmh) || limitKmh <= 0) return false;
     try {
       const data = await this._load();
+      const previous = snapshotData(data);
       data.cells ??= {};
       const cell = data.cells[geohash];
       if (!cell) return false;
@@ -655,8 +910,19 @@ export class LocalSpeedKnowledge {
         conflictResolvedSource: resolvedSource,
         conflictResolvedNote: note || '',
         lastUpdatedAt: resolvedAt,
+        verifiedAt: resolvedSource === 'user_confirmed_posted_sign' ? resolvedAt : cell.verifiedAt || null,
+        verificationStatus: verificationStatus(resolvedSource),
+        evidenceCount: Math.max(1, Number(cell.evidenceCount ?? cell.tripCount) || 1),
+        auditTrail: [
+          ...(Array.isArray(cell.auditTrail) ? cell.auditTrail : []),
+          auditEntry('conflict_resolved', {
+            previousLimitKmh: cell.limitKmh,
+            nextLimitKmh: limitKmh,
+            source: resolvedSource,
+          }),
+        ].slice(-25),
       };
-      await this._store.set(STORAGE_KEY, data);
+      await this._commit(data, previous, 'resolve_conflict', metadata.historyGroup || null);
       recordSpeedKnowledgeEvent('resolve_conflict', { source: resolvedSource });
       emitSpeedKnowledgeChanged({ action: 'resolve_conflict', geohash, source: resolvedSource });
       return true;

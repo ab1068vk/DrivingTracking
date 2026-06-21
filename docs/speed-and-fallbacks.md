@@ -1,6 +1,6 @@
 # Road Sage Speed, Speed-Limit Fallback, and Voice Alert Documentation
 
-Last reviewed: 2026-06-15
+Last reviewed: 2026-06-20
 
 This document explains the current Road Sage speed pipeline: how speed is recorded, cleaned, scored, compared against speed limits, enriched by OpenStreetMap, and spoken through live voice alerts.
 
@@ -19,6 +19,25 @@ The main fallback order is:
 
 For most saved trips without road data, speed-limit scoring is labeled as `gps_inferred_speed_limit`, and inferred speeding penalties are half-weighted.
 
+## Local Speed Intelligence
+
+Saved and observed limits now use a shared evidence contract:
+
+- `src/lib/speedLimitConfidence.js` defines source authority, base confidence, scoring weight, freshness windows, and review state.
+- `src/lib/speedLimitIntelligence.js` ranks review work, builds correction recommendations, previews affected trips and likely over-limit samples, and summarizes trip coverage.
+- Confirmed posted signs and OSM `maxspeed` data remain distinct from estimates and inferred traffic behavior.
+- Observed driving speed can request review, but it cannot automatically become legal posted-sign evidence.
+- User corrections preserve verification status, evidence count, freshness metadata, and a bounded audit trail.
+- The saved-speed map aggregates evidence across matching trips, supports route snapping, split and compatible-section merge preparation, and previews impact before save.
+- Speed Analysis reports total limit coverage separately from verified coverage and links uncertain sections back to road-speed review.
+- Speed knowledge is stored in the local `drivesense_speed_knowledge` IndexedDB database. Existing `speed_knowledge_v1` local-storage or Capacitor Preference data is migrated automatically and retained as a fallback only when IndexedDB is unavailable.
+- User operations keep a bounded local undo/redo history. Grouped split, merge, conflict-review, and bulk actions undo as one operation.
+- The full-app backup preserves saved road-speed rules, verification metadata, edit history, and bounded audit trails. The speed page also supports an optional speed-only JSON export and restore for transferring or reviewing speed rules without exposing trips and other app data; speed-only restores can be undone.
+- Local health checks flag unresolved conflicts, expired rules, stale learned evidence, invalid geometry, invalid limits, and same-road limit disagreements.
+- Saved roads, trip geometry, labels, and editing remain available offline. Standard OpenStreetMap tiles are not bulk-downloaded or persistently cached; the base map requires internet.
+
+Review priority is based on conflict severity, missing posted data, confidence, freshness, affected trips, score impact, and available route samples. These values organize review work; they do not establish the legal speed limit.
+
 ## Source Map
 
 | Area | Main files |
@@ -26,6 +45,8 @@ For most saved trips without road data, speed-limit scoring is labeled as `gps_i
 | Live GPS capture and point normalization | `src/lib/trackingService.js`, `src/lib/tripEngine.js` |
 | Trip stats, speed cleanup, inferred zones, events, scoring | `src/lib/tripEngine.js` |
 | OSM speed-limit lookup and road-type default tables | `src/lib/speedLimitSource.js` |
+| IndexedDB speed-rule persistence and migration | `src/lib/speedKnowledgeRepository.js` |
+| Speed-rule health diagnostics | `src/lib/speedKnowledgeHealth.js` |
 | Manual `Get Road Data`, OSRM, weather, and trip rescore | `src/lib/openSourceTripContext.js`, `src/lib/roadContextQueue.js` |
 | Live dashboard speed checks and posted warnings | `src/pages/Dashboard.jsx` |
 | Live coach overlay and speeding notifications | `src/components/LiveCoachOverlay.jsx`, `src/lib/notificationService.js` |

@@ -20,6 +20,7 @@ import PhoneUsePermissionBanner from '@/components/PhoneUsePermissionBanner';
 import SpeedLimitConflictReview from '@/components/SpeedLimitConflictReview';
 import { speedLimitReviewNeededForTrip } from '@/lib/speedLimitReview';
 import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
+import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import {
   buildDrivingThresholds,
   calculateSegmentMetrics,
@@ -356,10 +357,7 @@ export default function TripDetail() {
         if (!cancelled) setSpeedLimitLocalKnowledgeResults([]);
         return;
       }
-      const knowledge = new LocalSpeedKnowledge({
-        get: (key) => getJson(key, null),
-        set: (key, value) => setJson(key, value),
-      });
+      const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
       const results = await prefetchLocalKnowledge(points, knowledge).catch(() => points.map(() => null));
       if (!cancelled) setSpeedLimitLocalKnowledgeResults(results);
     };
@@ -1041,6 +1039,28 @@ export default function TripDetail() {
     : speedLimitContext
       ? 'Road data was checked, but no usable speed limits are available for this trip, so the speed-limit layer cannot visibly change the map yet.'
       : 'Before getting road data, this map shows GPS speed bands and event markers only.';
+  const speedReviewRows = [
+    {
+      label: 'Moving avg',
+      value: formatSpeed(primaryAvgSpeedKmh, units),
+      detail: showOverallAvgSpeed ? `${formatSpeed(trip.avg_speed_kmh || 0, units)} incl. stops` : 'Stops excluded',
+    },
+    {
+      label: 'Max speed',
+      value: formatSpeed(trip.max_speed_kmh || 0, units),
+      detail: `${tripMapPointCount} GPS point${tripMapPointCount === 1 ? '' : 's'}`,
+    },
+    {
+      label: 'Speed events',
+      value: trip.speeding_events_count ?? 0,
+      detail: `${trip.rapid_accel_count || 0} accel, ${trip.harsh_brakes_count || 0} brake`,
+    },
+    {
+      label: 'Limit source',
+      value: hasPostedSpeedLimitEvidence ? 'Posted' : effectiveSpeedLimits.length ? 'Estimated' : 'Learning',
+      detail: effectiveSpeedLimits.length ? `${effectiveSpeedLimits.join(', ')} km/h used` : 'Get road data for limits',
+    },
+  ];
   const renderEventRow = ({ event: evt, originalIndex }, { diagnostic = false } = {}) => {
     const key = eventFeedbackKey(evt, originalIndex);
     const feedback = eventFeedback[key]?.verdict || null;
@@ -1904,6 +1924,40 @@ export default function TripDetail() {
       >
         <TripScoreOverview trip={trip} speedLimitSourceBreakdown={speedLimitSourceBreakdown} />
       </SectionErrorBoundary>
+      <motion.section
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.165 }}
+        className="rounded-3xl border border-border bg-card p-5 shadow-sm"
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Gauge className="h-5 w-5 text-primary" />
+              <h2 className="font-semibold">Speed Review</h2>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Big-picture speed summary for this drive. Open Speed Analysis for the replay map, timeline, speed bands, and exact moments.
+            </p>
+          </div>
+          <Link
+            to={`/trips/${trip.id}/speed`}
+            className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
+          >
+            <Gauge className="h-4 w-4" />
+            Speed Analysis
+          </Link>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {speedReviewRows.map((row) => (
+            <div key={row.label} className="rounded-2xl bg-secondary/50 p-3">
+              <div className="text-xs font-medium text-muted-foreground">{row.label}</div>
+              <div className="mt-1 font-grotesk text-xl font-bold">{row.value}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{row.detail}</div>
+            </div>
+          ))}
+        </div>
+      </motion.section>
       <PostTripCalibrationSurvey
         trip={trip}
         status={calibrationSurveyStatus}
@@ -3180,9 +3234,9 @@ function TripScoreOverview({ trip, speedLimitSourceBreakdown = null }) {
         <div className="flex items-start gap-2">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <div>
-            <h3 className="text-sm font-semibold">Your score changed because...</h3>
+            <h3 className="text-sm font-semibold">What shaped this score</h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              Top 3 read-only drivers from stored component scores and recorded events. This explains the main direction of the score without rewriting the trip.
+              Top 3 read-only drivers from stored component scores and recorded events. This does not reconstruct exact point deductions or rewrite the trip.
             </p>
           </div>
         </div>

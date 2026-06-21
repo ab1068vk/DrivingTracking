@@ -656,8 +656,16 @@ describe('backup speed knowledge', () => {
             source: 'trip_consensus',
             confidence: 0.7,
             tripCount: 3,
+            evidenceCount: 4,
             firstSeenAt: '2026-06-01T12:00:00.000Z',
             lastUpdatedAt: '2026-06-02T12:00:00.000Z',
+            verifiedAt: '2026-06-02T12:00:00.000Z',
+            verificationStatus: 'learned_from_confirmed_source',
+            auditTrail: [{
+              action: 'evidence_added',
+              changedAt: '2026-06-02T12:00:00.000Z',
+              pointSource: 'osm_maxspeed',
+            }],
           },
         },
         corrections: [
@@ -669,10 +677,24 @@ describe('backup speed knowledge', () => {
             note: 'school zone',
             source: 'user_confirmed_posted_sign',
             roadName: 'King Street',
+            verifiedAt: '2026-06-03T12:00:00.000Z',
+            verificationStatus: 'confirmed_posted_sign',
+            evidenceCount: 2,
             sectionPoints: [
               { lat: 43.7001, lng: -79.4001 },
               { lat: 43.7003, lng: -79.4003 },
             ],
+            editHistory: [{
+              changedAt: '2026-06-03T11:00:00.000Z',
+              previousLimitKmh: 50,
+              previousSource: 'user_entered_estimate',
+            }],
+            auditTrail: [{
+              action: 'updated',
+              changedAt: '2026-06-03T12:00:00.000Z',
+              previousLimitKmh: 50,
+              nextLimitKmh: 40,
+            }],
           },
           {
             geohash: 'dpz800',
@@ -691,7 +713,13 @@ describe('backup speed knowledge', () => {
       limitKmh: 50,
       source: 'trip_consensus',
       tripCount: 3,
+      evidenceCount: 4,
+      verificationStatus: 'learned_from_confirmed_source',
     });
+    expect(backup.speed_knowledge.cells.dpz83q.auditTrail).toEqual([expect.objectContaining({
+      action: 'evidence_added',
+      pointSource: 'osm_maxspeed',
+    })]);
     expect(backup.speed_knowledge.corrections).toHaveLength(1);
     expect(backup.speed_knowledge.corrections[0]).toMatchObject({
       geohash: 'dpz83q',
@@ -699,11 +727,26 @@ describe('backup speed knowledge', () => {
       source: 'user_confirmed_posted_sign',
       roadName: 'King Street',
       note: 'school zone',
+      verifiedAt: '2026-06-03T12:00:00.000Z',
+      verificationStatus: 'confirmed_posted_sign',
+      evidenceCount: 2,
     });
+    expect(backup.speed_knowledge.corrections[0].editHistory).toHaveLength(1);
+    expect(backup.speed_knowledge.corrections[0].auditTrail).toEqual([expect.objectContaining({
+      action: 'updated',
+      previousLimitKmh: 50,
+      nextLimitKmh: 40,
+    })]);
 
     const parsed = parseDriveSenseBackup(JSON.stringify(backup));
     expect(parsed.speed_knowledge.corrections).toHaveLength(1);
     expect(parsed.speed_knowledge.corrections[0].sectionPoints).toHaveLength(2);
+    expect(parsed.speed_knowledge.corrections[0]).toMatchObject({
+      verifiedAt: '2026-06-03T12:00:00.000Z',
+      verificationStatus: 'confirmed_posted_sign',
+      evidenceCount: 2,
+    });
+    expect(parsed.speed_knowledge.corrections[0].auditTrail).toHaveLength(1);
   });
 
   it('restores speed knowledge during backup import', async () => {

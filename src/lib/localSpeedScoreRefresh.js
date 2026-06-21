@@ -82,4 +82,48 @@ export async function refreshTripsCrossingLocalSpeedCorrection(correction, setti
   return results;
 }
 
+const changedKeys = (before = {}, after = {}) => {
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  return [...keys].filter((key) => (
+    JSON.stringify(before?.[key] ?? null) !== JSON.stringify(after?.[key] ?? null)
+  ));
+};
+
+const correctionsByGeohash = (corrections = []) => Object.fromEntries(
+  (Array.isArray(corrections) ? corrections : [])
+    .filter((correction) => correction?.geohash)
+    .map((correction) => [correction.geohash, correction])
+);
+
+export async function refreshTripsForLocalSpeedKnowledgeChanges(
+  beforeKnowledge = {},
+  afterKnowledge = {},
+  settings = localSettings.get()
+) {
+  const beforeCorrections = correctionsByGeohash(beforeKnowledge?.corrections);
+  const afterCorrections = correctionsByGeohash(afterKnowledge?.corrections);
+  const correctionKeys = changedKeys(beforeCorrections, afterCorrections);
+  const changedCorrections = correctionKeys.flatMap((geohash) => (
+    [beforeCorrections[geohash], afterCorrections[geohash]].filter(Boolean)
+  ));
+  const changedCellKeys = new Set(changedKeys(beforeKnowledge?.cells, afterKnowledge?.cells));
+  const changedCellGeohashes = [...changedCellKeys];
+
+  if (!changedCorrections.length && !changedCellKeys.size) return [];
+
+  const trips = await tripService.listAll({ sort: '-start_time' });
+  const affectedTrips = trips.filter((trip) => (
+    trip?.status === 'completed' &&
+    (
+      changedCorrections.some((correction) => tripCrossesCorrection(trip, correction)) ||
+      changedCellGeohashes.some((geohash) => tripCrossesCell(trip, geohash))
+    )
+  ));
+  const results = [];
+  for (const trip of affectedTrips) {
+    results.push(await refreshTripForLocalSpeedKnowledge(trip, settings));
+  }
+  return results;
+}
+
 export { tripCrossesCell, tripCrossesCorrection };

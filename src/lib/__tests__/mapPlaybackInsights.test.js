@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildPlaybackTimeline,
+  buildPlaybackPositionIndex,
   buildRouteComparison,
   downsampleRoutePoints,
   hasRecoverableOriginalRouteGeometry,
@@ -96,6 +97,17 @@ describe('mapPlaybackInsights', () => {
     expect(position.index).toBe(1);
     expect(position.point.lat).toBeCloseTo(43.6505, 4);
     expect(position.point.speed_kmh).toBeCloseTo(30, 0);
+  });
+
+  it('uses a reusable playback position index without changing interpolation', () => {
+    const points = [point(0, 0), point(1, 60), point(2, 80)];
+    const index = buildPlaybackPositionIndex(points);
+    const position = playbackPositionAtElapsed(points, 15, index);
+
+    expect(index.hasTimeline).toBe(true);
+    expect(position.index).toBe(2);
+    expect(position.point.lat).toBeCloseTo(43.6515, 4);
+    expect(position.point.speed_kmh).toBeCloseTo(70, 0);
   });
 
   it('uses elapsed time rather than point index for timeline progress', () => {

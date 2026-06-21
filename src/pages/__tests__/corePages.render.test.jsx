@@ -126,6 +126,11 @@ vi.mock('@tanstack/react-query', () => ({
     isLoading: false,
     refetch: vi.fn(),
   }),
+  useQueries: ({ queries = [] }) => queries.map(({ queryKey }) => ({
+    data: queryData.get(JSON.stringify(queryKey)) ?? null,
+    isLoading: false,
+    isError: false,
+  })),
   useMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useQueryClient: () => ({
     invalidateQueries: vi.fn(),
@@ -515,8 +520,7 @@ describe('core page component renders', () => {
     const { default: MapScreen } = await import('@/pages/MapScreen');
     const html = renderToStaticMarkup(<MapScreen />);
 
-    expect(html).toContain('Showing 1 filtered route');
-    expect(html).toContain('2 completed trip summaries are hidden from map/playback because raw GPS retention removed route coordinates.');
+    expect(html).toContain('Show all filtered trips');
     expect(html).toContain('2 completed trip summaries are not shown here because raw GPS retention removed route coordinates for map/playback. Summaries stay saved in Trip History.');
     expect(html).not.toContain('because route GPS is unavailable');
     expect(html).not.toContain('3 completed trip summaries are hidden');

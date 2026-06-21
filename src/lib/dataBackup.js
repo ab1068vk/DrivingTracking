@@ -6,7 +6,7 @@ import { createPrivacyExportSalt, getPrivacyZones, isInsidePrivacyZone, maskTrip
 import { commitZoneForExportSync, createExportId } from '@/lib/exportCommitment';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
-import { STORAGE_KEY as SPEED_KNOWLEDGE_STORAGE_KEY } from '@/lib/localSpeedKnowledge';
+import { readSpeedKnowledgeData, replaceSpeedKnowledgeData } from '@/lib/speedKnowledgeRepository';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import {
   CALIBRATION_LABELS_KEY,
@@ -62,6 +62,7 @@ export const MAX_IMPORTED_SPEED_KNOWLEDGE_CELLS = 10000;
 export const MAX_IMPORTED_SPEED_KNOWLEDGE_CORRECTIONS = 5000;
 export const MAX_IMPORTED_SPEED_KNOWLEDGE_SECTION_POINTS = 24;
 export const MAX_IMPORTED_SPEED_KNOWLEDGE_EDIT_HISTORY = 10;
+export const MAX_IMPORTED_SPEED_KNOWLEDGE_AUDIT_TRAIL = 25;
 export { BACKUP_PASSWORD_REQUIRED_CODE, BACKUP_WRONG_PASSWORD_CODE };
 
 const safeFilename = (filename) => filename.replace(/[\\/:*?"<>|]+/g, '-');
@@ -558,8 +559,11 @@ const sanitizeSpeedKnowledgeCell = (cell, warnings = null) => {
     source: sanitizeSpeedKnowledgeSource(cell.source, 'trip_consensus'),
     confidence: sanitizeSpeedKnowledgeNumber(cell.confidence, 0, 1) ?? 0,
     tripCount: Math.max(0, Math.round(Number(cell.tripCount) || 0)),
+    evidenceCount: Math.max(0, Math.round(Number(cell.evidenceCount) || 0)),
     firstSeenAt: sanitizeSpeedKnowledgeString(cell.firstSeenAt, 80),
     lastUpdatedAt: sanitizeSpeedKnowledgeString(cell.lastUpdatedAt, 80),
+    verifiedAt: cell.verifiedAt ? sanitizeSpeedKnowledgeString(cell.verifiedAt, 80) : null,
+    verificationStatus: sanitizeSpeedKnowledgeString(cell.verificationStatus, 120),
   };
   if (cell.conflict === true) sanitized.conflict = true;
   if (isPlainObject(cell.conflictDetails)) {
@@ -587,6 +591,14 @@ const sanitizeSpeedKnowledgeCell = (cell, warnings = null) => {
     );
     if (Object.keys(buckets).length > 0) sanitized.timeOfDayBuckets = buckets;
   }
+  sanitized.auditTrail = (Array.isArray(cell.auditTrail) ? cell.auditTrail : [])
+    .slice(-MAX_IMPORTED_SPEED_KNOWLEDGE_AUDIT_TRAIL)
+    .map((item) => sanitizeJsonValue(item, 0, {
+      maxStringLength: 500,
+      warnings,
+      field: 'speed knowledge audit trail',
+    }))
+    .filter(isPlainObject);
   return sanitized;
 };
 
@@ -606,6 +618,7 @@ const sanitizeSpeedKnowledgeCorrection = (correction, privacyZones = [], warning
   const source = sanitizeSpeedKnowledgeSource(correction.source);
   const directionBearing = sanitizeSpeedKnowledgeNumber(correction.directionBearing, 0, 360);
   return {
+    id: sanitizeSpeedKnowledgeString(correction.id || correction.ruleId, 120),
     geohash,
     ...(coordinate || {}),
     coordinateSource: sanitizeSpeedKnowledgeString(correction.coordinateSource || 'driven_route_sample', 80),
@@ -613,6 +626,9 @@ const sanitizeSpeedKnowledgeCorrection = (correction, privacyZones = [], warning
     note: sanitizeSpeedKnowledgeString(correction.note, 500),
     source,
     appliedAt: sanitizeSpeedKnowledgeString(correction.appliedAt, 80),
+    verifiedAt: correction.verifiedAt ? sanitizeSpeedKnowledgeString(correction.verifiedAt, 80) : null,
+    verificationStatus: sanitizeSpeedKnowledgeString(correction.verificationStatus, 120),
+    evidenceCount: Math.max(0, Math.round(Number(correction.evidenceCount) || 0)),
     expiresAt: correction.expiresAt ? sanitizeSpeedKnowledgeString(correction.expiresAt, 80) : null,
     roadName: sanitizeSpeedKnowledgeString(correction.roadName, 200),
     contextLabel: sanitizeSpeedKnowledgeString(correction.contextLabel, 300),
@@ -629,6 +645,14 @@ const sanitizeSpeedKnowledgeCorrection = (correction, privacyZones = [], warning
         maxStringLength: 500,
         warnings,
         field: 'speed knowledge edit history',
+      }))
+      .filter(isPlainObject),
+    auditTrail: (Array.isArray(correction.auditTrail) ? correction.auditTrail : [])
+      .slice(-MAX_IMPORTED_SPEED_KNOWLEDGE_AUDIT_TRAIL)
+      .map((item) => sanitizeJsonValue(item, 0, {
+        maxStringLength: 500,
+        warnings,
+        field: 'speed knowledge audit trail',
       }))
       .filter(isPlainObject),
   };
@@ -763,7 +787,7 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
     getJson(SAVED_FILTERS_KEY, []),
     getJson(CALIBRATION_LABELS_KEY, []),
     getJson(CALIBRATION_SURVEY_MARKERS_KEY, {}),
-    getJson(SPEED_KNOWLEDGE_STORAGE_KEY, {}),
+    readSpeedKnowledgeData().then((value) => value || {}),
   ]);
   const backup = buildDriveSenseBackup({
     trips,
@@ -1241,7 +1265,7 @@ export async function importDriveSenseBackup(
   let speedKnowledgeRestored = false;
   if (speedKnowledgeCellCount > 0 || speedKnowledgeCorrectionCount > 0) {
     try {
-      await setJson(SPEED_KNOWLEDGE_STORAGE_KEY, backup.speed_knowledge);
+      await replaceSpeedKnowledgeData(backup.speed_knowledge);
       speedKnowledgeRestored = true;
     } catch (error) {
       logSystemFailure('backup_import_speed_knowledge_restore', error, {

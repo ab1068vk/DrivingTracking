@@ -1,5 +1,6 @@
 import { geohashCenter, geohashEncode } from '@/lib/localSpeedKnowledge';
 import { isPublicPoint } from '@/lib/roadSectionIdentity';
+import { assessSpeedLimitEvidence } from '@/lib/speedLimitConfidence';
 
 const pointRoadName = (point = {}) => String(point.speed_limit_road_name || '').trim();
 const pointSource = (point = {}) => point.speed_limit_source ?? point.limitSource ?? point.speedLimitSource ?? point.source ?? null;
@@ -27,20 +28,153 @@ const cleanGeometry = (points = []) => points
   .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng) }))
   .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
 
-const sectionCandidate = (geohash, points, tripId) => {
+const limitGeometryPoints = (points = [], maxPoints = 80) => {
   const geometry = cleanGeometry(points);
+  if (geometry.length <= maxPoints) return geometry;
+  const lastIndex = geometry.length - 1;
+  return Array.from({ length: maxPoints }, (_, index) => (
+    geometry[Math.round((index / (maxPoints - 1)) * lastIndex)]
+  )).filter((point, index, sampled) => (
+    index === 0 || point.lat !== sampled[index - 1].lat || point.lng !== sampled[index - 1].lng
+  ));
+};
+
+const distanceMeters = (a, b) => {
+  const lat1 = Number(a?.lat) * Math.PI / 180;
+  const lat2 = Number(b?.lat) * Math.PI / 180;
+  const dLat = lat2 - lat1;
+  const dLng = (Number(b?.lng) - Number(a?.lng)) * Math.PI / 180;
+  if (![lat1, lat2, dLat, dLng].every(Number.isFinite)) return Infinity;
+  const value = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+};
+
+const normalizedRoadName = (value) => String(value || '').trim().toLowerCase();
+
+export function snapSectionPointsToTripRoutes(sectionPoints = [], trips = [], maxDistanceM = 80) {
+  const routePoints = (trips || [])
+    .flatMap((trip) => Array.isArray(trip?.route_points) ? trip.route_points : [])
+    .filter(isPublicPoint)
+    .map((point) => ({ lat: Number(point.lat), lng: Number(point.lng) }));
+  if (!routePoints.length) return cleanGeometry(sectionPoints);
+
+  return cleanGeometry(sectionPoints).map((point) => {
+    let nearest = null;
+    let nearestDistanceM = Infinity;
+    for (const routePoint of routePoints) {
+      const candidateDistanceM = distanceMeters(point, routePoint);
+      if (candidateDistanceM < nearestDistanceM) {
+        nearest = routePoint;
+        nearestDistanceM = candidateDistanceM;
+      }
+    }
+    return nearest && nearestDistanceM <= maxDistanceM ? nearest : point;
+  });
+}
+
+export function findMergeableSpeedSection(section = {}, sections = [], maxDistanceM = 150) {
+  const sectionPoints = cleanGeometry(section.sectionPoints || []);
+  if (!section.saved || sectionPoints.length < 2) return null;
+  const roadName = normalizedRoadName(section.roadName);
+  const endpoints = [sectionPoints[0], sectionPoints.at(-1)];
+  return (sections || [])
+    .filter((candidate) => (
+      candidate.saved &&
+      (candidate.sectionKey || candidate.geohash) !== (section.sectionKey || section.geohash)
+    ))
+    .filter((candidate) => Number(candidate.limitKmh) === Number(section.limitKmh))
+    .filter((candidate) => {
+      const candidateRoad = normalizedRoadName(candidate.roadName);
+      return !roadName || !candidateRoad || candidateRoad === roadName;
+    })
+    .map((candidate) => {
+      const candidatePoints = cleanGeometry(candidate.sectionPoints || []);
+      if (candidatePoints.length < 2) return null;
+      const candidateEndpoints = [candidatePoints[0], candidatePoints.at(-1)];
+      const distanceM = Math.min(...endpoints.flatMap((point) => (
+        candidateEndpoints.map((candidatePoint) => distanceMeters(point, candidatePoint))
+      )));
+      return { candidate, distanceM };
+    })
+    .filter((result) => result && result.distanceM <= maxDistanceM)
+    .sort((a, b) => a.distanceM - b.distanceM)[0] || null;
+}
+
+export function mergeSpeedSections(first = {}, second = {}) {
+  const firstPoints = cleanGeometry(first.sectionPoints || []);
+  const secondPoints = cleanGeometry(second.sectionPoints || []);
+  if (firstPoints.length < 2 || secondPoints.length < 2) return null;
+  const options = [
+    [firstPoints, secondPoints],
+    [[...firstPoints].reverse(), secondPoints],
+    [firstPoints, [...secondPoints].reverse()],
+    [[...firstPoints].reverse(), [...secondPoints].reverse()],
+  ];
+  const [left, right] = options.sort((a, b) => (
+    distanceMeters(a[0].at(-1), a[1][0]) - distanceMeters(b[0].at(-1), b[1][0])
+  ))[0];
+  const sectionPoints = [...left, ...right].filter((point, index, points) => (
+    index === 0 || distanceMeters(point, points[index - 1]) > 2
+  )).slice(0, 24);
+  const center = sectionPoints[Math.floor(sectionPoints.length / 2)];
+  return {
+    ...first,
+    geohash: geohashEncode(center.lat, center.lng),
+    lat: center.lat,
+    lng: center.lng,
+    roadName: first.roadName || second.roadName || '',
+    sectionPoints,
+    mergedSelectors: [
+      first.id || first.ruleId || first.geohash,
+      second.id || second.ruleId || second.geohash,
+    ],
+    mergedGeohashes: [first.geohash, second.geohash],
+  };
+}
+
+const sectionCandidate = (geohash, points, tripId) => {
+  const geometry = limitGeometryPoints(points);
   if (!geometry.length) return null;
   const center = geometry[Math.floor(geometry.length / 2)];
+  const observedLimits = points.map(pointLimit).filter((value) => value != null);
+  const observedSources = [...new Set(points.map(pointSource).filter(Boolean))].sort();
   return {
     geohash,
     lat: center.lat,
     lng: center.lng,
     sectionPoints: geometry,
     roadName: mode(points.map(pointRoadName)),
-    observedLimitKmh: numberMode(points.map(pointLimit)),
-    observedSources: [...new Set(points.map(pointSource).filter(Boolean))].sort(),
+    observedLimitKmh: numberMode(observedLimits),
+    observedLimits,
+    observedSources,
     tripId,
+    tripIds: tripId ? [tripId] : [],
     sampleCount: geometry.length,
+  };
+};
+
+const mergeCandidates = (existing, candidate) => {
+  if (!existing) return candidate;
+  const observedLimits = [...(existing.observedLimits || []), ...(candidate.observedLimits || [])];
+  const useCandidateGeometry = candidate.sectionPoints.length > existing.sectionPoints.length;
+  return {
+    ...existing,
+    ...(useCandidateGeometry ? {
+      lat: candidate.lat,
+      lng: candidate.lng,
+      sectionPoints: candidate.sectionPoints,
+      tripId: candidate.tripId,
+    } : {}),
+    roadName: existing.roadName || candidate.roadName,
+    observedLimits,
+    observedLimitKmh: numberMode(observedLimits),
+    observedSources: [...new Set([
+      ...(existing.observedSources || []),
+      ...(candidate.observedSources || []),
+    ])].sort(),
+    tripIds: [...new Set([...(existing.tripIds || []), ...(candidate.tripIds || [])])],
+    sampleCount: (Number(existing.sampleCount) || 0) + (Number(candidate.sampleCount) || 0),
   };
 };
 
@@ -50,6 +184,15 @@ function conflictFor(correction, candidate) {
   if (!Number.isFinite(savedLimit) || !Number.isFinite(observedLimit)) return null;
   const deltaKmh = Math.abs(Math.round(savedLimit) - Math.round(observedLimit));
   if (deltaKmh <= 10) return null;
+  const resolution = correction?.conflictResolution;
+  if (
+    resolution &&
+    Math.round(Number(resolution.savedLimitKmh)) === Math.round(savedLimit) &&
+    Math.round(Number(resolution.observedLimitKmh)) === Math.round(observedLimit) &&
+    Math.round(Number(resolution.deltaKmh)) === deltaKmh
+  ) {
+    return null;
+  }
   return {
     savedLimitKmh: Math.round(savedLimit),
     observedLimitKmh: Math.round(observedLimit),
@@ -59,6 +202,7 @@ function conflictFor(correction, candidate) {
   };
 }
 
+/** @returns {any[]} */
 export function buildSplitCorrections(section = {}, splitIndex = null) {
   const points = cleanGeometry(section.sectionPoints || []);
   if (points.length < 3) return [];
@@ -97,6 +241,68 @@ export function speedLimitColor(limitKmh) {
   return '#a855f7';
 }
 
+export const SPEED_MAP_LAYER_DEFAULTS = {
+  conflicts: true,
+  saved: true,
+  observed: true,
+  unset: true,
+};
+
+function hasSpeedLimit(section = {}) {
+  const limit = Number(section.effectiveLimitKmh ?? section.limitKmh ?? section.observedLimitKmh);
+  return Number.isFinite(limit) && limit > 0;
+}
+
+function sectionLayer(section = {}) {
+  if (section.conflict) return 'conflicts';
+  if (section.saved) return 'saved';
+  if (hasSpeedLimit(section)) return 'observed';
+  return 'unset';
+}
+
+function normalizedSearchText(section = {}) {
+  return [
+    section.geohash,
+    section.roadName,
+    section.source,
+    section.tripId,
+    section.limitKmh,
+    section.observedLimitKmh,
+    section.effectiveLimitKmh,
+    ...(section.observedSources || []),
+  ].filter((value) => value != null && value !== '').join(' ').toLowerCase();
+}
+
+export function summarizeSpeedMapSections(sections = []) {
+  return (sections || []).reduce((summary, section) => {
+    const layer = sectionLayer(section);
+    summary.total += 1;
+    summary[layer] += 1;
+    if (section.saved) summary.savedRules += 1;
+    if (!section.saved && hasSpeedLimit(section)) summary.observedOnly += 1;
+    return summary;
+  }, {
+    total: 0,
+    conflicts: 0,
+    saved: 0,
+    observed: 0,
+    unset: 0,
+    savedRules: 0,
+    observedOnly: 0,
+  });
+}
+
+export function filterSpeedMapSections(sections = [], {
+  query = '',
+  layers = SPEED_MAP_LAYER_DEFAULTS,
+} = {}) {
+  const normalizedQuery = String(query || '').trim().toLowerCase();
+  const layerState = { ...SPEED_MAP_LAYER_DEFAULTS, ...(layers || {}) };
+  return (sections || [])
+    .filter((section) => layerState[sectionLayer(section)] !== false)
+    .filter((section) => !normalizedQuery || normalizedSearchText(section).includes(normalizedQuery));
+}
+
 export function buildSpeedMapSections(trips = [], corrections = []) {
   const candidates = new Map();
 
@@ -109,9 +315,7 @@ export function buildSpeedMapSections(trips = [], corrections = []) {
     const flush = () => {
       if (!currentHash || !currentPoints.length) return;
       const candidate = sectionCandidate(currentHash, currentPoints, trip?.id);
-      if (candidate && candidate.sampleCount > (candidates.get(currentHash)?.sampleCount || 0)) {
-        candidates.set(currentHash, candidate);
-      }
+      if (candidate) candidates.set(currentHash, mergeCandidates(candidates.get(currentHash), candidate));
     };
 
     for (const point of points) {
@@ -133,12 +337,22 @@ export function buildSpeedMapSections(trips = [], corrections = []) {
     flush();
   }
 
-  const correctionByHash = new Map((corrections || []).map((row) => [row.geohash, row]));
-  const hashes = new Set([...candidates.keys(), ...correctionByHash.keys()]);
+  const correctionsByHash = new Map();
+  for (const correction of corrections || []) {
+    const items = correctionsByHash.get(correction.geohash) || [];
+    items.push(correction);
+    correctionsByHash.set(correction.geohash, items);
+  }
+  const hashes = new Set([...candidates.keys(), ...correctionsByHash.keys()]);
+  const entries = [...hashes].flatMap((geohash) => {
+    const savedCorrections = correctionsByHash.get(geohash) || [];
+    return savedCorrections.length
+      ? savedCorrections.map((correction) => ({ geohash, correction }))
+      : [{ geohash, correction: null }];
+  });
 
-  return [...hashes].map((geohash) => {
+  return entries.map(({ geohash, correction }) => {
     const candidate = candidates.get(geohash);
-    const correction = correctionByHash.get(geohash);
     const savedGeometry = cleanGeometry(correction?.sectionPoints);
     const center = geohashCenter(geohash);
     const sectionPoints = savedGeometry.length >= 2
@@ -151,10 +365,18 @@ export function buildSpeedMapSections(trips = [], corrections = []) {
       : Number.isFinite(observedLimitKmh) && observedLimitKmh > 0
         ? Math.round(observedLimitKmh)
         : null;
+    const observedEvidence = assessSpeedLimitEvidence({
+      source: candidate?.observedSources?.[0] || 'unknown',
+      sampleCount: candidate?.sampleCount,
+    });
+    const savedEvidence = correction
+      ? assessSpeedLimitEvidence(correction)
+      : null;
     return {
       ...candidate,
       ...correction,
       geohash,
+      sectionKey: correction?.id || correction?.ruleId || geohash,
       lat: Number(correction?.lat ?? candidate?.lat ?? center.lat),
       lng: Number(correction?.lng ?? candidate?.lng ?? center.lng),
       sectionPoints,
@@ -164,6 +386,11 @@ export function buildSpeedMapSections(trips = [], corrections = []) {
       effectiveLimitKmh,
       source: correction?.source ?? null,
       conflict: conflictFor(correction, candidate),
+      observedEvidence,
+      savedEvidence,
+      confidence: savedEvidence?.confidence ?? observedEvidence.confidence,
+      confidenceLevel: savedEvidence?.level ?? observedEvidence.level,
+      affectedTripCount: candidate?.tripIds?.length || 0,
     };
   }).sort((a, b) => {
     if (a.saved !== b.saved) return a.saved ? -1 : 1;

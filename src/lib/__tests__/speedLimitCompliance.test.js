@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { calculateSpeedLimitCompliance, calculateTripScores, calculateTripStats, DEFAULT_THRESHOLDS, EVENT_TYPES } from '@/lib/tripEngine';
+import {
+  calculateSpeedLimitCompliance,
+  calculateTripScores,
+  calculateTripStats,
+  DEFAULT_THRESHOLDS,
+  EVENT_TYPES,
+  prefetchLocalKnowledge,
+  resolveEffectiveSpeedLimitForIndex,
+} from '@/lib/tripEngine';
 import { confidenceForSource, confidenceToPenaltyWeight, resolveSpeedLimitWithTier } from '@/lib/speedLimitSource';
 
 // CHANGES (session):
@@ -20,6 +28,66 @@ const p = (index, speed) => ({
 });
 
 describe('speed-limit compliance', () => {
+  it('keeps opposite-direction local lookups separate in the same place and time bucket', async () => {
+    const getForPoint = async (_lat, _lng, _time, { headingDeg }) => ({
+      limitKmh: headingDeg < 180 ? 50 : 60,
+      source: 'user_confirmed_posted_sign',
+      confidence: 0.92,
+    });
+    const points = [
+      { lat: 43.65, lng: -79.38, heading: 90, timestamp: '2026-01-01T12:00:00Z' },
+      { lat: 43.65, lng: -79.38, heading: 270, timestamp: '2026-01-01T12:01:00Z' },
+    ];
+
+    await expect(prefetchLocalKnowledge(points, { getForPoint })).resolves.toMatchObject([
+      { limitKmh: 50 },
+      { limitKmh: 60 },
+    ]);
+  });
+
+  it('uses the safer limit and flags review when saved and fresh posted data conflict', () => {
+    const result = resolveEffectiveSpeedLimitForIndex([
+      {
+        lat: 43.65,
+        lng: -79.38,
+        speed_limit_kmh: 40,
+        speed_limit_source: 'openstreetmap',
+      },
+    ], 0, DEFAULT_THRESHOLDS, {
+      localKnowledge: {
+        limitKmh: 60,
+        source: 'user_confirmed_posted_sign',
+        confidence: 0.92,
+      },
+    });
+
+    expect(result.effectiveLimitKmh).toBe(40);
+    expect(result.speedLimitConflict).toMatchObject({
+      savedLimitKmh: 60,
+      observedLimitKmh: 40,
+      needsReview: true,
+    });
+  });
+
+  it('does not let learned traffic history override fresh OpenStreetMap maxspeed data', () => {
+    const result = resolveEffectiveSpeedLimitForIndex([
+      {
+        lat: 43.65,
+        lng: -79.38,
+        speed_limit_kmh: 40,
+        speed_limit_source: 'openstreetmap',
+      },
+    ], 0, DEFAULT_THRESHOLDS, {
+      localKnowledge: {
+        limitKmh: 60,
+        source: 'trip_consensus',
+        confidence: 0.85,
+      },
+    });
+
+    expect(result.effectiveLimitKmh).toBe(40);
+    expect(result.limitSource).toBe('openstreetmap');
+  });
   it('handles empty route points', () => {
     expect(calculateSpeedLimitCompliance([], {}, DEFAULT_THRESHOLDS).overall_compliance_score).toBeNull();
   });

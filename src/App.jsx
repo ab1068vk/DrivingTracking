@@ -49,6 +49,7 @@ const Onboarding = lazy(() => import('@/pages/Onboarding'));
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const TripHistory = lazy(() => import('@/pages/TripHistory'));
 const TripDetail = lazy(() => import('@/pages/TripDetail'));
+const SpeedAnalysis = lazy(() => import('@/pages/SpeedAnalysis'));
 const MapScreen = lazy(() => import('@/pages/MapScreen'));
 const Reports = lazy(() => import('@/pages/Report'));
 const Settings = lazy(() => import('@/pages/Settings'));
@@ -127,29 +128,32 @@ const AuthenticatedApp = () => {
         .then(({ configureNotificationChannels }) => configureNotificationChannels())
         .catch((error) => logSystemFailure('notification_channels_configure', error));
       const settings = await localSettings.hydrateFromNative();
-      await setScreenCaptureAllowed(settings.allow_screen_capture === true)
-        .catch((error) => logSystemFailure('screen_capture_policy_apply', error));
-      await checkIntegrity()
-        .catch((error) => logSystemFailure('device_integrity_check', error));
       const lockEnabled = isAndroid() && settings.app_lock_enabled === true;
       setAppLockEnabled(lockEnabled);
       setAppLocked(lockEnabled);
-      await loadPrivacyZonesFromStorage(settings);
-      await activeTripStore.hydrate();
-      await syncNativeCompletedTripsToLocalStore();
-      notificationService
-        .then(({ syncReminderNotifications }) => syncReminderNotifications(settings, { requestPermission: false }))
-        .catch((error) => logSystemFailure('reminder_notifications_sync', error));
       setOnboardingDone(settings.onboarding_completed);
       const shouldShowFirstLaunchLegalNotice =
         Number(settings.legal_notice_ack_version) < LEGAL_NOTICE_ACK_VERSION;
       setLegalNoticeOpen(shouldShowFirstLaunchLegalNotice);
+      applyThemeMode(settings.dark_mode);
+
+      setScreenCaptureAllowed(settings.allow_screen_capture === true)
+        .catch((error) => logSystemFailure('screen_capture_policy_apply', error));
+      checkIntegrity()
+        .catch((error) => logSystemFailure('device_integrity_check', error));
+      loadPrivacyZonesFromStorage(settings)
+        .catch((error) => logSystemFailure('privacy_zones_load', error));
+      activeTripStore.hydrate()
+        .catch((error) => logSystemFailure('active_trip_hydrate', error));
+      syncNativeCompletedTripsToLocalStore()
+        .catch((error) => logSystemFailure('native_completed_trips_boot_sync', error));
+      notificationService
+        .then(({ syncReminderNotifications }) => syncReminderNotifications(settings, { requestPermission: false }))
+        .catch((error) => logSystemFailure('reminder_notifications_sync', error));
       if (isAndroid() && settings.tracking_mode === 'background_auto' && !settings.tracking_paused) {
         startNativeAutoTracking()
           .catch((error) => logSystemFailure('app_boot_native_auto_tracking_start', error));
       }
-
-      applyThemeMode(settings.dark_mode);
 
       const runDeferredMaintenance = async () => {
         await import('@/lib/localTripRepository')
@@ -359,6 +363,15 @@ const AuthenticatedApp = () => {
               message="Something went wrong while opening this trip. Reload to try again."
             >
               <TripDetail />
+            </SectionErrorBoundary>
+          )} />
+          <Route path="/trips/:id/speed" element={(
+            <SectionErrorBoundary
+              context="speed_analysis_page"
+              title="Speed analysis unavailable"
+              message="Something went wrong while opening speed analysis for this trip. Reload to try again."
+            >
+              <SpeedAnalysis />
             </SectionErrorBoundary>
           )} />
           <Route path="/map" element={(

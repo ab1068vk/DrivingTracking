@@ -4631,7 +4631,7 @@ export default function Settings() {
           <SettingRow
             icon={Download}
             label="Export Full Backup"
-            sublabel="Backup with trips, route points, events, vehicles, settings, and privacy-shifted export timestamps near privacy zones"
+            sublabel="Complete backup with trips, route points, events, vehicles, settings, and saved road-speed rules"
             onClick={handleExportBackup}
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />

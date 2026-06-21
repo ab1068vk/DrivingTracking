@@ -160,6 +160,50 @@
     min-height: 300px;
   }
 
+  .leaflet-tooltip.speed-limit-map-label {
+    border: 1px solid hsl(var(--border));
+    border-radius: 9999px;
+    box-shadow: 0 6px 18px hsl(220 25% 10% / 0.22);
+    color: hsl(var(--foreground));
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0;
+    line-height: 1;
+    padding: 5px 8px;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  .leaflet-tooltip.speed-limit-map-label::before {
+    display: none;
+  }
+
+  .leaflet-tooltip.speed-limit-map-label-saved {
+    background: hsl(var(--background) / 0.96);
+  }
+
+  .leaflet-tooltip.speed-limit-map-label-observed {
+    background: hsl(204 94% 94% / 0.96);
+    border-color: hsl(199 89% 48% / 0.45);
+    color: hsl(201 96% 26%);
+  }
+
+  .leaflet-tooltip.speed-limit-map-label-unset {
+    background: hsl(var(--background) / 0.94);
+    color: hsl(var(--muted-foreground));
+    font-weight: 700;
+  }
+
+  .leaflet-tooltip.speed-limit-map-label-conflict {
+    background: hsl(0 84% 60% / 0.96);
+    border-color: hsl(0 84% 95%);
+    color: white;
+  }
+
+  .leaflet-tooltip.speed-limit-map-label-selected {
+    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.25), 0 8px 20px hsl(220 25% 10% / 0.24);
+  }
+
   /* Custom scrollbar */
   .thin-scrollbar::-webkit-scrollbar { width: 4px; }
   .thin-scrollbar::-webkit-scrollbar-track { @apply bg-transparent; }

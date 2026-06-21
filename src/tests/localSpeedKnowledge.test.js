@@ -144,6 +144,50 @@ describe('LocalSpeedKnowledge', () => {
     await expect(lsk.getForPoint(43.6500, -79.3805, null, { headingDeg: 270 })).resolves.toBeNull();
   });
 
+  it('keeps independent speed rules for opposite directions in the same road cell', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+    const sectionPoints = [
+      { lat: 43.6500, lng: -79.3810 },
+      { lat: 43.6500, lng: -79.3800 },
+    ];
+
+    await lsk.saveUserCorrection(43.6500, -79.3805, 50, 'Eastbound', null, [], 'user_confirmed_posted_sign', {
+      directionMode: 'forward',
+      sectionPoints,
+    });
+    await lsk.saveUserCorrection(43.6500, -79.3805, 60, 'Westbound', null, [], 'user_confirmed_posted_sign', {
+      directionMode: 'reverse',
+      sectionPoints,
+    });
+
+    const corrections = await lsk.listUserCorrections();
+    expect(corrections).toHaveLength(2);
+    await expect(lsk.getForPoint(43.6500, -79.3805, null, { headingDeg: 90 })).resolves.toMatchObject({ limitKmh: 50 });
+    await expect(lsk.getForPoint(43.6500, -79.3805, null, { headingDeg: 270 })).resolves.toMatchObject({ limitKmh: 60 });
+
+    const eastbound = corrections.find((correction) => correction.directionMode === 'forward');
+    await expect(lsk.updateUserCorrection(eastbound.id, 40, 'user_confirmed_posted_sign')).resolves.toBe(true);
+    await expect(lsk.removeUserCorrection(eastbound.id)).resolves.toBe(true);
+    await expect(lsk.listUserCorrections()).resolves.toHaveLength(1);
+    await expect(lsk.getForPoint(43.6500, -79.3805, null, { headingDeg: 270 })).resolves.toMatchObject({ limitKmh: 60 });
+  });
+
+  it('does not match a directional rule when heading differs by more than 60 degrees', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+    await lsk.saveUserCorrection(43.6500, -79.3805, 50, 'Eastbound', null, [], 'user_confirmed_posted_sign', {
+      directionMode: 'forward',
+      sectionPoints: [
+        { lat: 43.6500, lng: -79.3810 },
+        { lat: 43.6500, lng: -79.3800 },
+      ],
+    });
+
+    await expect(lsk.getForPoint(43.6500, -79.3805, null, { headingDeg: 149 })).resolves.toMatchObject({ limitKmh: 50 });
+    await expect(lsk.getForPoint(43.6500, -79.3805, null, { headingDeg: 151 })).resolves.toBeNull();
+  });
+
   it('enforces active day and time windows for saved road sections', async () => {
     const store = new MockStore();
     const lsk = new LocalSpeedKnowledge(store);
@@ -270,12 +314,21 @@ describe('LocalSpeedKnowledge', () => {
     expect(saved.geohash).toBeTruthy();
     expect(Number.isFinite(saved.lat)).toBe(true);
     expect(Number.isFinite(saved.lng)).toBe(true);
+    expect(saved.verificationStatus).toBe('user_estimate');
+    expect(saved.auditTrail[0]).toMatchObject({ action: 'created', limitKmh: 50 });
 
     await expect(lsk.updateUserCorrection(saved.geohash, 40, 'user_confirmed_posted_sign', 'Changed sign')).resolves.toBe(true);
     const updated = await lsk.getForPoint(43.65, -79.38);
     expect(updated).toMatchObject({
       limitKmh: 40,
       source: 'user_confirmed_posted_sign',
+    });
+    const [updatedCorrection] = await lsk.listUserCorrections();
+    expect(updatedCorrection.verificationStatus).toBe('confirmed_posted_sign');
+    expect(updatedCorrection.auditTrail.at(-1)).toMatchObject({
+      action: 'updated',
+      previousLimitKmh: 50,
+      nextLimitKmh: 40,
     });
 
     await expect(lsk.removeUserCorrection(saved.geohash)).resolves.toBe(true);
@@ -311,7 +364,7 @@ describe('LocalSpeedKnowledge', () => {
     expect(timeToBucket(new Date(2026, 0, 1, 15, 30).getTime())).toBe('14-16');
   });
 
-  it('populates time-of-day buckets and returns a lower bucket-implied limit', async () => {
+  it('records time-of-day driving evidence without treating traffic speed as the speed limit', async () => {
     const store = new MockStore();
     const lsk = new LocalSpeedKnowledge(store);
     const timestamp = new Date(2026, 0, 1, 15, 0).getTime();
@@ -324,8 +377,9 @@ describe('LocalSpeedKnowledge', () => {
       source: 'openstreetmap',
     }], []);
     const result = await lsk.getForPoint(43.65, -79.38, timestamp);
-    expect(result.source).toBe('time_of_day_bucket');
-    expect(result.limitKmh).toBe(42);
+    expect(result.source).toBe('trip_consensus');
+    expect(result.limitKmh).toBe(60);
+    expect(result.observedTimeOfDayP85Kmh).toBe(42);
     expect(result.timeOfDayBuckets['14-16']).toMatchObject({ p85Kmh: 42, count: 1 });
   });
 
@@ -357,5 +411,52 @@ describe('LocalSpeedKnowledge', () => {
     const resolved = await lsk.getForPoint(43.65, -79.38);
     expect(resolved.source).toBe('user_entered_estimate');
     expect(resolved.confidence).toBe(0.75);
+  });
+
+  it('undoes and redoes saved rule changes', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+    await lsk.saveUserCorrection(43.65, -79.38, 50, 'Initial', null, [], 'user_entered_estimate');
+    const [saved] = await lsk.listUserCorrections();
+    await lsk.updateUserCorrection(saved.geohash, 60, 'user_confirmed_posted_sign', 'Sign checked');
+
+    expect((await lsk.listUserCorrections())[0].limitKmh).toBe(60);
+    expect(await lsk.undo()).toBe(true);
+    expect((await lsk.listUserCorrections())[0].limitKmh).toBe(50);
+    expect(await lsk.redo()).toBe(true);
+    expect((await lsk.listUserCorrections())[0].limitKmh).toBe(60);
+  });
+
+  it('undoes a grouped bulk operation in one step', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+    const historyGroup = 'bulk-create';
+    await lsk.saveUserCorrection(43.65, -79.38, 50, '', null, [], 'user_entered_estimate', { historyGroup });
+    await lsk.saveUserCorrection(43.67, -79.40, 60, '', null, [], 'user_entered_estimate', { historyGroup });
+
+    expect(await lsk.listUserCorrections()).toHaveLength(2);
+    expect(await lsk.undo()).toBe(true);
+    expect(await lsk.listUserCorrections()).toHaveLength(0);
+  });
+
+  it('restores imported speed knowledge and can undo the restore', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+    await lsk.saveUserCorrection(43.65, -79.38, 50);
+    await lsk.replaceData({
+      cells: {},
+      corrections: [{
+        geohash: 'dpz88z',
+        lat: 43.7,
+        lng: -79.4,
+        limitKmh: 70,
+        source: 'user_confirmed_posted_sign',
+        appliedAt: new Date().toISOString(),
+      }],
+    });
+
+    expect((await lsk.listUserCorrections())[0].limitKmh).toBe(70);
+    expect(await lsk.undo()).toBe(true);
+    expect((await lsk.listUserCorrections())[0].limitKmh).toBe(50);
   });
 });

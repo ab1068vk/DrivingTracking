@@ -27,7 +27,10 @@ vi.mock('@/lib/trackingStore', () => ({
 }));
 
 import { geohashEncode } from '@/lib/localSpeedKnowledge';
-import { refreshTripsCrossingLocalSpeedCell } from '@/lib/localSpeedScoreRefresh';
+import {
+  refreshTripsCrossingLocalSpeedCell,
+  refreshTripsForLocalSpeedKnowledgeChanges,
+} from '@/lib/localSpeedScoreRefresh';
 
 describe('local speed score refresh', () => {
   beforeEach(() => {
@@ -52,6 +55,43 @@ describe('local speed score refresh', () => {
     expect(updated).toHaveLength(1);
     expect(state.buildPatch).toHaveBeenCalledTimes(1);
     expect(state.buildPatch).toHaveBeenCalledWith(state.trips[0], {});
+    expect(state.update).toHaveBeenCalledWith('matching', {
+      score_overall: 88,
+      needs_rescore: false,
+    });
+  });
+
+  it('recalculates each affected trip once when speed knowledge is restored', async () => {
+    const matchingPoint = { lat: 43.6532, lng: -79.3832 };
+    const geohash = geohashEncode(matchingPoint.lat, matchingPoint.lng);
+    state.trips = [
+      { id: 'matching', status: 'completed', route_points: [matchingPoint] },
+      { id: 'other-road', status: 'completed', route_points: [{ lat: 45.4215, lng: -75.6972 }] },
+    ];
+    const before = {
+      cells: {},
+      corrections: [{
+        geohash,
+        ...matchingPoint,
+        limitKmh: 60,
+        directionMode: 'both',
+      }],
+    };
+    const after = {
+      cells: {},
+      corrections: [{
+        geohash,
+        ...matchingPoint,
+        limitKmh: 50,
+        directionMode: 'both',
+      }],
+    };
+
+    const updated = await refreshTripsForLocalSpeedKnowledgeChanges(before, after, {});
+
+    expect(updated).toHaveLength(1);
+    expect(state.buildPatch).toHaveBeenCalledTimes(1);
+    expect(state.update).toHaveBeenCalledTimes(1);
     expect(state.update).toHaveBeenCalledWith('matching', {
       score_overall: 88,
       needs_rescore: false,

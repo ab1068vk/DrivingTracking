@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { tripQueryKeys, tripService } from '@/api/trips';
 import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers, ChevronLeft, ChevronRight, Shield } from 'lucide-react';
@@ -10,9 +10,8 @@ import { formatDistance, formatDate, getScoreColor, getTripComponentScore, prefe
 import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
 import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
-import { getJson, setJson } from '@/lib/mobileStorage';
 import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
-import { identifyCommutePatterns } from '@/lib/tripInsights';
+import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import { saveDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildRiskHotspots, routeKeyForTrip } from '@/lib/mediumInsights';
@@ -38,6 +37,7 @@ const MAP_FILTERS = [
 
 const MAP_ROUTE_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#06b6d4', '#ef4444'];
 const TRIP_CARD_PAGE_SIZE = 30;
+const MAP_OVERVIEW_ROUTE_LIMIT = 24;
 const scheduleIdleWork = (callback) => {
   if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
     const idleId = window.requestIdleCallback(callback, { timeout: 1000 });
@@ -72,6 +72,10 @@ const completedTripSummaryLabel = (count) => (
 );
 
 const hasPlayableRouteGps = (trip) => (trip?.route_points?.length || 0) > 1;
+const hasReplayableRoute = (trip) => (
+  hasPlayableRouteGps(trip) || trip?.route_replay_available === true
+);
+const tripRouteKey = (trip) => trip?.route_key || routeKeyForTrip(trip);
 
 export default function MapScreen() {
   const qc = useQueryClient();
@@ -107,13 +111,15 @@ export default function MapScreen() {
   ])), [privacyZones]);
   const osrmConfigured = isOsrmMapMatchingConfigured(settings);
 
-  const { data: trips = [] } = useQuery({
-    queryKey: ['map-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 500 }),
+  const { data: trips = [], isLoading: tripsLoading } = useQuery({
+    queryKey: tripQueryKeys.map,
+    queryFn: () => tripService.listSummaries({ sort: '-start_time', limit: 500 }),
+    staleTime: 2 * 60 * 1000,
   });
   const contextMutation = useMutation({
     mutationFn: async () => {
       if (!selectedTrip) throw new Error('Select a trip first.');
+      if (!hasPlayableRouteGps(selectedTrip)) throw new Error('Wait for this trip route to finish loading.');
       setOsmFetchStatus('Preparing road data');
       return runRoadContextRefresh(selectedTrip, localSettings.get(), {
         onProgress: setOsmFetchStatus,
@@ -121,13 +127,14 @@ export default function MapScreen() {
     },
     onSuccess: (updatedTrip) => {
       if (updatedTrip) {
-        qc.setQueryData(['map-trips'], (old = []) => (
+        qc.setQueryData(tripQueryKeys.detail(updatedTrip.id), updatedTrip);
+        qc.setQueryData(tripQueryKeys.map, (old = []) => (
           Array.isArray(old) ? old.map((trip) => String(trip.id) === String(updatedTrip.id) ? updatedTrip : trip) : old
         ));
       }
-      qc.invalidateQueries({ queryKey: ['map-trips'] });
+      qc.invalidateQueries({ queryKey: tripQueryKeys.map });
       qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
-      if (selectedTripId) qc.invalidateQueries({ queryKey: ['trip', selectedTripId] });
+      if (selectedTripId) qc.invalidateQueries({ queryKey: tripQueryKeys.detail(selectedTripId) });
       const hasSpeedLimits = (updatedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
       setShowSpeedLimits(hasSpeedLimits);
     },
@@ -144,7 +151,7 @@ export default function MapScreen() {
     [trips]
   );
   const allCompleted = useMemo(
-    () => completedSummaries.filter(hasPlayableRouteGps),
+    () => completedSummaries.filter(hasReplayableRoute),
     [completedSummaries]
   );
   const retentionRemovedRouteCount = completedSummaries.filter(t => (
@@ -155,14 +162,43 @@ export default function MapScreen() {
     if (mapFilter === 'harsh_braking') return (t.harsh_brakes_count || 0) > 0;
     return true;
   }), [allCompleted, mapFilter]);
-  const selectedTrip = useMemo(
+  const selectedTripSummary = useMemo(
     () => allCompleted.find(t => t.id === selectedTripId),
     [allCompleted, selectedTripId]
   );
-  const secondaryTrip = useMemo(
+  const secondaryTripSummary = useMemo(
     () => allCompleted.find(t => String(t.id) === String(secondaryTripId)),
     [allCompleted, secondaryTripId]
   );
+  const { data: selectedTripDetail, isFetching: selectedTripLoading } = useQuery({
+    queryKey: tripQueryKeys.detail(selectedTripId || 'none'),
+    queryFn: () => tripService.getById(selectedTripId),
+    enabled: Boolean(selectedTripId),
+    staleTime: 2 * 60 * 1000,
+  });
+  const { data: secondaryTripDetail } = useQuery({
+    queryKey: tripQueryKeys.detail(secondaryTripId || 'none'),
+    queryFn: () => tripService.getById(secondaryTripId),
+    enabled: Boolean(secondaryTripId),
+    staleTime: 2 * 60 * 1000,
+  });
+  const overviewTripsForMap = useMemo(
+    () => selectedTripId ? [] : completed.slice(0, MAP_OVERVIEW_ROUTE_LIMIT),
+    [completed, selectedTripId]
+  );
+  const overviewTripDetails = useQueries({
+    queries: overviewTripsForMap.map((trip) => ({
+      queryKey: tripQueryKeys.detail(trip.id),
+      queryFn: () => tripService.getById(trip.id),
+      staleTime: 2 * 60 * 1000,
+    })),
+  });
+  const overviewMapTrips = useMemo(
+    () => overviewTripDetails.map((query) => query.data).filter(hasPlayableRouteGps),
+    [overviewTripDetails]
+  );
+  const selectedTrip = selectedTripDetail || selectedTripSummary || null;
+  const secondaryTrip = secondaryTripDetail || secondaryTripSummary || null;
   const selectedEvents = useMemo(() => (
     settings.phone_use_show_on_map === false
       ? (selectedTrip?.driving_events || []).filter((event) => event.type !== 'phone_use')
@@ -172,6 +208,7 @@ export default function MapScreen() {
   const selectedHasTripSpeedLimits = (selectedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
   const selectedHasLocalSpeedLimits = speedLimitLocalKnowledgeResults.some((item) => Number(item?.limitKmh) > 0);
   const selectedHasSpeedLimits = selectedHasTripSpeedLimits || selectedHasLocalSpeedLimits;
+  const selectedRouteReady = !selectedTripId || hasPlayableRouteGps(selectedTripDetail);
   const selectedSpeedLimitStatus = selectedTrip?.speed_limit_context?.status || 'not_fetched';
   const selectedMapMatchingStatus = selectedTrip?.map_matching_context?.status || 'not_fetched';
   const speedLimitLookupEnabled = settings.speed_limit_lookup_enabled !== false;
@@ -184,10 +221,7 @@ export default function MapScreen() {
         if (!cancelled) setSpeedLimitLocalKnowledgeResults([]);
         return;
       }
-      const knowledge = new LocalSpeedKnowledge({
-        get: (key) => getJson(key, null),
-        set: (key, value) => setJson(key, value),
-      });
+      const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
       const results = await prefetchLocalKnowledge(points, knowledge).catch(() => points.map(() => null));
       if (!cancelled) setSpeedLimitLocalKnowledgeResults(results);
     };
@@ -207,6 +241,8 @@ export default function MapScreen() {
 
   const selectedLayerEffect = !selectedTrip
     ? 'Select a trip to get road data.'
+    : !selectedRouteReady
+      ? 'Loading this trip route...'
     : selectedHasSpeedLimits
       ? 'Turning the layer on recolors the selected route: green is within the matched/default limit, orange is over, red is well over.'
       : !speedLimitLookupEnabled
@@ -219,6 +255,10 @@ export default function MapScreen() {
   const selectedRiskSegments = useMemo(() => (
     selectedTrip ? getSegmentsForTrip(selectedTrip, routeRiskIndex) : []
   ), [routeRiskIndex, selectedTrip]);
+  const overlaySourceTrips = useMemo(
+    () => selectedTripDetail ? [selectedTripDetail, ...overviewMapTrips] : overviewMapTrips,
+    [overviewMapTrips, selectedTripDetail]
+  );
   const visibleDangerZones = useMemo(
     () => dangerZones.filter((zone) => !isPointInPrivacyZone(zone, privacyZones)),
     [dangerZones, privacyZones]
@@ -228,13 +268,20 @@ export default function MapScreen() {
     : visibleDangerZones.slice(0, MAX_VISIBLE_DANGER_ZONES);
   const hiddenDangerZoneCount = visibleDangerZones.length - displayedDangerZones.length;
   const parkedLocationIsPrivate = parkedLocation && isPointInPrivacyZone(parkedLocation, privacyZones);
-  const commutePatterns = useMemo(() => identifyCommutePatterns(allCompleted), [allCompleted]);
+  const commuteRouteCounts = useMemo(() => {
+    const counts = new Map();
+    allCompleted.forEach((trip) => {
+      const key = tripRouteKey(trip);
+      if (key) counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return counts;
+  }, [allCompleted]);
   const compareOptions = useMemo(() => {
     if (!selectedTrip) return [];
-    const selectedKey = routeKeyForTrip(selectedTrip);
-    if (!selectedKey || !commutePatterns.some((pattern) => pattern.route_key === selectedKey)) return [];
+    const selectedKey = tripRouteKey(selectedTrip);
+    if (!selectedKey || (commuteRouteCounts.get(selectedKey) || 0) < 3) return [];
     const routeRuns = allCompleted
-      .filter((trip) => String(trip.id) !== String(selectedTrip.id) && routeKeyForTrip(trip) === selectedKey)
+      .filter((trip) => String(trip.id) !== String(selectedTrip.id) && tripRouteKey(trip) === selectedKey)
       .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
     const bestRun = [...routeRuns].sort((a, b) => (
       (getTripComponentScore(b, 'overall').value ?? Number.NEGATIVE_INFINITY) -
@@ -247,18 +294,18 @@ export default function MapScreen() {
         .filter((trip) => String(trip.id) !== String(bestRun?.id))
         .map((trip) => ({ ...trip, compareLabel: `${formatDate(trip.start_time)} - ${formatDistance(trip.distance_km || 0, units)}` })),
     ].slice(0, 6);
-  }, [allCompleted, commutePatterns, selectedTrip, units]);
+  }, [allCompleted, commuteRouteCounts, selectedTrip, units]);
   const mapRoutes = useMemo(() => (
-    selectedTrip
+    selectedTripDetail
       ? [{
-        id: selectedTrip.id,
-        route_points: selectedTrip.route_points,
-        rawPointCount: selectedTrip.route_points_raw_count,
+        id: selectedTripDetail.id,
+        route_points: selectedTripDetail.route_points,
+        rawPointCount: selectedTripDetail.route_points_raw_count,
         selected: true,
         color: '#3b82f6',
-        label: formatDate(selectedTrip.start_time),
+        label: formatDate(selectedTripDetail.start_time),
       }]
-      : completed.map((trip, index) => ({
+      : overviewMapTrips.map((trip, index) => ({
         id: trip.id,
         route_points: trip.route_points,
         rawPointCount: trip.route_points_raw_count,
@@ -266,15 +313,16 @@ export default function MapScreen() {
         color: MAP_ROUTE_COLORS[index % MAP_ROUTE_COLORS.length],
         label: formatDate(trip.start_time),
       }))
-  ), [completed, selectedTrip]);
+  ), [overviewMapTrips, selectedTripDetail]);
   const tripPageCount = Math.max(1, Math.ceil(completed.length / TRIP_CARD_PAGE_SIZE));
   const safeTripListPage = Math.min(tripListPage, tripPageCount - 1);
   const tripPageStart = safeTripListPage * TRIP_CARD_PAGE_SIZE;
   const visibleTripCards = completed.slice(tripPageStart, tripPageStart + TRIP_CARD_PAGE_SIZE);
   const tripPageEnd = tripPageStart + visibleTripCards.length;
+  const mapOverviewHiddenCount = selectedTripId ? 0 : Math.max(0, completed.length - overviewTripsForMap.length);
 
   const confirmAndFetchRoadContext = () => {
-    if (!selectedTrip) return;
+    if (!selectedTrip || !hasPlayableRouteGps(selectedTrip)) return;
     const latestSettings = localSettings.get();
     if (!isRoadDataLookupConfigured(latestSettings)) {
       if (typeof window !== 'undefined') window.alert(buildRoadDataDisabledMessage(latestSettings));
@@ -312,17 +360,17 @@ export default function MapScreen() {
   useEffect(() => {
     let cancelled = false;
     const rebuildOverlays = async () => {
-      if (!allCompleted.length) {
+      if (!overlaySourceTrips.length) {
         setDangerZones([]);
         setRouteRiskIndex(new Map());
         return;
       }
 
-      const zones = buildRiskHotspots(allCompleted);
+      const zones = buildRiskHotspots(overlaySourceTrips);
       await saveDangerZones(zones);
       let index = await loadRouteRiskIndex(privacyZones);
       if (!index || index.size === 0) {
-        index = buildRouteRiskIndex(allCompleted, privacyZones);
+        index = buildRouteRiskIndex(overlaySourceTrips, privacyZones);
         await saveRouteRiskIndex(index);
       } else if (privacyZones.length) {
         await saveRouteRiskIndex(index);
@@ -338,7 +386,7 @@ export default function MapScreen() {
       cancelled = true;
       cancelScheduledWork();
     };
-  }, [allCompleted, privacyZones, privacyZonesKey]);
+  }, [overlaySourceTrips, privacyZones, privacyZonesKey]);
 
   const handleWhereParked = async () => {
     const stored = await getLastParkedLocation();
@@ -372,7 +420,18 @@ export default function MapScreen() {
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
         <h1 className="text-2xl font-grotesk font-bold">Map</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          {selectedTrip ? 'Focused route view' : `Showing ${completed.length} filtered route${completed.length === 1 ? '' : 's'}`}
+          {selectedTrip
+            ? selectedTripLoading && !selectedTripDetail
+              ? 'Loading focused route view'
+              : 'Focused route view'
+            : tripsLoading
+              ? 'Loading trips...'
+              : `Showing ${completed.length} filtered trip${completed.length === 1 ? '' : 's'}`}
+          {!selectedTrip && mapOverviewHiddenCount > 0 && (
+            <span className="block text-xs">
+              Drawing the most recent {overviewTripsForMap.length} routes first for a faster map. Select any trip below for the full route.
+            </span>
+          )}
           {!selectedTrip && retentionRemovedRouteCount > 0 && (
             <span className="block text-xs">
               {completedTripSummaryLabel(retentionRemovedRouteCount)} {retentionRemovedRouteCount === 1 ? 'is' : 'are'} hidden from map/playback because raw GPS retention removed route coordinates.
@@ -446,6 +505,11 @@ export default function MapScreen() {
               rawPointCount={selectedTrip?.route_points_raw_count}
               height="400px"
             />
+            {selectedTripId && selectedTripLoading && !selectedTripDetail && (
+              <div className="absolute inset-x-3 bottom-3 z-10 rounded-2xl border border-border bg-card/95 px-3 py-2 text-xs font-semibold text-muted-foreground shadow backdrop-blur">
+                Loading route detail...
+              </div>
+            )}
             <div className="absolute top-3 right-3 flex flex-col gap-2 z-10">
               <button onClick={handleShowMyLocation}
                 className="w-10 h-10 bg-card/90 backdrop-blur rounded-xl border border-border shadow flex items-center justify-center hover:bg-card transition-colors"
@@ -495,7 +559,7 @@ export default function MapScreen() {
             <div>
               <div className="font-semibold text-sm">{formatDate(selectedTrip.start_time)}</div>
               <div className="text-xs text-muted-foreground mt-1">
-                {formatDistance(selectedTrip.distance_km || 0, units)} - {tripPointSummary(selectedTrip)} - {selectedTrip.driving_events?.length || 0} events
+                {formatDistance(selectedTrip.distance_km || 0, units)} - {selectedRouteReady ? tripPointSummary(selectedTrip) : 'loading route details'} - {selectedTrip.driving_events?.length || 0} events
               </div>
             </div>
             <button
@@ -525,7 +589,7 @@ export default function MapScreen() {
                 }
                 setShowSpeedLimits(value => !value);
               }}
-              disabled={!selectedTrip || contextMutation.isPending || (!selectedHasSpeedLimits && !speedLimitLookupEnabled)}
+              disabled={!selectedTrip || !selectedRouteReady || contextMutation.isPending || (!selectedHasSpeedLimits && !speedLimitLookupEnabled)}
               className={`rounded-xl border p-3 text-left text-xs font-semibold transition-all disabled:opacity-50 ${
                 showSpeedLimits ? 'border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300' : 'border-border bg-secondary/40 text-muted-foreground'
               }`}
@@ -537,6 +601,8 @@ export default function MapScreen() {
               <div className="mt-1 font-normal">
                 {!selectedTrip
                   ? 'Select a trip first'
+                  : !selectedRouteReady
+                    ? 'Loading route data'
                   : selectedHasLocalSpeedLimits
                     ? 'Saved local speeds available - tap to show or hide'
                     : selectedHasSpeedLimits
@@ -597,7 +663,7 @@ export default function MapScreen() {
               <button
                 type="button"
                 onClick={confirmAndFetchRoadContext}
-                disabled={contextMutation.isPending || !selectedTrip.route_points?.length}
+                disabled={contextMutation.isPending || !selectedRouteReady || !selectedTrip.route_points?.length}
                 className="mt-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
               >
                 {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get Road Data'}
@@ -699,6 +765,7 @@ export default function MapScreen() {
               <button
                 onClick={() => {
                   if (!selectedTrip) return;
+                  if (!selectedRouteReady) return;
                   if (!selectedHasSpeedLimits) {
                     if (!speedLimitLookupEnabled) return;
                     confirmAndFetchRoadContext();
@@ -706,7 +773,7 @@ export default function MapScreen() {
                   }
                   setShowSpeedLimits(value => !value);
                 }}
-                disabled={!selectedTrip || contextMutation.isPending || (!selectedHasSpeedLimits && !speedLimitLookupEnabled)}
+                disabled={!selectedTrip || !selectedRouteReady || contextMutation.isPending || (!selectedHasSpeedLimits && !speedLimitLookupEnabled)}
                 className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all whitespace-nowrap disabled:opacity-50 ${
                   showSpeedLimits ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
                 }`}
