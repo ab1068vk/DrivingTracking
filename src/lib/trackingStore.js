@@ -34,16 +34,16 @@ import {
 // - Added backup exclusion metadata for local-only storage keys.
 // - Allowed numeric settings drafts to be blank while the user edits an input.
 
-const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
-const SETTINGS_KEY = 'drivesense_settings';
-const LAST_PARKED_KEY = 'drivesense_last_parked';
+export const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
+export const SETTINGS_KEY = 'drivesense_settings';
+export const LAST_PARKED_KEY = 'drivesense_last_parked';
 export const SETTINGS_CHANGED_EVENT = 'roadsage-settings-changed';
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
 let lastNativeSettingsSync = '';
 let memorySettings = null;
 let activeTripMemory = null;
 let activeTripWriteQueue = Promise.resolve();
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 12;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 13;
 
 const settingsStorage = () => {
   try {
@@ -259,6 +259,7 @@ export const DEFAULT_SETTINGS = {
   weather_context_enabled: true,
   external_context_auto_fetch_enabled: false,
   external_context_auto_fetch_consented_at: '',
+  heightened_privacy_mode: false,
   request_obfuscation_enabled: true,
   decoy_traffic_mode: 'off',
   min_speed_rapid_accel_kmh: scoringValue('MIN_SPEED_RAPID_ACCEL_KMH'),
@@ -511,6 +512,7 @@ const IMPORT_STRIPPED_KEYS = new Set([
   'osrm_consent_invalidated_zone_label',
   'osrm_block_near_any_zone',
   'request_obfuscation_enabled',
+  'heightened_privacy_mode',
   'decoy_traffic_mode',
   'privacy_zones_native_sync_status',
   'privacy_zones_native_sync_failed_at',
@@ -857,6 +859,12 @@ export const localSettings = {
     return updated;
   },
 };
+
+export function clearSettingsMemoryForErasure() {
+  memorySettings = null;
+  activeTripMemory = null;
+  lastNativeSettingsSync = '';
+}
 
 export function applyThemeMode(mode = localSettings.get().dark_mode || 'system') {
   if (typeof document === 'undefined') return;

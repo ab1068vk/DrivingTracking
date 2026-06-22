@@ -1,6 +1,7 @@
 import { runNativeRoadDataRequest } from '@/lib/nativeRoadDataQueue';
-import { pinnedFetch } from '@/lib/pinnedFetch';
+import { privacyGatedFetch } from '@/lib/privacyGatedFetch';
 import { localSettings } from '@/lib/trackingStore';
+import { effectivePrivacySettings, isHeightenedPrivacyMode } from '@/lib/privacyMode';
 
 const BATCH_MIN_MS = 3 * 60 * 1000;
 const BATCH_MAX_MS = 9 * 60 * 1000;
@@ -41,7 +42,16 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function fireFirstPartyDecoy() {
   try {
-    await pinnedFetch('https://api.open-meteo.com/v1/forecast?latitude=0&longitude=0&current_weather=true');
+    await privacyGatedFetch('open-meteo', {
+      url: 'https://api.open-meteo.com/v1/forecast?latitude=0&longitude=0&current_weather=true',
+    }, {
+      type: 'Weather decoy request',
+      coordinateDisclosure: 'rounded',
+      privacyVerificationEvidence: ['first-party decoy uses a static non-trip coordinate'],
+      sentCoords: '0, 0 static decoy',
+      protections: ['timing obfuscation decoy'],
+      status: 'safe',
+    });
   } catch {
     // Decoys are best-effort and must not affect real request outcomes.
   }
@@ -88,9 +98,10 @@ export function enqueueLocationRequest(tag, fn, nativeRequest = null) {
   if (typeof fn !== 'function') {
     return Promise.reject(new TypeError('Location request must be a function.'));
   }
-  if (localSettings.get()?.request_obfuscation_enabled === false) return fn();
+  const settings = effectivePrivacySettings(localSettings.get());
+  if (settings?.request_obfuscation_enabled === false) return fn();
 
-  if (nativeRequest?.url) {
+  if (nativeRequest?.url && !isHeightenedPrivacyMode(settings)) {
     const delay = randomInt(BATCH_MIN_MS, BATCH_MAX_MS);
     return runNativeRoadDataRequest(tag, nativeRequest, delay)
       .then((result) => result ?? enqueueLocationRequest(tag, fn))
@@ -120,7 +131,7 @@ export function resetRequestObfuscatorForTests() {
 }
 
 export function getObfuscatorQueueStatus() {
-  const settings = localSettings.get();
+  const settings = effectivePrivacySettings(localSettings.get());
   return {
     enabled: settings?.request_obfuscation_enabled !== false,
     decoyMode: settings?.decoy_traffic_mode || 'off',

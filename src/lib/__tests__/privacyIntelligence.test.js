@@ -1,28 +1,73 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 const mocks = vi.hoisted(() => ({
   loadTransmissionLog: vi.fn(),
+  isNativePlatform: vi.fn(() => false),
+  encryptedStorage: new Map(),
+  getEncryptedJson: vi.fn(async (key, fallback) => (
+    mocks.encryptedStorage.has(key) ? mocks.encryptedStorage.get(key) : fallback
+  )),
+  setEncryptedJson: vi.fn(async (key, value) => {
+    mocks.encryptedStorage.set(key, value);
+  }),
+  logSystemFailure: vi.fn(),
 }));
 
 vi.mock('@/lib/transmissionLog', () => ({
   loadTransmissionLog: mocks.loadTransmissionLog,
 }));
 
+vi.mock('@/lib/nativePlatform', () => ({
+  isNativePlatform: mocks.isNativePlatform,
+}));
+
+vi.mock('@/lib/securePayloadCrypto', () => ({
+  getEncryptedJson: mocks.getEncryptedJson,
+  setEncryptedJson: mocks.setEncryptedJson,
+}));
+
+vi.mock('@/lib/systemLog', () => ({
+  logSystemFailure: mocks.logSystemFailure,
+}));
+
 import {
   buildDrivingPrivacyReadout,
   buildOutboundPrivacyReadout,
+  buildPrivacyRecommendations,
+  detectCompoundRisk,
+  detectTimingPatternExposure,
   summarizeAudit,
+  summarizeScoreTrend,
   summarizeZones,
   transmissionPrivacyLevel,
   computePrivacyScoreFromControls,
   buildPrivacyActionPlan,
+  getPrivacyScoreHistory,
   getTransmissionSummary,
+  osrmConsentEvidence,
+  PRIVACY_POSTURE_SNAPSHOT_KEY,
+  PRIVACY_SCORE_HISTORY_KEY,
+  PROTECTION_USER_ACTIONS,
+  recordAndDetectVersionPostureRegression,
+  recordPrivacyScoreHistory,
 } from '@/lib/privacyIntelligence';
 
 describe('privacy intelligence summaries', () => {
   afterEach(() => {
     vi.useRealTimers();
     mocks.loadTransmissionLog.mockReset();
+    mocks.isNativePlatform.mockReturnValue(false);
+    mocks.encryptedStorage.clear();
+    mocks.getEncryptedJson.mockClear();
+    mocks.setEncryptedJson.mockClear();
+    mocks.logSystemFailure.mockClear();
+    mocks.getEncryptedJson.mockImplementation(async (key, fallback) => (
+      mocks.encryptedStorage.has(key) ? mocks.encryptedStorage.get(key) : fallback
+    ));
+    mocks.setEncryptedJson.mockImplementation(async (key, value) => {
+      mocks.encryptedStorage.set(key, value);
+    });
   });
 
   it('classifies blocked, protected, and raw outbound location data', () => {
@@ -58,6 +103,259 @@ describe('privacy intelligence summaries', () => {
     expect(score.overall).toBe(53);
   });
 
+  it('caps a fully verified web score at Good without changing the native score', () => {
+    const controls = [
+      { category: 'device', status: 'ok', weight: 1 },
+      { category: 'network', status: 'ok', weight: 1 },
+      { category: 'inference', status: 'ok', weight: 1 },
+      { category: 'integrity', status: 'ok', weight: 1 },
+    ];
+
+    mocks.isNativePlatform.mockReturnValue(false);
+    const webScore = computePrivacyScoreFromControls(controls);
+    // Intentional Phase 3 behavior: web evidence cannot reach the native Strong band.
+    expect(webScore).toMatchObject({
+      overall: 89,
+      computedOverall: 100,
+      label: 'Good',
+      webCapApplied: true,
+      capReason: 'Capped because this is a web build; install the Android app for hardware-backed checks.',
+    });
+
+    mocks.isNativePlatform.mockReturnValue(true);
+    const nativeScore = computePrivacyScoreFromControls(controls);
+    expect(nativeScore).toMatchObject({
+      overall: 100,
+      computedOverall: 100,
+      label: 'Strong',
+      webCapApplied: false,
+      capReason: null,
+    });
+  });
+
+  it('keeps status priority primary and uses category risk as the secondary recommendation sort', () => {
+    const recommendations = buildPrivacyRecommendations([
+      { id: 'network-error', category: 'network', status: 'error', weight: 10 },
+      { id: 'network-warn', category: 'network', status: 'warn', weight: 3 },
+      { id: 'device-warn', category: 'device', status: 'warn', weight: 2 },
+      { id: 'integrity-warn', category: 'integrity', status: 'warn', weight: 1 },
+    ]);
+
+    expect(recommendations.map((item) => item.id)).toEqual([
+      'network-error',
+      'device-warn',
+      'network-warn',
+      'integrity-warn',
+    ]);
+  });
+
+  it('provides a user action for every registry-backed protection control', () => {
+    expect(Object.keys(PROTECTION_USER_ACTIONS).sort()).toEqual([
+      'audit_log',
+      'bridge_encryption',
+      'cert_pinning',
+      'commitment_scheme',
+      'crash_scrubbing',
+      'differential_privacy',
+      'export_signing',
+      'key_rotation',
+      'kinematic_nulling',
+      'memory_zeroing',
+      'request_obfuscation',
+      'root_detection',
+      'score_input_masking',
+      'secure_deletion',
+      'storage_encryption',
+      'timestamp_fuzzing',
+    ]);
+    expect(Object.values(PROTECTION_USER_ACTIONS).every(Boolean)).toBe(true);
+  });
+
+  it('keeps disabled OSRM evidence distinct from current consent with zone guards', () => {
+    expect(osrmConsentEvidence({ enabled: false })).toBe('OSRM route matching is disabled');
+    expect(osrmConsentEvidence({
+      enabled: true,
+      outdated: false,
+      unguarded: false,
+    })).toBe('Consent is current and privacy zones are always excluded');
+  });
+
+  it('stores one encrypted score snapshot per local calendar day and retains 180 entries', async () => {
+    const base = new Date('2025-01-01T12:00:00.000Z').getTime();
+    const score = {
+      overall: 82,
+      layers: [
+        { id: 'device', score: 80 },
+        { id: 'network', score: 84 },
+      ],
+    };
+
+    await recordPrivacyScoreHistory(score, base);
+    await recordPrivacyScoreHistory({ ...score, overall: 40 }, base + 60_000);
+    for (let day = 1; day <= 180; day += 1) {
+      await recordPrivacyScoreHistory(
+        { ...score, overall: 82 + (day % 3) },
+        base + day * 24 * 60 * 60 * 1000
+      );
+    }
+
+    const history = await getPrivacyScoreHistory();
+    expect(mocks.setEncryptedJson).toHaveBeenCalledWith(PRIVACY_SCORE_HISTORY_KEY, expect.any(Array));
+    expect(history).toHaveLength(180);
+    expect(history[0].timestamp).toBe(base + 24 * 60 * 60 * 1000);
+    expect(history.at(-1).layerScores).toEqual({ device: 80, network: 84 });
+    expect(history.some((entry) => entry.overall === 40)).toBe(false);
+  });
+
+  it('logs score-history storage failures', async () => {
+    mocks.getEncryptedJson.mockRejectedValueOnce(new Error('read failed'));
+
+    await expect(getPrivacyScoreHistory()).resolves.toEqual([]);
+    expect(mocks.logSystemFailure).toHaveBeenCalledWith(
+      'privacy_score_history_read_failed',
+      expect.any(Error),
+      {}
+    );
+
+    mocks.logSystemFailure.mockClear();
+    mocks.setEncryptedJson.mockRejectedValueOnce(new Error('write failed'));
+    await expect(recordPrivacyScoreHistory({
+      overall: 82,
+      layers: [{ id: 'device', score: 80 }],
+    }, Date.parse('2026-06-22T12:00:00.000Z'))).rejects.toThrow('write failed');
+
+    expect(mocks.logSystemFailure).toHaveBeenCalledWith(
+      'privacy_score_history_write_failed',
+      expect.any(Error),
+      expect.objectContaining({ history_count: 1 })
+    );
+  });
+
+  it('classifies weekly and monthly score trends', () => {
+    const day = 24 * 60 * 60 * 1000;
+    const latest = Date.parse('2026-06-22T12:00:00.000Z');
+    const history = (weekAgo, latestScore, monthAgo = weekAgo) => [
+      { timestamp: latest - 31 * day, overall: monthAgo, layerScores: {} },
+      { timestamp: latest - 8 * day, overall: weekAgo, layerScores: {} },
+      { timestamp: latest, overall: latestScore, layerScores: {} },
+    ];
+
+    expect(summarizeScoreTrend(history(70, 78, 60))).toEqual({
+      direction: 'improving',
+      changeFromLastWeek: 8,
+      changeFromLastMonth: 18,
+    });
+    expect(summarizeScoreTrend(history(85, 72, 90))).toEqual({
+      direction: 'declining',
+      changeFromLastWeek: -13,
+      changeFromLastMonth: -18,
+    });
+    expect(summarizeScoreTrend(history(80, 80))).toMatchObject({
+      direction: 'flat',
+      changeFromLastWeek: 0,
+    });
+    expect(summarizeScoreTrend([{ timestamp: latest, overall: 80, layerScores: {} }])).toEqual({
+      direction: 'insufficient_data',
+      changeFromLastWeek: null,
+      changeFromLastMonth: null,
+    });
+  });
+
+  it('flags tight request timing patterns but ignores random timing fixtures', () => {
+    const day = 24 * 60 * 60 * 1000;
+    const base = Date.parse('2026-06-01T00:00:00.000Z');
+    const tight = Array.from({ length: 12 }, (_, index) => ({
+      service: 'open-meteo',
+      status: 'safe',
+      coordinateDisclosure: 'rounded',
+      timestamp: base + index * day + (8 * 60 + (index % 5)) * 60 * 1000,
+    }));
+    const random = Array.from({ length: 12 }, (_, index) => ({
+      service: 'overpass',
+      status: 'safe',
+      coordinateDisclosure: 'bounding_box',
+      timestamp: base + index * day + ((index * 107) % 1440) * 60 * 1000,
+    }));
+
+    const findings = detectTimingPatternExposure([...tight, ...random], {
+      request_obfuscation_enabled: false,
+    }, base + 29 * day);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      id: 'timing_pattern_open-meteo',
+      service: 'open-meteo',
+      action: 'Enable request timing obfuscation',
+      occurrenceDays: 12,
+    });
+    expect(findings[0].detail).toContain('could reveal routine activity to a network observer');
+  });
+
+  it('records app-version posture snapshots and reports update regressions', async () => {
+    const v1 = await recordAndDetectVersionPostureRegression([
+      { id: 'storage_encryption', label: 'Storage encryption', category: 'device', status: 'ok' },
+      { id: 'cert_pinning', label: 'Certificate pinning', category: 'network', status: 'configured' },
+    ], '1.0.0', Date.parse('2026-06-01T12:00:00.000Z'));
+    expect(v1.findings).toEqual([]);
+
+    const v2 = await recordAndDetectVersionPostureRegression([
+      { id: 'storage_encryption', label: 'Storage encryption', category: 'device', status: 'error' },
+      { id: 'cert_pinning', label: 'Certificate pinning', category: 'network', status: 'ok' },
+    ], '1.1.0', Date.parse('2026-06-02T12:00:00.000Z'));
+
+    expect(mocks.setEncryptedJson).toHaveBeenCalledWith(PRIVACY_POSTURE_SNAPSHOT_KEY, expect.any(Object));
+    expect(v2.findings).toContainEqual(expect.objectContaining({
+      id: 'version_posture_regression',
+      tone: 'error',
+      controlIds: ['storage_encryption'],
+    }));
+  });
+
+  it('logs app-version posture snapshot storage failures without blocking the summary', async () => {
+    mocks.getEncryptedJson.mockRejectedValueOnce(new Error('snapshot read failed'));
+    mocks.setEncryptedJson.mockRejectedValueOnce(new Error('snapshot write failed'));
+
+    const result = await recordAndDetectVersionPostureRegression([
+      { id: 'storage_encryption', label: 'Storage encryption', category: 'device', status: 'ok' },
+    ], '2.0.0', Date.parse('2026-06-22T12:00:00.000Z'));
+
+    expect(result).toMatchObject({
+      changed: false,
+      findings: [],
+      currentVersion: '2.0.0',
+    });
+    expect(mocks.logSystemFailure).toHaveBeenCalledWith(
+      'privacy_posture_snapshot_read_failed',
+      expect.any(Error),
+      expect.objectContaining({ current_version: '2.0.0' })
+    );
+    expect(mocks.logSystemFailure).toHaveBeenCalledWith(
+      'privacy_posture_snapshot_write_failed',
+      expect.any(Error),
+      expect.objectContaining({
+        current_version: '2.0.0',
+        snapshot_count: 1,
+      })
+    );
+  });
+
+  it('flags compound risk only when two or more controls fail in the same category', () => {
+    expect(detectCompoundRisk([
+      { id: 'storage_encryption', category: 'device', status: 'error' },
+      { id: 'secure_deletion', category: 'device', status: 'error' },
+      { id: 'cert_pinning', category: 'network', status: 'error' },
+    ])).toEqual([expect.objectContaining({
+      id: 'compound_device_risk',
+      count: 2,
+      controlIds: ['storage_encryption', 'secure_deletion'],
+    })]);
+
+    expect(detectCompoundRisk([
+      { id: 'storage_encryption', category: 'device', status: 'error' },
+      { id: 'cert_pinning', category: 'network', status: 'error' },
+    ])).toEqual([]);
+  });
+
   it('summarizes saved zone protection across time windows', () => {
     const summary = summarizeZones([
       {
@@ -88,6 +386,7 @@ describe('privacy intelligence summaries', () => {
   });
 
   it('builds a trip-derived privacy readout for zone usefulness', () => {
+    // Checklist: "Confirm raw saved samples inside zones are flagged."
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-13T16:00:00.000Z'));
     const protectedAt = '2026-06-13T14:00:00.000Z';
@@ -157,14 +456,21 @@ describe('privacy intelligence summaries', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-13T16:00:00.000Z'));
     const summary = summarizeAudit([
-      { op: 'TRANSMISSION', timestamp: Date.parse('2026-06-13T14:00:00.000Z') },
+      {
+        op: 'TRANSMISSION',
+        timestamp: Date.parse('2026-06-13T14:00:00.000Z'),
+        tipSignature: 'signature',
+        signingPublicKey: 'public-key',
+      },
       { op: 'TRANSMISSION', timestamp: Date.parse('2026-06-10T14:00:00.000Z') },
       { op: 'ZONE_SAVED', timestamp: Date.parse('2026-05-01T14:00:00.000Z') },
-    ]);
+    ], Date.parse('2026-06-01T12:00:00.000Z'));
 
     expect(summary.todayTotal).toBe(1);
     expect(summary.weekTotal).toBe(2);
     expect(summary.latestAt).toBe(Date.parse('2026-06-13T14:00:00.000Z'));
+    expect(summary.lastCheckpointExportedAt).toBe(Date.parse('2026-06-01T12:00:00.000Z'));
+    expect(summary.signatureCoverage).toBe(2);
     expect(summary.operations).toEqual([
       { operation: 'TRANSMISSION', count: 2 },
       { operation: 'ZONE_SAVED', count: 1 },
@@ -310,5 +616,102 @@ describe('privacy intelligence summaries', () => {
       'unverified_transmissions',
       'unknown_controls',
     ]));
+  });
+
+  it('passes driving readout evidence into the Overview action plan wiring', () => {
+    const source = readFileSync(new URL('../privacyIntelligence.js', import.meta.url), 'utf8');
+
+    expect(source).toMatch(/const drivingReadout = buildDrivingPrivacyReadout\(trips, zonesWithEffectiveness\);[\s\S]*buildPrivacyActionPlan\(\{[\s\S]*drivingReadout,/);
+  });
+
+  it('surfaces zone and recent-drive findings in the action plan', () => {
+    const plan = buildPrivacyActionPlan({
+      score: { label: 'Good' },
+      protections: [],
+      transmissions: {},
+      chainResult: { valid: true },
+      zoneSummary: { zoneCount: 2 },
+      drivingReadout: {
+        tripCount: 4,
+        recentTripCount: 3,
+        recentProtectedTripCount: 0,
+        rawPointInsideZoneCount: 2,
+        untouchedZoneCount: 1,
+      },
+    });
+
+    expect(plan.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'zones_not_matching_recent_drives',
+        tone: 'warn',
+        targetTab: 'zones',
+        action: 'Review zones',
+      }),
+      expect.objectContaining({
+        id: 'raw_points_inside_zone',
+        tone: 'error',
+        targetTab: 'zones',
+        action: 'Open zones',
+      }),
+      expect.objectContaining({
+        id: 'untouched_zones',
+        tone: 'unknown',
+        targetTab: 'zones',
+        action: 'Review zones',
+      }),
+    ]));
+  });
+
+  it('adds a protections action when the weekly privacy score drops by more than 10 points', () => {
+    const plan = buildPrivacyActionPlan({
+      score: { label: 'Needs review' },
+      protections: [],
+      transmissions: {},
+      chainResult: { valid: true },
+      zoneSummary: { zoneCount: 1 },
+      scoreTrend: { changeFromLastWeek: -11 },
+    });
+
+    expect(plan.issues).toContainEqual(expect.objectContaining({
+      id: 'score_regression',
+      tone: 'warn',
+      targetTab: 'protections',
+      title: 'Privacy score dropped recently',
+      action: 'Open protections',
+    }));
+  });
+
+  it('prioritizes app-update posture regressions in the action plan', () => {
+    const plan = buildPrivacyActionPlan({
+      score: { label: 'Needs review' },
+      protections: [],
+      transmissions: {},
+      chainResult: { valid: true },
+      zoneSummary: { zoneCount: 1 },
+      postureRegression: {
+        findings: [{
+          id: 'version_posture_regression',
+          tone: 'error',
+          targetTab: 'protections',
+          title: 'A protection changed after updating the app',
+          detail: 'A protection changed after updating the app - review before trusting current claims. Review: Storage encryption.',
+          action: 'Open protections',
+        }],
+      },
+    });
+
+    expect(plan.primaryAction).toMatchObject({
+      id: 'version_posture_regression',
+      tone: 'error',
+      targetTab: 'protections',
+    });
+  });
+
+  it('records the daily score before summarizing the trend during dashboard loading', () => {
+    const source = readFileSync(new URL('../privacyIntelligence.js', import.meta.url), 'utf8');
+
+    expect(source).toMatch(
+      /const score = computePrivacyScoreFromControls\(protections\);[\s\S]*const scoreHistory = await recordPrivacyScoreHistory\(score\);[\s\S]*const scoreTrend = summarizeScoreTrend\(scoreHistory\);/
+    );
   });
 });

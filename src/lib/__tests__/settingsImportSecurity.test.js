@@ -65,6 +65,7 @@ describe('backup settings import security', () => {
   });
 
   it('strips imported OSRM endpoints so backups cannot redirect route data', async () => {
+    // Checklist: "Confirm imported settings cannot restore untrusted OSRM endpoint/consent."
     vi.stubGlobal('localStorage', makeMemoryStorage());
 
     await importDriveSenseBackup(backupFile({

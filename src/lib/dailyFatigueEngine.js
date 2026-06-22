@@ -21,7 +21,7 @@ export const DAILY_FATIGUE_DEFAULTS = Object.freeze({
    */
   RECOVERY_BREAK_MINUTES: scoringValue('DAILY_RECOVERY_BREAK_MINUTES'),
   /**
-   * Product-model interpolation cap, not a researched full-recovery guarantee.
+   * Product-model interpolation cap, not a researched full-recovery assurance.
    * It uses the cited rest-break evidence only as context for recovery modelling.
    * @see https://doi.org/10.1177/001872088502700207
    */

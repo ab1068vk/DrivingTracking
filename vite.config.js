@@ -2,11 +2,12 @@ import react from '@vitejs/plugin-react'
 import { configDefaults, defineConfig } from 'vitest/config'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildIntegrityVitePlugin } from './scripts/build-integrity-utils.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), buildIntegrityVitePlugin()],
   test: {
     exclude: [...configDefaults.exclude, 'e2e/**', 'android/**'],
   },

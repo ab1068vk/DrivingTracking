@@ -12,6 +12,7 @@ import { resetRetryCircuits } from '@/lib/retry';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { annotateRouteSpeedLimits, loadOsmSpeedLimitWays } from '@/lib/speedLimitSource';
 import { fetchWeatherContextForTrip } from '@/lib/weatherContext';
+import { loadTransmissionLog } from '@/lib/transmissionLog';
 
 const route = [
   { lat: 43.6500, lng: -79.3800, accuracy: 8, speed_kmh: 45, timestamp: '2026-05-23T14:00:00.000Z' },
@@ -44,6 +45,7 @@ describe('external service contracts', () => {
   });
 
   it('calls Overpass with the expected speed-limit query envelope', async () => {
+    // Checklist: "Trigger Open-Meteo and Overpass lookups and confirm retained records are protected or unverified accurately."
     vi.stubGlobal('fetch', vi.fn(async (_url, options) => ({
       ok: true,
       json: async () => ({
@@ -69,6 +71,22 @@ describe('external service contracts', () => {
     expect(options.headers['Content-Type']).toContain('application/x-www-form-urlencoded');
     expect(String(options.body)).toContain('%5Bout%3Ajson%5D');
     expect(String(options.body)).toContain('highway');
+    const [entry] = await loadTransmissionLog();
+    expect(entry).toMatchObject({
+      service: 'overpass',
+      coordinateDisclosure: 'bounding_box',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'privacyGatedFetch:overpass',
+      privacyVerificationEvidence: expect.arrayContaining([
+        'privacy gateway verified overpass payload precision <= 6 decimals',
+        'request body contains only the computed bounding box',
+        'query does not request individual node coordinates',
+      ]),
+      sentCoords: 'Bounding box',
+      status: 'safe',
+    });
+    expect(entry.bytesOut).toBe(String(url).length + String(options.body).length);
+    expect(entry.privacyVerificationWarnings).toEqual([]);
     expect(result.status).toBe('fetched');
     expect(result.coverage).toBeGreaterThan(0);
     expect(result.routePoints[0]).toMatchObject({
@@ -191,6 +209,18 @@ describe('external service contracts', () => {
       source: 'openstreetmap_overpass',
       skipped_reason: 'privacy_bounds_overlap',
     });
+    const [entry] = await loadTransmissionLog();
+    expect(entry).toMatchObject({
+      service: 'overpass',
+      coordinateDisclosure: 'blocked',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'privacyGatedFetch:overpass',
+      privacyVerificationEvidence: ['computed road-data bounding boxes overlapped a privacy-zone guard'],
+      sentCoords: null,
+      bytesOut: 0,
+      status: 'blocked',
+    });
+    expect(entry.privacyVerificationWarnings).toEqual([]);
   });
 
   it('fetches only safe public Overpass chunks when a trip also has privacy-adjacent points', async () => {
@@ -277,6 +307,18 @@ describe('external service contracts', () => {
       source: 'openstreetmap_overpass',
       skipped_reason: 'all_points_private',
     });
+    const [entry] = await loadTransmissionLog();
+    expect(entry).toMatchObject({
+      service: 'overpass',
+      coordinateDisclosure: 'blocked',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'privacyGatedFetch:overpass',
+      privacyVerificationEvidence: ['privacy filtering left no public road-data points'],
+      sentCoords: null,
+      bytesOut: 0,
+      status: 'blocked',
+    });
+    expect(entry.privacyVerificationWarnings).toEqual([]);
   });
 
   it('returns an unchanged annotation result when masked route points have no safe bbox', async () => {
@@ -301,6 +343,7 @@ describe('external service contracts', () => {
   });
 
   it('calls Open-Meteo forecast with midpoint, day, timezone, and hourly fields', async () => {
+    // Checklist: "Trigger Open-Meteo and Overpass lookups and confirm retained records are protected or unverified accurately."
     vi.stubGlobal('fetch', vi.fn(async (url) => ({
       ok: true,
       json: async () => ({
@@ -317,7 +360,9 @@ describe('external service contracts', () => {
       }),
     })));
 
-    const result = await fetchWeatherContextForTrip(route, route[0].timestamp, route.at(-1).timestamp, {});
+    const result = await fetchWeatherContextForTrip(route, route[0].timestamp, route.at(-1).timestamp, {
+      privacy_zones: [],
+    });
 
     expect(fetch).toHaveBeenCalledTimes(1);
     const [rawUrl] = fetch.mock.calls[0];
@@ -329,6 +374,22 @@ describe('external service contracts', () => {
     expect(url.searchParams.get('end_date')).toBe('2026-05-23');
     expect(url.searchParams.get('timezone')).toBe('auto');
     expect(url.searchParams.get('hourly')).toContain('weather_code');
+    const [entry] = await loadTransmissionLog();
+    expect(entry).toMatchObject({
+      service: 'open-meteo',
+      coordinateDisclosure: 'rounded',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'privacyGatedFetch:open-meteo',
+      privacyVerificationEvidence: [
+        'privacy gateway verified open-meteo payload precision <= 4 decimals',
+        'no privacy zones were configured for this weather lookup',
+        'coordinate is rounded to 4 decimals',
+      ],
+      sentCoords: '43.6504, -79.3801',
+      bytesOut: url.toString().length,
+      status: 'safe',
+    });
+    expect(entry.privacyVerificationWarnings).toEqual([]);
     expect(result).toMatchObject({
       provider: 'open-meteo',
       source: 'open_meteo',
@@ -368,6 +429,23 @@ describe('external service contracts', () => {
     const url = new URL(String(rawUrl));
     expect(url.searchParams.get('latitude')).toBe('43.0100');
     expect(url.searchParams.get('longitude')).toBe('-79.0000');
+    const [entry] = await loadTransmissionLog();
+    expect(entry).toMatchObject({
+      service: 'open-meteo',
+      coordinateDisclosure: 'rounded',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'privacyGatedFetch:open-meteo',
+      privacyVerificationEvidence: [
+        'privacy gateway verified open-meteo payload precision <= 4 decimals',
+        'selected point is outside privacy-zone weather buffer',
+        'coordinate is rounded to 4 decimals',
+      ],
+      sentCoords: '43.0100, -79.0000',
+      zonesSuppressed: ['Home'],
+      bytesOut: url.toString().length,
+      status: 'safe',
+    });
+    expect(entry.privacyVerificationWarnings).toEqual([]);
     expect(result.status).toBe('fetched');
   });
 
@@ -391,9 +469,23 @@ describe('external service contracts', () => {
       weather_context: null,
       weather_skipped_reason: 'all_points_within_privacy_zones',
     });
+    const [entry] = await loadTransmissionLog();
+    expect(entry).toMatchObject({
+      service: 'open-meteo',
+      coordinateDisclosure: 'blocked',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'privacyGatedFetch:open-meteo',
+      privacyVerificationEvidence: ['all weather candidates were inside privacy-zone buffers'],
+      sentCoords: null,
+      bytesOut: 0,
+      status: 'blocked',
+      zonesSuppressed: ['Home'],
+    });
+    expect(entry.privacyVerificationWarnings).toEqual([]);
   });
 
   it('calls OSRM match with ordered lon-lat coordinates and per-point radiuses', async () => {
+    // Checklist: "Configure OSRM endpoint and consent, then confirm raw sharing is labeled raw with consent."
     vi.stubGlobal('fetch', vi.fn(async (url) => ({
       ok: true,
       json: async () => ({
@@ -423,11 +515,86 @@ describe('external service contracts', () => {
     expect(url.searchParams.get('overview')).toBe('full');
     expect(url.searchParams.get('geometries')).toBe('geojson');
     expect(url.searchParams.get('radiuses')).toBe('10;12;10');
+    const [entry] = await loadTransmissionLog();
+    expect(entry).toMatchObject({
+      service: 'osrm',
+      coordinateDisclosure: 'raw',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'privacyGatedFetch:osrm',
+      privacyVerificationEvidence: [
+        'privacy gateway found coordinate data and logged raw disclosure',
+        'route was split at privacy/null gaps before sampling',
+        'OSRM raw-coordinate sharing consent was checked before this request',
+        'privacy-zone endpoint guard ran before this request',
+      ],
+      sentCoords: '3 sampled coordinates',
+      bytesOut: url.toString().length,
+      status: 'warning',
+    });
+    expect(entry.privacyVerificationWarnings).toEqual([
+      'Raw coordinates left the app; consent or guards do not make this a protected send.',
+    ]);
     expect(result).toMatchObject({
       provider: 'osrm',
       status: 'matched',
       confidence: 0.87,
       snapped_coverage: 100,
     });
+  });
+
+  it('logs OSRM endpoint privacy blocks with the guard evidence that caused the block', async () => {
+    // Checklist: "Try a route endpoint inside a zone and confirm OSRM is blocked and logged as blocked."
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute(route, {
+      osrm_map_matching_url: 'https://osrm.example',
+      osrm_data_sharing_consented: true,
+      privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 120 }],
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result.status).toBe('blocked_private_endpoint');
+    const [entry] = await loadTransmissionLog();
+    expect(entry).toMatchObject({
+      service: 'osrm',
+      coordinateDisclosure: 'blocked',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'privacyGatedFetch:osrm',
+      privacyVerificationEvidence: ['route endpoint was inside the privacy-zone guard buffer'],
+      sentCoords: null,
+      bytesOut: 0,
+      status: 'blocked',
+      zonesSuppressed: ['Home'],
+    });
+    expect(entry.privacyVerificationWarnings).toEqual([]);
+  });
+
+  it('logs OSRM blocks when privacy gaps leave no matchable public segment', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute([
+      { lat: 43.7, lng: -79.4, accuracy: 8 },
+      { lat: null, lng: null, masked_for_privacy: true, privacy_gap: true, privacy_zone_label: 'Home' },
+      { lat: 43.8, lng: -79.5, accuracy: 8 },
+    ], {
+      osrm_map_matching_url: 'https://osrm.example',
+      osrm_data_sharing_consented: true,
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result.status).toBe('not_enough_points');
+    const [entry] = await loadTransmissionLog();
+    expect(entry).toMatchObject({
+      service: 'osrm',
+      coordinateDisclosure: 'blocked',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'privacyGatedFetch:osrm',
+      privacyVerificationEvidence: ['privacy filtering left no matchable public route segment'],
+      sentCoords: null,
+      bytesOut: 0,
+      status: 'blocked',
+      zonesSuppressed: ['Home'],
+    });
+    expect(entry.privacyVerificationWarnings).toEqual([]);
   });
 });

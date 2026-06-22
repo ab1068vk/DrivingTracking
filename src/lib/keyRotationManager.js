@@ -13,7 +13,7 @@ import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
 export const KEY_ROTATION_DAYS = 30;
 export const KEY_ROTATION_MS = KEY_ROTATION_DAYS * 24 * 60 * 60 * 1000;
-const ROTATING_ENCRYPTED_JSON_KEYS = [
+export const ROTATING_ENCRYPTED_JSON_KEYS = [
   'drivesense_active_trip',
   'drivesense_last_parked',
   'drivesense_privacy_zone_stats_v1',

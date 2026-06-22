@@ -100,7 +100,7 @@ export const METRIC_REGISTRY = Object.freeze({
     dataSources: ['gps_events'],
     minDistanceKm: 0,
     minSamples: 1,
-    calibrationNote: 'Unavailable until a qualifying stop is observed; does not prove a signed or signalized intersection.',
+    calibrationNote: 'Unavailable until a qualifying stop is observed; does not establish a signed or signalized intersection.',
   },
   distraction_score: {
     label: 'Attention-Pattern Estimate',

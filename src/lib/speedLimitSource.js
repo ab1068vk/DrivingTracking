@@ -1,9 +1,9 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { withRetry } from '@/lib/retry';
 import { boundsOverlapPrivacyZone, getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
-import { pinnedFetch } from '@/lib/pinnedFetch';
-import { logTransmission } from '@/lib/transmissionLog';
+import { privacyGatedFetch } from '@/lib/privacyGatedFetch';
 import { enqueueLocationRequest } from '@/lib/requestObfuscator';
+import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 
 const SPEED_LIMIT_CACHE_KEY = 'drivesense_osm_speed_limit_cache_v2';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
@@ -680,8 +680,15 @@ function privacySafeQueryBounds(routePoints = [], privacyZones = []) {
   };
 }
 
+const overpassBboxCoordinate = (value) => Number(value).toFixed(6);
+
 function overpassQuery(bounds) {
-  const bbox = `${bounds.south},${bounds.west},${bounds.north},${bounds.east}`;
+  const bbox = [
+    overpassBboxCoordinate(bounds.south),
+    overpassBboxCoordinate(bounds.west),
+    overpassBboxCoordinate(bounds.north),
+    overpassBboxCoordinate(bounds.east),
+  ].join(',');
   return `
     [out:json][timeout:25];
     (
@@ -727,33 +734,24 @@ async function fetchOverpassWaysFromUrl(bounds, url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   const queryString = overpassQuery(bounds);
+  const body = new URLSearchParams({ data: queryString });
   try {
-    await logTransmission({
-      service: 'overpass',
+    const response = await withRetry(`overpass-speed-limit:${url}`, () => privacyGatedFetch('overpass', {
+      url,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body,
+      signal: controller.signal,
+    }, {
       type: 'Speed limit query',
       coordinateDisclosure: 'bounding_box',
-      privacyTransformVerified: (
-        queryString.includes(`${bounds.south},${bounds.west},${bounds.north},${bounds.east}`) &&
-        !/\bnode\s*\(/i.test(queryString)
-      ),
-      privacyTransformSource: 'speedLimitSource.js:overpassQuery',
       privacyVerificationEvidence: [
         'request body contains only the computed bounding box',
         'query does not request individual node coordinates',
       ],
       sentCoords: 'Bounding box',
       protections: ['privacy-zone excluded bbox', 'zone guard +50m'],
-      offsetMeters: null,
-      bytesOut: queryString.length,
       status: 'safe',
-      tripId: null,
-      zonesSuppressed: [],
-    });
-    const response = await withRetry(`overpass-speed-limit:${url}`, () => pinnedFetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-      body: new URLSearchParams({ data: queryString }),
-      signal: controller.signal,
     }));
     if (!response.ok) throw new Error(`Overpass request failed (${response.status})`);
     const data = await response.json();
@@ -868,6 +866,9 @@ function nearestWayLimit(point, ways = [], maxDistanceM = 75) {
 }
 
 export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
+  if (isHeightenedPrivacyMode(settings)) {
+    return { ways: [], status: 'disabled_heightened_privacy', source: 'openstreetmap_overpass' };
+  }
   if (settings.speed_limit_lookup_enabled === false) {
     return { ways: [], status: 'disabled', source: 'openstreetmap_overpass' };
   }
@@ -876,20 +877,13 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
   const bounds = routeBounds(safeRoutePoints);
   if (!bounds) {
     if (privacyZones.length && routePoints.length) {
-      await logTransmission({
-        service: 'overpass',
+      await privacyGatedFetch('overpass', { url: settings.overpass_speed_limit_url || OVERPASS_URL }, {
         type: 'Speed limit query',
         coordinateDisclosure: 'blocked',
-        privacyTransformVerified: true,
-        privacyTransformSource: 'speedLimitSource.js:privacySafeRoutePoints',
-        privacyVerificationEvidence: ['privacy filtering left no public road-data points'],
-        sentCoords: null,
-        protections: ['all route points inside privacy guard - request blocked'],
-        offsetMeters: null,
-        bytesOut: 0,
-        status: 'blocked',
-        tripId: null,
-        zonesSuppressed: [],
+        block: {
+          privacyVerificationEvidence: ['privacy filtering left no public road-data points'],
+          protections: ['all route points inside privacy guard - request blocked'],
+        },
       });
     }
     return {
@@ -918,20 +912,13 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
 
   if (!queryBounds.length) {
     if (privacyZones.length && routePoints.length) {
-      await logTransmission({
-        service: 'overpass',
+      await privacyGatedFetch('overpass', { url: settings.overpass_speed_limit_url || OVERPASS_URL }, {
         type: 'Speed limit query',
         coordinateDisclosure: 'blocked',
-        privacyTransformVerified: true,
-        privacyTransformSource: 'speedLimitSource.js:boundsOverlapPrivacyZone',
-        privacyVerificationEvidence: ['computed road-data bounding boxes overlapped a privacy-zone guard'],
-        sentCoords: null,
-        protections: ['road-data bounding box would overlap privacy guard - request blocked'],
-        offsetMeters: null,
-        bytesOut: 0,
-        status: 'blocked',
-        tripId: null,
-        zonesSuppressed: [],
+        block: {
+          privacyVerificationEvidence: ['computed road-data bounding boxes overlapped a privacy-zone guard'],
+          protections: ['road-data bounding box would overlap privacy guard - request blocked'],
+        },
       });
     }
     return {

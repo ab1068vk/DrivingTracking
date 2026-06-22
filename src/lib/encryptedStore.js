@@ -33,7 +33,7 @@ export const isSecureDeleteTombstone = (record) => (
  * Best-effort record deletion for IndexedDB.
  *
  * Browsers do not expose physical page placement, flash wear-leveling, or a
- * compaction API, so this cannot guarantee media sanitization. Sensitive
+ * compaction API, so this cannot ensure media sanitization. Sensitive
  * records must remain encrypted at rest; the committed random tombstone only
  * reduces recoverable application data before the logical delete.
  */

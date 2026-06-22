@@ -1,5 +1,6 @@
 import { clamp } from '@/lib/mathUtils';
 import { scoringValue } from '@/lib/scoringConstants';
+import { excludePrivacyTouchedDaysFromTrends } from '@/lib/privateTripMode';
 
 const HABIT_CONSTANTS = {
   MIN_TRIPS_FOR_BUCKET: 3,
@@ -102,7 +103,7 @@ const defaultHourlyRiskForHour = (hour) => {
  * @example buildHabitProfile(completedTrips)
  */
 export function buildHabitProfile(trips = []) {
-  const completed = (trips || [])
+  const completed = excludePrivacyTouchedDaysFromTrends(trips)
     .filter((trip) => !trip?.status || trip.status === 'completed')
     .map((trip) => ({ trip, start: getTripStartDate(trip), score: getTripScore(trip) }))
     .filter((entry) => entry.start && entry.score != null);

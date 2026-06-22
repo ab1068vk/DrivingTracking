@@ -2,6 +2,7 @@ import { registerPlugin } from '@capacitor/core';
 import { isAndroid } from '@/lib/nativePlatform';
 import { localSettings } from '@/lib/trackingStore';
 import { recordSystemEvent, logSystemFailure } from '@/lib/systemLog';
+import { getBuildIntegrityInfo } from '@/lib/buildIntegrity';
 
 const Rasp = registerPlugin('Rasp');
 
@@ -23,6 +24,10 @@ export function sanitizeIntegrityResult(result = {}) {
     threats,
     checkedAt: typeof result.checkedAt === 'string' ? result.checkedAt : new Date().toISOString(),
     native: result.native === true,
+    buildHash: typeof result.buildHash === 'string' && result.buildHash.trim()
+      ? result.buildHash.trim()
+      : getBuildIntegrityInfo().buildHash,
+    buildHashAlgorithm: result.buildHashAlgorithm || getBuildIntegrityInfo().algorithm,
   };
 }
 

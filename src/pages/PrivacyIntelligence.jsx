@@ -29,6 +29,10 @@ import { authenticateDevice } from '@/lib/biometricGate';
 import { loadPrivacyIntelligence } from '@/lib/privacyIntelligence';
 import { clearTransmissionLog } from '@/lib/transmissionLog';
 import { exportAuditCheckpoint, verifyCheckpoint } from '@/lib/hashChainLog';
+import { exportPrivacyReport } from '@/lib/privacyReport';
+import { dismissPrivacyZoneSuggestion } from '@/lib/privacyZoneSuggestions';
+import { logSystemFailure } from '@/lib/systemLog';
+import ProtectionGuidance from '@/components/privacy/ProtectionGuidance';
 import {
   Dialog,
   DialogContent,
@@ -45,7 +49,7 @@ const TABS = [
   { id: 'audit', label: 'Audit Log', icon: History },
 ];
 
-const statusClass = {
+export const statusClass = {
   ok: 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100',
   configured: 'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100',
   warn: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100',
@@ -54,7 +58,7 @@ const statusClass = {
   not_applicable: 'border-border bg-secondary/40 text-muted-foreground',
 };
 
-const privacyLevelClass = {
+export const privacyLevelClass = {
   blocked: 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-200',
   raw: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-100',
   protected: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100',
@@ -62,14 +66,14 @@ const privacyLevelClass = {
   none: 'bg-secondary text-muted-foreground',
 };
 
-const actionToneClass = {
+export const actionToneClass = {
   ok: 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100',
   warn: 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100',
   unknown: 'border-slate-300 bg-slate-100 text-slate-800 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-100',
   error: 'border-red-200 bg-red-50 text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100',
 };
 
-const STATUS_LABELS = {
+export const STATUS_LABELS = {
   ok: 'Verified',
   configured: 'Configured',
   warn: 'Needs attention',
@@ -79,6 +83,8 @@ const STATUS_LABELS = {
 };
 
 const V2_BANNER_KEY = 'privacy_intel_v2_banner_dismissed';
+const CHECKPOINT_REMINDER_MS = 30 * 24 * 60 * 60 * 1000;
+const SHOW_DEVELOPER_ACTIONS = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEBUG_ROUTES === 'true';
 
 const auditLabels = {
   TRANSMISSION: ['External request recorded', 'An outbound request was added to the privacy history.'],
@@ -120,10 +126,124 @@ const titleCase = (value) => String(value || 'Privacy event')
   .replace(/_/g, ' ')
   .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
+const scoreTrendText = (trend = {}) => {
+  const weekly = Number(trend.changeFromLastWeek);
+  const monthly = Number(trend.changeFromLastMonth);
+  const hasWeekly = trend.changeFromLastWeek != null && Number.isFinite(weekly);
+  const hasMonthly = trend.changeFromLastMonth != null && Number.isFinite(monthly);
+  const change = hasWeekly ? weekly : hasMonthly ? monthly : null;
+  if (change == null) return null;
+  const period = hasWeekly ? 'this week' : 'this month';
+  if (change === 0) return `No change ${period} · see Protections`;
+  return `${change > 0 ? 'Up' : 'Down'} ${Math.abs(change)} pts ${period} · see Protections`;
+};
+
+const formatExpiryCountdown = (value) => {
+  const remainingMs = new Date(value).getTime() - Date.now();
+  if (!Number.isFinite(remainingMs)) return null;
+  if (remainingMs <= 0) return 'Expiry pending cleanup';
+  const hours = Math.ceil(remainingMs / 3_600_000);
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'} remaining`;
+  const days = Math.ceil(remainingMs / 86_400_000);
+  return `${days} day${days === 1 ? '' : 's'} remaining`;
+};
+
 const auditMeta = (entry = {}) => {
   const [title, description] = auditLabels[entry.op] || [titleCase(entry.op), 'A privacy-related operation was recorded.'];
   return { title, description };
 };
+
+/**
+ * @param {{
+ *   authenticate?: (reason?: string) => Promise<any>,
+ *   setAuthed?: (authed: boolean) => void,
+ *   setError?: (error: string) => void,
+ *   onRejected?: () => void
+ * }} options
+ */
+export async function runPrivacyAuthentication({
+  authenticate = authenticateDevice,
+  setAuthed,
+  setError,
+  onRejected,
+} = {}) {
+  try {
+    const result = await authenticate('Access Privacy Intelligence');
+    if (result?.verified) {
+      setAuthed?.(true);
+      setError?.('');
+      return true;
+    }
+    onRejected?.();
+  } catch (authError) {
+    setError?.(authError?.message || 'Device authentication is unavailable.');
+  }
+  return false;
+}
+
+/**
+ * @param {{
+ *   authenticate?: () => any,
+ *   setAuthed?: (authed: boolean) => void,
+ *   now?: () => number
+ * }} options
+ */
+export function createPrivacyAppStateHandler({
+  authenticate,
+  setAuthed,
+  now = Date.now,
+} = {}) {
+  let backgroundedAt = 0;
+  return ({ isActive }) => {
+    if (!isActive) {
+      backgroundedAt = now();
+      return;
+    }
+    if (backgroundedAt && now() - backgroundedAt >= 5 * 60 * 1000) {
+      setAuthed?.(false);
+      void authenticate?.();
+    }
+    backgroundedAt = 0;
+  };
+}
+
+/**
+ * @param {{
+ *   authed: boolean,
+ *   loading: boolean,
+ *   error: string,
+ *   hasData: boolean,
+ *   onRetry: () => any,
+ *   children?: import('react').ReactNode
+ * }} props
+ */
+export function PrivacyAuthenticationGate({
+  authed,
+  loading,
+  error,
+  hasData,
+  onRetry,
+  children,
+}) {
+  if (error && !hasData) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-center">
+        <AlertTriangle className="h-8 w-8 text-red-500" />
+        <div className="text-sm font-medium text-red-600 dark:text-red-300">{error}</div>
+        <button type="button" onClick={onRetry} className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Retry</button>
+      </div>
+    );
+  }
+  if (!authed || loading) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-center">
+        <Lock className="h-8 w-8 text-primary" />
+        <div className="text-sm font-medium text-muted-foreground">Loading privacy intelligence...</div>
+      </div>
+    );
+  }
+  return children;
+}
 
 export default function PrivacyIntelligence() {
   const navigate = useNavigate();
@@ -135,18 +255,11 @@ export default function PrivacyIntelligence() {
   const [authed, setAuthed] = useState(false);
 
   const authenticate = useCallback(async () => {
-    try {
-      const result = await authenticateDevice('Access Privacy Intelligence');
-      if (result.verified) {
-        setAuthed(true);
-        setError('');
-        return true;
-      }
-      window.history.back();
-    } catch (authError) {
-      setError(authError?.message || 'Device authentication is unavailable.');
-    }
-    return false;
+    return runPrivacyAuthentication({
+      setAuthed,
+      setError,
+      onRejected: () => window.history.back(),
+    });
   }, []);
 
   useEffect(() => {
@@ -160,18 +273,10 @@ export default function PrivacyIntelligence() {
 
   useEffect(() => {
     let listener;
-    let backgroundedAt = 0;
-    CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-      if (!isActive) {
-        backgroundedAt = Date.now();
-        return;
-      }
-      if (backgroundedAt && Date.now() - backgroundedAt >= 5 * 60 * 1000) {
-        setAuthed(false);
-        void authenticate();
-      }
-      backgroundedAt = 0;
-    }).then((handle) => { listener = handle; }).catch(() => {});
+    const handleAppStateChange = createPrivacyAppStateHandler({ authenticate, setAuthed });
+    CapacitorApp.addListener('appStateChange', handleAppStateChange)
+      .then((handle) => { listener = handle; })
+      .catch(() => {});
     return () => listener?.remove?.();
   }, [authenticate]);
 
@@ -182,6 +287,7 @@ export default function PrivacyIntelligence() {
       setData(await loadPrivacyIntelligence());
       setError('');
     } catch (loadError) {
+      logSystemFailure('privacy_intelligence_load_failed', loadError, {});
       setError(loadError?.message || 'Privacy data could not be loaded.');
     } finally {
       setLoading(false);
@@ -198,22 +304,15 @@ export default function PrivacyIntelligence() {
 
   const activeTab = useMemo(() => TABS.find((item) => item.id === tab) || TABS[0], [tab]);
 
-  if (error && !data) {
+  if (!authed || loading || (error && !data)) {
     return (
-      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-center">
-        <AlertTriangle className="h-8 w-8 text-red-500" />
-        <div className="text-sm font-medium text-red-600 dark:text-red-300">{error}</div>
-        <button type="button" onClick={() => (authed ? loadData() : authenticate())} className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Retry</button>
-      </div>
-    );
-  }
-
-  if (!authed || loading) {
-    return (
-      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-center">
-        <Lock className="h-8 w-8 text-primary" />
-        <div className="text-sm font-medium text-muted-foreground">Loading privacy intelligence...</div>
-      </div>
+      <PrivacyAuthenticationGate
+        authed={authed}
+        loading={loading}
+        error={error}
+        hasData={Boolean(data)}
+        onRetry={() => (authed ? loadData() : authenticate())}
+      />
     );
   }
 
@@ -274,23 +373,61 @@ export default function PrivacyIntelligence() {
       {tab === 'overview' && <OverviewTab data={data} onOpenTab={setTab} onOpenSettings={() => navigate('/settings')} />}
       {tab === 'transmissions' && <TransmissionsTab data={data} onClear={async () => { await clearTransmissionLog(); await loadData(); }} />}
       {tab === 'protections' && <ProtectionsTab data={data} onOpenSettings={() => navigate('/settings')} />}
-      {tab === 'zones' && <ZonesTab data={data} />}
+      {tab === 'zones' && (
+        <ZonesTab
+          data={data}
+          onAcceptSuggestion={(suggestion) => navigate('/settings?section=settings-privacy-data', {
+            state: { privacyZoneSuggestion: suggestion },
+          })}
+          onDismissSuggestion={async (suggestion) => {
+            await dismissPrivacyZoneSuggestion(suggestion);
+            await loadData({ quiet: true });
+          }}
+        />
+      )}
       {tab === 'audit' && <AuditTab data={data} />}
     </div>
   );
 }
 
-function OverviewTab({ data, onOpenTab, onOpenSettings }) {
+export function OverviewTab({ data, onOpenTab, onOpenSettings }) {
   const score = data?.score || {};
+  const trendText = scoreTrendText(data?.scoreTrend);
   const zoneSummary = data?.zoneSummary || {};
   const drivingReadout = data?.drivingReadout || {};
   const transmissions = data?.transmissions || {};
   const recommendations = data?.recommendations || [];
   const actionPlan = data?.actionPlan || {};
+  const protectionFindings = data?.protectionSummary?.findings || [];
+  const postureRegressionFindings = data?.protectionSummary?.postureRegressionFindings || [];
+  const compoundRiskFindings = score.compoundRiskFindings || [];
   const [showThreatModel, setShowThreatModel] = useState(false);
+  const [reportError, setReportError] = useState('');
+  const [exportingReport, setExportingReport] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(() => (
     globalThis.localStorage?.getItem(V2_BANNER_KEY) === 'true'
   ));
+  const downloadPrivacyReport = useCallback(async () => {
+    setExportingReport(true);
+    setReportError('');
+    try {
+      const report = await exportPrivacyReport(data);
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `road-sage-privacy-report-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (reportExportError) {
+      logSystemFailure('privacy_report_export_failed', reportExportError, {
+        has_data: Boolean(data),
+      });
+      setReportError(reportExportError?.message || 'Privacy Report could not be exported.');
+    } finally {
+      setExportingReport(false);
+    }
+  }, [data]);
   return (
     <div className="min-w-0 space-y-4 overflow-hidden">
       {!bannerDismissed && (
@@ -321,6 +458,18 @@ function OverviewTab({ data, onOpenTab, onOpenSettings }) {
           {score.summary.error} protection{score.summary.error === 1 ? '' : 's'} failed verification.
         </button>
       )}
+      {postureRegressionFindings.map((finding) => (
+        <button key={finding.id} type="button" onClick={() => onOpenTab(finding.targetTab || 'protections')} className="flex w-full items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-left text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span><span className="font-semibold">{finding.title}</span><span className="mt-1 block text-xs opacity-85">{finding.detail}</span></span>
+        </button>
+      ))}
+      {protectionFindings.map((finding) => (
+        <button key={finding.id} type="button" onClick={() => onOpenTab(finding.targetTab || 'transmissions')} className="flex w-full items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-left text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+          <Clock3 className="mt-0.5 h-4 w-4 shrink-0" />
+          <span><span className="font-semibold">{finding.title}</span><span className="mt-1 block text-xs opacity-85">{finding.detail} {finding.userAction}</span></span>
+        </button>
+      ))}
       <section className={`rounded-2xl border p-4 shadow-sm ${actionToneClass[actionPlan.tone] || actionToneClass.unknown}`}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
@@ -361,8 +510,27 @@ function OverviewTab({ data, onOpenTab, onOpenSettings }) {
             <span className="rounded-full bg-background/60 px-2 py-1 text-xs font-bold">{score.label || 'Checking'}</span>
           </div>
           <div className="mt-5 flex items-end gap-2"><span className="font-grotesk text-6xl font-bold leading-none">{score.overall ?? 0}</span><span className="pb-1 text-sm font-semibold opacity-70">/ 100</span></div>
+          {trendText && (
+            <button type="button" onClick={() => onOpenTab('protections')} className="mt-2 text-left text-xs font-semibold underline-offset-2 hover:underline">
+              {trendText}
+            </button>
+          )}
           <p className="mt-3 break-words text-sm opacity-90">{score.detail}</p>
-          <p className="mt-2 break-words text-xs opacity-75">Local evidence only. Unknown checks are not proof of safety.</p>
+          {score.capReason && <p className="mt-2 break-words text-xs font-medium opacity-85">{score.capReason}</p>}
+          {compoundRiskFindings.map((finding) => (
+            <p key={finding.id} className="mt-2 break-words text-xs font-semibold opacity-90">{finding.detail}</p>
+          ))}
+          <p className="mt-2 break-words text-xs opacity-75">Local evidence only. Unknown checks are not evidence of safety.</p>
+          <button
+            type="button"
+            onClick={downloadPrivacyReport}
+            disabled={exportingReport}
+            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+          >
+            <Download className="h-4 w-4" />
+            {exportingReport ? 'Preparing report...' : 'Export Privacy Report'}
+          </button>
+          {reportError && <p className="mt-2 text-xs font-medium text-red-700 dark:text-red-200">{reportError}</p>}
         </section>
 
         <section className="grid min-w-0 gap-3 sm:grid-cols-2">
@@ -421,7 +589,7 @@ function OverviewTab({ data, onOpenTab, onOpenSettings }) {
           </div>
         </section>
       </div>
-      <SummaryCard icon={History} label="Audit integrity" value={data?.chainResult?.valid ? 'Verified' : 'Needs review'} detail={`${data?.chain?.length || 0} chained entries`} tone={data?.chainResult?.valid ? 'ok' : 'error'} onClick={() => onOpenTab('audit')} />
+      <SummaryCard icon={History} label="Audit integrity" value={data?.chainResult?.valid ? 'Consistent' : 'Needs review'} detail={data?.chainResult?.valid ? ((data?.chain?.length || 0) > 0 && data?.auditSummary?.signatureCoverage < data.chain.length ? `${data.auditSummary.signatureCoverage} entries since the last hardware-signed checkpoint` : 'Hardware signature unavailable') : `${data?.chain?.length || 0} chained entries`} tone={data?.chainResult?.valid ? 'ok' : 'error'} onClick={() => onOpenTab('audit')} />
       <button type="button" onClick={() => setShowThreatModel(true)} className="w-full text-center text-xs text-muted-foreground underline underline-offset-4">
         Local privacy activity and protection checks - not an external security audit.
       </button>
@@ -429,7 +597,7 @@ function OverviewTab({ data, onOpenTab, onOpenSettings }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>What this dashboard does and does not show</DialogTitle>
-            <DialogDescription>These checks provide local evidence, not a guarantee against a fully compromised device or application.</DialogDescription>
+            <DialogDescription>These checks provide local evidence, not a promise against a fully compromised device or application.</DialogDescription>
           </DialogHeader>
           <ThreatList title="Can help with" items={[
             'Accidental privacy regressions',
@@ -477,7 +645,7 @@ function MiniMetric({ label, value }) {
   return <div className="min-w-0 rounded-xl bg-secondary/50 p-3"><div className="break-words font-grotesk text-xl font-bold">{value}</div><div className="mt-1 break-words text-[11px] text-muted-foreground">{label}</div></div>;
 }
 
-function TransmissionsTab({ data, onClear }) {
+export function TransmissionsTab({ data, onClear }) {
   const entries = data?.transmissions?.entries || [];
   const outboundReadout = data?.transmissions?.outboundReadout || {};
   const [query, setQuery] = useState('');
@@ -639,9 +807,10 @@ function TransmissionCard({ entry }) {
   );
 }
 
-function ProtectionsTab({ data, onOpenSettings }) {
+export function ProtectionsTab({ data, onOpenSettings }) {
   const protections = data?.protections || [];
   const [filter, setFilter] = useState('all');
+  const [expandedControlId, setExpandedControlId] = useState(null);
   const visible = protections.filter((item) => filter === 'all' || item.status === filter || item.category === filter);
   const categories = [...new Set(protections.map((item) => item.category))];
   return (
@@ -656,9 +825,26 @@ function ProtectionsTab({ data, onOpenSettings }) {
       <div className="grid gap-3 md:grid-cols-2">
         {visible.map((item) => (
           <article key={item.id} className={`rounded-2xl border p-4 shadow-sm ${statusClass[item.status] || statusClass.warn}`}>
-            <div className="flex items-start gap-3">
-              {item.status === 'ok' ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : item.status === 'error' ? <XCircle className="mt-0.5 h-4 w-4 shrink-0" /> : item.status === 'unknown' || item.status === 'not_applicable' ? <Info className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />}
+            <div className="flex flex-wrap items-start gap-3">
+              {item.id === 'request_obfuscation' ? null : item.status === 'ok' ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : item.status === 'error' ? <XCircle className="mt-0.5 h-4 w-4 shrink-0" /> : item.status === 'unknown' || item.status === 'not_applicable' ? <Info className="mt-0.5 h-4 w-4 shrink-0" /> : <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />}
+              {item.id === 'request_obfuscation' && (
+                <button
+                  type="button"
+                  aria-label="About Request Timing Obfuscation"
+                  title="First-party decoy traffic mode creates additional real Open-Meteo requests, so Transmissions may show more weather requests than trips."
+                  className="mt-0.5 shrink-0 rounded-full opacity-70 hover:opacity-100"
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </button>
+              )}
               <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="font-semibold">{item.label}</span><span className="rounded-full bg-background/60 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">{item.category}</span><span className="rounded bg-background/60 px-2 py-0.5 text-[10px] font-bold uppercase">{STATUS_LABELS[item.status] || 'Unknown'}</span></div><div className="mt-1 text-xs opacity-90">{item.evidence || item.detail}</div>{item.rotation && <div className="mt-2 text-[11px] opacity-75">Active v{item.rotation.activeKeyVersion} · Oldest {item.rotation.oldestPayloadKeyVersion == null ? 'none' : `v${item.rotation.oldestPayloadKeyVersion}`} · Pending {item.rotation.payloadsPendingRotation || 0}</div>}{item.action && item.status !== 'not_applicable' && <button type="button" onClick={onOpenSettings} className="mt-3 inline-flex items-center gap-1 text-xs font-bold underline underline-offset-2">{item.action}<ChevronRight className="h-3.5 w-3.5" /></button>}</div>
+              <ProtectionGuidance
+                item={item}
+                expanded={expandedControlId === item.id}
+                onToggle={() => setExpandedControlId((current) => current === item.id ? null : item.id)}
+                onOpenSettings={onOpenSettings}
+                showDeveloperActions={SHOW_DEVELOPER_ACTIONS}
+              />
             </div>
           </article>
         ))}
@@ -667,13 +853,19 @@ function ProtectionsTab({ data, onOpenSettings }) {
   );
 }
 
-function ZonesTab({ data }) {
+export function ZonesTab({ data, onAcceptSuggestion, onDismissSuggestion }) {
   const zones = data?.zones || [];
+  const suggestions = data?.zoneSuggestions || [];
   const summary = data?.zoneSummary || {};
   const drivingReadout = data?.drivingReadout || {};
   if (!zones.length) {
     return (
       <div className="space-y-4">
+        <ZoneSuggestionCards
+          suggestions={suggestions}
+          onAcceptSuggestion={onAcceptSuggestion}
+          onDismissSuggestion={onDismissSuggestion}
+        />
         <EmptyState text={drivingReadout.tripCount ? `No privacy zones are configured, but ${drivingReadout.tripCount} trip${drivingReadout.tripCount === 1 ? '' : 's'} were found. Add home, work, or sensitive-place zones in Settings so endpoint GPS can be hidden.` : 'No privacy zones are configured. Add one in Settings to hide sensitive route areas.'} />
         <SummaryCard icon={Activity} label="Trips analyzed" value={drivingReadout.tripCount || 0} detail={drivingReadout.latestTripAt ? `Latest trip ${formatRelativeTime(drivingReadout.latestTripAt)}` : 'No completed trips found'} />
       </div>
@@ -681,6 +873,11 @@ function ZonesTab({ data }) {
   }
   return (
     <div className="space-y-4">
+      <ZoneSuggestionCards
+        suggestions={suggestions}
+        onAcceptSuggestion={onAcceptSuggestion}
+        onDismissSuggestion={onDismissSuggestion}
+      />
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex items-start gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="font-semibold">How these counts work</div><p className="mt-1 text-xs text-muted-foreground">GPS samples and driving events are counted from redacted records saved with each trip. Reopening maps or refreshing this page does not increase them.</p></div></div>
       </div>
@@ -714,7 +911,7 @@ function ZonesTab({ data }) {
               : 'Ready for future trips';
           return (
             <article key={zone.id} className={`rounded-2xl border p-4 shadow-sm ${zone.lastActive ? statusClass.ok : 'border-border bg-card'}`}>
-              <div className="flex items-start justify-between gap-3"><div><div className="font-semibold">{zone.label}</div><div className="mt-1 text-xs opacity-80">{Math.round(zone.radius_m)} m mask radius - {zoneVerdict}</div></div><span className={`rounded-full px-2 py-1 text-xs font-semibold ${zone.lastActive ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100' : 'bg-secondary text-muted-foreground'}`}>{zone.lastActive ? 'Protecting' : 'Ready'}</span></div>
+              <div className="flex items-start justify-between gap-3"><div><div className="font-semibold">{zone.label}</div><div className="mt-1 text-xs opacity-80">{zone.type === 'corridor' ? 'Route corridor' : 'Circle'} - {Math.round(zone.radius_m)} m {zone.type === 'corridor' ? 'width' : 'mask radius'} - {zoneVerdict}</div>{zone.expiresAt && <div className="mt-1 text-xs font-semibold text-amber-700 dark:text-amber-200">{formatExpiryCountdown(zone.expiresAt)}</div>}</div><span className={`rounded-full px-2 py-1 text-xs font-semibold ${zone.lastActive ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100' : 'bg-secondary text-muted-foreground'}`}>{zone.sensitivity === 'high' ? 'High' : zone.lastActive ? 'Protecting' : 'Ready'}</span></div>
               <div className="mt-3 rounded-xl bg-background/55 p-3 text-xs opacity-85">
                 {zone.lastActive
                   ? `Last matched a saved trip ${formatRelativeTime(zone.lastActive)}. Route samples or events were hidden for this zone.`
@@ -722,6 +919,11 @@ function ZonesTab({ data }) {
                     ? 'No saved trip has matched this zone yet. Check the radius or whether this is actually where trips start, end, or pass through.'
                     : 'This zone is configured and will be checked when trips are saved.'}
               </div>
+              {(Number(zone?.effectiveness?.nearMissCount) || 0) > 0 && (
+                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                  {zone.effectiveness.nearMissCount} raw point{zone.effectiveness.nearMissCount === 1 ? '' : 's'} were just outside this zone&apos;s boundary - consider widening to {zone.effectiveness.suggestedRadiusM} m.
+                </div>
+              )}
               <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
                 <ZoneMetric label="GPS today" value={zone.today.hidden} />
                 <ZoneMetric label="Events today" value={zone.today.events} />
@@ -739,17 +941,90 @@ function ZonesTab({ data }) {
   );
 }
 
+function ZoneSuggestionCards({
+  suggestions = [],
+  onAcceptSuggestion,
+  onDismissSuggestion,
+}) {
+  return suggestions.map((suggestion) => (
+    <section
+      key={`${suggestion.suggestedCenter.lat.toFixed(4)}_${suggestion.suggestedCenter.lng.toFixed(4)}`}
+      className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sky-950 shadow-sm dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100"
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="font-semibold">You stop here often - protect it?</div>
+          <p className="mt-1 text-xs opacity-85">
+            Seen on {suggestion.occurrenceDays} different days. Suggested radius: {suggestion.suggestedRadiusM} m. Last seen {formatRelativeTime(suggestion.lastSeenAt)}.
+          </p>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <button
+            type="button"
+            onClick={() => onDismissSuggestion?.(suggestion)}
+            className="rounded-lg border border-current/25 px-3 py-2 text-xs font-semibold"
+          >
+            Dismiss
+          </button>
+          <button
+            type="button"
+            onClick={() => onAcceptSuggestion?.(suggestion)}
+            className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
+          >
+            Accept
+          </button>
+        </div>
+      </div>
+    </section>
+  ));
+}
+
 function ZoneMetric({ label, value }) {
   return <div className="rounded-xl bg-secondary/60 p-3 text-center"><div className="font-grotesk text-xl font-bold">{value || 0}</div><div className="mt-1 text-[11px] text-muted-foreground">{label}</div></div>;
 }
 
-function AuditTab({ data }) {
+export function AuditTab({ data }) {
   const entries = (data?.chain || []).slice().reverse();
   const [query, setQuery] = useState('');
   const [operation, setOperation] = useState('all');
   const [checkpointResult, setCheckpointResult] = useState(null);
+  const [lastCheckpointExportedAt, setLastCheckpointExportedAt] = useState(
+    data?.auditSummary?.lastCheckpointExportedAt || null
+  );
   const fileInputRef = useRef(null);
   const operations = data?.auditSummary?.operations || [];
+  const chainValid = data?.chainResult?.valid === true;
+  const signatureCoverage = data?.auditSummary?.signatureCoverage || 0;
+  const hasHardwareSignedEntry = (data?.chain || []).some((entry) => (
+    Boolean(entry?.tipSignature) && Boolean(entry?.signingPublicKey)
+  ));
+  const checkpointReminderDue = entries.length > 0 && (
+    !lastCheckpointExportedAt ||
+    Date.now() - lastCheckpointExportedAt > CHECKPOINT_REMINDER_MS
+  );
+  useEffect(() => {
+    setLastCheckpointExportedAt(data?.auditSummary?.lastCheckpointExportedAt || null);
+  }, [data?.auditSummary?.lastCheckpointExportedAt]);
+  const exportCheckpoint = useCallback(async () => {
+    try {
+      const checkpoint = await exportAuditCheckpoint();
+      const blob = new Blob([JSON.stringify(checkpoint, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `road-sage-audit-checkpoint-${checkpoint.seq}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setLastCheckpointExportedAt(checkpoint.exported_at);
+    } catch (checkpointError) {
+      logSystemFailure('privacy_audit_checkpoint_export_failed', checkpointError, {});
+      setCheckpointResult({
+        valid: false,
+        signatureStatus: 'invalid',
+        reason: checkpointError?.message,
+      });
+    }
+  }, []);
   const filtered = useMemo(() => entries.filter((entry) => {
     if (operation !== 'all' && entry.op !== operation) return false;
     if (!query.trim()) return true;
@@ -758,28 +1033,28 @@ function AuditTab({ data }) {
   }), [entries, operation, query]);
   return (
     <div className="space-y-4">
-      <div className={`rounded-2xl border p-4 ${data?.chainResult?.valid ? statusClass.ok : statusClass.error}`}>
-        <div className="flex items-start gap-3">{data?.chainResult?.valid ? <ShieldCheck className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}<div><div className="font-semibold">{data?.chainResult?.valid ? 'Local audit chain internally consistent' : 'Audit chain broken'}</div><div className="mt-1 text-xs opacity-80">{data?.chainResult?.valid ? `${data.chainResult.length || 0} entries are linked in order. Tip ${shortHash(data.chainResult.tip)}. This is tamper-evident locally, not tamper-proof.` : `Entry ${(data?.chainResult?.brokenAt ?? 0) + 1}: ${data?.chainResult?.reason || 'Verification failed'}`}</div></div></div>
+      <div className={`rounded-2xl border p-4 ${chainValid ? (hasHardwareSignedEntry && signatureCoverage === 0 ? statusClass.ok : statusClass.warn) : statusClass.error}`}>
+        <div className="flex items-start gap-3">{chainValid ? <ShieldCheck className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}<div><div className="font-semibold">{chainValid ? (hasHardwareSignedEntry && signatureCoverage === 0 ? 'Hash-chain consistent, hardware-signed tip available' : hasHardwareSignedEntry ? `Hash-chain consistent, ${signatureCoverage} entries since the last hardware-signed checkpoint` : 'Hash-chain consistent, hardware signature unavailable') : 'Audit chain broken'}</div><div className="mt-1 text-xs opacity-80">{chainValid ? `${data.chainResult.length || 0} entries are linked in order. Tip ${shortHash(data.chainResult.tip)}. ${hasHardwareSignedEntry ? 'Retain an exported signed checkpoint to detect later local history rewrites.' : 'An unsigned local chain only protects against casual tampering.'}` : `Entry ${(data?.chainResult?.brokenAt ?? 0) + 1}: ${data?.chainResult?.reason || 'Verification failed'}`}</div></div></div>
       </div>
-      <div className="rounded-2xl border border-border bg-card p-4 text-sm shadow-sm"><div className="flex items-start gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="font-semibold">What the audit log can show</div><p className="mt-1 text-xs text-muted-foreground">Each entry includes the previous entry's hash. Editing, reordering, or deleting an entry breaks local verification unless the attacker can also rewrite the local anchor. The log records privacy operations and intentionally excludes coordinates, addresses, tokens, and zone radius details.</p></div></div></div>
+      <div className="rounded-2xl border border-border bg-card p-4 text-sm shadow-sm"><div className="flex items-start gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="font-semibold">What the audit log can show</div><p className="mt-1 text-xs text-muted-foreground">Each entry includes the previous entry's hash. A verified signed checkpoint protects against later history rewrites if you retain the exported file. An unsigned chain only protects against casual tampering because the local chain and anchor can be rewritten together. The log intentionally excludes coordinates, addresses, tokens, and zone radius details.</p></div></div></div>
+      {checkpointReminderDue && (
+        <div className={`rounded-2xl border p-4 ${statusClass.warn}`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-semibold">Export a checkpoint to protect against undetected local history rewrites.</div>
+              <div className="mt-1 text-xs opacity-80">Keep the exported file outside the app and verify it later against the live chain.</div>
+            </div>
+            <button type="button" onClick={exportCheckpoint} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground">
+              <Download className="h-4 w-4" /> Export checkpoint
+            </button>
+          </div>
+        </div>
+      )}
       <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={async () => {
-              try {
-                const checkpoint = await exportAuditCheckpoint();
-                const blob = new Blob([JSON.stringify(checkpoint, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `road-sage-audit-checkpoint-${checkpoint.seq}.json`;
-                link.click();
-                URL.revokeObjectURL(url);
-              } catch (checkpointError) {
-                setCheckpointResult({ valid: false, reason: checkpointError?.message });
-              }
-            }}
+            onClick={exportCheckpoint}
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
           >
             <Download className="h-4 w-4" /> Export checkpoint
@@ -798,7 +1073,12 @@ function AuditTab({ data }) {
                 if (!file) return;
                 setCheckpointResult(await verifyCheckpoint(JSON.parse(await file.text())));
               } catch (checkpointError) {
-                setCheckpointResult({ valid: false, reason: checkpointError?.message || 'Checkpoint file is invalid' });
+                logSystemFailure('privacy_audit_checkpoint_verify_failed', checkpointError, {});
+                setCheckpointResult({
+                  valid: false,
+                  signatureStatus: 'invalid',
+                  reason: checkpointError?.message || 'Checkpoint file is invalid',
+                });
               } finally {
                 event.target.value = '';
               }
@@ -806,11 +1086,15 @@ function AuditTab({ data }) {
           />
         </div>
         {checkpointResult && (
-          <div className={`mt-3 rounded-lg border p-3 text-xs ${checkpointResult.valid ? statusClass.ok : statusClass.error}`}>
-            {checkpointResult.valid ? 'Chain history matches the saved checkpoint.' : checkpointResult.reason}
+          <div className={`mt-3 rounded-lg border p-3 text-xs ${checkpointResult.valid ? (checkpointResult.signatureStatus === 'verified' ? statusClass.ok : statusClass.warn) : statusClass.error}`}>
+            {checkpointResult.valid
+              ? checkpointResult.signatureStatus === 'verified'
+                ? 'Chain history matches the saved checkpoint and its hardware-backed signature is valid.'
+                : 'Hash-chain consistent, hardware signature unavailable.'
+              : checkpointResult.reason}
           </div>
         )}
-        <p className="mt-3 text-xs text-muted-foreground">A saved checkpoint makes later history changes detectable across time. It is tamper-evident, not tamper-proof.</p>
+        <p className="mt-3 text-xs text-muted-foreground">A retained, verified signed checkpoint protects against later history rewrites. An unsigned checkpoint can still detect ordinary edits while the local anchor remains trustworthy.</p>
       </section>
       <div className="grid gap-3 sm:grid-cols-3"><SummaryCard icon={History} label="Entries today" value={data?.auditSummary?.todayTotal || 0} detail={`${data?.auditSummary?.weekTotal || 0} this week`} /><SummaryCard icon={Activity} label="Operation types" value={operations.length} detail="Distinct privacy actions" /><SummaryCard icon={Clock3} label="Latest entry" value={data?.auditSummary?.latestAt ? formatRelativeTime(data.auditSummary.latestAt) : 'None'} detail={data?.auditSummary?.latestAt ? formatTime(data.auditSummary.latestAt) : 'No audit activity yet'} /></div>
       <div className="grid gap-2 rounded-2xl border border-border bg-card p-4 shadow-sm md:grid-cols-[1fr_220px]"><label className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search audit activity" className="h-9 w-full rounded-xl border border-input bg-background pl-9 pr-3 text-sm outline-none focus:ring-1 focus:ring-ring" /></label><select value={operation} onChange={(event) => setOperation(event.target.value)} className="h-9 rounded-xl border border-input bg-background px-3 text-sm"><option value="all">All operations</option>{operations.map((item) => <option key={item.operation} value={item.operation}>{titleCase(item.operation)} ({item.count})</option>)}</select></div>

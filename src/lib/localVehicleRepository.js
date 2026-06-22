@@ -1,7 +1,7 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { DEFAULT_EV_KWH_PER_100KM, DEFAULT_MAINTENANCE_ITEMS } from '@/lib/tripEconomyDefaults';
 
-const VEHICLES_KEY = 'drivesense_vehicles';
+export const VEHICLES_KEY = 'drivesense_vehicles';
 
 const mergeMaintenanceItems = (items = []) => {
   const byId = new Map((Array.isArray(items) ? items : []).map((item) => [item.id, item]));

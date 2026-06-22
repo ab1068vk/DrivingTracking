@@ -5,9 +5,9 @@ import { weightedBlend } from '@/lib/tripEngine';
 import { scoringValue } from '@/lib/scoringConstants';
 import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
-import { pinnedFetch } from '@/lib/pinnedFetch';
-import { logTransmission } from '@/lib/transmissionLog';
+import { privacyGatedFetch } from '@/lib/privacyGatedFetch';
 import { enqueueLocationRequest } from '@/lib/requestObfuscator';
+import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 
 const WEATHER_CACHE_KEY = 'drivesense_open_meteo_weather_cache_v1';
 const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -211,7 +211,6 @@ async function fetchOpenMeteoWeather({
   date,
   tripId = null,
   zonesSuppressed = [],
-  privacyTransformVerified = false,
   privacyVerificationEvidence = [],
 }) {
   const startDate = dayKey(date);
@@ -220,22 +219,19 @@ async function fetchOpenMeteoWeather({
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
-    await logTransmission({
-      service: 'open-meteo',
+    const response = await withRetry('open-meteo-weather', () => privacyGatedFetch('open-meteo', {
+      url: url.toString(),
+      signal: controller.signal,
+    }, {
       type: 'Weather lookup',
       coordinateDisclosure: 'rounded',
-      privacyTransformVerified,
-      privacyTransformSource: 'weatherContext.js:safeWeatherPoint',
       privacyVerificationEvidence,
       sentCoords: `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
       protections: ['privacy-zone buffer +100m', 'rounded to 4 decimals'],
-      offsetMeters: null,
-      bytesOut: url.toString().length,
       status: 'safe',
       tripId,
       zonesSuppressed,
-    });
-    const response = await withRetry('open-meteo-weather', () => pinnedFetch(url, { signal: controller.signal }));
+    }));
     if (!response.ok) throw new Error(`Open-Meteo request failed (${response.status})`);
     return response.json();
   } catch (error) {
@@ -297,6 +293,10 @@ function samplesForTrip(data, startTime, endTime) {
 }
 
 export async function fetchWeatherContextForTrip(routePoints = [], startTime, endTime, settings = {}) {
+  if (isHeightenedPrivacyMode(settings)) {
+    recordSystemEvent('weather_context_skipped', { status: 'disabled_heightened_privacy' }, { category: 'weather' });
+    return unavailableWeatherContext('disabled_heightened_privacy');
+  }
   if (settings.weather_context_enabled === false) {
     recordSystemEvent('weather_context_skipped', { status: 'disabled' }, { category: 'weather' });
     return unavailableWeatherContext('disabled');
@@ -314,20 +314,14 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
         : 'No usable route points were available.',
     }, { category: 'weather', severity: 'warn', title: 'Operation failed: weather_context' });
     if (privacyZones.length && hasRoutePoints) {
-      await logTransmission({
-        service: 'open-meteo',
+      await privacyGatedFetch('open-meteo', { url: 'https://api.open-meteo.com/v1/forecast' }, {
         type: 'Weather lookup',
         coordinateDisclosure: 'blocked',
-        privacyTransformVerified: true,
-        privacyTransformSource: 'weatherContext.js:safeWeatherPoint',
-        privacyVerificationEvidence: ['all weather candidates were inside privacy-zone buffers'],
-        sentCoords: null,
-        protections: ['all route points inside privacy buffer - request blocked'],
-        offsetMeters: null,
-        bytesOut: 0,
-        status: 'blocked',
-        tripId: null,
-        zonesSuppressed: privacyZones.map((zone) => zone.label),
+        block: {
+          privacyVerificationEvidence: ['all weather candidates were inside privacy-zone buffers'],
+          protections: ['all route points inside privacy buffer - request blocked'],
+          zonesSuppressed: privacyZones.map((zone) => zone.label),
+        },
       });
     }
     return unavailableWeatherContext(privacyZones.length && hasRoutePoints ? 'skipped_privacy' : 'empty_route', {
@@ -352,8 +346,6 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
       lng: center.lng,
       date: startTime,
       zonesSuppressed: privacyZones.map((zone) => zone.label),
-      privacyTransformVerified: privacyZones.length === 0 ||
-        !insidePrivacyWeatherBuffer(center, privacyZones),
       privacyVerificationEvidence: [
         privacyZones.length === 0
           ? 'no privacy zones were configured for this weather lookup'

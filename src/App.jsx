@@ -10,7 +10,7 @@ import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { activeTripStore, applyThemeMode, localSettings } from '@/lib/trackingStore';
-import { loadPrivacyZonesFromStorage } from '@/lib/privacyZones';
+import { loadPrivacyZonesFromStorage, sweepExpiredPrivacyZones } from '@/lib/privacyZones';
 import { isAndroid } from '@/lib/nativePlatform';
 import { startNativeAutoTracking } from '@/lib/activityRecognition';
 import { tripQueryKeys } from '@/api/trips';
@@ -43,6 +43,17 @@ async function syncNativeCompletedTripsToLocalStore() {
     title: 'Native completed trips imported',
   });
 }
+
+let privacyZoneExpirySweep = null;
+const sweepExpiredZonesOnForeground = () => {
+  if (!privacyZoneExpirySweep) {
+    privacyZoneExpirySweep = sweepExpiredPrivacyZones()
+      .finally(() => {
+        privacyZoneExpirySweep = null;
+      });
+  }
+  return privacyZoneExpirySweep;
+};
 
 const showDebugRoutes = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEBUG_ROUTES === 'true';
 const Onboarding = lazy(() => import('@/pages/Onboarding'));
@@ -142,6 +153,7 @@ const AuthenticatedApp = () => {
       checkIntegrity()
         .catch((error) => logSystemFailure('device_integrity_check', error));
       loadPrivacyZonesFromStorage(settings)
+        .then(() => sweepExpiredZonesOnForeground())
         .catch((error) => logSystemFailure('privacy_zones_load', error));
       activeTripStore.hydrate()
         .catch((error) => logSystemFailure('active_trip_hydrate', error));
@@ -216,6 +228,8 @@ const AuthenticatedApp = () => {
 
     CapacitorApp.addListener('appStateChange', ({ isActive }) => {
       if (isActive) {
+        sweepExpiredZonesOnForeground()
+          .catch((error) => logSystemFailure('app_resume_privacy_zone_expiry', error));
         syncNativeCompletedTripsToLocalStore()
           .catch((error) => logSystemFailure('app_resume_native_completed_trips_sync', error));
         checkAndRotateEncryptionKey()
@@ -249,6 +263,8 @@ const AuthenticatedApp = () => {
   useEffect(() => {
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
+        sweepExpiredZonesOnForeground()
+          .catch((error) => logSystemFailure('visibility_privacy_zone_expiry', error));
         checkAndRotateEncryptionKey()
           .catch((error) => logSystemFailure('visibility_key_rotation_check', error));
         import('@/lib/roadContextQueue')

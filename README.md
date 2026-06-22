@@ -25,7 +25,7 @@ Road Sage observes the ego vehicle GPS speed and heading stream, optionally enri
 | `heading_drift_beta_*` | Sustained five-minute GPS heading-drift windows at highway speed. | Always low confidence, labelled Beta, and presented as a GPS-only attention pattern signal rather than a fatigue measurement; the 02:00-05:00 window increases proxy risk by 2.5x. |
 | `heading_deviation` / Heading Event (Beta); `heading_deviation_legacy` | Counter-steering GPS-heading shape above 50 km/h with context suppression; migrated legacy lane-change records. | Collected as diagnostic evidence even when Advanced Safety scoring is off, and removed from Safety scoring because it cannot verify a lane change. Retired `lane_change` backups/local records migrate to `heading_deviation_legacy` and remain diagnostic only. |
 | `lane_changing_score` / Lane Changing | Highway-speed GPS heading pattern plus calibrated IMU yaw when motion samples are available. | Requires at least 5 km and two detected manoeuvres, contributes a provisional 5% Safety blend weight when enabled, downweights GPS-only confidence, and cannot verify turn signals, lane markings, following gap, or slow-traffic lane changes. |
-| `aggressive_overtake` / Overtake Pattern (Beta) | Straight-highway baseline, acceleration, and bilateral heading-return pattern in GPS speed/heading. | Diagnostic only, always Beta/low confidence, excluded from Safety, Aggression, route risk, coaching, achievements, and headline trip risk. It cannot prove a lane crossing or actual overtake from GPS alone. |
+| `aggressive_overtake` / Overtake Pattern (Beta) | Straight-highway baseline, acceleration, and bilateral heading-return pattern in GPS speed/heading. | Diagnostic only, always Beta/low confidence, excluded from Safety, Aggression, route risk, coaching, achievements, and headline trip risk. It cannot establish a lane crossing or actual overtake from GPS alone. |
 | `phone_proxy_*` / GPS phone-use proxy | Repetitive GPS heading oscillations at driving speed. | Diagnostic only. Requires at least six oscillations in 15 seconds and acceptable GPS accuracy; no phone-use score is shown unless Android Usage Access evidence is available. |
 | `possible_crash` / Possible Incident Signal | Impact-like device-motion samples followed by low movement or still activity. | Emergency workflow cue only; unavailable without motion samples and never a crash diagnosis. |
 
@@ -108,6 +108,7 @@ The production technical reference is [docs/TECHNICAL_REFERENCE.md](docs/TECHNIC
 
 Other project documentation lives in [docs/](docs/):
 
+- [UI and loading performance guide](docs/UI_LOADING_PERFORMANCE.md) covers the app-wide loading model, Saved road speeds lag analysis, UI loading states, and optimization snippets.
 - [Privacy Intelligence](docs/PRIVACY_INTELLIGENCE.md) covers the privacy dashboard, score model, protection checks, transmission logging, audit chain, storage/encryption behavior, test gaps, and release-readiness limits.
 - [Speed and fallback behavior](docs/speed-and-fallbacks.md) covers speed capture, limit inference, OpenStreetMap enrichment, and live voice alerts.
 - [Recovery plan](docs/RECOVERY_PLAN.md), [upgrade verification](docs/UPGRADE_VERIFICATION.md), and [version code 2 verification](docs/VERSION_CODE_2_VERIFICATION.md) record Android in-place upgrade safety work.

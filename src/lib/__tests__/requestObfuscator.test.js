@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   enqueueLocationRequest,
+  getObfuscatorQueueStatus,
   REQUEST_OBFUSCATION_TIMING,
   resetRequestObfuscatorForTests,
 } from '@/lib/requestObfuscator';
@@ -18,6 +19,7 @@ describe('request timing obfuscation', () => {
       }),
     });
     localSettings.update({
+      heightened_privacy_mode: false,
       request_obfuscation_enabled: true,
       decoy_traffic_mode: 'off',
     });
@@ -70,5 +72,16 @@ describe('request timing obfuscation', () => {
     expect(fetch).toHaveBeenCalledTimes(REQUEST_OBFUSCATION_TIMING.decoyMinCount);
     expect(fetch.mock.calls[0][0]).toContain('api.open-meteo.com');
     expect(fetch.mock.calls[0][0]).toContain('latitude=0&longitude=0');
+  });
+
+  it('treats request timing obfuscation as enabled during heightened privacy mode', () => {
+    localSettings.update({
+      heightened_privacy_mode: true,
+      request_obfuscation_enabled: false,
+    });
+
+    expect(getObfuscatorQueueStatus()).toMatchObject({
+      enabled: true,
+    });
   });
 });

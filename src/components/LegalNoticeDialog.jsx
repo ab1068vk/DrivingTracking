@@ -111,12 +111,12 @@ const PRACTICAL_RULES = [
   },
   {
     title: 'Privacy zones and exports',
-    body: 'Privacy zones reduce sensitive location detail but cannot make every export, screenshot, backup, notification, or device compromise safe.',
+    body: 'Privacy zones reduce sensitive location detail for enabled features, but they are not absolute protection against exports, screenshots, backups, notifications, modified builds, network metadata, external endpoints, or device compromise.',
     icon: Lock,
   },
   {
     title: 'Outside services',
-    body: 'OpenStreetMap, Open-Meteo, and OSRM requests run only through enabled features, and those services have their own availability, privacy, and logging practices.',
+    body: 'Saved road-speed reviews can reduce repeated OpenStreetMap lookups. OpenStreetMap, Open-Meteo, and OSRM requests run only through enabled features, and those services have their own availability, privacy, and logging practices.',
     icon: Wifi,
   },
 ];

@@ -1,5 +1,15 @@
-import { verifyChain, loadPrivacyAuditChain } from '@/lib/hashChainLog';
-import { getHydratedPrivacyZones, getZoneStatsSnapshot, isPointInPrivacyZone } from '@/lib/privacyZones';
+import {
+  getLastCheckpointExportedAt,
+  loadPrivacyAuditChain,
+  verifyChain,
+} from '@/lib/hashChainLog';
+import {
+  getHydratedPrivacyZones,
+  getZoneEffectiveness,
+  getZoneStatsSnapshot,
+  isPointInPrivacyZone,
+} from '@/lib/privacyZones';
+import { getPrivacyZoneSuggestions } from '@/lib/privacyZoneSuggestions';
 import { loadTransmissionLog } from '@/lib/transmissionLog';
 import { tripService } from '@/api/trips';
 import { localSettings } from '@/lib/trackingStore';
@@ -15,6 +25,7 @@ import {
   checkKinematicNulling,
   checkMemoryZeroing,
   checkRequestObfuscation,
+  checkScoreInputMasking,
   checkSecureDeletion,
   checkStorageEncryption,
   checkTimestampFuzzing,
@@ -27,9 +38,21 @@ import {
 } from '@/lib/deviceStatus';
 import { getKeyRotationStatus } from '@/lib/keyRotationManager';
 import { isNativePlatform } from '@/lib/nativePlatform';
+import { getEncryptedJson, setEncryptedJson } from '@/lib/securePayloadCrypto';
+import { logSystemFailure } from '@/lib/systemLog';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STALE_ZONE_MS = 90 * DAY_MS;
+const SCORE_HISTORY_RETENTION = 180;
+const WEB_SCORE_CEILING = 89;
+const WEB_SCORE_CAP_REASON = 'Capped because this is a web build; install the Android app for hardware-backed checks.';
+const APP_VERSION = import.meta.env?.['VITE_APP_VERSION'] || '1.0.0';
+const TIMING_PATTERN_MIN_DAYS = 10;
+const TIMING_PATTERN_WINDOW_MS = 30 * DAY_MS;
+const TIMING_PATTERN_STDDEV_MINUTES = 20;
+
+export const PRIVACY_SCORE_HISTORY_KEY = 'drivesense_privacy_score_history_v1';
+export const PRIVACY_POSTURE_SNAPSHOT_KEY = 'drivesense_privacy_posture_snapshots_v1';
 
 export const STATUS_POINTS = Object.freeze({
   ok: 1,
@@ -55,6 +78,16 @@ const RECOMMENDATION_PRIORITY = {
   ok: 4,
   not_applicable: 5,
 };
+
+export const RISK_MULTIPLIER = Object.freeze({
+  device: 1.6,
+  integrity: 1.5,
+  inference: 1.2,
+  network: 1,
+});
+
+/** @type {Promise<Array<{timestamp: number, overall: number, layerScores: Record<string, number | null>}>>} */
+let scoreHistoryWriteQueue = Promise.resolve([]);
 
 const OUTBOUND_SERVICE_PROFILES = Object.freeze({
   'open-meteo': {
@@ -97,6 +130,25 @@ const disclosureRank = Object.freeze({
   raw: 4,
 });
 
+export const PROTECTION_USER_ACTIONS = Object.freeze({
+  storage_encryption: 'Update Road Sage and retry the check after unlocking your device. If it still fails, avoid keeping sensitive trip history on this device.',
+  secure_deletion: 'Use the in-app delete or purge controls for sensitive trips, then retry this check before relying on deletion.',
+  cert_pinning: 'Update Road Sage before using external lookups, especially on networks you do not control.',
+  bridge_encryption: 'Restart and update Road Sage. Avoid sensitive exports or external lookups while this check remains unresolved.',
+  request_obfuscation: 'Review Request Timing Obfuscation in Settings and enable it if the additional first-party weather requests fit your needs.',
+  memory_zeroing: 'Restart and update Road Sage before recording another sensitive trip.',
+  timestamp_fuzzing: 'Regenerate sensitive exports after updating Road Sage, and review boundary timestamps before sharing.',
+  kinematic_nulling: 'Regenerate sensitive exports after updating Road Sage, and review boundary records before sharing.',
+  score_input_masking: 'Update Road Sage and rescore affected trips so privacy-zone gaps are applied before trip scores are computed.',
+  differential_privacy: 'Use the privacy-preserving aggregate export option and avoid repeatedly sharing the same small data set.',
+  commitment_scheme: 'Regenerate the export and do not share a file that exposes privacy-zone centers.',
+  export_signing: 'Create a fresh export after updating Road Sage and verify it before relying on the backup.',
+  crash_scrubbing: 'Update Road Sage and review diagnostic files before sharing them with anyone.',
+  audit_log: 'Refresh the check and export a checkpoint. If consistency still fails, do not rely on the local audit history.',
+  root_detection: 'Use Road Sage on a device that is not rooted or jailbroken for stronger local protection.',
+  key_rotation: 'Keep the app unlocked long enough to finish key rotation, then retry the check.',
+});
+
 const control = (id, category, weight, label, check, riskIfMissing, developerAction) => ({
   id,
   category,
@@ -104,7 +156,7 @@ const control = (id, category, weight, label, check, riskIfMissing, developerAct
   label,
   check,
   riskIfMissing,
-  userAction: null,
+  userAction: PROTECTION_USER_ACTIONS[id],
   developerAction,
 });
 
@@ -117,6 +169,7 @@ const CONTROL_REGISTRY = [
   control('memory_zeroing', 'inference', 1, 'Memory zeroing', checkMemoryZeroing, 'Raw coordinates could remain in process memory after masking.', 'Keep SecureGpsBuffer.zero() in finally blocks.'),
   control('timestamp_fuzzing', 'inference', 2, 'Boundary timestamp fuzzing', checkTimestampFuzzing, 'Boundary times may reveal private arrival or departure patterns.', 'Verify export boundary timestamps are fuzzed.'),
   control('kinematic_nulling', 'inference', 2, 'Kinematic data nulling', checkKinematicNulling, 'Boundary motion fields could help infer private route segments.', 'Keep all recorded kinematic fields in the sanitization list.'),
+  control('score_input_masking', 'inference', 2, 'Score input masking', checkScoreInputMasking, 'Trip scores could statistically reveal privacy-zone-adjacent movement even when the map is redacted.', 'Keep privacy-zone masking ahead of every trip scoring call path.'),
   control('differential_privacy', 'inference', 2, 'Differential privacy', checkDifferentialPrivacy, 'Repeated aggregate exports could reveal private activity.', 'Verify metric budgets and Laplace noise.'),
   control('commitment_scheme', 'inference', 2, 'Export commitments', checkCommitmentScheme, 'Repeated exports could expose privacy-zone centers.', 'Ensure commitments use fresh salts and exclude coordinates.'),
   control('export_signing', 'integrity', 2, 'Export HMAC signing', checkExportSigning, 'Modified backups could be accepted as authentic.', 'Verify signing keys and tamper rejection.'),
@@ -125,6 +178,16 @@ const CONTROL_REGISTRY = [
   control('root_detection', 'device', 3, 'Root / jailbreak detection', checkDeviceIntegrity, 'A compromised device can weaken every local protection.', null),
   control('key_rotation', 'device', 2, 'Key rotation', getKeyRotationStatus, 'Older encryption keys may remain in use indefinitely.', 'Inspect stored payload key versions and rotation failures.'),
 ];
+
+/**
+ * @param {{enabled?: boolean, outdated?: boolean, unguarded?: boolean}} state
+ */
+export function osrmConsentEvidence({ enabled, outdated, unguarded } = {}) {
+  if (!enabled) return 'OSRM route matching is disabled';
+  if (outdated) return 'Consent predates a privacy-zone change';
+  if (unguarded) return 'OSRM endpoint blocking near privacy zones is off';
+  return 'Consent is current and privacy zones are always excluded';
+}
 
 const settingBackedControls = () => {
   const native = isNativePlatform();
@@ -170,13 +233,11 @@ const settingBackedControls = () => {
       weight: 2,
       label: 'OSRM data sharing consent',
       status: !osrmEnabled ? 'not_applicable' : osrmOutdated ? 'warn' : osrmUnguarded ? 'error' : 'configured',
-      evidence: !osrmEnabled
-        ? 'OSRM route matching is disabled'
-        : osrmOutdated
-          ? 'Consent predates a privacy-zone change'
-          : osrmUnguarded
-            ? 'OSRM endpoint blocking near privacy zones is off'
-            : 'Consent is current and privacy zones are always excluded',
+      evidence: osrmConsentEvidence({
+        enabled: osrmEnabled,
+        outdated: osrmOutdated,
+        unguarded: osrmUnguarded,
+      }),
       riskIfMissing: 'Raw public route coordinates may be sent without current consent or zone exclusion.',
       userAction: 'Review OSRM sharing in Settings.',
       developerAction: null,
@@ -238,22 +299,344 @@ export function computePrivacyScoreFromControls(controls = []) {
   });
   const applicableLayers = layers.filter((layer) => layer.score != null);
   const totalLayerWeight = applicableLayers.reduce((sum, layer) => sum + LAYERS[layer.id].weight, 0);
-  const overall = totalLayerWeight
+  const computedOverall = totalLayerWeight
     ? Math.round(applicableLayers.reduce(
       (sum, layer) => sum + layer.score * LAYERS[layer.id].weight,
       0
     ) / totalLayerWeight)
     : null;
+  // Browser storage and runtime checks cannot provide the same hardware-backed evidence as Android.
+  const webCapApplied = !isNativePlatform() && computedOverall != null && computedOverall > WEB_SCORE_CEILING;
+  const overall = webCapApplied ? WEB_SCORE_CEILING : computedOverall;
   const summary = Object.fromEntries(
     ['ok', 'configured', 'warn', 'unknown', 'error', 'not_applicable']
       .map((status) => [status, controls.filter((item) => item.status === status).length])
   );
   summary.total = controls.length;
-  return { overall, ...scoreBand(overall), layers, summary };
+  return {
+    overall,
+    computedOverall,
+    webCapApplied,
+    capReason: webCapApplied ? WEB_SCORE_CAP_REASON : null,
+    compoundRiskFindings: detectCompoundRisk(controls),
+    ...scoreBand(overall),
+    layers,
+    summary,
+  };
 }
 
 export async function computePrivacyScore(controls = null) {
   return computePrivacyScoreFromControls(controls || await getProtectionStatus());
+}
+
+const localDayKey = (timestamp) => {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return null;
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-');
+};
+
+const normalizeScoreHistory = (history = []) => (
+  (Array.isArray(history) ? history : [])
+    .map((entry) => {
+      const timestamp = Number(entry?.timestamp);
+      const overall = Number(entry?.overall);
+      if (!Number.isFinite(timestamp) || !Number.isFinite(overall)) return null;
+      const layerScores = Object.fromEntries(
+        Object.entries(entry?.layerScores || {})
+          .filter(([, value]) => value == null || Number.isFinite(Number(value)))
+          .map(([key, value]) => [key, value == null ? null : Number(value)])
+      );
+      return { timestamp, overall, layerScores };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(-SCORE_HISTORY_RETENTION)
+);
+
+export async function getPrivacyScoreHistory() {
+  try {
+    return normalizeScoreHistory(await getEncryptedJson(PRIVACY_SCORE_HISTORY_KEY, []));
+  } catch (error) {
+    logSystemFailure('privacy_score_history_read_failed', error, {});
+    return [];
+  }
+}
+
+export async function recordPrivacyScoreHistory(score = {}, timestamp = Date.now()) {
+  const overall = Number(score?.overall);
+  const dayKey = localDayKey(timestamp);
+  if (!Number.isFinite(overall) || !dayKey) return getPrivacyScoreHistory();
+
+  scoreHistoryWriteQueue = scoreHistoryWriteQueue
+    .catch(() => [])
+    .then(async () => {
+      const history = await getPrivacyScoreHistory();
+      if (history.some((entry) => localDayKey(entry.timestamp) === dayKey)) return history;
+      const layerScores = Object.fromEntries(
+        (score.layers || []).map((layer) => [layer.id, layer.score == null ? null : Number(layer.score)])
+      );
+      const next = normalizeScoreHistory([...history, {
+        timestamp: Number(timestamp),
+        overall,
+        layerScores,
+      }]);
+      await setEncryptedJson(PRIVACY_SCORE_HISTORY_KEY, next).catch((error) => {
+        logSystemFailure('privacy_score_history_write_failed', error, {
+          history_count: next.length,
+        });
+        throw error;
+      });
+      return next;
+    });
+  return scoreHistoryWriteQueue;
+}
+
+export function summarizeScoreTrend(history = []) {
+  const normalized = normalizeScoreHistory(history);
+  if (normalized.length < 2) {
+    return {
+      direction: 'insufficient_data',
+      changeFromLastWeek: null,
+      changeFromLastMonth: null,
+    };
+  }
+  const latest = normalized.at(-1);
+  const baselineAtLeast = (ageMs) => normalized
+    .filter((entry) => entry.timestamp <= latest.timestamp - ageMs)
+    .at(-1);
+  const weeklyBaseline = baselineAtLeast(7 * DAY_MS);
+  const monthlyBaseline = baselineAtLeast(30 * DAY_MS);
+  const changeFromLastWeek = weeklyBaseline ? latest.overall - weeklyBaseline.overall : null;
+  const changeFromLastMonth = monthlyBaseline ? latest.overall - monthlyBaseline.overall : null;
+  const directionalChange = changeFromLastWeek ?? changeFromLastMonth;
+  return {
+    direction: directionalChange == null
+      ? 'insufficient_data'
+      : directionalChange > 0
+        ? 'improving'
+        : directionalChange < 0
+          ? 'declining'
+          : 'flat',
+    changeFromLastWeek,
+    changeFromLastMonth,
+  };
+}
+
+const localMinuteOfDay = (timestamp) => {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return null;
+  return date.getHours() * 60 + date.getMinutes() + (date.getSeconds() / 60);
+};
+
+const circularMeanMinutes = (minutes = []) => {
+  if (!minutes.length) return null;
+  const angles = minutes.map((minute) => (minute / 1440) * Math.PI * 2);
+  const sin = angles.reduce((sum, angle) => sum + Math.sin(angle), 0) / angles.length;
+  const cos = angles.reduce((sum, angle) => sum + Math.cos(angle), 0) / angles.length;
+  const angle = Math.atan2(sin, cos);
+  return ((angle < 0 ? angle + Math.PI * 2 : angle) / (Math.PI * 2)) * 1440;
+};
+
+const circularStddevMinutes = (minutes = []) => {
+  if (minutes.length < 2) return 0;
+  const angles = minutes.map((minute) => (minute / 1440) * Math.PI * 2);
+  const sin = angles.reduce((sum, angle) => sum + Math.sin(angle), 0) / angles.length;
+  const cos = angles.reduce((sum, angle) => sum + Math.cos(angle), 0) / angles.length;
+  const r = Math.min(1, Math.max(0, Math.sqrt(sin ** 2 + cos ** 2)));
+  if (r >= 0.999999) return 0;
+  if (r <= 0.000001) return 720;
+  return Math.sqrt(-2 * Math.log(r)) * (1440 / (Math.PI * 2));
+};
+
+const formatMinuteOfDay = (minuteOfDay) => {
+  if (!Number.isFinite(Number(minuteOfDay))) return 'a regular time';
+  const total = Math.round(Number(minuteOfDay)) % 1440;
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+};
+
+export function detectTimingPatternExposure(entries = [], settings = {}, now = Date.now()) {
+  const cutoff = now - TIMING_PATTERN_WINDOW_MS;
+  const byService = new Map();
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    const timestamp = Number(entry?.timestamp);
+    if (!Number.isFinite(timestamp) || timestamp < cutoff || timestamp > now) return;
+    if (entry?.status === 'blocked' || entry?.coordinateDisclosure === 'blocked') return;
+    const service = String(entry?.service || '').trim();
+    const minute = localMinuteOfDay(timestamp);
+    const day = localDayKey(timestamp);
+    if (!service || minute == null || !day) return;
+    if (!byService.has(service)) byService.set(service, new Map());
+    const serviceDays = byService.get(service);
+    serviceDays.set(day, [...(serviceDays.get(day) || []), minute]);
+  });
+
+  const findings = [];
+  byService.forEach((serviceDays, service) => {
+    if (serviceDays.size < TIMING_PATTERN_MIN_DAYS) return;
+    const dailyMinutes = Array.from(serviceDays.values())
+      .map(circularMeanMinutes)
+      .filter((minute) => minute != null);
+    const stddevMinutes = circularStddevMinutes(dailyMinutes);
+    if (stddevMinutes >= TIMING_PATTERN_STDDEV_MINUTES) return;
+    const profile = OUTBOUND_SERVICE_PROFILES[service];
+    findings.push({
+      id: `timing_pattern_${service}`,
+      tone: 'warn',
+      targetTab: 'transmissions',
+      service,
+      title: `Regular ${profile?.label || service} request timing`,
+      detail: `Outbound request timing for ${service} follows a regular daily pattern that could reveal routine activity to a network observer, independent of payload content.`,
+      action: settings.request_obfuscation_enabled === false
+        ? 'Enable request timing obfuscation'
+        : 'Review transmissions',
+      userAction: settings.request_obfuscation_enabled === false
+        ? 'Turn on Request timing obfuscation in Settings so automatic lookups are less tied to a daily routine.'
+        : 'Review automatic lookup habits and consider first-party decoy mode if the extra Open-Meteo traffic fits your needs.',
+      occurrenceDays: serviceDays.size,
+      stddevMinutes: Math.round(stddevMinutes * 10) / 10,
+      typicalLocalTime: formatMinuteOfDay(circularMeanMinutes(dailyMinutes)),
+    });
+  });
+  return findings.sort((a, b) => a.stddevMinutes - b.stddevMinutes || a.service.localeCompare(b.service));
+}
+
+export function detectCompoundRisk(protections = []) {
+  const byCategory = new Map();
+  (Array.isArray(protections) ? protections : [])
+    .filter((item) => item?.status === 'error')
+    .forEach((item) => {
+      const category = item.category || 'unknown';
+      byCategory.set(category, [...(byCategory.get(category) || []), item]);
+    });
+  return Array.from(byCategory.entries())
+    .filter(([, items]) => items.length >= 2)
+    .map(([category, items]) => ({
+      id: `compound_${category}_risk`,
+      tone: 'warn',
+      category,
+      title: `Multiple ${LAYERS[category]?.label?.toLowerCase() || category}-layer protections are failing together`,
+      detail: `Multiple ${LAYERS[category]?.label?.toLowerCase() || category}-layer protections are failing together, which increases risk beyond what the score weighting alone reflects.`,
+      controlIds: items.map((item) => item.id).filter(Boolean),
+      count: items.length,
+    }));
+}
+
+const normalizePostureSnapshot = (value = {}) => ({
+  currentVersion: typeof value?.currentVersion === 'string' ? value.currentVersion : null,
+  snapshots: (Array.isArray(value?.snapshots) ? value.snapshots : [])
+    .filter((snapshot) => snapshot && typeof snapshot.version === 'string')
+    .map((snapshot) => ({
+      version: snapshot.version,
+      timestamp: Number(snapshot.timestamp) || 0,
+      controls: (Array.isArray(snapshot.controls) ? snapshot.controls : [])
+        .filter((controlItem) => controlItem?.id && controlItem?.status)
+        .map((controlItem) => ({
+          id: String(controlItem.id),
+          label: String(controlItem.label || controlItem.id),
+          status: String(controlItem.status),
+          category: String(controlItem.category || ''),
+        })),
+    }))
+    .slice(-8),
+});
+
+const buildPostureSnapshot = (protections = [], version = APP_VERSION, timestamp = Date.now()) => ({
+  version: String(version || 'unknown'),
+  timestamp,
+  controls: (Array.isArray(protections) ? protections : []).map((item) => ({
+    id: String(item.id || ''),
+    label: String(item.label || item.id || 'Protection'),
+    status: String(item.status || 'unknown'),
+    category: String(item.category || ''),
+  })).filter((item) => item.id),
+});
+
+export async function recordAndDetectVersionPostureRegression(
+  protections = [],
+  version = APP_VERSION,
+  timestamp = Date.now()
+) {
+  const currentSnapshot = buildPostureSnapshot(protections, version, timestamp);
+  let stored;
+  try {
+    stored = normalizePostureSnapshot(await getEncryptedJson(PRIVACY_POSTURE_SNAPSHOT_KEY, {}));
+  } catch (error) {
+    logSystemFailure('privacy_posture_snapshot_read_failed', error, {
+      current_version: currentSnapshot.version,
+    });
+    stored = normalizePostureSnapshot({});
+  }
+  const previousSnapshot = stored.currentVersion
+    ? stored.snapshots.find((snapshot) => snapshot.version === stored.currentVersion) || stored.snapshots.at(-1)
+    : null;
+
+  if (stored.currentVersion === currentSnapshot.version) {
+    return { changed: false, findings: [], previousVersion: stored.currentVersion, currentVersion: currentSnapshot.version };
+  }
+
+  const previousById = new Map((previousSnapshot?.controls || []).map((item) => [item.id, item]));
+  const regressed = currentSnapshot.controls.filter((item) => {
+    const previous = previousById.get(item.id);
+    return ['ok', 'configured'].includes(previous?.status) &&
+      ['error', 'not_applicable'].includes(item.status);
+  });
+  const next = normalizePostureSnapshot({
+    currentVersion: currentSnapshot.version,
+    snapshots: [
+      ...stored.snapshots.filter((snapshot) => snapshot.version !== currentSnapshot.version),
+      currentSnapshot,
+    ],
+  });
+  try {
+    await setEncryptedJson(PRIVACY_POSTURE_SNAPSHOT_KEY, next);
+  } catch (error) {
+    logSystemFailure('privacy_posture_snapshot_write_failed', error, {
+      current_version: currentSnapshot.version,
+      snapshot_count: next.snapshots.length,
+    });
+  }
+
+  if (!previousSnapshot || !regressed.length) {
+    return {
+      changed: Boolean(previousSnapshot),
+      findings: [],
+      previousVersion: previousSnapshot?.version || null,
+      currentVersion: currentSnapshot.version,
+    };
+  }
+  return {
+    changed: true,
+    previousVersion: previousSnapshot.version,
+    currentVersion: currentSnapshot.version,
+    findings: [{
+      id: 'version_posture_regression',
+      tone: 'error',
+      targetTab: 'protections',
+      title: 'A protection changed after updating the app',
+      detail: `A protection changed after updating the app - review before trusting current claims. Review: ${regressed.map((item) => item.label).join(', ')}.`,
+      action: 'Open protections',
+      controlIds: regressed.map((item) => item.id),
+      controls: regressed,
+    }],
+  };
+}
+
+export function buildPrivacyRecommendations(protections = [], limit = 4) {
+  return protections
+    .filter((item) => ['error', 'warn', 'unknown'].includes(item.status))
+    .sort((a, b) => (
+      (RECOMMENDATION_PRIORITY[a.status] ?? 9) - (RECOMMENDATION_PRIORITY[b.status] ?? 9) ||
+      ((b.weight || 0) * (RISK_MULTIPLIER[b.category] || 1)) -
+        ((a.weight || 0) * (RISK_MULTIPLIER[a.category] || 1)) ||
+      String(a.id || '').localeCompare(String(b.id || ''))
+    ))
+    .slice(0, limit);
 }
 
 export async function getZoneStats(trips = null) {
@@ -511,7 +894,9 @@ export async function getTransmissionSummary() {
  *   transmissions?: Record<string, any>,
  *   chainResult?: Record<string, any>,
  *   zoneSummary?: Record<string, any>,
- *   drivingReadout?: Record<string, any>
+ *   drivingReadout?: Record<string, any>,
+ *   scoreTrend?: Record<string, any>,
+ *   postureRegression?: Record<string, any>
  * }} params
  */
 export function buildPrivacyActionPlan({
@@ -521,6 +906,8 @@ export function buildPrivacyActionPlan({
   chainResult = {},
   zoneSummary = {},
   drivingReadout = {},
+  scoreTrend = {},
+  postureRegression = {},
 } = {}) {
   const failedControls = protections.filter((item) => item.status === 'error');
   const warningControls = protections.filter((item) => item.status === 'warn');
@@ -529,6 +916,17 @@ export function buildPrivacyActionPlan({
   const rawWithConsent = Number(transmissions.rawWithConsentCount) || 0;
   const unverifiedTransmissions = Number(transmissions.claimedButUnverifiedCount) || 0;
   const issues = [];
+
+  (postureRegression.findings || []).forEach((finding) => {
+    issues.push({
+      id: finding.id || 'version_posture_regression',
+      tone: finding.tone || 'error',
+      targetTab: finding.targetTab || 'protections',
+      title: finding.title || 'A protection changed after updating the app',
+      detail: finding.detail || 'A protection changed after updating the app - review before trusting current claims.',
+      action: finding.action || 'Open protections',
+    });
+  });
 
   if (rawWithoutConsent > 0) {
     issues.push({
@@ -568,6 +966,17 @@ export function buildPrivacyActionPlan({
       title: 'Verify protected-request claims',
       detail: `${unverifiedTransmissions} outbound record${unverifiedTransmissions === 1 ? '' : 's'} claimed protection without complete evidence.`,
       action: 'Open transmissions',
+    });
+  }
+  if (Number(scoreTrend.changeFromLastWeek) < -10) {
+    const pointDrop = Math.abs(Number(scoreTrend.changeFromLastWeek));
+    issues.push({
+      id: 'score_regression',
+      tone: 'warn',
+      targetTab: 'protections',
+      title: 'Privacy score dropped recently',
+      detail: `The local evidence score is down ${pointDrop} points compared with the most recent score at least one week earlier.`,
+      action: 'Open protections',
     });
   }
   if (rawWithConsent > 0) {
@@ -659,7 +1068,7 @@ export function buildPrivacyActionPlan({
     claim: hasErrors
       ? 'Do not claim this setup is private until the flagged items are fixed.'
       : hasWarnings || hasUnknowns
-        ? 'Treat this as local transparency, not a security guarantee.'
+        ? 'Treat this as local transparency, not a security assurance.'
         : 'The dashboard found no urgent local issues, but it is still not an external audit.',
     primaryAction: issues[0] || {
       id: 'no_action',
@@ -820,16 +1229,25 @@ export function buildDrivingPrivacyReadout(trips = [], zones = [], now = Date.no
   };
 }
 
-export function summarizeAudit(chain = []) {
+export function summarizeAudit(chain = [], lastCheckpointExportedAt = null) {
   const now = Date.now();
   const operations = {};
-  (Array.isArray(chain) ? chain : []).forEach((entry) => {
+  const safeChain = Array.isArray(chain) ? chain : [];
+  safeChain.forEach((entry) => {
     operations[entry.op] = (operations[entry.op] || 0) + 1;
   });
+  const lastSignedIndex = safeChain.findLastIndex((entry) => (
+    Boolean(entry?.tipSignature) && Boolean(entry?.signingPublicKey)
+  ));
+  const exportedAt = Number(lastCheckpointExportedAt);
   return {
-    todayTotal: chain.filter((entry) => Number(entry.timestamp) > now - DAY_MS).length,
-    weekTotal: chain.filter((entry) => Number(entry.timestamp) > now - 7 * DAY_MS).length,
-    latestAt: chain.reduce((latest, entry) => Math.max(latest, Number(entry?.timestamp) || 0), 0) || null,
+    todayTotal: safeChain.filter((entry) => Number(entry.timestamp) > now - DAY_MS).length,
+    weekTotal: safeChain.filter((entry) => Number(entry.timestamp) > now - 7 * DAY_MS).length,
+    latestAt: safeChain.reduce((latest, entry) => Math.max(latest, Number(entry?.timestamp) || 0), 0) || null,
+    lastCheckpointExportedAt: Number.isFinite(exportedAt) && exportedAt > 0 ? exportedAt : null,
+    signatureCoverage: lastSignedIndex >= 0
+      ? safeChain.length - lastSignedIndex - 1
+      : safeChain.length,
     operations: Object.entries(operations)
       .map(([operation, count]) => ({ operation, count }))
       .sort((a, b) => b.count - a.count),
@@ -837,52 +1255,71 @@ export function summarizeAudit(chain = []) {
 }
 
 export async function loadPrivacyIntelligence() {
+  const settings = localSettings.get();
   const protections = await getProtectionStatus();
   const score = computePrivacyScoreFromControls(protections);
+  const postureRegression = await recordAndDetectVersionPostureRegression(protections);
+  const scoreHistory = await recordPrivacyScoreHistory(score);
+  const scoreTrend = summarizeScoreTrend(scoreHistory);
   const tripsPromise = tripService.listAll({ sort: '-start_time' }).catch(() => []);
-  const [trips, transmissions, chain, chainResult] = await Promise.all([
+  const [trips, transmissions, chain, chainResult, lastCheckpointExportedAt] = await Promise.all([
     tripsPromise,
     getTransmissionSummary(),
     loadPrivacyAuditChain(),
     verifyChain(),
+    getLastCheckpointExportedAt(),
   ]);
   const zones = await getZoneStats(trips);
-  const recommendations = protections
-    .filter((item) => ['error', 'warn', 'unknown'].includes(item.status))
-    .sort((a, b) => (
-      (RECOMMENDATION_PRIORITY[a.status] ?? 9) - (RECOMMENDATION_PRIORITY[b.status] ?? 9) ||
-      (b.weight || 0) - (a.weight || 0)
-    ))
-    .slice(0, 4);
-  const zoneSummary = summarizeZones(zones);
-  const drivingReadout = buildDrivingPrivacyReadout(trips, zones);
+  const zonesWithEffectiveness = zones.map((zone) => ({
+    ...zone,
+    effectiveness: getZoneEffectiveness(zone, trips),
+  }));
+  const zoneSuggestions = await getPrivacyZoneSuggestions({
+    trips,
+    zones: zonesWithEffectiveness,
+  });
+  const recommendations = buildPrivacyRecommendations(protections);
+  const zoneSummary = summarizeZones(zonesWithEffectiveness);
+  const drivingReadout = buildDrivingPrivacyReadout(trips, zonesWithEffectiveness);
+  const timingPatternFindings = detectTimingPatternExposure(transmissions.entries, settings);
   const actionPlan = buildPrivacyActionPlan({
     score,
     protections,
     transmissions,
     chainResult,
     zoneSummary,
+    drivingReadout,
+    scoreTrend,
+    postureRegression,
   });
+  const protectionSummary = {
+    active: protections.filter((item) => item.status === 'ok').length,
+    configured: protections.filter((item) => item.status === 'configured').length,
+    warnings: protections.filter((item) => item.status === 'warn').length,
+    unknown: protections.filter((item) => item.status === 'unknown').length,
+    errors: protections.filter((item) => item.status === 'error').length,
+    notApplicable: protections.filter((item) => item.status === 'not_applicable').length,
+    findings: timingPatternFindings,
+    timingPatternFindings,
+    postureRegressionFindings: postureRegression.findings || [],
+  };
   return {
     generatedAt: Date.now(),
     score,
+    scoreHistory,
+    scoreTrend,
     protections,
-    protectionSummary: {
-      active: protections.filter((item) => item.status === 'ok').length,
-      configured: protections.filter((item) => item.status === 'configured').length,
-      warnings: protections.filter((item) => item.status === 'warn').length,
-      unknown: protections.filter((item) => item.status === 'unknown').length,
-      errors: protections.filter((item) => item.status === 'error').length,
-      notApplicable: protections.filter((item) => item.status === 'not_applicable').length,
-    },
+    protectionSummary,
+    postureRegression,
     recommendations,
-    zones,
+    zones: zonesWithEffectiveness,
+    zoneSuggestions,
     zoneSummary,
     drivingReadout,
     transmissions,
     chain,
     chainResult,
-    auditSummary: summarizeAudit(chain),
+    auditSummary: summarizeAudit(chain, lastCheckpointExportedAt),
     actionPlan,
   };
 }

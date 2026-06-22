@@ -38,6 +38,7 @@ import { activeTripStore } from '@/lib/trackingStore';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDateTime } from '@/lib/tripEngine';
 import { buildLocalFeatureTestTrips, LOCAL_TEST_TRIP_PREFIX } from '@/lib/localTestTrips';
+import { getBuildIntegrityInfo } from '@/lib/buildIntegrity';
 import {
   buildMotionSensorDiagnostics,
   requestMotionSensorPermission,
@@ -271,6 +272,7 @@ export default function Diagnostics() {
     () => buildRecoveryCompatibilitySnapshot(settings, isAndroid()),
     [settings]
   );
+  const buildIntegrity = useMemo(() => getBuildIntegrityInfo(), []);
 
   const clearLogs = async () => {
     clearTrackingDiagnostics();
@@ -412,6 +414,29 @@ export default function Diagnostics() {
           </div>
         </section>
       )}
+
+      <section aria-label="Build integrity" className="rounded-2xl border border-border bg-card p-4">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+          <div>
+            <h2 className="font-semibold">Build Integrity</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Compare this hash with the published source build output for the version you reviewed.
+            </p>
+          </div>
+          <span className={`w-fit rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${buildIntegrity.available ? statusStyle.good : statusStyle.unknown}`}>
+            {buildIntegrity.available ? 'available' : 'dev build'}
+          </span>
+        </div>
+        <div className="mt-3 rounded-xl border border-border bg-secondary/30 p-3">
+          <div className="text-[11px] font-bold uppercase text-muted-foreground">Build hash</div>
+          <div className="mt-1 break-all font-mono text-xs">
+            {buildIntegrity.buildHash || 'Available after production build'}
+          </div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Algorithm: {buildIntegrity.algorithm}. {buildIntegrity.limitation}
+          </div>
+        </div>
+      </section>
 
       <section>
         <div className="mb-3 flex items-center justify-between">

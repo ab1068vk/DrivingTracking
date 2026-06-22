@@ -14,8 +14,10 @@ import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
-import { getPrivacyZones, maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import { getPrivacyZones, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import { prepareScoreInputsForPrivacy } from '@/lib/scoreInputPrivacy';
 import { isAndroid } from '@/lib/nativePlatform';
+import { effectivePrivacySettings, isHeightenedPrivacyMode } from '@/lib/privacyMode';
 
 // CHANGES (session):
 // - Wired LocalSpeedKnowledge.learnFromTrip after OSM speed-limit enrichment using only openstreetmap-sourced points.
@@ -38,6 +40,7 @@ const timeout = (promise, ms, message) => new Promise((resolve, reject) => {
 export { PUBLIC_OSRM_DEMO_URL };
 
 export const isOsrmMapMatchingConfigured = (settings = {}) => (
+  !isHeightenedPrivacyMode(settings) &&
   settings.map_matching_enabled !== false &&
   Boolean(settings.osrm_map_matching_url) &&
   settings.osrm_data_sharing_consented === true &&
@@ -45,6 +48,7 @@ export const isOsrmMapMatchingConfigured = (settings = {}) => (
 );
 
 export const isOsrmMapMatchingEnabled = (settings = {}) => (
+  !isHeightenedPrivacyMode(settings) &&
   settings.map_matching_enabled !== false
 );
 
@@ -55,12 +59,17 @@ export const isExternalContextAutoFetchEnabled = (settings = {}) => (
 );
 
 export const isRoadDataLookupConfigured = (settings = {}) => (
-  settings.speed_limit_lookup_enabled !== false ||
-  settings.weather_context_enabled !== false ||
-  isOsrmMapMatchingConfigured(settings)
+  !isHeightenedPrivacyMode(settings) && (
+    settings.speed_limit_lookup_enabled !== false ||
+    settings.weather_context_enabled !== false ||
+    isOsrmMapMatchingConfigured(settings)
+  )
 );
 
 export function buildRoadDataDisabledMessage(settings = {}) {
+  if (isHeightenedPrivacyMode(settings)) {
+    return 'Heightened privacy mode is on. OSRM route snapping, Open-Meteo weather, and Overpass speed-limit lookups are skipped until you turn it off in Settings > Privacy & Data.';
+  }
   const osrmState = settings.map_matching_enabled === false
     ? 'Snap route to roads is off.'
     : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented !== true
@@ -140,6 +149,14 @@ function mergePublicMapMatchingMetadata(originalPoints = [], matchedPoints = [])
 }
 
 export function buildRoadContextPrivacyMessage(settings = {}) {
+  if (isHeightenedPrivacyMode(settings)) {
+    return [
+      'Heightened privacy mode is on.',
+      'OSRM route snapping, Open-Meteo weather, and Overpass speed-limit lookups will be skipped for this trip.',
+      '',
+      'Continue with local-only recalculation?',
+    ].join('\n');
+  }
   const lines = [
     'Get Road Data will run the enabled online lookups for this selected trip only.',
     'Privacy-zone coordinates are excluded before anything leaves the app.',
@@ -170,9 +187,10 @@ export function buildRoadContextPrivacyMessage(settings = {}) {
 export async function buildOpenSourceTripContextPatch(trip, settings = localSettings.get(), options = {}) {
   if (!trip) throw new Error('Trip not loaded');
   const { onProgress, immediateRequests = false } = options;
-  const requestSettings = immediateRequests
-    ? { ...settings, request_obfuscation_enabled: false }
-    : settings;
+  const effectiveSettings = effectivePrivacySettings(settings);
+  const requestSettings = immediateRequests && !isHeightenedPrivacyMode(effectiveSettings)
+    ? { ...effectiveSettings, request_obfuscation_enabled: false }
+    : effectiveSettings;
   const lookupStatus = immediateRequests ? 'Getting privacy-filtered road data' : ROAD_CONTEXT_QUEUED_STATUS;
 
   const originalPoints = trip.route_points || [];
@@ -192,24 +210,11 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     };
   }
 
-  const thresholds = buildDrivingThresholds(settings);
-  const privacyZones = getPrivacyZones(settings);
+  const thresholds = buildDrivingThresholds(effectiveSettings);
+  const privacyZones = getPrivacyZones(effectiveSettings);
   stage(onProgress, lookupStatus);
-  const weatherPromise = timeout(
-    fetchWeatherContextForTrip(originalPoints, trip.start_time, trip.end_time, requestSettings),
-    PRIVACY_DELAYED_LOOKUP_TIMEOUT_MS,
-    'Weather lookup timed out'
-  ).catch((error) => ({
-    provider: 'open-meteo',
-    status: 'unavailable',
-    riskLevel: null,
-    riskScore: null,
-    riskMultiplier: 1,
-    error: error?.message || 'Weather lookup unavailable',
-  }));
-
-  const osrmConfigured = isOsrmMapMatchingConfigured(settings);
-  const osrmRoutePoints = buildPrivacySafeOsrmRoute(originalPoints, settings);
+  const osrmConfigured = isOsrmMapMatchingConfigured(effectiveSettings);
+  const osrmRoutePoints = buildPrivacySafeOsrmRoute(originalPoints, effectiveSettings);
   const osrmValidPointCount = osrmRoutePoints.filter((point) => (
     Number.isFinite(Number(point?.lat)) && Number.isFinite(Number(point?.lng))
   )).length;
@@ -226,7 +231,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       osrm_exposed_privacy_zone_count: 0,
     }
     : await timeout(
-      mapMatchRoute(osrmRoutePoints, settings),
+      mapMatchRoute(osrmRoutePoints, effectiveSettings),
       16000,
       'OSRM route snapping timed out'
     ).catch((error) => ({
@@ -251,7 +256,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     coverage: 0,
     status: 'unavailable',
     source: 'openstreetmap_overpass',
-    fallback_country: speedLimitDefaultCountryKey(settings),
+    fallback_country: speedLimitDefaultCountryKey(effectiveSettings),
     error: error?.message || 'Speed limit lookup unavailable',
   }));
   routePoints = speedLimitContext.routePoints || routePoints;
@@ -267,28 +272,46 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   } catch (error) {
     console.warn('Local speed knowledge learning skipped.', error);
   }
-  const localKnowledgeResults = await prefetchLocalKnowledge(routePoints, knowledge);
-  stage(onProgress, 'Recalculating trip scores');
-  const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, {
-    ...trip,
-    raw_route_points: originalPoints,
+  const scoreInputPrivacy = prepareScoreInputsForPrivacy({
+    routePoints,
+    events: [],
+    settings: effectiveSettings,
+    zones: privacyZones,
   });
-  const { events: detectedEvents, phoneUse: detectedPhoneUse } = detectDrivingEvents(routePoints, thresholds, trip.end_time, privacyZones, {
+  const scoringRoutePoints = scoreInputPrivacy.routePoints;
+  const localKnowledgeResults = await prefetchLocalKnowledge(scoringRoutePoints, knowledge);
+  stage(onProgress, 'Recalculating trip scores');
+  const stats = calculateTripStats(scoringRoutePoints, trip.start_time, trip.end_time, thresholds, {
+    ...trip,
+    raw_route_points: scoringRoutePoints,
+  });
+  const { events: detectedEvents, phoneUse: detectedPhoneUse } = detectDrivingEvents(scoringRoutePoints, thresholds, trip.end_time, privacyZones, {
     localKnowledgeResults,
-    settings,
+    settings: effectiveSettings,
   });
   const phoneUse = buildPhoneUseFromTripEvidence(
     trip,
-    routePoints,
+    scoringRoutePoints,
     stats.duration_seconds,
     detectedPhoneUse
   );
-  const weatherContext = await weatherPromise;
-  let scores = calculateTripScores(detectedEvents, stats, routePoints, thresholds, stats.duration_seconds, phoneUse, {
+  const weatherContext = await timeout(
+    fetchWeatherContextForTrip(scoringRoutePoints, trip.start_time, trip.end_time, requestSettings),
+    PRIVACY_DELAYED_LOOKUP_TIMEOUT_MS,
+    'Weather lookup timed out'
+  ).catch((error) => ({
+    provider: 'open-meteo',
+    status: 'unavailable',
+    riskLevel: null,
+    riskScore: null,
+    riskMultiplier: 1,
+    error: error?.message || 'Weather lookup unavailable',
+  }));
+  let scores = calculateTripScores(detectedEvents, stats, scoringRoutePoints, thresholds, stats.duration_seconds, phoneUse, {
     endTime: trip.end_time,
     privacyZones,
     localKnowledgeResults,
-    settings,
+    settings: effectiveSettings,
   });
   scores = applyWeatherRiskToScores(scores, weatherContext);
   if (trip.id && scores.trip_speed_summary_v1) {
@@ -296,17 +319,23 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       console.warn('Trip speed summary storage skipped.', error);
     });
   }
-  const events = maskEventsForPrivacy(
+  const events = prepareScoreInputsForPrivacy({
+    routePoints: [],
+    events:
     mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || detectedEvents, phoneUse),
-    { privacy_zones: privacyZones }
-  );
+    settings: effectiveSettings,
+    zones: privacyZones,
+  }).events;
 
   return {
     ...stats,
     ...scores,
-    route_points: routePoints,
+    route_points: scoringRoutePoints,
     route_points_raw_count: recordedPointCount,
-    route_points_map_count: routePoints.length,
+    route_points_map_count: scoringRoutePoints.length,
+    score_input_masking_applied: true,
+    privacy_zone_touched: scoreInputPrivacy.touchesPrivacyZone,
+    privacy_trend_excluded: scoreInputPrivacy.trendExcluded,
     driving_events: events,
     speed_limit_context: {
       provider: 'openstreetmap_overpass',
@@ -327,7 +356,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       privacy_zone_count: privacyZones.length,
       osrm_exposed_privacy_zone_count: 0,
       error: mapMatchingContext.error,
-      isOsrmDemoUrl: mapMatchingContext.isOsrmDemoUrl === true || isPublicOsrmDemoUrl(settings.osrm_map_matching_url),
+      isOsrmDemoUrl: mapMatchingContext.isOsrmDemoUrl === true || isPublicOsrmDemoUrl(effectiveSettings.osrm_map_matching_url),
     },
     weather_context: weatherContext?.weather_skipped_reason ? null : weatherContext,
     weather_skipped_reason: weatherContext?.weather_skipped_reason || null,
@@ -348,13 +377,20 @@ export async function buildLocalSpeedKnowledgeScorePatch(trip, settings = localS
   const thresholds = buildDrivingThresholds(settings);
   const privacyZones = getPrivacyZones(settings);
   const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
-  const localKnowledgeResults = await prefetchLocalKnowledge(routePoints, knowledge);
-  const stats = calculateTripStats(routePoints, trip.start_time, trip.end_time, thresholds, {
+  const scoreInputPrivacy = prepareScoreInputsForPrivacy({
+    routePoints,
+    events: [],
+    settings,
+    zones: privacyZones,
+  });
+  const scoringRoutePoints = scoreInputPrivacy.routePoints;
+  const localKnowledgeResults = await prefetchLocalKnowledge(scoringRoutePoints, knowledge);
+  const stats = calculateTripStats(scoringRoutePoints, trip.start_time, trip.end_time, thresholds, {
     ...trip,
-    raw_route_points: routePoints,
+    raw_route_points: scoringRoutePoints,
   });
   const { events: detectedEvents, phoneUse: detectedPhoneUse } = detectDrivingEvents(
-    routePoints,
+    scoringRoutePoints,
     thresholds,
     trip.end_time,
     privacyZones,
@@ -362,14 +398,14 @@ export async function buildLocalSpeedKnowledgeScorePatch(trip, settings = localS
   );
   const phoneUse = buildPhoneUseFromTripEvidence(
     trip,
-    routePoints,
+    scoringRoutePoints,
     stats.duration_seconds,
     detectedPhoneUse
   );
   let scores = calculateTripScores(
     detectedEvents,
     stats,
-    routePoints,
+    scoringRoutePoints,
     thresholds,
     stats.duration_seconds,
     phoneUse,
@@ -386,15 +422,21 @@ export async function buildLocalSpeedKnowledgeScorePatch(trip, settings = localS
       console.warn('Trip speed summary storage skipped.', error);
     });
   }
-  const events = maskEventsForPrivacy(
+  const events = prepareScoreInputsForPrivacy({
+    routePoints: [],
+    events:
     mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || detectedEvents, phoneUse),
-    { privacy_zones: privacyZones }
-  );
+    settings,
+    zones: privacyZones,
+  }).events;
 
   return {
     ...stats,
     ...scores,
     driving_events: events,
+    score_input_masking_applied: true,
+    privacy_zone_touched: scoreInputPrivacy.touchesPrivacyZone,
+    privacy_trend_excluded: scoreInputPrivacy.trendExcluded,
     needs_rescore: false,
     updated_at: new Date().toISOString(),
   };

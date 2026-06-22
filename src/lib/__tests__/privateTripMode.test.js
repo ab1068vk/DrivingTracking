@@ -3,6 +3,8 @@ import {
   PRIVATE_TRIP_MODE,
   buildPrivateTripRecord,
   createPrivateTripRuntime,
+  excludePrivacyTouchedDaysFromTrends,
+  privacyExcludedTripDayKeys,
   processPrivateTripPoint,
 } from '@/lib/privateTripMode';
 
@@ -51,5 +53,41 @@ describe('private trip mode', () => {
       needs_rescore: false,
     });
     expect(record.private_trip_summary.gps_points_stored).toBe(0);
+  });
+
+  it('excludes an entire privacy-zone-touched day from cross-trip trends', () => {
+    const trips = [
+      {
+        id: 'safe-morning',
+        status: 'completed',
+        start_time: '2026-06-20T08:00:00.000Z',
+        score_overall: 92,
+      },
+      {
+        id: 'private-stop',
+        status: 'completed',
+        start_time: '2026-06-21T08:00:00.000Z',
+        privacy_zone_touched: true,
+        score_overall: 45,
+      },
+      {
+        id: 'same-day-public',
+        status: 'completed',
+        start_time: '2026-06-21T18:00:00.000Z',
+        score_overall: 98,
+      },
+      {
+        id: 'safe-next',
+        status: 'completed',
+        start_time: '2026-06-22T08:00:00.000Z',
+        score_overall: 93,
+      },
+    ];
+
+    expect([...privacyExcludedTripDayKeys(trips)]).toEqual(['2026-06-21']);
+    expect(excludePrivacyTouchedDaysFromTrends(trips).map((trip) => trip.id)).toEqual([
+      'safe-morning',
+      'safe-next',
+    ]);
   });
 });

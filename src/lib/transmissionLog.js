@@ -126,7 +126,10 @@ export async function logTransmission(entry = {}) {
     expiresAt: now + EXPIRY_MS,
     schemaVersion: 2,
   };
-  record.privacyVerificationWarnings = verificationWarningsFor(record);
+  record.privacyVerificationWarnings = [
+    ...safeArray(entry.privacyVerificationWarnings),
+    ...verificationWarningsFor(record),
+  ];
   record.status = statusForRecord(record);
 
   try {

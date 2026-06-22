@@ -14,6 +14,7 @@ vi.mock('@/lib/controlSelfTests', () => ({
   selfTestKinematicNulling: vi.fn(),
   selfTestMemoryZeroing: vi.fn(),
   selfTestRequestObfuscation: vi.fn(),
+  selfTestScoreInputMasking: vi.fn(),
   selfTestSecureDeletion: vi.fn(),
   selfTestStorageEncryption: vi.fn(),
   selfTestTimestampFuzzing: vi.fn(),

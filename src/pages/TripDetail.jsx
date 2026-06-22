@@ -552,7 +552,12 @@ export default function TripDetail() {
       calibrationLabelService.submitTripSurveyLabel(trip, surveyInput, { replaceExisting })
     ),
     onSuccess: async (record, variables) => {
-      const wasDriver = record?.surveyLabel?.wasDriver ?? variables?.surveyInput?.wasDriver ?? null;
+      const submittedSurvey = /** @type {{ wasDriver?: string } | null} */ (
+        variables?.surveyInput && typeof variables.surveyInput === 'object'
+          ? variables.surveyInput
+          : null
+      );
+      const wasDriver = record?.surveyLabel?.wasDriver ?? submittedSurvey?.wasDriver ?? null;
       if (wasDriver) {
         try {
           const updatedTrip = await tripService.update(trip.id, {

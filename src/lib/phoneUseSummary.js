@@ -1,5 +1,6 @@
 import { buildPhoneUseFromTripEvidence, PHONE_USE_PENALTY_POINTS } from '@/lib/phoneUsageAccess';
 import { scoringValue } from '@/lib/scoringConstants';
+import { excludePrivacyTouchedDaysFromTrends } from '@/lib/privateTripMode';
 
 const riskRank = { none: 0, low: 1, medium: 2, high: 3 };
 const eventPenaltyPoints = scoringValue('EVENT_PENALTY_POINTS');
@@ -371,7 +372,7 @@ const periodStats = (summaries = [], startMs, endMs) => {
 
 export function summarizePhoneUseAcrossTrips(trips = [], options = {}) {
   const nowMs = timestampMs(options.now) ?? Date.now();
-  const allSummaries = (Array.isArray(trips) ? trips : []).map((trip) => summarizeTripPhoneUse(trip));
+  const allSummaries = excludePrivacyTouchedDaysFromTrends(trips).map((trip) => summarizeTripPhoneUse(trip));
   const passengerTrips = allSummaries.filter((summary) => summary.isPassenger);
   const summaries = allSummaries.filter((summary) => !summary.isPassenger);
   const measuredTrips = summaries.filter((summary) => summary.scoreAvailable);

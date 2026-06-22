@@ -13,11 +13,13 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.KeyFactory;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Signature;
 import java.security.spec.ECGenParameterSpec;
+import java.security.spec.X509EncodedKeySpec;
 
 @CapacitorPlugin(name = "AuditAnchor")
 public class AuditAnchorPlugin extends Plugin {
@@ -46,6 +48,36 @@ public class AuditAnchorPlugin extends Plugin {
             call.resolve(result);
         } catch (Exception error) {
             call.reject("AUDIT_ANCHOR_SIGN_FAILED", error);
+        }
+    }
+
+    @PluginMethod
+    public void verifyTipHash(PluginCall call) {
+        String tipHash = call.getString("tipHash");
+        String signatureValue = call.getString("signature");
+        String publicKeyValue = call.getString("publicKey");
+        if (tipHash == null || signatureValue == null || publicKeyValue == null) {
+            call.reject("AUDIT_ANCHOR_VERIFY_INPUT_REQUIRED");
+            return;
+        }
+
+        try {
+            byte[] publicKeyBytes = Base64.decode(publicKeyValue, Base64.DEFAULT);
+            PublicKey publicKey = KeyFactory.getInstance("EC").generatePublic(
+                new X509EncodedKeySpec(publicKeyBytes)
+            );
+            Signature verifier = Signature.getInstance("SHA256withECDSA");
+            verifier.initVerify(publicKey);
+            verifier.update(tipHash.getBytes(StandardCharsets.UTF_8));
+
+            JSObject result = new JSObject();
+            result.put(
+                "valid",
+                verifier.verify(Base64.decode(signatureValue, Base64.DEFAULT))
+            );
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("AUDIT_ANCHOR_VERIFY_FAILED", error);
         }
     }
 

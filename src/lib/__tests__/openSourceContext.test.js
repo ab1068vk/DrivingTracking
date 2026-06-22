@@ -309,7 +309,10 @@ describe('open-source trip context', () => {
     });
 
     expect(patch.map_matching_context.status).toBe('privacy_zones_excluded');
-    expect(patch.route_points).toEqual(route);
+    // Phase 8: road-data rescoring no longer returns raw all-private route points as score/storage inputs.
+    expect(patch.route_points).toEqual([]);
+    expect(patch.score_input_masking_applied).toBe(true);
+    expect(patch.privacy_zone_touched).toBe(true);
     expect(fetch).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });

@@ -4,6 +4,7 @@ import {
   BACKUP_SIGNATURE_INVALID_CODE,
   BACKUP_WRONG_PASSWORD_CODE,
   buildDriveSenseBackup,
+  exportDriveSenseBackup,
   importDriveSenseBackup,
   BACKUP_VERSION,
   MAX_BACKUP_BYTES,
@@ -27,6 +28,7 @@ import { localCalibrationLabelRepository } from '@/lib/localCalibrationLabelRepo
 import { STORAGE_KEY as SPEED_KNOWLEDGE_STORAGE_KEY } from '@/lib/localSpeedKnowledge';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { maskTripForPrivacy } from '@/lib/privacyZones';
+import { loadTransmissionLog } from '@/lib/transmissionLog';
 
 vi.mock('@/api/trips', () => ({
   tripService: {
@@ -39,6 +41,11 @@ vi.mock('@/api/vehicles', () => ({
     upsertMany: vi.fn(async (vehicles) => vehicles),
   },
 }));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 const parseTrips = (trips) => parseDriveSenseBackup(JSON.stringify({
   app: 'Road Sage',
@@ -795,6 +802,67 @@ describe('backup speed knowledge', () => {
 });
 
 describe('backup export privacy', () => {
+  it('logs full-backup exports from the actual signed payload shape', async () => {
+    const values = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+    const clicked = vi.fn();
+    const anchor = {
+      href: '',
+      download: '',
+      style: {},
+      click: clicked,
+      remove: vi.fn(),
+    };
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => anchor),
+      body: { appendChild: vi.fn() },
+    });
+    const RealURL = globalThis.URL;
+    const createObjectURL = vi.fn(() => 'blob:road-sage-backup');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', class TestURL extends RealURL {
+      static createObjectURL = createObjectURL;
+      static revokeObjectURL = revokeObjectURL;
+    });
+
+    const settings = {
+      privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 }],
+    };
+    const result = await exportDriveSenseBackup({
+      trips: [],
+      vehicles: [],
+      settings,
+      filename: 'backup.json',
+    });
+
+    const payloadText = JSON.stringify(result.signedBackup);
+    const [entry] = await loadTransmissionLog();
+    expect(clicked).toHaveBeenCalledTimes(1);
+    expect(payloadText).not.toContain('"lat"');
+    expect(payloadText).not.toContain('"lng"');
+    expect(payloadText).not.toContain('"radius_m"');
+    expect(payloadText).not.toContain('"label":"Home"');
+    expect(entry).toMatchObject({
+      service: 'export',
+      coordinateDisclosure: 'committed',
+      privacyTransformVerified: true,
+      privacyTransformSource: 'dataBackup.js:buildDriveSenseBackup',
+      privacyVerificationEvidence: [
+        'backup payload was inspected for zone coordinate and radius fields',
+        'privacy zones are exported as coordinate-free commitments',
+      ],
+      sentCoords: '0 - zone coordinates and ranges excluded, boundary points committed',
+      bytesOut: payloadText.length,
+      status: 'safe',
+      zonesSuppressed: ['Private area'],
+    });
+    expect(entry.privacyVerificationWarnings).toEqual([]);
+  });
+
   it('replaces exported privacy boundaries with opaque placeholders', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const settings = {

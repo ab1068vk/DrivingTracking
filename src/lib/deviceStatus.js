@@ -1,5 +1,6 @@
 import { localSettings } from '@/lib/trackingStore';
 import { checkIntegrity } from '@/lib/rasp';
+import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 import {
   selfTestAuditLog,
   selfTestBridgeEncryption,
@@ -11,6 +12,7 @@ import {
   selfTestKinematicNulling,
   selfTestMemoryZeroing,
   selfTestRequestObfuscation,
+  selfTestScoreInputMasking,
   selfTestSecureDeletion,
   selfTestStorageEncryption,
   selfTestTimestampFuzzing,
@@ -26,6 +28,7 @@ export const checkBridgeEncryption = selfTestBridgeEncryption;
 export const checkRequestObfuscation = selfTestRequestObfuscation;
 export const checkTimestampFuzzing = selfTestTimestampFuzzing;
 export const checkKinematicNulling = selfTestKinematicNulling;
+export const checkScoreInputMasking = selfTestScoreInputMasking;
 export const checkDifferentialPrivacy = selfTestDifferentialPrivacy;
 export const checkCommitmentScheme = selfTestCommitmentScheme;
 export const checkExportSigning = selfTestExportSigning;
@@ -36,6 +39,7 @@ export const isScreenSecureEnabled = () => getSetting('allow_screen_capture') !=
 export const isBiometricGateEnabled = () => getSetting('app_lock_enabled') === true;
 export const getBiometricType = () => 'Device authentication';
 export const isOsrmEnabled = () => (
+  !isHeightenedPrivacyMode(localSettings.get()) &&
   getSetting('map_matching_enabled') !== false &&
   Boolean(getSetting('osrm_map_matching_url'))
 );

@@ -87,6 +87,44 @@ describe('mapMatching', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('blocks OSRM when a route segment touches a high-sensitivity zone even without global consent', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const route = [
+      { lat: 43.65, lng: -79.385, accuracy: 8 },
+      { lat: 43.65, lng: -79.375, accuracy: 8 },
+    ];
+
+    const result = await mapMatchRoute(route, {
+      osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: false,
+      privacy_zones: [{
+        id: 'high-zone',
+        label: 'High sensitivity',
+        lat: 43.65,
+        lng: -79.38,
+        radius_m: 100,
+        sensitivity: 'high',
+      }],
+    });
+
+    expect(result.status).toBe('blocked_high_sensitivity_zone');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('disables OSRM entirely when heightened privacy mode is active', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      heightened_privacy_mode: true,
+      map_matching_enabled: true,
+      osrm_map_matching_url: 'https://example.test',
+      osrm_data_sharing_consented: true,
+    });
+
+    expect(result.status).toBe('disabled_heightened_privacy');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('uses the user-configured OSRM timeout when matching routes', async () => {
     const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
     vi.stubGlobal('fetch', vi.fn(async () => ({
@@ -116,6 +154,7 @@ describe('mapMatching', () => {
   });
 
   it('blocks route matches that use the public OSRM demo endpoint', async () => {
+    // Checklist: "Confirm Settings rejects or blocks public OSRM demo use for saved settings."
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -145,6 +184,7 @@ describe('mapMatching', () => {
   });
 
   it('keeps the privacy-zone endpoint guard on even if a legacy setting disables it', async () => {
+    // Checklist: "Try a route endpoint inside a zone and confirm OSRM is blocked and logged as blocked."
     vi.stubGlobal('fetch', vi.fn());
 
     const result = await mapMatchRoute([point(0), point(3), point(4)], {

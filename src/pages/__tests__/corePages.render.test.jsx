@@ -195,6 +195,9 @@ vi.mock('@/components/ui/use-toast', () => ({
 }));
 
 vi.mock('@/lib/trackingStore', () => ({
+  ACTIVE_TRIP_KEY: 'drivesense_active_trip',
+  LAST_PARKED_KEY: 'drivesense_last_parked',
+  SETTINGS_KEY: 'drivesense_settings',
   activeTripStore: {
     get: vi.fn(() => null),
     set: vi.fn(),
@@ -208,6 +211,7 @@ vi.mock('@/lib/trackingStore', () => ({
     set: vi.fn(),
     update: vi.fn((patch) => Object.assign(settings, patch)),
   },
+  clearSettingsMemoryForErasure: vi.fn(),
   saveLastParkedLocation: vi.fn(),
   validateSettingsPatch: vi.fn(() => ({ valid: true, errors: [] })),
 }));

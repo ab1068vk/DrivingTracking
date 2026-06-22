@@ -1,4 +1,5 @@
 import { analyzeTimeOfDay } from '@/lib/tripInsights';
+import { excludePrivacyTouchedDaysFromTrends } from '@/lib/privateTripMode';
 
 export const WEEKLY_COACH_MIN_SCORE_DELTA = 3;
 
@@ -20,7 +21,7 @@ const distanceWeightedScore = (trips = []) => {
 };
 
 export function buildWeeklyCoachSummary(trips = []) {
-  const completed = (trips || [])
+  const completed = excludePrivacyTouchedDaysFromTrends(trips)
     .filter((trip) => trip.status === 'completed')
     .sort((a, b) => new Date(b.start_time || 0).getTime() - new Date(a.start_time || 0).getTime());
   if (completed.length < 3) {

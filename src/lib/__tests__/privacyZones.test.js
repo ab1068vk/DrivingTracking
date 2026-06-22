@@ -4,11 +4,14 @@ import { Preferences } from '@capacitor/preferences';
 import { cleanRoutePoints, haversineDistance } from '@/lib/tripEngine';
 import {
   countTripsAffectedByPrivacyZone,
+  corridorWaypointsFromRoute,
   createPrivacyCellHashes,
   deriveZoneStatsFromTrips,
   findOverlappingZones,
   getBoundaryTimestampFuzz,
   getPrivacyZoneDisplayCircle,
+  getPrivacyZones,
+  getZoneEffectiveness,
   getZoneStatsSnapshot,
   isPointInPrivacyZone,
   isInsidePrivacyZone,
@@ -33,6 +36,7 @@ import {
   purgeTripGpsWithinPrivacyZone,
   redactRoutePointForPrivacyStorage,
   sanitizeKinematics,
+  sweepExpiredPrivacyZones,
   syncZonesToNative,
   upsertPrivacyZone,
   ZONE_STATS_KEY,
@@ -41,6 +45,33 @@ import { getEncryptedJson, setEncryptedJson } from '@/lib/securePayloadCrypto';
 import { secureSetPreference } from '@/lib/secureBridge';
 import { SecureGpsBuffer } from '@/lib/SecureGpsBuffer';
 import { localSettings } from '@/lib/trackingStore';
+
+const privacyZoneMocks = vi.hoisted(() => ({
+  appendPrivacyEvent: vi.fn(async () => ({})),
+  listTrips: vi.fn(async () => []),
+  updateTrip: vi.fn(async () => ({})),
+  enqueueRescoreJob: vi.fn(async () => ({})),
+}));
+
+vi.mock('@/lib/hashChainLog', async (importOriginal) => ({
+  ...await importOriginal(),
+  appendPrivacyEvent: privacyZoneMocks.appendPrivacyEvent,
+}));
+
+vi.mock('@/api/trips', () => ({
+  tripService: {
+    listAll: privacyZoneMocks.listTrips,
+    update: privacyZoneMocks.updateTrip,
+  },
+}));
+
+vi.mock('@/lib/rescoringQueue', () => ({
+  enqueueRescoreJob: privacyZoneMocks.enqueueRescoreJob,
+}));
+
+vi.mock('@/lib/rescoringWorker', () => ({
+  rescoreTripForQueue: vi.fn(),
+}));
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
@@ -483,6 +514,7 @@ describe('privacyZones', () => {
   });
 
   it('updates each affected trip when purging a privacy zone', async () => {
+    // Checklist: "Delete a zone with purge enabled and confirm audit event plus trip rescore marker."
     const updateTrip = vi.fn(async () => ({}));
     const trips = [
       { id: 'inside', route_points: [point(43.65, -79.38, 0)], driving_events: [] },
@@ -499,6 +531,16 @@ describe('privacyZones', () => {
       lng: null,
       privacy_purged: true,
     });
+    expect(updateTrip.mock.calls[0][1].needs_rescore).toBe(true);
+    await vi.waitFor(() => {
+      expect(privacyZoneMocks.appendPrivacyEvent).toHaveBeenCalledWith(expect.objectContaining({
+        op: 'PRIVATE_GPS_PURGED',
+        details: expect.objectContaining({
+          affected_trip_count: 1,
+          purged_point_count: 1,
+        }),
+      }));
+    });
   });
 
   it('omits events inside privacy zones but keeps public events', () => {
@@ -513,6 +555,7 @@ describe('privacyZones', () => {
   });
 
   it('derives zone activity from saved redacted trip records without render-time overcounting', () => {
+    // Checklist: "Save or seed a trip crossing the zone and confirm protected GPS/event counts."
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-13T16:00:00.000Z'));
     const protectedAt = '2026-06-13T14:00:00.000Z';
@@ -812,6 +855,7 @@ describe('privacyZones', () => {
   });
 
   it('invalidates OSRM consent when a privacy zone is added', async () => {
+    // Checklist: "Add a privacy zone and confirm it appears on Zones."
     const values = new Map([[
       'drivesense_settings',
       JSON.stringify({
@@ -864,6 +908,150 @@ describe('privacyZones', () => {
     expect(storedZones[0].display_lat).toBeUndefined();
     expect(storedZones[0].display_lng).toBeUndefined();
     expect(storedZones[0].display_radius_m).toBeUndefined();
+    const [zoneForDashboard] = await getZoneStatsSnapshot(updated, []);
+    expect(zoneForDashboard).toMatchObject({
+      id: 'home',
+      label: 'Home',
+      radius_m: 100,
+      today: { hidden: 0, events: 0 },
+    });
+  });
+
+  it('matches points against each segment of a multi-segment corridor', () => {
+    const corridor = {
+      id: 'private-street',
+      label: 'Private street',
+      type: 'corridor',
+      width_m: 80,
+      radius_m: 80,
+      sensitivity: 'standard',
+      waypoints: [
+        { lat: 43.65, lng: -79.39 },
+        { lat: 43.65, lng: -79.38 },
+        { lat: 43.66, lng: -79.38 },
+      ],
+    };
+
+    expect(isPointInPrivacyZone({ lat: 43.6503, lng: -79.385 }, [corridor])?.id).toBe('private-street');
+    expect(isPointInPrivacyZone({ lat: 43.655, lng: -79.3797 }, [corridor])?.id).toBe('private-street');
+    expect(isPointInPrivacyZone({ lat: 43.655, lng: -79.376 }, [corridor])).toBeNull();
+    expect(createPrivacyCellHashes(corridor).length).toBeGreaterThan(0);
+  });
+
+  it('downsamples a saved route to the corridor waypoint limit while preserving endpoints', () => {
+    const route = Array.from({ length: 60 }, (_, index) => ({
+      lat: 43.65 + index * 0.0001,
+      lng: -79.38,
+    }));
+    const waypoints = corridorWaypointsFromRoute(route);
+
+    expect(waypoints).toHaveLength(20);
+    expect(waypoints[0]).toEqual(route[0]);
+    expect(waypoints.at(-1)).toEqual(route.at(-1));
+  });
+
+  it('expires a temporary zone through the purge-on-delete flow', async () => {
+    const now = Date.UTC(2026, 5, 22, 16);
+    const expiredZone = {
+      id: 'temporary',
+      label: 'Temporary visit',
+      lat: 43.65,
+      lng: -79.38,
+      radius_m: 120,
+      expiresAt: new Date(now - 1000).toISOString(),
+    };
+    const trip = {
+      id: 'temporary-trip',
+      route_points: [point(43.65, -79.38)],
+      driving_events: [],
+    };
+    privacyZoneMocks.listTrips.mockResolvedValue([trip]);
+
+    await upsertPrivacyZone(expiredZone, localSettings.get());
+    privacyZoneMocks.appendPrivacyEvent.mockClear();
+    const result = await sweepExpiredPrivacyZones(now);
+
+    expect(result).toMatchObject({
+      expiredCount: 1,
+      purgedTrips: 1,
+      purgedPoints: 1,
+    });
+    expect(privacyZoneMocks.updateTrip).toHaveBeenCalledWith(
+      'temporary-trip',
+      expect.objectContaining({
+        needs_rescore: true,
+        route_points: [expect.objectContaining({ privacy_purged: true })],
+      })
+    );
+    expect(privacyZoneMocks.appendPrivacyEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ op: 'PRIVATE_GPS_PURGED', zoneId: 'temporary' })
+    );
+    expect(privacyZoneMocks.appendPrivacyEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ op: 'ZONE_DELETED', zoneId: 'temporary' })
+    );
+    expect(getPrivacyZones(localSettings.get()).some((item) => item.id === 'temporary')).toBe(false);
+  });
+
+  it('purges existing raw GPS immediately when a high-sensitivity zone is saved', async () => {
+    privacyZoneMocks.listTrips.mockResolvedValue([{
+      id: 'high-trip',
+      route_points: [point(43.651, -79.381)],
+      driving_events: [],
+    }]);
+
+    await upsertPrivacyZone({
+      id: 'high',
+      label: 'High sensitivity',
+      lat: 43.651,
+      lng: -79.381,
+      radius_m: 100,
+      sensitivity: 'high',
+    }, localSettings.get());
+
+    expect(privacyZoneMocks.updateTrip).toHaveBeenCalledWith(
+      'high-trip',
+      expect.objectContaining({
+        needs_rescore: true,
+        route_points: [expect.objectContaining({ privacy_purged: true })],
+      })
+    );
+  });
+
+  it('suggests the smallest wider radius that catches raw near-misses', () => {
+    const north = (meters) => ({
+      lat: zone.lat + meters / 111320,
+      lng: zone.lng,
+    });
+    const effectiveness = getZoneEffectiveness(zone, [{
+      route_points: [
+        north(90),
+        north(120),
+        north(175),
+        north(205),
+        { lat: null, lng: null, masked_for_privacy: true },
+      ],
+      driving_events: [
+        north(150),
+      ],
+    }]);
+
+    expect(effectiveness.nearMissCount).toBe(3);
+    expect(effectiveness.suggestedRadiusM).toBe(175);
+  });
+
+  it('caps zone-effectiveness suggestions at the maximum privacy radius', () => {
+    const wideZone = { ...zone, radius_m: 950 };
+    const north = (meters) => ({
+      lat: zone.lat + meters / 111320,
+      lng: zone.lng,
+    });
+
+    expect(getZoneEffectiveness(wideZone, [{
+      route_points: [north(1000.5), north(1010)],
+    }])).toEqual({
+      nearMissCount: 1,
+      suggestedRadiusM: 1000,
+    });
   });
 
   it('migrates legacy plaintext privacy zones into encrypted storage and scrubs settings', async () => {

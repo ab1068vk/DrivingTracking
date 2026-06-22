@@ -119,6 +119,7 @@ describe('transmissionLog', () => {
   });
 
   it('clears the encrypted log after queued writes finish', async () => {
+    // Checklist: "Clear transmission records and confirm TRANSMISSION_LOG_CLEARED appears in audit log."
     const pending = logTransmission({
       service: 'overpass',
       type: 'Speed limit query',
@@ -169,6 +170,27 @@ describe('transmissionLog', () => {
     expect(record.privacyVerificationWarnings).toContain(
       'Raw coordinates left the app; consent or guards do not make this a protected send.'
     );
+  });
+
+  it('preserves gateway-supplied verification warnings without changing the schema', async () => {
+    const record = await logTransmission({
+      service: 'open-meteo',
+      type: 'Weather lookup',
+      coordinateDisclosure: 'raw',
+      privacyTransformVerified: false,
+      privacyTransformSource: 'privacyGatedFetch:open-meteo',
+      privacyVerificationWarnings: ['Declared protection did not match outgoing payload precision; downgraded to raw.'],
+      sentCoords: '43.650412, -79.380177',
+      status: 'safe',
+    });
+
+    expect(record.schemaVersion).toBe(2);
+    expect(record.privacyVerificationWarnings).toEqual(expect.arrayContaining([
+      'Declared protection did not match outgoing payload precision; downgraded to raw.',
+      'Raw coordinates left the app; consent or guards do not make this a protected send.',
+      'Raw coordinate send has no explicit-consent metadata.',
+    ]));
+    expect(record.status).toBe('warning');
   });
 
   it('migrates legacy claims without retroactively verifying them', async () => {

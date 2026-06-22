@@ -6,6 +6,7 @@ import { secureSetPreference } from '@/lib/secureBridge';
 import { appendPrivacyEvent } from '@/lib/hashChainLog';
 import { SecureGpsBuffer } from '@/lib/SecureGpsBuffer';
 import { applyDifferentialPrivacyToAggregates } from '@/lib/differentialPrivacy';
+import { effectivePrivacyZones } from '@/lib/privacyMode';
 
 const EARTH_RADIUS_M = 6371000;
 const DISPLAY_CIRCLE_OFFSET_M = 35;
@@ -19,6 +20,10 @@ const EXPORT_PRIVACY_ZONE_LABEL = 'Private area';
 export const PRIVACY_RADIUS_MIN_M = 50;
 export const PRIVACY_RADIUS_MAX_M = 1000;
 export const PRIVACY_RADIUS_DEFAULT_M = 180;
+export const PRIVACY_ZONE_TYPES = Object.freeze(['circle', 'corridor']);
+export const PRIVACY_ZONE_SENSITIVITIES = Object.freeze(['standard', 'high']);
+export const PRIVACY_CORRIDOR_MIN_WAYPOINTS = 2;
+export const PRIVACY_CORRIDOR_MAX_WAYPOINTS = 20;
 export const ZONE_STATS_KEY = 'drivesense_privacy_zone_stats_v1';
 export const ZONE_EVENT_GUARD_M = 50;
 const PRIVACY_CELL_STORAGE_GUARD_M = 0;
@@ -271,7 +276,43 @@ const finiteNumber = (value) => {
   return Number.isFinite(number) ? number : null;
 };
 
-function distanceM(a, b) {
+const normalizeExpiry = (value) => {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+};
+
+export const isPrivacyZoneExpired = (zone, now = Date.now()) => {
+  const expiresAt = normalizeExpiry(zone?.expiresAt);
+  return Boolean(expiresAt && new Date(expiresAt).getTime() <= Number(now));
+};
+
+const normalizeCorridorWaypoints = (waypoints = []) => (
+  (Array.isArray(waypoints) ? waypoints : [])
+    .map((point) => ({
+      lat: finiteNumber(point?.lat),
+      lng: finiteNumber(point?.lng),
+    }))
+    .filter((point) => (
+      point.lat != null &&
+      point.lng != null &&
+      point.lat >= -90 &&
+      point.lat <= 90 &&
+      point.lng >= -180 &&
+      point.lng <= 180
+    ))
+);
+
+export function corridorWaypointsFromRoute(routePoints = []) {
+  const valid = normalizeCorridorWaypoints(routePoints);
+  if (valid.length <= PRIVACY_CORRIDOR_MAX_WAYPOINTS) return valid;
+  const step = (valid.length - 1) / (PRIVACY_CORRIDOR_MAX_WAYPOINTS - 1);
+  return Array.from({ length: PRIVACY_CORRIDOR_MAX_WAYPOINTS }, (_, index) => (
+    valid[Math.round(index * step)]
+  ));
+}
+
+export function privacyZoneDistanceM(a, b) {
   const aLat = finiteNumber(a?.lat);
   const aLng = finiteNumber(a?.lng);
   const bLat = finiteNumber(b?.lat);
@@ -286,6 +327,120 @@ function distanceM(a, b) {
   const h = Math.sin(dLat / 2) ** 2 +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
   return 2 * EARTH_RADIUS_M * Math.atan2(Math.sqrt(h), Math.sqrt(Math.max(0, 1 - h)));
+}
+
+const distanceM = privacyZoneDistanceM;
+
+const projectPointMeters = (point, referenceLat) => {
+  const latitude = finiteNumber(point?.lat);
+  const longitude = finiteNumber(point?.lng);
+  if (latitude == null || longitude == null) return null;
+  const latRadians = Number(referenceLat) * Math.PI / 180;
+  return {
+    x: longitude * 111320 * Math.max(0.01, Math.abs(Math.cos(latRadians))),
+    y: latitude * 111320,
+  };
+};
+
+const pointToSegmentDistanceM = (point, start, end) => {
+  const referenceLat = (
+    Number(point?.lat) +
+    Number(start?.lat) +
+    Number(end?.lat)
+  ) / 3;
+  const projectedPoint = projectPointMeters(point, referenceLat);
+  const projectedStart = projectPointMeters(start, referenceLat);
+  const projectedEnd = projectPointMeters(end, referenceLat);
+  if (!projectedPoint || !projectedStart || !projectedEnd) return Number.POSITIVE_INFINITY;
+
+  const dx = projectedEnd.x - projectedStart.x;
+  const dy = projectedEnd.y - projectedStart.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared <= 0) return privacyZoneDistanceM(point, start);
+  const ratio = Math.max(0, Math.min(1, (
+    (projectedPoint.x - projectedStart.x) * dx +
+    (projectedPoint.y - projectedStart.y) * dy
+  ) / lengthSquared));
+  return Math.hypot(
+    projectedPoint.x - (projectedStart.x + dx * ratio),
+    projectedPoint.y - (projectedStart.y + dy * ratio)
+  );
+};
+
+export function privacyZoneGeometryDistanceM(point, zone) {
+  if (zone?.type === 'corridor') {
+    const waypoints = normalizeCorridorWaypoints(zone?.waypoints);
+    if (waypoints.length < PRIVACY_CORRIDOR_MIN_WAYPOINTS) return Number.POSITIVE_INFINITY;
+    let nearest = Number.POSITIVE_INFINITY;
+    for (let index = 1; index < waypoints.length; index++) {
+      nearest = Math.min(nearest, pointToSegmentDistanceM(point, waypoints[index - 1], waypoints[index]));
+    }
+    return nearest;
+  }
+  return distanceM(point, zone);
+}
+
+const zoneWidthM = (zone) => Math.max(
+  PRIVACY_RADIUS_MIN_M,
+  Math.min(
+    PRIVACY_RADIUS_MAX_M,
+    finiteNumber(zone?.type === 'corridor' ? zone?.width_m ?? zone?.widthM : zone?.radius_m) ??
+      PRIVACY_RADIUS_DEFAULT_M
+  )
+);
+
+const hasExactCircleGeometry = (zone = {}) => (
+  finiteNumber(zone?.lat) != null &&
+  finiteNumber(zone?.lng) != null &&
+  Number(zone?.radius_m) > 0
+);
+
+const hasExactCorridorGeometry = (zone = {}) => (
+  zone?.type === 'corridor' &&
+  normalizeCorridorWaypoints(zone?.waypoints).length >= PRIVACY_CORRIDOR_MIN_WAYPOINTS &&
+  Number(zone?.width_m ?? zone?.widthM) > 0
+);
+
+const hasExactZoneGeometry = (zone = {}) => (
+  hasExactCircleGeometry(zone) || hasExactCorridorGeometry(zone)
+);
+
+export function getZoneEffectiveness(zone, trips = []) {
+  const radiusM = zoneWidthM(zone);
+  const outerRadiusM = Math.min(
+    PRIVACY_RADIUS_MAX_M,
+    radiusM + ZONE_EVENT_GUARD_M * 2
+  );
+  let nearMissCount = 0;
+  let farthestNearMissM = radiusM;
+
+  const inspect = (item) => {
+    if (
+      finiteNumber(item?.lat) == null ||
+      finiteNumber(item?.lng) == null ||
+      item?.masked_for_privacy === true ||
+      item?.privacy_gap === true ||
+      item?.privacy_boundary === true ||
+      item?.privacy_purged === true ||
+      item?.privacy_event_redacted === true
+    ) return;
+    const pointDistanceM = privacyZoneGeometryDistanceM(item, zone);
+    if (pointDistanceM <= radiusM || pointDistanceM > outerRadiusM) return;
+    nearMissCount += 1;
+    farthestNearMissM = Math.max(farthestNearMissM, pointDistanceM);
+  };
+
+  (Array.isArray(trips) ? trips : []).forEach((trip) => {
+    (Array.isArray(trip?.route_points) ? trip.route_points : []).forEach(inspect);
+    (Array.isArray(trip?.driving_events) ? trip.driving_events : []).forEach(inspect);
+  });
+
+  return {
+    nearMissCount,
+    suggestedRadiusM: nearMissCount
+      ? Math.min(PRIVACY_RADIUS_MAX_M, Math.ceil(farthestNearMissM))
+      : null,
+  };
 }
 
 const timestampMs = (point) => {
@@ -319,14 +474,8 @@ const normalizePrivacyCellHashes = (zone = {}) => (
   Array.isArray(zone.privacy_cell_hashes)
     ? Array.from(new Set(zone.privacy_cell_hashes
       .filter((cell) => typeof cell === 'string' && cell.startsWith('pzc_'))))
-      .slice(0, 2000)
+      .slice(0, 50000)
     : []
-);
-
-const hasExactZoneGeometry = (zone = {}) => (
-  finiteNumber(zone?.lat) != null &&
-  finiteNumber(zone?.lng) != null &&
-  Number(zone?.radius_m) > 0
 );
 
 const hasCellZoneGeometry = (zone = {}) => normalizePrivacyCellHashes(zone).length > 0;
@@ -335,22 +484,46 @@ const normalizePrivacyZones = (zones = []) => (
   Array.isArray(zones)
     ? zones
       .map((zone) => {
-        const radiusM = Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, Number(zone?.radius_m) || PRIVACY_RADIUS_DEFAULT_M));
+        const type = zone?.type === 'corridor' ? 'corridor' : 'circle';
+        const radiusM = Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, Number(
+          type === 'corridor'
+            ? zone?.width_m ?? zone?.widthM ?? zone?.radius_m
+            : zone?.radius_m
+        ) || PRIVACY_RADIUS_DEFAULT_M));
+        const sensitivity = zone?.sensitivity === 'high' ? 'high' : 'standard';
+        const expiresAt = normalizeExpiry(zone?.expiresAt);
         const base = {
           id: String(zone?.id || `pz_${Date.now().toString(36)}`),
           label: String(zone?.label || 'Private place').trim() || 'Private place',
+          type,
           radius_m: radiusM,
+          ...(type === 'corridor' ? { width_m: radiusM } : {}),
+          sensitivity,
+          ...(expiresAt ? { expiresAt } : {}),
           exclude_from_osrm: true,
           privacy_cell_schema: zone?.privacy_cell_schema || PRIVACY_CELL_SCHEMA,
           privacy_cell_size_m: Number(zone?.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M,
           privacy_cell_hashes: normalizePrivacyCellHashes(zone),
           masked_for_privacy: zone?.masked_for_privacy === true,
         };
-        if (hasExactZoneGeometry({ ...zone, radius_m: radiusM })) {
+        const corridorWaypoints = type === 'corridor'
+          ? normalizeCorridorWaypoints(zone?.waypoints).slice(0, PRIVACY_CORRIDOR_MAX_WAYPOINTS)
+          : [];
+        if (hasExactZoneGeometry({
+          ...zone,
+          type,
+          radius_m: radiusM,
+          width_m: radiusM,
+          waypoints: corridorWaypoints,
+        })) {
           const withGeometry = {
             ...base,
-            lat: Number(zone.lat),
-            lng: Number(zone.lng),
+            ...(type === 'corridor' ? {
+              waypoints: corridorWaypoints,
+            } : {
+              lat: Number(zone.lat),
+              lng: Number(zone.lng),
+            }),
           };
           return {
             ...withGeometry,
@@ -370,7 +543,13 @@ const redactedPrivacyZones = (zones = []) => (
   (Array.isArray(zones) ? zones : []).map((zone) => ({
     id: String(zone.id || ''),
     label: String(zone.label || 'Private place'),
+    type: zone?.type === 'corridor' ? 'corridor' : 'circle',
     radius_m: Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, Number(zone.radius_m) || PRIVACY_RADIUS_DEFAULT_M)),
+    ...(zone?.type === 'corridor' ? {
+      width_m: Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, Number(zone.width_m) || PRIVACY_RADIUS_DEFAULT_M)),
+    } : {}),
+    sensitivity: zone?.sensitivity === 'high' ? 'high' : 'standard',
+    ...(normalizeExpiry(zone?.expiresAt) ? { expiresAt: normalizeExpiry(zone.expiresAt) } : {}),
     exclude_from_osrm: true,
     masked_for_privacy: true,
   }))
@@ -380,7 +559,11 @@ const cellOnlyPrivacyZones = (zones = []) => (
   normalizePrivacyZones(zones).map((zone) => ({
     id: zone.id,
     label: zone.label,
+    type: zone.type,
     radius_m: zone.radius_m,
+    ...(zone.type === 'corridor' ? { width_m: zone.width_m } : {}),
+    sensitivity: zone.sensitivity,
+    ...(zone.expiresAt ? { expiresAt: zone.expiresAt } : {}),
     exclude_from_osrm: true,
     privacy_cell_schema: zone.privacy_cell_schema || PRIVACY_CELL_SCHEMA,
     privacy_cell_size_m: Number(zone.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M,
@@ -393,10 +576,10 @@ export function getPrivacyZones(settings = localSettings.get()) {
   const settingsZones = normalizePrivacyZones(settings?.privacy_zones);
   if (settingsZones.length) {
     privacyZonesMemory = settingsZones;
-    return settingsZones;
+    return effectivePrivacyZones(settingsZones, settings);
   }
   if (Array.isArray(settings?.privacy_zones) && settings.privacy_zones.length === 0) return [];
-  return Array.isArray(privacyZonesMemory) ? privacyZonesMemory : [];
+  return effectivePrivacyZones(Array.isArray(privacyZonesMemory) ? privacyZonesMemory : [], settings);
 }
 
 export async function getHydratedPrivacyZones(settings = localSettings.get()) {
@@ -642,6 +825,42 @@ function recoverPrivacyZoneCenter(zone = {}, referencePoints = []) {
 }
 
 export function createPrivacyCellHashes(zone = {}, cellSizeM = PRIVACY_CELL_SIZE_M) {
+  if (zone?.type === 'corridor') {
+    const waypoints = normalizeCorridorWaypoints(zone?.waypoints);
+    const widthM = zoneWidthM(zone);
+    if (waypoints.length < PRIVACY_CORRIDOR_MIN_WAYPOINTS) return [];
+
+    const latitudes = waypoints.map((point) => point.lat);
+    const longitudes = waypoints.map((point) => point.lng);
+    const midLat = (Math.min(...latitudes) + Math.max(...latitudes)) / 2;
+    const latitudeCosine = Math.max(0.01, Math.abs(Math.cos(midLat * Math.PI / 180)));
+    const latPad = widthM / 111320;
+    const lngPad = widthM / (111320 * latitudeCosine);
+    const southWest = cellCoordinate(
+      Math.max(-90, Math.min(...latitudes) - latPad),
+      Math.max(-180, Math.min(...longitudes) - lngPad),
+      cellSizeM
+    );
+    const northEast = cellCoordinate(
+      Math.min(90, Math.max(...latitudes) + latPad),
+      Math.min(180, Math.max(...longitudes) + lngPad),
+      cellSizeM
+    );
+    if (!southWest || !northEast) return [];
+
+    const cellDiagonalM = Math.SQRT2 * southWest.cellSizeM;
+    const hashes = new Set();
+    for (let y = Math.min(southWest.y, northEast.y); y <= Math.max(southWest.y, northEast.y); y++) {
+      for (let x = Math.min(southWest.x, northEast.x); x <= Math.max(southWest.x, northEast.x); x++) {
+        const cellCenter = cellCenterPoint(y, x, southWest.latStep, southWest.lngStep);
+        if (privacyZoneGeometryDistanceM(cellCenter, zone) <= widthM + (cellDiagonalM / 2)) {
+          hashes.add(privacyCellHash(y, x, southWest.cellSizeM));
+        }
+      }
+    }
+    return [...hashes].sort();
+  }
+
   const lat = finiteNumber(zone?.lat);
   const lng = finiteNumber(zone?.lng);
   const radiusM = finiteNumber(zone?.radius_m);
@@ -730,6 +949,7 @@ export function addExportNoise(lat, lng, zoneId = 'privacy-zone', exportSalt = c
 }
 
 export function getPrivacyZoneDisplayCircle(zone, offsetM = DISPLAY_CIRCLE_OFFSET_M, referencePoints = []) {
+  if (zone?.type === 'corridor') return null;
   const exactLat = finiteNumber(zone?.lat);
   const exactLng = finiteNumber(zone?.lng);
   const recoveredCenter = exactLat == null || exactLng == null
@@ -762,12 +982,14 @@ export function isPointInPrivacyZone(point, zones = getPrivacyZones(), guardM = 
   const cellOnlyZones = [];
 
   for (const zone of Array.isArray(zones) ? zones : []) {
+    if (isPrivacyZoneExpired(zone)) continue;
+    if (isPrivacyZoneExpired(zone)) continue;
     if (!hasExactZoneGeometry(zone)) {
       if (hasCellZoneGeometry(zone)) cellOnlyZones.push(zone);
       continue;
     }
-    const radius = Number(zone?.radius_m || PRIVACY_RADIUS_DEFAULT_M) + guardM;
-    const depth = radius - distanceM(point, zone);
+    const radius = zoneWidthM(zone) + guardM;
+    const depth = radius - privacyZoneGeometryDistanceM(point, zone);
     if (depth >= 0 && depth > bestDepth) {
       bestZone = zone;
       bestDepth = depth;
@@ -826,7 +1048,8 @@ export function boundsOverlapPrivacyZone(bounds, zones = getPrivacyZones(), guar
   const guard = Math.max(0, Number(guardM) || 0);
 
   for (const zone of Array.isArray(zones) ? zones : []) {
-    if (hasExactZoneGeometry(zone)) {
+    if (isPrivacyZoneExpired(zone)) continue;
+    if (hasExactCircleGeometry(zone)) {
       const nearest = {
         lat: Math.max(minLat, Math.min(maxLat, Number(zone.lat))),
         lng: Math.max(minLng, Math.min(maxLng, Number(zone.lng))),
@@ -835,7 +1058,13 @@ export function boundsOverlapPrivacyZone(bounds, zones = getPrivacyZones(), guar
       continue;
     }
 
-    const hashes = normalizePrivacyCellHashes(zone);
+    const hashes = hasExactCorridorGeometry(zone)
+      ? createPrivacyCellHashes({
+        ...zone,
+        width_m: zoneWidthM(zone) + guard,
+        radius_m: zoneWidthM(zone) + guard,
+      })
+      : normalizePrivacyCellHashes(zone);
     if (!hashes.length) return true;
 
     const range = boundsToCellRange(bounds, zone.privacy_cell_size_m || PRIVACY_CELL_SIZE_M, guard);
@@ -1189,7 +1418,6 @@ export function privacyZonesForRoute(routePoints = [], settings = localSettings.
 export function privacyBoundaryPoint(insidePoint, outsidePoint, zone) {
   if (!insidePoint || !outsidePoint || !zone) return null;
   if (isPointInPrivacyZone(outsidePoint, [zone])) return null;
-  const radius = Number(zone.radius_m || PRIVACY_RADIUS_DEFAULT_M);
   let low = 0;
   let high = 1;
   let mid = 1;
@@ -1200,7 +1428,7 @@ export function privacyBoundaryPoint(insidePoint, outsidePoint, zone) {
       lat: interpolateValue(insidePoint.lat, outsidePoint.lat, mid),
       lng: interpolateValue(insidePoint.lng, outsidePoint.lng, mid),
     };
-    if (distanceM(candidate, zone) <= radius) low = mid;
+    if (isPointInPrivacyZone(candidate, [zone])) low = mid;
     else high = mid;
   }
 
@@ -1241,9 +1469,9 @@ const pushPrivacyGap = (masked, point, zone) => {
 };
 
 export function maskRoutePointsForPrivacy(routePoints = [], settings = localSettings.get()) {
-  // Display/export masking only. Scoring that depends on continuous movement
-  // windows, including intersection-stop behavior, should run before this on
-  // raw local points and persist aggregate scores rather than private coords.
+  // Display, storage, export, and scoring-input masking. Score pipelines call
+  // this before calculating aggregate scores so private-zone gaps protect both
+  // the map and the score inputs.
   const zones = getPrivacyZones(settings);
   if (!zones.length) {
     return (Array.isArray(routePoints) ? routePoints : [])
@@ -1502,14 +1730,125 @@ function averageSpeed(speeds = []) {
 
 const roundSpeed = (speed) => Math.round(speed * 10) / 10;
 
+const segmentsIntersect = (a, b, c, d) => {
+  const cross = (p, q, r) => (
+    (q.x - p.x) * (r.y - p.y) -
+    (q.y - p.y) * (r.x - p.x)
+  );
+  const abC = cross(a, b, c);
+  const abD = cross(a, b, d);
+  const cdA = cross(c, d, a);
+  const cdB = cross(c, d, b);
+  return (
+    ((abC >= 0 && abD <= 0) || (abC <= 0 && abD >= 0)) &&
+    ((cdA >= 0 && cdB <= 0) || (cdA <= 0 && cdB >= 0))
+  );
+};
+
+const segmentToSegmentDistanceM = (a, b, c, d) => {
+  const referenceLat = (Number(a?.lat) + Number(b?.lat) + Number(c?.lat) + Number(d?.lat)) / 4;
+  const pa = projectPointMeters(a, referenceLat);
+  const pb = projectPointMeters(b, referenceLat);
+  const pc = projectPointMeters(c, referenceLat);
+  const pd = projectPointMeters(d, referenceLat);
+  if (!pa || !pb || !pc || !pd) return Number.POSITIVE_INFINITY;
+  if (segmentsIntersect(pa, pb, pc, pd)) return 0;
+  return Math.min(
+    pointToSegmentDistanceM(a, c, d),
+    pointToSegmentDistanceM(b, c, d),
+    pointToSegmentDistanceM(c, a, b),
+    pointToSegmentDistanceM(d, a, b)
+  );
+};
+
+const routeSegmentTouchesExactZone = (start, end, zone, guardM = 0) => {
+  const threshold = zoneWidthM(zone) + Math.max(0, Number(guardM) || 0);
+  if (zone?.type === 'corridor') {
+    const waypoints = normalizeCorridorWaypoints(zone?.waypoints);
+    for (let index = 1; index < waypoints.length; index++) {
+      if (segmentToSegmentDistanceM(start, end, waypoints[index - 1], waypoints[index]) <= threshold) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return pointToSegmentDistanceM(zone, start, end) <= threshold;
+};
+
+export function routeTouchesPrivacyZone(routePoints = [], zone, guardM = 0) {
+  if (!zone || isPrivacyZoneExpired(zone)) return false;
+  const points = (Array.isArray(routePoints) ? routePoints : []).filter((point) => (
+    finiteNumber(point?.lat) != null && finiteNumber(point?.lng) != null
+  ));
+  if (!points.length) return false;
+  if (points.some((point) => Boolean(isPointInPrivacyZone(point, [zone], guardM)))) return true;
+
+  for (let index = 1; index < points.length; index++) {
+    const start = points[index - 1];
+    const end = points[index];
+    if (hasExactZoneGeometry(zone)) {
+      if (routeSegmentTouchesExactZone(start, end, zone, guardM)) return true;
+      continue;
+    }
+
+    const lengthM = privacyZoneDistanceM(start, end);
+    const sampleCount = Math.max(1, Math.ceil(lengthM / Math.max(25, Number(zone.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M)));
+    for (let sample = 1; sample < sampleCount; sample++) {
+      const ratio = sample / sampleCount;
+      if (isPointInPrivacyZone({
+        lat: start.lat + (end.lat - start.lat) * ratio,
+        lng: start.lng + (end.lng - start.lng) * ratio,
+      }, [zone], guardM)) return true;
+    }
+  }
+  return false;
+}
+
+async function purgeZoneFromTripRepository(zone) {
+  const [{ tripService }, { enqueueRescoreJob }, { rescoreTripForQueue }] = await Promise.all([
+    import('@/api/trips'),
+    import('@/lib/rescoringQueue'),
+    import('@/lib/rescoringWorker'),
+  ]);
+  const trips = await tripService.listAll({ sort: '-start_time' });
+  const purgeZone = { ...zone };
+  delete purgeZone.expiresAt;
+  const result = await purgeGpsWithinPrivacyZone(
+    trips,
+    purgeZone,
+    (id, patch) => tripService.update(id, patch)
+  );
+  if (result.tripIdsAffected.length) {
+    void enqueueRescoreJob({
+      reason: 'privacy_zone_purged',
+      zoneId: zone.id,
+      tripIds: result.tripIdsAffected,
+    }, { rescoreTrip: rescoreTripForQueue });
+  }
+  return result;
+}
+
 export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
   const zones = getPrivacyZones(settings);
+  const type = zone?.type === 'corridor' ? 'corridor' : 'circle';
+  const widthM = Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, Number(
+    type === 'corridor'
+      ? zone?.width_m ?? zone?.widthM ?? zone?.radius_m
+      : zone?.radius_m
+  ) || PRIVACY_RADIUS_DEFAULT_M));
   const proposed = {
     id: zone.id || `pz_${Date.now().toString(36)}`,
     label: String(zone.label || 'Private place').trim() || 'Private place',
-    radius_m: Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, Number(zone.radius_m) || PRIVACY_RADIUS_DEFAULT_M)),
+    type,
+    radius_m: widthM,
+    ...(type === 'corridor' ? {
+      width_m: widthM,
+      waypoints: normalizeCorridorWaypoints(zone?.waypoints),
+    } : {}),
+    sensitivity: zone?.sensitivity === 'high' ? 'high' : 'standard',
+    ...(normalizeExpiry(zone?.expiresAt) ? { expiresAt: normalizeExpiry(zone.expiresAt) } : {}),
     exclude_from_osrm: true,
-    ...(finiteNumber(zone.lat) != null && finiteNumber(zone.lng) != null ? {
+    ...(type === 'circle' && finiteNumber(zone.lat) != null && finiteNumber(zone.lng) != null ? {
       lat: Number(zone.lat),
       lng: Number(zone.lng),
     } : {}),
@@ -1521,16 +1860,19 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
   };
   const previous = zones.find((item) => item.id === proposed.id);
   if (!hasExactZoneGeometry(proposed) && previous && Number(proposed.radius_m) !== Number(previous.radius_m)) {
-    throw new Error('Re-add this privacy zone to change its radius because the exact center is no longer stored.');
+    throw new Error('Re-add this privacy zone to change its radius or width because the exact geometry is no longer stored.');
   }
   const normalized = normalizePrivacyZones([proposed])[0];
   if (!normalized) throw new Error('Privacy zone needs a location before it can be saved.');
   const proposedLat = finiteNumber(zone?.lat);
   const proposedLng = finiteNumber(zone?.lng);
   const zoneChanged = !previous ||
+    previous.type !== normalized.type ||
     previous.lat !== proposedLat ||
     previous.lng !== proposedLng ||
     previous.radius_m !== normalized.radius_m ||
+    previous.sensitivity !== normalized.sensitivity ||
+    previous.expiresAt !== normalized.expiresAt ||
     previous.exclude_from_osrm !== normalized.exclude_from_osrm ||
     JSON.stringify(previous.privacy_cell_hashes || []) !== JSON.stringify(normalized.privacy_cell_hashes || []);
   const next = zones.filter((item) => item.id !== normalized.id).concat(normalized);
@@ -1551,6 +1893,8 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
     zone_id: normalized.id,
     label: normalized.label,
     radius_m: normalized.radius_m,
+    zone_type: normalized.type,
+    sensitivity: normalized.sensitivity,
     zone_count: next.length,
   }, { category: 'privacy', title: 'Privacy zone saved' });
   appendPrivacyAuditEvent({
@@ -1581,6 +1925,9 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
       }));
     }
   }
+  if (normalized.sensitivity === 'high') {
+    await purgeZoneFromTripRepository(normalized);
+  }
   return updated;
 }
 
@@ -1600,4 +1947,45 @@ export async function removePrivacyZone(id, settings = localSettings.get()) {
     },
   });
   return updated;
+}
+
+export async function sweepExpiredPrivacyZones(now = Date.now()) {
+  const settings = localSettings.get();
+  const zones = await getHydratedPrivacyZones(settings);
+  const expired = zones.filter((zone) => isPrivacyZoneExpired(zone, now));
+  if (!expired.length) return { expiredCount: 0, purgedTrips: 0, purgedPoints: 0, purgedEvents: 0 };
+
+  let purgedTrips = 0;
+  let purgedPoints = 0;
+  let purgedEvents = 0;
+  for (const zone of expired) {
+    const result = await purgeZoneFromTripRepository(zone);
+    purgedTrips += result.tripsAffected;
+    purgedPoints += result.pointsPurged;
+    purgedEvents += result.eventsPurged;
+  }
+
+  const remaining = zones.filter((zone) => !isPrivacyZoneExpired(zone, now));
+  await persistPrivacyZones(remaining);
+  localSettings.update({ privacy_zones: redactedPrivacyZones(remaining) });
+  expired.forEach((zone) => {
+    recordSystemEvent('privacy_zone_expired', {
+      zone_id: zone.id,
+      label: zone.label,
+      purge_raw_gps: true,
+    }, { category: 'privacy', severity: 'warn', title: 'Temporary privacy zone expired and private GPS erased' });
+    appendPrivacyAuditEvent({
+      op: 'ZONE_DELETED',
+      zoneId: zone.id,
+      zoneLabel: zone.label,
+      details: { reason: 'expired', zone_count: remaining.length },
+    });
+  });
+  void clearMapMatchingCache();
+  return {
+    expiredCount: expired.length,
+    purgedTrips,
+    purgedPoints,
+    purgedEvents,
+  };
 }

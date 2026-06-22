@@ -4,7 +4,7 @@ export const LEGAL_DISCLAIMER_SHORT =
 export const LEGAL_DISCLAIMER_SUMMARY =
   `${LEGAL_DISCLAIMER_SHORT} Road Sage estimates driving patterns from device sensors, GPS, maps, weather, route, vehicle, cost, emissions, phone-use, OBD, and optional third-party data that can be incomplete, delayed, unavailable, stale, misclassified, or wrong. You remain responsible for safe driving, posted signs, traffic laws, road conditions, vehicle condition, permissions, consent, data sharing, exports, backups, and every decision made from app outputs.`;
 
-export const LEGAL_NOTICE_ACK_VERSION = 5;
+export const LEGAL_NOTICE_ACK_VERSION = 6;
 
 export const LEGAL_NOTICE_INTRO =
   'Road Sage is a local-first driving log and coaching app for personal information and self-coaching. Read this notice before using tracking, background auto tracking, scores, maps, alerts, reports, exports, backups, privacy zones, external road data, phone-use checks, OBD features, vehicle features, or survey tools.';
@@ -14,7 +14,7 @@ export const LEGAL_NOTICE_KEY_POINTS = [
   'Scores, alerts, maps, speed limits, costs, emissions, fatigue signals, phone-use signals, possible incident signals, crash-related signals, and vehicle-health outputs are estimates and may be wrong.',
   'Road Sage is not legal, insurance, emergency, navigation, medical, tax, employment, fleet, compliance, repair, maintenance, or safety-critical advice.',
   'If Background Auto is enabled, Road Sage may collect location and activity signals while the app is minimized or in the background, but Android may stop tracking if the app is fully closed or force-stopped.',
-  'Your data stays local by default. Road-data features may share limited route, location, date, or public road-area data with outside services when you tap Get Road Data, enable automatic road-data lookup, or approve route matching.',
+  'Your data stays local by default. Saved road-speed reviews can reduce repeated OpenStreetMap lookups, but road-data features may still share limited route, location, date, or public road-area data with outside services when you tap Get Road Data, enable automatic road-data lookup, or approve route matching.',
   'Do not use Road Sage to monitor another person, worker, vehicle, family member, minor, or shared device without all legally required consent, notice, and permissions.',
   'You are responsible for safe driving, traffic laws, posted signs, road conditions, your vehicle, permissions, consent, exports, backups, and any decisions made from app information.',
 ];
@@ -106,7 +106,7 @@ export const LEGAL_DISCLAIMER_ITEMS = [
   {
     group: 'Records, exports & decisions',
     title: 'Vehicles and costs',
-    body: 'Maintenance, tire wear, fuel, EV, emissions, savings, and vehicle health estimates are not diagnostics, financial advice, environmental certification, or repair instructions. Inspect your vehicle, follow the manufacturer schedule, and use a qualified professional for repairs, safety concerns, or compliance decisions.',
+    body: 'Maintenance, tire wear, fuel, EV, emissions, savings, and vehicle health estimates are not diagnostics, financial advice, environmental compliance validation, or repair instructions. Inspect your vehicle, follow the manufacturer schedule, and use a qualified professional for repairs, safety concerns, or compliance decisions.',
   },
   {
     group: 'Privacy & data',
@@ -116,7 +116,7 @@ export const LEGAL_DISCLAIMER_ITEMS = [
   {
     group: 'Privacy & data',
     title: 'Optional external requests',
-    body: 'Road-data lookup can send privacy-filtered public road boxes to OpenStreetMap and one privacy-safe route point plus date to Open-Meteo when you tap Get Road Data or enable automatic road-data lookup. Route matching can send sampled public GPS segments to the OSRM endpoint you configure and explicitly approve. Public or third-party services have their own availability, logging, privacy, retention, security, rate-limit, and policy practices.',
+    body: 'Saved and reviewed road speeds can reduce repeated OpenStreetMap lookups for roads you already maintain locally. Road-data lookup can send privacy-filtered public road boxes to OpenStreetMap and one privacy-safe route point plus date to Open-Meteo when you tap Get Road Data or enable automatic road-data lookup. Route matching can send sampled public GPS segments to the OSRM endpoint you configure and explicitly approve. Public or third-party services have their own availability, logging, privacy, retention, security, rate-limit, and policy practices.',
   },
   {
     group: 'Privacy & data',
@@ -131,7 +131,7 @@ export const LEGAL_DISCLAIMER_ITEMS = [
   {
     group: 'Privacy & data',
     title: 'Privacy zones reduce risk, not all exposure',
-    body: 'Privacy zones, masking, export warnings, local storage, app lock, and screen-capture controls reduce exposure but cannot guarantee anonymity, secrecy, deletion, legal compliance, or protection from device compromise, screenshots, synced files, backups, notifications, memory, or people with access to your device.',
+    body: 'Privacy zones, masking, export warnings, local storage, app lock, and screen-capture controls reduce exposure but are not absolute protection. They cannot promise anonymity, secrecy, deletion, legal compliance, or protection from device compromise, modified app builds, screenshots, synced files, backups, notifications, memory, network metadata, user-approved external endpoints, or people with access to your device.',
   },
   {
     group: 'Backups & deletion',
@@ -141,7 +141,7 @@ export const LEGAL_DISCLAIMER_ITEMS = [
   {
     group: 'Emergency limits',
     title: 'No emergency monitoring',
-    body: 'Road Sage does not monitor you for emergencies, guarantee crash detection, contact emergency services, or replace roadside assistance, insurance claims processes, law enforcement, medical help, or human supervision.',
+    body: 'Road Sage does not monitor you for emergencies, promise crash detection, contact emergency services, or replace roadside assistance, insurance claims processes, law enforcement, medical help, or human supervision.',
   },
   {
     group: 'Emergency limits',
@@ -150,7 +150,7 @@ export const LEGAL_DISCLAIMER_ITEMS = [
   },
   {
     group: 'Emergency limits',
-    title: 'No guarantees',
-    body: 'Except where law says otherwise, no app output is guaranteed to be accurate, complete, available, secure, current, uninterrupted, error-free, or suitable for your situation. You are responsible for how you use the app, what data you store or share, and any decision made from app information.',
+    title: 'No app-wide assurances',
+    body: 'Except where law says otherwise, no app output is promised to be accurate, complete, available, secure, current, uninterrupted, error-free, or suitable for your situation. You are responsible for how you use the app, what data you store or share, and any decision made from app information.',
   },
 ];

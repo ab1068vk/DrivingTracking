@@ -7,6 +7,12 @@ import {
   maskRoutePointsForPrivacy,
   maskRoutePointsForPrivacyExport,
 } from '@/lib/privacyZones';
+import { DEFAULT_THRESHOLDS } from '@/lib/tripEngine';
+import {
+  assertScoreInputsDoNotContainRawZoneKinematics,
+  hasPrivacyRedactionMarker,
+  scoreTripWithPrivacyInputs,
+} from '@/lib/scoreInputPrivacy';
 import { getSecureGpsBufferZeroCallCount } from '@/lib/SecureGpsBuffer';
 import { PINNED_GPS_HOSTS } from '@/lib/pinnedFetch';
 import { secureCall } from '@/lib/secureBridge';
@@ -205,6 +211,51 @@ export const selfTestKinematicNulling = () => withCache('kinematic_nulling', asy
     : ok('Boundary placeholder contains no speed, heading, bearing, accuracy, or altitude');
 });
 
+export const selfTestScoreInputMasking = () => withCache('score_input_masking', async () => {
+  const timestamp = Date.now();
+  const settings = {
+    privacy_zones: [{
+      id: 'score-input-zone',
+      label: 'Score input self test',
+      lat: 43,
+      lng: -79,
+      radius_m: 120,
+    }],
+  };
+  const routePoints = [
+    { lat: 43, lng: -79, timestamp: new Date(timestamp).toISOString(), speed_kmh: 42, heading: 270, accuracy: 4 },
+    { lat: 43.003, lng: -79.003, timestamp: new Date(timestamp + 60_000).toISOString(), speed_kmh: 35, heading: 180, accuracy: 5 },
+  ];
+  /** @type {null | {routePoints: Array<Record<string, any>>, privacyZones: Array<Record<string, any>>}} */
+  let scoreInput = null;
+  const scored = scoreTripWithPrivacyInputs({
+    trip: {
+      start_time: routePoints[0].timestamp,
+      end_time: routePoints.at(-1).timestamp,
+    },
+    routePoints,
+    thresholds: DEFAULT_THRESHOLDS,
+    settings,
+    endTime: routePoints.at(-1).timestamp,
+    onScoreInput: (input) => {
+      scoreInput = input;
+    },
+  });
+
+  if (!scoreInput) return error('Score self-test did not reach the scoring input hook');
+  try {
+    assertScoreInputsDoNotContainRawZoneKinematics(scoreInput.routePoints, scoreInput.privacyZones);
+  } catch (leakError) {
+    return error(leakError?.message || 'Raw privacy-zone kinematics reached scoring input');
+  }
+  if (!scoreInput.routePoints.some(hasPrivacyRedactionMarker)) {
+    return error('Privacy-zone crossing did not create a masked score-input gap');
+  }
+  return scored.scoreInputPrivacy?.touchedPrivacyZone
+    ? ok('Real scoring path received masked privacy-zone inputs, not raw kinematic points')
+    : error('Score input masking did not mark the privacy-zone crossing');
+});
+
 export const selfTestDifferentialPrivacy = () => withCache('differential_privacy', async () => {
   const samples = Array.from({ length: 20 }, () => noisyStat(10, 'distance_km'));
   if (samples.every((sample) => sample === 10)) {
@@ -271,6 +322,7 @@ export async function runAllSelfTests() {
     request_obfuscation: selfTestRequestObfuscation,
     timestamp_fuzzing: selfTestTimestampFuzzing,
     kinematic_nulling: selfTestKinematicNulling,
+    score_input_masking: selfTestScoreInputMasking,
     differential_privacy: selfTestDifferentialPrivacy,
     commitment_scheme: selfTestCommitmentScheme,
     export_signing: selfTestExportSigning,

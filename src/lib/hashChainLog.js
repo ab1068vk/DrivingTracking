@@ -3,6 +3,7 @@ import { registerPlugin } from '@capacitor/core';
 
 export const PRIVACY_AUDIT_CHAIN_KEY = 'drivesense_privacy_audit_chain_v1';
 export const PRIVACY_AUDIT_ANCHOR_KEY = 'drivesense_privacy_audit_anchor_v1';
+export const LAST_CHECKPOINT_EXPORT_KEY = 'drivesense_last_checkpoint_export_at';
 export const GENESIS_HASH = '0'.repeat(64);
 
 const AUDIT_SCHEMA = 'drivesense_privacy_audit_v1';
@@ -241,15 +242,23 @@ export async function exportAuditCheckpoint() {
   const chain = await loadPrivacyAuditChain();
   if (!chain.length) throw new Error('Audit chain is empty');
   const tip = chain.at(-1);
-  return {
+  const exportedAt = Date.now();
+  const checkpoint = {
     schema: 'ds_audit_checkpoint_v1',
     seq: tip.seq,
     tip_hash: tip.hash,
     signature: tip.tipSignature || null,
     signing_pubkey: tip.signingPublicKey || null,
     chain_length: chain.length,
-    exported_at: Date.now(),
+    exported_at: exportedAt,
   };
+  await writeRaw(LAST_CHECKPOINT_EXPORT_KEY, String(exportedAt));
+  return checkpoint;
+}
+
+export async function getLastCheckpointExportedAt() {
+  const timestamp = Number(await readRaw(LAST_CHECKPOINT_EXPORT_KEY));
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
 }
 
 const base64Bytes = (value) => {
@@ -275,8 +284,16 @@ const derEcdsaToRaw = (signature) => {
 };
 
 async function verifyCheckpointSignature(hash, signature, publicKey) {
+  if (isNativePlatform()) {
+    const result = await AuditAnchor.verifyTipHash({
+      tipHash: hash,
+      signature,
+      publicKey,
+    });
+    return result?.valid === true;
+  }
   const subtle = globalThis.crypto?.subtle;
-  if (!subtle) return false;
+  if (!subtle || typeof TextEncoder === 'undefined') return false;
   const key = await subtle.importKey(
     'spki',
     base64Bytes(publicKey),
@@ -293,34 +310,72 @@ async function verifyCheckpointSignature(hash, signature, publicKey) {
 }
 
 export async function verifyCheckpoint(checkpoint = {}) {
+  const hasSignature = Boolean(checkpoint.signature);
+  const hasPublicKey = Boolean(checkpoint.signing_pubkey);
+  let signatureStatus = 'unsigned';
+
   if (checkpoint.schema !== 'ds_audit_checkpoint_v1') {
-    return { valid: false, reason: 'Unsupported audit checkpoint schema' };
+    return {
+      valid: false,
+      signatureStatus: hasSignature || hasPublicKey ? 'invalid' : 'unsigned',
+      reason: 'Unsupported audit checkpoint schema',
+    };
   }
-  const currentVerification = await verifyChain();
-  if (!currentVerification.valid) {
-    return { valid: false, reason: `Current audit chain is invalid: ${currentVerification.reason}` };
+  if (hasSignature !== hasPublicKey) {
+    return {
+      valid: false,
+      signatureStatus: 'invalid',
+      reason: 'Checkpoint signature metadata is incomplete',
+    };
   }
-  const chain = await loadPrivacyAuditChain();
-  if (chain.length < checkpoint.seq) {
-    return { valid: false, reason: `Chain is shorter (${chain.length}) than checkpoint seq (${checkpoint.seq})` };
-  }
-  const entry = chain.find((item) => item.seq === checkpoint.seq);
-  if (!entry) return { valid: false, reason: `No audit entry exists at seq ${checkpoint.seq}` };
-  if (entry.hash !== checkpoint.tip_hash) {
-    return { valid: false, reason: `Hash at seq ${checkpoint.seq} does not match the checkpoint` };
-  }
-  if (checkpoint.signature && checkpoint.signing_pubkey) {
+  if (hasSignature && hasPublicKey) {
     try {
       if (!await verifyCheckpointSignature(
         checkpoint.tip_hash,
         checkpoint.signature,
         checkpoint.signing_pubkey
       )) {
-        return { valid: false, reason: 'Checkpoint signature is invalid' };
+        return { valid: false, signatureStatus: 'invalid', reason: 'Checkpoint signature is invalid' };
       }
+      signatureStatus = 'verified';
     } catch {
-      return { valid: false, reason: 'Checkpoint signature could not be verified' };
+      return {
+        valid: false,
+        signatureStatus: 'invalid',
+        reason: 'Checkpoint signature could not be verified',
+      };
     }
   }
-  return { valid: true, verifiedAt: Date.now() };
+  const currentVerification = await verifyChain();
+  if (!currentVerification.valid) {
+    return {
+      valid: false,
+      signatureStatus,
+      reason: `Current audit chain is invalid: ${currentVerification.reason}`,
+    };
+  }
+  const chain = await loadPrivacyAuditChain();
+  if (chain.length < checkpoint.seq) {
+    return {
+      valid: false,
+      signatureStatus,
+      reason: `Chain is shorter (${chain.length}) than checkpoint seq (${checkpoint.seq})`,
+    };
+  }
+  const entry = chain.find((item) => item.seq === checkpoint.seq);
+  if (!entry) {
+    return {
+      valid: false,
+      signatureStatus,
+      reason: `No audit entry exists at seq ${checkpoint.seq}`,
+    };
+  }
+  if (entry.hash !== checkpoint.tip_hash) {
+    return {
+      valid: false,
+      signatureStatus,
+      reason: `Hash at seq ${checkpoint.seq} does not match the checkpoint`,
+    };
+  }
+  return { valid: true, signatureStatus, verifiedAt: Date.now() };
 }

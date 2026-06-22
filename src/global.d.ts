@@ -6,6 +6,7 @@ interface ImportMetaEnv {
   readonly VITE_DEFAULT_MAP_LNG?: string;
   readonly VITE_DEFAULT_OSRM_URL?: string;
   readonly VITE_OSRM_TIMEOUT_MS?: string;
+  readonly VITE_SHOW_DEBUG_ROUTES?: string;
 }
 
 interface ImportMeta {
@@ -19,4 +20,9 @@ interface Window {
 
 declare module '@capacitor/app' {
   export const App: any;
+}
+
+declare module '*.jpg' {
+  const src: string;
+  export default src;
 }

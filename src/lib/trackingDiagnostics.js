@@ -418,7 +418,7 @@ export function buildDashboardTrackingExplanation(/** @type {any} */ {
       headline: 'Checking movement',
       detail: lastDecision.type === 'candidate_hidden_parking_cooldown'
         ? 'Road Sage started a hidden candidate near the parked location and is waiting for stronger vehicle-like proof before saving it.'
-        : 'Road Sage started a hidden candidate and will save it only if the movement proves vehicle-like.',
+        : 'Road Sage started a hidden candidate and will save it only if the movement looks vehicle-like.',
       facts,
       lastDecision,
     };

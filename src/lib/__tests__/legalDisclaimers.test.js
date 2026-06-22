@@ -36,7 +36,7 @@ describe('legal and responsible-use explanations', () => {
     expect(copy).toContain('does not monitor you for emergencies');
     expect(copy).toContain('No use for monitoring others without consent');
     expect(copy).toContain('Not for adverse decisions');
-    expect(copy).toContain('No guarantees');
+    expect(copy).toContain('No app-wide assurances');
     expect(copy).toContain('Background tracking requires consent');
     expect(copy).toContain('while the app is minimized or in the background');
     expect(copy).toContain('force-stopping the app can still stop Android tracking');

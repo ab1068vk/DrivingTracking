@@ -310,7 +310,7 @@ export const SCORING_CONSTANTS = Object.freeze({
 
   DAILY_FATIGUE_ONSET_MINUTES: constant(90, { label: 'Daily fatigue onset', domain: 'fatigue', calibration_note: 'Time-on-task study supplies context, but score remains approximate.', affected_metrics: ['fatigue_risk_score', 'score_safety', 'score_overall'] }),
   DAILY_RECOVERY_BREAK_MINUTES: constant(30, { label: 'Daily fatigue recovery break', domain: 'fatigue', calibration_note: 'Break study supplies context, but recovery model remains approximate.', affected_metrics: ['fatigue_risk_score'] }),
-  DAILY_FULL_RECOVERY_BREAK_MINUTES: constant(180, { label: 'Daily full-recovery cap', domain: 'fatigue', calibration_note: 'Product interpolation cap, not a recovery guarantee.', affected_metrics: ['fatigue_risk_score'] }),
+  DAILY_FULL_RECOVERY_BREAK_MINUTES: constant(180, { label: 'Daily full-recovery cap', domain: 'fatigue', calibration_note: 'Product interpolation cap, not a recovery assurance.', affected_metrics: ['fatigue_risk_score'] }),
   DAILY_FATIGUE_SCORE_AT_ONSET: constant(5, { label: 'Daily fatigue onset score', domain: 'fatigue', calibration_note: 'Heuristic score step.', affected_metrics: ['fatigue_risk_score'] }),
 
   ROUTE_RISK_EVENT_WEIGHT: constant(20, { label: 'Route event risk weight', domain: 'route_risk', calibration_note: 'Segment risk heuristic; not incident calibrated.', affected_metrics: routeRiskMetrics, calibration_metadata: pendingCalibrationMetadata }),

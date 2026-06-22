@@ -2382,7 +2382,10 @@ export default function SpeedLimits() {
                 If no matching saved rule is available, Road Sage falls back to learned local data, OpenStreetMap/Get Road Data results, then lower-confidence road-type, regional, or GPS estimates.
               </p>
               <p>
-                Your saved speed, road name, notes, split sections, direction rules, and time rules are not uploaded to OpenStreetMap. Get Road Data only sends privacy-filtered public-road bounding boxes to an OpenStreetMap Overpass service, which may receive normal network metadata such as your IP address.
+                Saving and reviewing road speeds here can reduce how often you need OpenStreetMap lookups for the same roads. Your saved speed, road name, notes, split sections, direction rules, and time rules are not uploaded to OpenStreetMap.
+              </p>
+              <p>
+                Get Road Data sends only privacy-filtered public-road bounding boxes to an OpenStreetMap Overpass service, which may receive normal network metadata such as your IP address. Privacy zones reduce what enabled road-data features can send, but they are not an absolute protection against device compromise, modified app builds, screenshots, exported files, network metadata, or user-approved external endpoints.
               </p>
               <p>
                 This map uses OpenStreetMap tiles while online. Saved roads, trip geometry, editing, and speed labels remain available offline, but standard OpenStreetMap tiles are not downloaded for offline use. Tile providers can see the map tile area viewed and normal network metadata.

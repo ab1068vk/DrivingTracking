@@ -1,5 +1,6 @@
 import { buildDangerZones } from '@/lib/dangerZoneEngine';
 import { routeKeyForTrip } from '@/lib/commuteMatching';
+import { excludePrivacyTouchedDaysFromTrends } from '@/lib/privateTripMode';
 export { COMMUTE_MATCH_RADIUS_M, routeKeyForTrip } from '@/lib/commuteMatching';
 
 const DAY_MS = 86400000;
@@ -65,7 +66,7 @@ const inferRouteLabel = (trips = []) => {
 
 export function buildRouteComparisons(trips = []) {
   const groups = new Map();
-  trips
+  excludePrivacyTouchedDaysFromTrends(trips)
     .filter((trip) => trip.status === 'completed')
     .forEach((trip) => {
       const key = routeKeyForTrip(trip);
@@ -145,7 +146,8 @@ export function buildTripCalendarMonth(trips = [], monthDate = new Date()) {
   const firstGridDay = startOfDay(monthStart);
   firstGridDay.setDate(firstGridDay.getDate() - firstGridDay.getDay());
   const days = [];
-  const completed = trips.filter((trip) => trip.status === 'completed');
+  const completed = excludePrivacyTouchedDaysFromTrends(trips)
+    .filter((trip) => trip.status === 'completed');
 
   for (let i = 0; i < 42; i++) {
     const date = new Date(firstGridDay.getTime() + i * DAY_MS);
@@ -193,12 +195,13 @@ export function buildTripCalendarMonth(trips = [], monthDate = new Date()) {
 
 export function buildWeeklyDriverSummary(trips = [], settings = {}) {
   const weekStart = startOfWeek();
-  const completed = trips.filter((trip) => (
+  const trendTrips = excludePrivacyTouchedDaysFromTrends(trips);
+  const completed = trendTrips.filter((trip) => (
     trip.status === 'completed' &&
     new Date(trip.start_time).getTime() >= weekStart.getTime()
   ));
   const previousStart = new Date(weekStart.getTime() - 7 * DAY_MS);
-  const previous = trips.filter((trip) => {
+  const previous = trendTrips.filter((trip) => {
     const time = new Date(trip.start_time).getTime();
     return trip.status === 'completed' && time >= previousStart.getTime() && time < weekStart.getTime();
   });
@@ -256,10 +259,11 @@ export function buildWeeklyDriverSummary(trips = [], settings = {}) {
 }
 
 export function buildGoalStatus(weekTrips = [], settings = {}) {
-  const harshBrakes = weekTrips.reduce((sum, trip) => sum + (trip.harsh_brakes_count || 0), 0);
-  const weightedScore = distanceWeightedScore(weekTrips);
+  const trendTrips = excludePrivacyTouchedDaysFromTrends(weekTrips);
+  const harshBrakes = trendTrips.reduce((sum, trip) => sum + (trip.harsh_brakes_count || 0), 0);
+  const weightedScore = distanceWeightedScore(trendTrips);
   const avgScore = weightedScore == null ? null : Math.round(weightedScore);
-  const nightKm = weekTrips
+  const nightKm = trendTrips
     .filter((trip) => trip.night_driving)
     .reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
   const harshBrakeTarget = Number(settings.weekly_goal_harsh_brakes ?? 0);

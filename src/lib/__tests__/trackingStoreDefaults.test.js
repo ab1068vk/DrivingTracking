@@ -29,7 +29,19 @@ describe('tracking store default settings', () => {
     })).not.toHaveProperty('external_context_auto_fetch_enabled');
   });
 
+  it('defaults heightened privacy mode off and does not import it from backups', () => {
+    expect(DEFAULT_SETTINGS.heightened_privacy_mode).toBe(false);
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 12,
+    }).settings.settings_defaults_version).toBe(13);
+    expect(sanitizeImportedSettings({
+      heightened_privacy_mode: true,
+    })).not.toHaveProperty('heightened_privacy_mode');
+    expect(validateSettingsPatch({ heightened_privacy_mode: true })).toEqual({ valid: true, errors: [] });
+  });
+
   it('keeps OSRM route snapping off until an endpoint and consent are saved', () => {
+    // Checklist: "Confirm Settings rejects or blocks public OSRM demo use for saved settings."
     expect(DEFAULT_SETTINGS.map_matching_enabled).toBe(false);
     expect(DEFAULT_SETTINGS.osrm_map_matching_url).not.toBe('https://router.project-osrm.org');
     expect(DEFAULT_SETTINGS.osrm_data_sharing_consented).toBe(false);
@@ -256,7 +268,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(12);
+    expect(legacySunset.settings_defaults_version).toBe(13);
     expect(legacySunset.raw_gps_retention_days).toBe(0);
     expect(legacyCustom.night_end_time).toBe('06:00');
     expect(legacyCustom.raw_gps_retention_days).toBe(0);

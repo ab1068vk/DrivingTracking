@@ -142,6 +142,7 @@ import {
   maskEventsForPrivacy,
   redactRoutePointForPrivacyStorage,
 } from '@/lib/privacyZones';
+import { prepareScoreInputsForPrivacy } from '@/lib/scoreInputPrivacy';
 import { appendPrivacyEvent } from '@/lib/hashChainLog';
 import {
   PRIVATE_TRIP_MODE,
@@ -856,7 +857,7 @@ export default function Dashboard() {
       });
     }
     refreshTrackingStatusContext();
-    setLocationError('Auto-detected movement was ignored because it did not prove vehicle-like.');
+    setLocationError('Auto-detected movement was ignored because it did not indicate vehicle-like travel.');
   }, [refreshTrackingStatusContext]);
 
   const markActiveTripLocationPermissionLoss = useCallback((reason = 'web_geolocation_permission_denied') => {
@@ -1907,7 +1908,7 @@ export default function Dashboard() {
           });
         }
         refreshTrackingStatusContext();
-        setLocationError('Auto-detected movement was ignored because it did not prove vehicle-like.');
+        setLocationError('Auto-detected movement was ignored because it did not indicate vehicle-like travel.');
         return;
       }
       tripToEnd = {
@@ -2115,11 +2116,21 @@ export default function Dashboard() {
           error: null,
     };
     pts = speedLimitContext.routePoints || pts;
+    const tripPrivacyZones = getPrivacyZones(cfg);
+    const activeIncidentEvents = (tripToEnd.driving_events || []).filter((event) => event.type === 'possible_crash');
+    const scoreInputPrivacy = prepareScoreInputsForPrivacy({
+      routePoints: pts,
+      events: activeIncidentEvents,
+      settings: cfg,
+      zones: tripPrivacyZones,
+    });
+    const scoringRoutePoints = scoreInputPrivacy.routePoints;
+    const scoringIncidentEvents = scoreInputPrivacy.events;
     const speedKnowledge = getLocalSpeedKnowledge();
-    const localKnowledgeResults = await prefetchLocalKnowledge(pts, speedKnowledge);
-    let stats = calculateTripStats(pts, tripToEnd.start_time, endTime, thresholds, {
+    const localKnowledgeResults = await prefetchLocalKnowledge(scoringRoutePoints, speedKnowledge);
+    let stats = calculateTripStats(scoringRoutePoints, tripToEnd.start_time, endTime, thresholds, {
       ...tripToEnd,
-      raw_route_points: cleanedPoints,
+      raw_route_points: scoringRoutePoints,
     });
     const manualSparseDistanceKm = manualSaveReview?.shouldSave
       ? Number(manualSaveReview.cumulativeCoordKm) || 0
@@ -2135,7 +2146,7 @@ export default function Dashboard() {
       };
     }
     const weatherContext = shouldAutoFetchExternalContext
-      ? await fetchWeatherContextForTrip(pts, tripToEnd.start_time, endTime, cfg).catch((error) => ({
+      ? await fetchWeatherContextForTrip(scoringRoutePoints, tripToEnd.start_time, endTime, cfg).catch((error) => ({
           provider: 'open-meteo',
           status: 'unavailable',
           riskLevel: null,
@@ -2151,13 +2162,11 @@ export default function Dashboard() {
           riskMultiplier: 1,
         };
 
-    const tripPrivacyZones = getPrivacyZones(cfg);
-    const { events: detectedEvents, phoneUse: gpsPhoneUse } = detectDrivingEvents(pts, thresholds, endTime, tripPrivacyZones, {
+    const { events: detectedEvents, phoneUse: gpsPhoneUse } = detectDrivingEvents(scoringRoutePoints, thresholds, endTime, tripPrivacyZones, {
       localKnowledgeResults,
       settings: cfg,
     });
-    const activeIncidentEvents = (tripToEnd.driving_events || []).filter((event) => event.type === 'possible_crash');
-    const events = enrichEventsWithSensorContext([...detectedEvents, ...activeIncidentEvents], sensorFusionRef.current?.getSamples?.() || []);
+    const events = enrichEventsWithSensorContext([...detectedEvents, ...scoringIncidentEvents], sensorFusionRef.current?.getSamples?.() || []);
     const startMs = new Date(tripToEnd.start_time).getTime();
     const endMs = new Date(endTime).getTime();
     let nativePhoneUsageSummary = null;
@@ -2166,11 +2175,11 @@ export default function Dashboard() {
     }
     const nativePhoneUsageAccessGranted = nativePhoneUsageSummary?.usage_access_granted === true ||
       tripToEnd.native_phone_usage_access_granted === true;
-    const usagePhoneUse = buildPhoneUseFromAndroidUsage(nativePhoneUsageSummary || {}, pts, stats.duration_seconds);
+    const usagePhoneUse = buildPhoneUseFromAndroidUsage(nativePhoneUsageSummary || {}, scoringRoutePoints, stats.duration_seconds);
     const phoneUse = mergePhoneUseSignals(gpsPhoneUse, usagePhoneUse, stats.duration_seconds);
     const motionSamples = sensorFusionRef.current?.getSamples?.() || [];
-    const sensorFusionSummary = buildSensorFusionSummary(motionSamples, pts, latestActivityRef.current, events);
-    let scores = calculateTripScores(events, stats, pts, thresholds, stats.duration_seconds, phoneUse, {
+    const sensorFusionSummary = buildSensorFusionSummary(motionSamples, scoringRoutePoints, latestActivityRef.current, events);
+    let scores = calculateTripScores(events, stats, scoringRoutePoints, thresholds, stats.duration_seconds, phoneUse, {
       endTime,
       privacyZones: tripPrivacyZones,
       motionSamples,
@@ -2198,7 +2207,7 @@ export default function Dashboard() {
       statsRecord.score_confidence_flag ||
       (uniqueDataQualityFlags.includes('location_permission_loss') || uniqueDataQualityFlags.includes('manual_sparse_gps_distance_estimate') ? 'data_gap_detected' : null);
 
-    const mapRouteSelection = selectMapRoutePoints(pts, rawPoints);
+    const mapRouteSelection = selectMapRoutePoints(scoringRoutePoints, rawPoints);
     if (mapRouteSelection.usedRecordedFallback) {
       uniqueDataQualityFlags.push('map_used_recorded_gps_fallback');
       recordTrackingDiagnostic({
@@ -2222,6 +2231,9 @@ export default function Dashboard() {
       route_points: mapRoutePoints,
       route_points_raw_count: rawPoints.length,
       route_points_map_count: mapRoutePoints.length,
+      score_input_masking_applied: true,
+      privacy_zone_touched: scoreInputPrivacy.touchesPrivacyZone,
+      privacy_trend_excluded: scoreInputPrivacy.trendExcluded,
       ...scores,
       driving_events: tripEvents,
       speed_limit_context: {
@@ -3204,7 +3216,7 @@ export default function Dashboard() {
           <div>
             <div className="text-sm font-semibold">GPS points are not arriving</div>
             <div className="mt-0.5 text-xs">
-              Keep Road Sage open and check location permission. Background GPS can record while minimized, but fully closing or force-stopping the app is not guaranteed.
+              Keep Road Sage open and check location permission. Background GPS can record while minimized, but fully closing or force-stopping the app is not assured.
             </div>
           </div>
         </div>

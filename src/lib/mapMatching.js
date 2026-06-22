@@ -3,9 +3,9 @@ import { withRetry } from '@/lib/retry';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { appendPrivacyEvent } from '@/lib/hashChainLog';
-import { pinnedFetch } from '@/lib/pinnedFetch';
-import { logTransmission } from '@/lib/transmissionLog';
-import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
+import { privacyGatedFetch } from '@/lib/privacyGatedFetch';
+import { getPrivacyZones, isPointInPrivacyZone, routeTouchesPrivacyZone } from '@/lib/privacyZones';
+import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 
 const CACHE_KEY = 'drivesense_map_matching_cache_v2';
 const MAX_MATCH_POINTS = 100;
@@ -211,7 +211,14 @@ export async function checkOsrmEndpointHealth(endpoint) {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), OSRM_HEALTH_TIMEOUT_MS);
-    const response = await pinnedFetch(osrmHealthCheckUrl(url.toString()), { signal: controller.signal })
+    const healthUrl = osrmHealthCheckUrl(url.toString());
+    const response = await privacyGatedFetch('osrm', { url: healthUrl, signal: controller.signal }, {
+      type: 'OSRM endpoint health check',
+      coordinateDisclosure: 'raw',
+      privacyVerificationEvidence: ['static health-check route, not a trip payload'],
+      sentCoords: '2 static coordinates',
+      protections: ['static health check route'],
+    })
       .finally(() => clearTimeout(timeout));
     if (!response.ok) {
       recordSystemEvent('osrm_health_unreachable', {
@@ -268,29 +275,22 @@ const osrmTimeoutMs = (settings = {}) => {
 
 async function fetchMatchedSegment(segment = [], endpoint, timeoutMs = OSRM_TIMEOUT_MS) {
   const sampled = samplePoints(segment);
-  await logTransmission({
-    service: 'osrm',
-    type: 'Route matching',
-    coordinateDisclosure: 'raw',
-    privacyTransformVerified: true,
-    privacyTransformSource: 'mapMatching.js:splitAtNullPoints',
-    privacyVerificationEvidence: [
-      'route was split at privacy/null gaps before sampling',
-      'OSRM raw-coordinate sharing consent was checked before this request',
-      'privacy-zone endpoint guard ran before this request',
-    ],
-    sentCoords: `${sampled.length} sampled coordinates`,
-    protections: ['zone-masked route', 'explicit consent'],
-    offsetMeters: null,
-    bytesOut: osrmMatchUrl(sampled, endpoint).length,
-    status: 'safe',
-    tripId: null,
-    zonesSuppressed: [],
-  });
+  const url = osrmMatchUrl(sampled, endpoint);
   const response = await withRetry('osrm-map-matching', async () => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    return pinnedFetch(osrmMatchUrl(sampled, endpoint), { signal: controller.signal })
+    return privacyGatedFetch('osrm', { url, signal: controller.signal }, {
+      type: 'Route matching',
+      coordinateDisclosure: 'raw',
+      privacyVerificationEvidence: [
+        'route was split at privacy/null gaps before sampling',
+        'OSRM raw-coordinate sharing consent was checked before this request',
+        'privacy-zone endpoint guard ran before this request',
+      ],
+      sentCoords: `${sampled.length} sampled coordinates`,
+      protections: ['zone-masked route', 'explicit consent'],
+      status: 'safe',
+    })
       .finally(() => clearTimeout(timeout));
   });
   if (!response.ok) throw new Error(`OSRM match failed (${response.status})`);
@@ -326,6 +326,22 @@ async function fetchMatchedSegment(segment = [], endpoint, timeoutMs = OSRM_TIME
 
 export async function mapMatchRoute(routePoints = [], settings = {}) {
   const isOsrmDemoUrl = isPublicOsrmDemoUrl(settings.osrm_map_matching_url);
+  if (isHeightenedPrivacyMode(settings)) {
+    await privacyGatedFetch('osrm', { url: settings.osrm_map_matching_url || 'https://osrm.local/blocked' }, {
+      type: 'Route matching',
+      coordinateDisclosure: 'blocked',
+      block: {
+        reason: 'heightened_privacy_mode',
+        privacyVerificationEvidence: ['heightened privacy mode disabled OSRM before route matching'],
+        protections: ['heightened privacy mode disables OSRM'],
+      },
+    });
+    appendOsrmAuditEvent({
+      op: 'OSRM_SKIPPED',
+      details: { status: 'disabled_heightened_privacy' },
+    });
+    return { routePoints, status: 'disabled_heightened_privacy', provider: 'osrm', isOsrmDemoUrl };
+  }
   if (settings.map_matching_enabled === false) {
     recordSystemEvent('osrm_map_matching_skipped', { status: 'disabled' }, { category: 'osrm' });
     appendOsrmAuditEvent({
@@ -375,6 +391,37 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       isOsrmDemoUrl,
     };
   }
+  const configuredZones = getPrivacyZones(settings);
+  const highSensitivityZone = configuredZones.find((zone) => (
+    zone?.sensitivity === 'high' &&
+    routeTouchesPrivacyZone(routePoints, zone)
+  ));
+  if (highSensitivityZone) {
+    await privacyGatedFetch('osrm', { url: settings.osrm_map_matching_url }, {
+      type: 'Route matching',
+      coordinateDisclosure: 'blocked',
+      block: {
+        privacyVerificationEvidence: ['route touched a high-sensitivity privacy zone'],
+        protections: ['high-sensitivity zone blocks OSRM regardless of general consent'],
+        zonesSuppressed: [highSensitivityZone.label],
+      },
+    });
+    appendOsrmAuditEvent({
+      op: 'OSRM_SKIPPED_PRIVACY_ENDPOINT',
+      zoneId: highSensitivityZone.id,
+      zoneLabel: highSensitivityZone.label,
+      details: {
+        status: 'blocked_high_sensitivity_zone',
+        privacy_zone_count: configuredZones.length,
+      },
+    });
+    return {
+      routePoints,
+      status: 'blocked_high_sensitivity_zone',
+      provider: 'osrm',
+      isOsrmDemoUrl,
+    };
+  }
   if (settings.osrm_data_sharing_consented !== true) {
     recordSystemEvent('osrm_map_matching_failed', {
       status: 'needs_consent',
@@ -406,18 +453,14 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
     Boolean(isPointInPrivacyZone(point, zones, OSRM_PRIVACY_ENDPOINT_GUARD_M))
   ));
   if (nearPrivateEndpoint) {
-    await logTransmission({
-      service: 'osrm',
+    await privacyGatedFetch('osrm', { url: settings.osrm_map_matching_url }, {
       type: 'Route matching',
       coordinateDisclosure: 'blocked',
-      privacyTransformVerified: true,
-      privacyTransformSource: 'mapMatching.js:always_on_privacy_zone_guard',
-      privacyVerificationEvidence: ['route endpoint was inside the privacy-zone guard buffer'],
-      sentCoords: null,
-      protections: ['route endpoint near privacy zone - request blocked'],
-      bytesOut: 0,
-      status: 'blocked',
-      zonesSuppressed: zones.map((zone) => zone.label),
+      block: {
+        privacyVerificationEvidence: ['route endpoint was inside the privacy-zone guard buffer'],
+        protections: ['route endpoint near privacy zone - request blocked'],
+        zonesSuppressed: zones.map((zone) => zone.label),
+      },
     });
     appendOsrmAuditEvent({
       op: 'OSRM_SKIPPED_PRIVACY_ENDPOINT',
@@ -437,22 +480,16 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
   const matchableSegments = segments.filter((segment) => segment.length >= 2);
   const validCount = segments.reduce((count, segment) => count + segment.length, 0);
   if (!matchableSegments.length) {
-    await logTransmission({
-      service: 'osrm',
+    await privacyGatedFetch('osrm', { url: settings.osrm_map_matching_url }, {
       type: 'Route matching',
       coordinateDisclosure: 'blocked',
-      privacyTransformVerified: true,
-      privacyTransformSource: 'mapMatching.js:splitAtNullPoints',
-      privacyVerificationEvidence: ['privacy filtering left no matchable public route segment'],
-      sentCoords: null,
-      protections: [gapCount ? 'privacy gaps left no route segment to send' : 'not enough public points - request blocked'],
-      offsetMeters: null,
-      bytesOut: 0,
-      status: 'blocked',
-      tripId: null,
-      zonesSuppressed: osrmRoutePoints
-        .map((point) => point?.privacy_zone_label)
-        .filter(Boolean),
+      block: {
+        privacyVerificationEvidence: ['privacy filtering left no matchable public route segment'],
+        protections: [gapCount ? 'privacy gaps left no route segment to send' : 'not enough public points - request blocked'],
+        zonesSuppressed: osrmRoutePoints
+          .map((point) => point?.privacy_zone_label)
+          .filter(Boolean),
+      },
     });
     recordSystemEvent('osrm_map_matching_failed', {
       status: 'not_enough_points',

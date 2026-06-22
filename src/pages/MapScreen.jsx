@@ -169,18 +169,20 @@ export default function MapScreen() {
     () => allCompleted.find(t => String(t.id) === String(secondaryTripId)),
     [allCompleted, secondaryTripId]
   );
-  const { data: selectedTripDetail, isFetching: selectedTripLoading } = useQuery({
+  const { data: selectedTripDetailRaw, isFetching: selectedTripLoading } = useQuery({
     queryKey: tripQueryKeys.detail(selectedTripId || 'none'),
     queryFn: () => tripService.getById(selectedTripId),
     enabled: Boolean(selectedTripId),
     staleTime: 2 * 60 * 1000,
   });
-  const { data: secondaryTripDetail } = useQuery({
+  const selectedTripDetail = /** @type {any} */ (selectedTripDetailRaw);
+  const { data: secondaryTripDetailRaw } = useQuery({
     queryKey: tripQueryKeys.detail(secondaryTripId || 'none'),
     queryFn: () => tripService.getById(secondaryTripId),
     enabled: Boolean(secondaryTripId),
     staleTime: 2 * 60 * 1000,
   });
+  const secondaryTripDetail = /** @type {any} */ (secondaryTripDetailRaw);
   const overviewTripsForMap = useMemo(
     () => selectedTripId ? [] : completed.slice(0, MAP_OVERVIEW_ROUTE_LIMIT),
     [completed, selectedTripId]
@@ -193,7 +195,7 @@ export default function MapScreen() {
     })),
   });
   const overviewMapTrips = useMemo(
-    () => overviewTripDetails.map((query) => query.data).filter(hasPlayableRouteGps),
+    () => /** @type {any[]} */ (overviewTripDetails.map((query) => query.data).filter(hasPlayableRouteGps)),
     [overviewTripDetails]
   );
   const selectedTrip = selectedTripDetail || selectedTripSummary || null;

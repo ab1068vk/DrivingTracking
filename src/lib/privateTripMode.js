@@ -1,6 +1,35 @@
 import { haversineDistance } from '@/lib/tripEngine';
 
 export const PRIVATE_TRIP_MODE = 'summary_only';
+export const PRIVACY_TREND_EXCLUSION_REASON = 'privacy_zone_touched_day';
+
+export const PRIVACY_TREND_FEATURE_AUDIT = Object.freeze([
+  {
+    feature: 'personal_baseline',
+    status: 'changed',
+    detail: 'Weekly score averages, percentile, personal bests, and baseline deltas exclude privacy-zone-touched days.',
+  },
+  {
+    feature: 'commute_patterns',
+    status: 'changed',
+    detail: 'Repeated-route score trends and weekly-minute estimates exclude privacy-zone-touched days.',
+  },
+  {
+    feature: 'monthly_calendar',
+    status: 'changed',
+    detail: 'Daily score summaries, best/worst day, and drive streaks exclude privacy-zone-touched days.',
+  },
+  {
+    feature: 'weekly_driver_summary',
+    status: 'changed',
+    detail: 'Week-over-week score improvements and best-day summaries exclude privacy-zone-touched days.',
+  },
+  {
+    feature: 'phone_use_summary',
+    status: 'changed',
+    detail: 'Cross-trip phone-use rates and weekly trend buckets exclude privacy-zone-touched days.',
+  },
+]);
 
 const finiteNumber = (value, fallback = 0) => {
   if (value == null || value === '') return fallback;
@@ -15,6 +44,58 @@ const pointTimestampMs = (point) => {
 
 export function isPrivateTrip(trip) {
   return trip?.privacy_mode === PRIVATE_TRIP_MODE;
+}
+
+export function tripDayKey(trip = {}) {
+  const timestamp = new Date(trip.start_time || trip.end_time || trip.created_at || 0).getTime();
+  if (!Number.isFinite(timestamp)) return null;
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+export function tripTouchesPrivacyZoneForTrend(trip = {}) {
+  if (!trip || typeof trip !== 'object') return false;
+  const record = /** @type {Record<string, any>} */ (trip);
+  if (
+    record.privacy_trend_excluded === true ||
+    record.privacy_zone_touched === true ||
+    record.score_input_privacy?.touchedPrivacyZone === true
+  ) return true;
+
+  const hasMarker = (item = {}) => {
+    const marker = /** @type {Record<string, any>} */ (item || {});
+    return Boolean(item && typeof item === 'object' && (
+      marker.masked_for_privacy === true ||
+      marker.privacy_gap === true ||
+      marker.privacy_boundary === true ||
+      marker.privacy_live_redacted === true ||
+      marker.privacy_event_redacted === true ||
+      marker.privacy_zone_id
+    ));
+  };
+  return (
+    (Array.isArray(record.route_points) && record.route_points.some(hasMarker)) ||
+    (Array.isArray(record.driving_events) && record.driving_events.some(hasMarker))
+  );
+}
+
+export function privacyExcludedTripDayKeys(trips = []) {
+  const excluded = new Set();
+  (Array.isArray(trips) ? trips : []).forEach((trip) => {
+    if (!tripTouchesPrivacyZoneForTrend(trip)) return;
+    const key = tripDayKey(trip);
+    if (key) excluded.add(key);
+  });
+  return excluded;
+}
+
+export function excludePrivacyTouchedDaysFromTrends(trips = []) {
+  const source = Array.isArray(trips) ? trips : [];
+  const excludedDays = privacyExcludedTripDayKeys(source);
+  if (!excludedDays.size) return source;
+  return source.filter((trip) => {
+    const key = tripDayKey(trip);
+    return !key || !excludedDays.has(key);
+  });
 }
 
 export function createPrivateTripRuntime(summary = {}) {
