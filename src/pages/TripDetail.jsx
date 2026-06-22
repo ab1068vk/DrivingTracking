@@ -329,6 +329,7 @@ export default function TripDetail() {
   const [speedLimitKnowledgeRevision, setSpeedLimitKnowledgeRevision] = useState(0);
   const [speedLimitLocalKnowledgeResults, setSpeedLimitLocalKnowledgeResults] = useState([]);
   const metadataSectionRef = useRef(null);
+  const speedLimitReviewSectionRef = useRef(null);
   const invalidateTripLists = () => {
     qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
   };
@@ -338,9 +339,25 @@ export default function TripDetail() {
     queryFn: () => tripService.getById(id),
   });
   const showSpeedLimitReviewButton = Boolean(trip);
+  const scrollToSpeedLimitReview = useCallback(() => {
+    speedLimitReviewSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+  const openSpeedLimitReview = useCallback(() => {
+    if (reviewSpeedLimitConflicts) {
+      scrollToSpeedLimitReview();
+      return;
+    }
+    navigate(`/trips/${id}?review=speed-limit-conflicts`);
+  }, [id, navigate, reviewSpeedLimitConflicts, scrollToSpeedLimitReview]);
   const toggleSpeedLimitReview = () => {
     navigate(reviewSpeedLimitConflicts ? `/trips/${id}` : `/trips/${id}?review=speed-limit-conflicts`);
   };
+
+  useEffect(() => {
+    if (!reviewSpeedLimitConflicts) return undefined;
+    const frame = window.requestAnimationFrame(scrollToSpeedLimitReview);
+    return () => window.cancelAnimationFrame(frame);
+  }, [reviewSpeedLimitConflicts, scrollToSpeedLimitReview]);
 
   const { data: vehicles = [] } = useQuery({
     queryKey: ['vehicles'],
@@ -1243,11 +1260,13 @@ export default function TripDetail() {
       </motion.div>
 
       {reviewSpeedLimitConflicts && (
-        <SpeedLimitConflictReview
-          trip={trip}
-          reviewMode
-          onResolved={handleSpeedLimitReviewResolved}
-        />
+        <div ref={speedLimitReviewSectionRef} className="scroll-mt-24">
+          <SpeedLimitConflictReview
+            trip={trip}
+            reviewMode
+            onResolved={handleSpeedLimitReviewResolved}
+          />
+        </div>
       )}
 
       {showTagSuggestion && (
@@ -1736,7 +1755,7 @@ export default function TripDetail() {
               </div>
               <button
                 type="button"
-                onClick={() => navigate(`/trips/${id}?review=speed-limit-conflicts`)}
+                onClick={openSpeedLimitReview}
                 className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold ${
                   speedLimitReviewCount > 0
                     ? 'bg-amber-600 text-white hover:bg-amber-700'

@@ -1,15 +1,11 @@
-import { motion } from 'framer-motion';
 import { TrendingUp } from 'lucide-react';
 
-export default function StatCard({ icon: Icon, label, value, sub = '', gradient, index = 0, onClick = null }) {
+export default function StatCard({ icon: Icon, label, value, sub = '', gradient, index: _index = 0, onClick = null }) {
   const IconComponent = Icon || TrendingUp;
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.07 }}
+    <div
       onClick={onClick}
-      className={`relative overflow-hidden rounded-2xl p-4 text-white shadow-lg ${gradient} ${onClick ? 'cursor-pointer hover:scale-[1.02] transition-transform' : ''}`}
+      className={`relative overflow-hidden rounded-2xl p-4 text-white shadow-lg ${gradient} ${onClick ? 'cursor-pointer transition-opacity hover:opacity-95' : ''}`}
     >
       {/* Background decoration */}
       <div className="absolute -top-4 -right-4 w-20 h-20 bg-white/10 rounded-full" />
@@ -25,6 +21,6 @@ export default function StatCard({ icon: Icon, label, value, sub = '', gradient,
         <div className="text-white/80 text-sm font-medium">{label}</div>
         {sub && <div className="text-white/60 text-xs mt-1">{sub}</div>}
       </div>
-    </motion.div>
+    </div>
   );
 }

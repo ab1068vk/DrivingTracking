@@ -1,12 +1,11 @@
 import { getScoreColor } from '@/lib/tripEngine';
-import { motion } from 'framer-motion';
 import { isApproximateScoreOutput } from '@/lib/scoreDisplay';
 
 /**
  * Circular score display with animated ring.
  * Uses SVG for the ring and color-codes based on score.
  */
-export default function ScoreRing({ score = null, evidence = null, size = 120, strokeWidth = 8, label = '', sublabel = '', animated = true, title = '', approximate = true, scoreProvenance = null }) {
+export default function ScoreRing({ score = null, evidence = null, size = 120, strokeWidth = 8, label = '', sublabel = '', animated: _animated = false, title = '', approximate = true, scoreProvenance = null }) {
   const evidenceLevel = evidence || (score == null ? 'unavailable' : 'low');
   const unavailable = evidenceLevel === 'unavailable' || score == null;
   const provisional = !unavailable && (scoreProvenance ? isApproximateScoreOutput(scoreProvenance) : approximate !== false);
@@ -43,7 +42,7 @@ export default function ScoreRing({ score = null, evidence = null, size = 120, s
           />
           {/* Progress arc */}
           {!unavailable && (
-            <motion.circle
+            <circle
               cx={size / 2}
               cy={size / 2}
               r={radius}
@@ -52,24 +51,19 @@ export default function ScoreRing({ score = null, evidence = null, size = 120, s
               strokeWidth={strokeWidth}
               strokeLinecap="round"
               strokeDasharray={provisional ? '5 4' : circumference}
-              initial={animated ? { strokeDashoffset: circumference } : { strokeDashoffset: offset }}
-              animate={{ strokeDashoffset: offset }}
-              transition={{ duration: 1.2, ease: 'easeOut', delay: 0.1 }}
+              strokeDashoffset={offset}
             />
           )}
         </svg>
 
         {/* Score text */}
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <motion.span
+          <span
             className={`font-grotesk font-bold ${color}`}
             style={{ fontSize: size * 0.22 }}
-            initial={animated ? { opacity: 0 } : { opacity: 1 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.5 }}
           >
             {unavailable ? '-' : `${provisional ? '~' : ''}${Math.round(Number(score) || 0)}`}
-          </motion.span>
+          </span>
           {sublabel && (
             <span className="text-muted-foreground text-xs">{sublabel}</span>
           )}

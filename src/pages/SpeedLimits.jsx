@@ -34,7 +34,7 @@ import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import { inspectSpeedKnowledgeHealth } from '@/lib/speedKnowledgeHealth';
 
 const sourceLabel = (source) => speedLimitSourceLabel(source, { short: true });
-const correctionKey = (correction = {}) => correction.id || correction.ruleId || correction.sectionKey || correction.geohash;
+const correctionKey = (correction = {}) => correction?.id || correction?.ruleId || correction?.sectionKey || correction?.geohash;
 
 const formatSpeedLimit = (value) => {
   const number = Number(value);
@@ -413,15 +413,16 @@ export default function SpeedLimits() {
       knowledge.getHistoryState().catch(() => ({ canUndo: false, canRedo: false, undoLabel: '', redoLabel: '' })),
       knowledge.exportData().catch(() => ({ cells: {}, corrections: [] })),
     ]);
-    setRows(nextRows);
+    const safeRows = (Array.isArray(nextRows) ? nextRows : []).filter(Boolean);
+    setRows(safeRows);
     setHistoryState(nextHistory);
     setHealth(inspectSpeedKnowledgeHealth(rawKnowledge));
     setSelectedRows((current) => new Set([...current].filter((key) => (
-      nextRows.some((row) => correctionKey(row) === key)
+      safeRows.some((row) => correctionKey(row) === key)
     ))));
     setDrafts((current) => {
       const next = { ...current };
-      for (const row of nextRows) {
+      for (const row of safeRows) {
         const key = correctionKey(row);
         if (!next[key]) {
           next[key] = {
@@ -1616,7 +1617,7 @@ export default function SpeedLimits() {
         </details>
 
         {selectedSection && (
-          <div className="sticky bottom-3 z-[600] max-h-[78vh] overflow-y-auto rounded-2xl border border-primary/30 bg-card/95 p-4 shadow-2xl backdrop-blur sm:static sm:max-h-none sm:overflow-visible sm:bg-card sm:shadow-sm">
+          <div className="max-h-[78vh] overflow-y-auto rounded-2xl border border-primary/30 bg-card p-4 shadow-sm sm:max-h-none sm:overflow-visible">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-xs font-semibold uppercase tracking-wide text-primary">

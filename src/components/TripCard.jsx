@@ -1,4 +1,3 @@
-import { motion } from 'framer-motion';
 import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Star, StickyNote, Moon, Smartphone } from 'lucide-react';
 import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed, getTripComponentScore } from '@/lib/tripEngine';
 import {
@@ -19,7 +18,7 @@ const SCORE_UNAVAILABLE_MESSAGE = 'Score unavailable for this trip – re-score 
 export default function TripCard({
   trip,
   units = 'metric',
-  index = 0,
+  index: _index = 0,
   scoreDelta = null,
   onToggleFavorite = null,
 }) {
@@ -50,12 +49,7 @@ export default function TripCard({
     : 0;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.05 }}
-      className="relative bg-card border border-border rounded-2xl p-4 hover:shadow-md hover:border-primary/30 transition-all group"
-    >
+    <div className="render-lazy relative bg-card border border-border rounded-2xl p-4 hover:border-primary/30 transition-colors group">
       <button
         type="button"
         onClick={openTrip}
@@ -254,6 +248,6 @@ export default function TripCard({
       <div className="flex justify-end mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
         <ChevronRight className="w-4 h-4 text-muted-foreground" />
       </div>
-    </motion.div>
+    </div>
   );
 }

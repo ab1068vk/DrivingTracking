@@ -604,8 +604,10 @@ export default function Dashboard() {
     () => (completedTrips.length >= 5 ? buildHabitProfile(completedTrips) : null),
     [completedTrips.length, completedTrips[completedTrips.length - 1]?.id]
   );
-  const todayTrips = getTodayTrips(completedTrips);
-  const dailyFatigue = computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes);
+  const dailyFatigue = useMemo(() => {
+    const todayTrips = getTodayTrips(completedTrips);
+    return computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes);
+  }, [completedTrips, habitProfile?.fatigueOnsetMinutes, settings]);
 
   useEffect(() => {
     getLastParkedLocation().then(setParkedLocation).catch((error) => {
@@ -2603,23 +2605,68 @@ export default function Dashboard() {
 
   // Stats
   const totalTrips = completedTrips.length;
-  const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-  const weekTrips = driverCompletedTrips.filter(t => new Date(t.start_time) >= weekAgo);
-  const weekDistance = weekTrips.reduce((s, t) => s + (t.distance_km || 0), 0);
-  const scoredTrips = driverCompletedTrips.slice(0, 10)
-    .map((trip) => ({ trip, component: getTripComponentScore(trip, 'overall') }))
-    .filter(({ component }) => component.value != null);
-  const totalScoredKm = scoredTrips.reduce((sum, { trip }) => sum + (Number(trip.distance_km) || 0), 0);
-  const avgScore = scoredTrips.length && totalScoredKm > 0
-    ? Math.round(scoredTrips.reduce((sum, { trip, component }) => sum + component.value * (Number(trip.distance_km) || 0), 0) / totalScoredKm)
-    : null;
-  const avgScoreEvidence = scoredTrips.length === 0
-    ? 'unavailable'
-    : scoredTrips.some(({ component }) => component.evidence === 'low')
-      ? 'low'
-      : scoredTrips.some(({ component }) => component.evidence === 'developing')
-        ? 'developing'
-        : 'high';
+  const {
+    avgScore,
+    avgScoreEvidence,
+    baseline,
+    baselineRangeLabel,
+    baselineText,
+    brakingImprovement,
+    fatigueRisk,
+    noHarshBrakeStreak,
+    parkingReminder,
+    peakStress,
+    scoreTrend,
+    tips,
+    weekDistance,
+    weeklyGoals,
+  } = useMemo(() => {
+    const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const weekTrips = driverCompletedTrips.filter(t => new Date(t.start_time) >= weekAgo);
+    const weekDistance = weekTrips.reduce((s, t) => s + (t.distance_km || 0), 0);
+    const scoredTrips = driverCompletedTrips.slice(0, 10)
+      .map((trip) => ({ trip, component: getTripComponentScore(trip, 'overall') }))
+      .filter(({ component }) => component.value != null);
+    const totalScoredKm = scoredTrips.reduce((sum, { trip }) => sum + (Number(trip.distance_km) || 0), 0);
+    const avgScore = scoredTrips.length && totalScoredKm > 0
+      ? Math.round(scoredTrips.reduce((sum, { trip, component }) => sum + component.value * (Number(trip.distance_km) || 0), 0) / totalScoredKm)
+      : null;
+    const avgScoreEvidence = scoredTrips.length === 0
+      ? 'unavailable'
+      : scoredTrips.some(({ component }) => component.evidence === 'low')
+        ? 'low'
+        : scoredTrips.some(({ component }) => component.evidence === 'developing')
+          ? 'developing'
+          : 'high';
+    const baseline = computePersonalBaseline(driverCompletedTrips);
+    const baselineRangeLabel = baseline.baseline_includes_older_scores
+      ? baseline.baseline_label
+      : baseline.baseline_confidence_interval_label;
+    const baselineText = baseline.baseline_avg == null
+      ? `Record at least 10 trips in 4 weeks to unlock your baseline (${baseline.baseline_trip_count}/10 recorded).`
+      : baseline.baseline_includes_older_scores
+        ? `Approximate baseline: ${baseline.baseline_avg}. ${baseline.baseline_label}. Re-score older trips in Settings for a comparable interval.`
+        : baseline.delta == null
+          ? `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). Record a trip this week for a comparison.`
+          : `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta}.`;
+
+    return {
+      avgScore,
+      avgScoreEvidence,
+      baseline,
+      baselineRangeLabel,
+      baselineText,
+      brakingImprovement: calculateRecentBrakingImprovement(driverCompletedTrips),
+      fatigueRisk: calculateFatigueRisk(weekTrips, settings),
+      noHarshBrakeStreak: calculateNoHarshBrakeStreak(driverCompletedTrips),
+      parkingReminder: formatParkingReminder(parkedLocation),
+      peakStress: calculatePeakHourStress(driverCompletedTrips),
+      scoreTrend: driverCompletedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: getTripComponentScore(t, 'overall').value })),
+      tips: buildScoreTips(driverCompletedTrips),
+      weekDistance,
+      weeklyGoals: calculateWeeklyDrivingGoals(driverCompletedTrips, settings),
+    };
+  }, [driverCompletedTrips, parkedLocation, settings]);
   const latestTrip = completedTrips[0];
   const activeSpeedLimitReview = speedLimitReviewSummary || speedLimitConflictReview;
   const activeSpeedLimitReviewFingerprint = activeSpeedLimitReview?.fingerprint || '';
@@ -2627,25 +2674,6 @@ export default function Dashboard() {
     && activeSpeedLimitReview
     && activeSpeedLimitReviewFingerprint
     && dismissedSpeedLimitReviewFingerprint !== activeSpeedLimitReviewFingerprint;
-  const scoreTrend = driverCompletedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: getTripComponentScore(t, 'overall').value }));
-  const tips = buildScoreTips(driverCompletedTrips);
-  const weeklyGoals = calculateWeeklyDrivingGoals(driverCompletedTrips, settings);
-  const brakingImprovement = calculateRecentBrakingImprovement(driverCompletedTrips);
-  const parkingReminder = formatParkingReminder(parkedLocation);
-  const noHarshBrakeStreak = calculateNoHarshBrakeStreak(driverCompletedTrips);
-  const fatigueRisk = calculateFatigueRisk(weekTrips, settings);
-  const baseline = computePersonalBaseline(driverCompletedTrips);
-  const baselineRangeLabel = baseline.baseline_includes_older_scores
-    ? baseline.baseline_label
-    : baseline.baseline_confidence_interval_label;
-  const baselineText = baseline.baseline_avg == null
-    ? `Record at least 10 trips in 4 weeks to unlock your baseline (${baseline.baseline_trip_count}/10 recorded).`
-    : baseline.baseline_includes_older_scores
-      ? `Approximate baseline: ${baseline.baseline_avg}. ${baseline.baseline_label}. Re-score older trips in Settings for a comparable interval.`
-      : baseline.delta == null
-        ? `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). Record a trip this week for a comparison.`
-        : `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta}.`;
-  const peakStress = calculatePeakHourStress(driverCompletedTrips);
   const activeFatigueAlert = tracking && elapsed > 90 * 60 && (() => {
     const points = activeTrip?.route_points || [];
     if (points.length < 12) return false;
@@ -3418,7 +3446,7 @@ export default function Dashboard() {
               <button
                 onClick={handleEndTrip}
                 disabled={endingTrip}
-                className={`${activeTripIsPrivate ? 'px-3 text-sm leading-tight sm:text-base' : ''} flex w-full min-w-0 items-center justify-center gap-2 rounded-xl bg-white/15 py-3 font-semibold transition-colors hover:bg-white/25 backdrop-blur disabled:cursor-not-allowed disabled:opacity-75`}
+                className={`${activeTripIsPrivate ? 'px-3 text-sm leading-tight sm:text-base' : ''} flex w-full min-w-0 items-center justify-center gap-2 rounded-xl bg-white/15 py-3 font-semibold transition-colors hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-75`}
               >
                 {endingTrip ? (
                   <RefreshCw className="h-4 w-4 flex-shrink-0 animate-spin" />

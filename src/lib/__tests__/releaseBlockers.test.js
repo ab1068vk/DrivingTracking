@@ -963,8 +963,37 @@ describe('release blocker regressions', () => {
 
     expect(tripPlaybackSource).toContain('clearMapInvalidateTimers');
     expect(tripPlaybackSource).toContain('stopLeafletMap');
-    expect(tripPlaybackSource).toContain('panTo(latlng, { animate: false })');
+    expect(tripPlaybackSource).toContain('safeMapPanTo(map, latlng, DEFAULT_MAP_ZOOM);');
+    expect(tripPlaybackSource).toContain('map.panTo(center, { animate: false })');
     expect(tripPlaybackSource).toContain('resolveFallbackMapCenter(settingsRef.current || {})');
     expect(tripPlaybackSource).not.toContain('panTo(latlng, { animate: true');
+  });
+
+  it('sets Trip Map center before adding Leaflet layers and clears delayed invalidation', () => {
+    const tripMapSource = readFileSync(new URL('../../components/TripMap.jsx', import.meta.url), 'utf8');
+    const mapStart = tripMapSource.indexOf('const map = window.L.map(mapRef.current');
+    const tileStart = tripMapSource.indexOf('window.L.tileLayer(tileConfig.url', mapStart);
+    const setViewStart = tripMapSource.indexOf('safeMapSetView(map, TORONTO_CENTER, 12);', mapStart);
+
+    expect(mapStart).toBeGreaterThan(-1);
+    expect(setViewStart).toBeGreaterThan(mapStart);
+    expect(tileStart).toBeGreaterThan(setViewStart);
+    expect(tripMapSource).toContain('let invalidateTimer = null;');
+    expect(tripMapSource).toContain('window.clearTimeout(invalidateTimer)');
+    expect(tripMapSource).toContain('if (leafletMapRef.current === map) safeLeafletCall(() => map.invalidateSize({ animate: false }))');
+  });
+
+  it('waits for Speed Limit Editor Map readiness before adding Leaflet overlays', () => {
+    const speedLimitEditorMapSource = readFileSync(new URL('../../components/SpeedLimitEditorMap.jsx', import.meta.url), 'utf8');
+    const mapStart = speedLimitEditorMapSource.indexOf('const map = L.map(containerRef.current');
+    const setViewStart = speedLimitEditorMapSource.indexOf('safeMapSetView(map, center, 13);', mapStart);
+    const sectionLayerStart = speedLimitEditorMapSource.indexOf('sectionLayersRef.current = L.layerGroup().addTo(map);', mapStart);
+
+    expect(mapStart).toBeGreaterThan(-1);
+    expect(setViewStart).toBeGreaterThan(mapStart);
+    expect(sectionLayerStart).toBeGreaterThan(setViewStart);
+    expect(speedLimitEditorMapSource).toContain('const [mapReady, setMapReady] = useState(false);');
+    expect(speedLimitEditorMapSource).toContain('if (!mapReady || !map) return');
+    expect(speedLimitEditorMapSource).toContain('[mapReady, online]');
   });
 });

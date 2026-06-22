@@ -122,6 +122,7 @@ const SPEEDS = [1, 2, 4, 8];
 const REVIEW_SECONDS_PER_POINT = 0.6;
 
 const finiteCoordinate = (value) => {
+  if (value == null || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
@@ -132,6 +133,16 @@ const validLatLng = (lat, lng) => {
   if (parsedLat == null || parsedLng == null) return null;
   if (parsedLat < -90 || parsedLat > 90 || parsedLng < -180 || parsedLng > 180) return null;
   return { lat: parsedLat, lng: parsedLng };
+};
+
+const validLatLngPoint = (point) => {
+  const center = validLatLng(point?.lat, point?.lng);
+  return center ? { ...point, lat: center.lat, lng: center.lng } : null;
+};
+
+const validLatLngArray = (point) => {
+  const center = validLatLng(point?.lat, point?.lng);
+  return center ? [center.lat, center.lng] : null;
 };
 
 const settingMapCenter = (value) => (
@@ -243,6 +254,20 @@ const stopLeafletMap = (map) => {
   safeLeafletCall(() => map?.closePopup?.());
   safeLeafletCall(() => map?.closeTooltip?.());
 };
+
+const safeMapSetView = (map, center, zoom, options = {}) => safeLeafletCall(() => (
+  map?.setView?.(center, zoom, { animate: false, ...options })
+));
+
+const safeMapFitBounds = (map, bounds, options = {}) => {
+  if (!bounds || (typeof bounds.isValid === 'function' && !bounds.isValid())) return null;
+  return safeLeafletCall(() => map?.fitBounds?.(bounds, { animate: false, ...options }));
+};
+
+const safeMapPanTo = (map, center, zoom = DEFAULT_MAP_ZOOM) => safeLeafletCall(() => {
+  if (!map?._loaded) return map?.setView?.(center, zoom, { animate: false });
+  return map.panTo(center, { animate: false });
+});
 
 const carIconHtml = (color, heading, label = '') => `
   <div style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,0.94);border:1px solid rgba(15,23,42,0.18);box-shadow:0 4px 16px rgba(15,23,42,0.24);display:flex;align-items:center;justify-content:center">
@@ -358,11 +383,11 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
   const points = useMemo(() => prepareMapRoutePoints(
     maskRoutePointsForPrivacy(trip?.route_points || [], playbackPrivacySettings),
     { maxPoints: 900 }
-  ), [playbackPrivacySettings, trip?.route_points]);
+  ).map(validLatLngPoint).filter(Boolean), [playbackPrivacySettings, trip?.route_points]);
   const secondaryPoints = useMemo(() => prepareMapRoutePoints(
     maskRoutePointsForPrivacy(secondaryTrip?.route_points || [], playbackPrivacySettings),
     { maxPoints: 700 }
-  ), [playbackPrivacySettings, secondaryTrip?.route_points]);
+  ).map(validLatLngPoint).filter(Boolean), [playbackPrivacySettings, secondaryTrip?.route_points]);
   const events = useMemo(
     () => maskEventsForPrivacy(trip?.driving_events || [], playbackPrivacySettings)
       .filter((event) => validLatLng(event?.lat, event?.lng)),
@@ -376,6 +401,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
           undefined,
           [...(trip?.route_points || []), ...(secondaryTrip?.route_points || [])]
         ))
+        .map(validLatLngPoint)
         .filter(Boolean)
       : [],
     [playbackPrivacySettings, secondaryTrip?.route_points, trip?.route_points]
@@ -439,7 +465,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
     const timer = window.setTimeout(() => {
       invalidateTimersRef.current = invalidateTimersRef.current.filter((item) => item !== timer);
       if (leafletMapRef.current !== map) return;
-      safeLeafletCall(() => map.invalidateSize());
+      safeLeafletCall(() => map.invalidateSize({ animate: false }));
     }, delay);
     invalidateTimersRef.current.push(timer);
   };
@@ -454,23 +480,33 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
     loadLeaflet().then(() => {
       if (cancelled || !mapRef.current || leafletMapRef.current) return;
       try {
-        const map = window.L.map(mapRef.current, { zoomControl: true, attributionControl: true });
+        const map = window.L.map(mapRef.current, {
+          zoomControl: true,
+          attributionControl: true,
+          fadeAnimation: false,
+          markerZoomAnimation: false,
+          zoomAnimation: false,
+        });
         leafletMapRef.current = map;
         const initialCenter = resolveInitialMapCenter(points, secondaryPoints, privacySettings);
-        map.setView([initialCenter.lat, initialCenter.lng], DEFAULT_MAP_ZOOM);
+        safeMapSetView(map, [initialCenter.lat, initialCenter.lng], DEFAULT_MAP_ZOOM);
         window.L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
         map.whenReady(() => {
           if (!cancelled) scheduleMapInvalidate(map);
         });
 
         if (points.length === 1) {
-          const onlyPoint = validLatLng(points[0].lat, points[0].lng);
-          if (onlyPoint) {
-            persistLastMapCenter(onlyPoint, trip?.id);
-            safeLeafletCall(() => map.setView([onlyPoint.lat, onlyPoint.lng], 15, { animate: false }));
-          }
+            const onlyPoint = validLatLng(points[0].lat, points[0].lng);
+            if (onlyPoint) {
+              persistLastMapCenter(onlyPoint, trip?.id);
+              safeMapSetView(map, [onlyPoint.lat, onlyPoint.lng], 15);
+            }
         } else if (points.length > 1) {
-          const latLngs = points.map(p => [p.lat, p.lng]);
+          const latLngs = points.map(validLatLngArray).filter(Boolean);
+          if (latLngs.length < 2) {
+            setMapFailed(true);
+            throw new Error('Playback map needs at least two valid route points.');
+          }
 
           window.L.polyline(latLngs, {
             color: '#0f172a',
@@ -482,8 +518,11 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
           }).addTo(map);
 
           speedSegments.forEach((segment) => {
+            const fromLatLng = validLatLngArray(segment.from);
+            const toLatLng = validLatLngArray(segment.to);
+            if (!fromLatLng || !toLatLng) return;
             window.L.polyline(
-              [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
+              [fromLatLng, toLatLng],
               {
                 color: segmentColor(segment),
                 weight: 6,
@@ -503,7 +542,8 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
           });
 
           if (secondaryPoints.length > 1) {
-            window.L.polyline(secondaryPoints.map((point) => [point.lat, point.lng]), {
+            const secondaryLatLngs = secondaryPoints.map(validLatLngArray).filter(Boolean);
+            if (secondaryLatLngs.length > 1) window.L.polyline(secondaryLatLngs, {
               color: '#0f172a',
               weight: 8,
               opacity: 0.12,
@@ -512,8 +552,11 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
               lineJoin: 'round',
             }).addTo(map);
             secondarySegments.forEach((segment) => {
+              const fromLatLng = validLatLngArray(segment.from);
+              const toLatLng = validLatLngArray(segment.to);
+              if (!fromLatLng || !toLatLng) return;
               window.L.polyline(
-                [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
+                [fromLatLng, toLatLng],
                 {
                   color: '#f97316',
                   weight: 5,
@@ -528,7 +571,8 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
                 .addTo(map);
             });
             secondaryPoints.forEach((point) => {
-              if (validLatLng(point.lat, point.lng)) latLngs.push([point.lat, point.lng]);
+              const latLng = validLatLngArray(point);
+              if (latLng) latLngs.push(latLng);
             });
           }
 
@@ -588,18 +632,21 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
           markerRef.current = window.L.marker(latLngs[0], { icon: carIcon }).addTo(map);
 
           if (secondaryPoints.length > 0) {
+            const secondaryStart = validLatLngArray(secondaryPoints[0]);
             const secondaryIcon = window.L.divIcon({
               html: carIconHtml('#f97316', 0, '2'),
               className: '', iconSize: [34, 34], iconAnchor: [17, 17],
             });
-            secondaryMarkerRef.current = window.L.marker([secondaryPoints[0].lat, secondaryPoints[0].lng], { icon: secondaryIcon }).addTo(map);
+            if (secondaryStart) secondaryMarkerRef.current = window.L.marker(secondaryStart, { icon: secondaryIcon }).addTo(map);
           }
 
           const bounds = window.L.latLngBounds(latLngs);
           const midpoint = points[Math.floor((points.length - 1) / 2)];
           persistLastMapCenter(midpoint, trip?.id);
           visiblePrivacyZones.forEach((zone) => {
-            const circle = window.L.circle([Number(zone.lat), Number(zone.lng)], {
+            const latLng = validLatLngArray(zone);
+            if (!latLng) return;
+            const circle = window.L.circle(latLng, {
               radius: zone.radius_m,
               color: '#2563eb',
               fillColor: '#3b82f6',
@@ -613,12 +660,12 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
             bounds.extend(circle.getBounds());
           });
 
-          safeLeafletCall(() => map.fitBounds(bounds, { padding: [24, 24] }));
+          safeMapFitBounds(map, bounds, { padding: [24, 24] });
           scheduleMapInvalidate(map);
         } else {
           resolveFallbackMapCenter(settingsRef.current || {}).then((center) => {
             if (cancelled || !center || !leafletMapRef.current) return;
-            safeLeafletCall(() => map.setView([center.lat, center.lng], DEFAULT_MAP_ZOOM, { animate: false }));
+            safeMapSetView(map, [center.lat, center.lng], DEFAULT_MAP_ZOOM);
           });
         }
       } catch (error) {
@@ -671,7 +718,8 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
     if (!map || !points[currentIdx] || !window.L) return;
     const pt = currentPt || points[currentIdx];
     if (!pt) return;
-    const latlng = [pt.lat, pt.lng];
+    const latlng = validLatLngArray(pt);
+    if (!latlng) return;
     const secondaryIdx = secondaryPoints.length > 1
       ? Math.min(secondaryPoints.length - 1, Math.round((currentIdx / Math.max(1, totalPoints - 1)) * (secondaryPoints.length - 1)))
       : 0;
@@ -697,13 +745,15 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
       });
     }
     if (secondaryMarkerRef.current && secondaryPt) {
+      const secondaryLatLng = validLatLngArray(secondaryPt);
+      if (!secondaryLatLng) return;
       const secondaryPrev = secondaryPoints[Math.max(0, secondaryIdx - 1)];
       const secondaryHeading = secondaryIdx > 0 && secondaryPrev
         ? calculateBearing(secondaryPrev.lat, secondaryPrev.lng, secondaryPt.lat, secondaryPt.lng)
         : Number(secondaryPt.heading ?? secondaryPt.bearing ?? 0) || 0;
       safeLeafletCall(() => {
         const secondaryHeadingBucket = Math.round(secondaryHeading / 5) * 5;
-        secondaryMarkerRef.current.setLatLng([secondaryPt.lat, secondaryPt.lng]);
+        secondaryMarkerRef.current.setLatLng(secondaryLatLng);
         if (secondaryMarkerHeadingRef.current !== secondaryHeadingBucket) {
           secondaryMarkerRef.current.setIcon(window.L.divIcon({
             html: carIconHtml('#f97316', secondaryHeadingBucket, '2'),
@@ -717,7 +767,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
     }
     if (followVehicle) {
       stopLeafletMap(map);
-      safeLeafletCall(() => map.panTo(latlng, { animate: false }));
+      safeMapPanTo(map, latlng, DEFAULT_MAP_ZOOM);
     }
     if (progressLineRef.current) {
       safeLeafletCall(() => {
@@ -839,25 +889,25 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
         )}
 
         <div className="absolute left-3 top-3 z-10 grid max-w-[calc(100%-1.5rem)] grid-cols-2 gap-2 sm:grid-cols-4">
-          <div className="rounded-xl border border-border bg-card/95 px-3 py-2 shadow backdrop-blur">
+          <div className="rounded-xl border border-border bg-card px-3 py-2 shadow">
             <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-normal text-muted-foreground">
               <Gauge className="h-3 w-3" /> Speed
             </div>
             <div className="font-grotesk text-lg font-bold">{Math.round(currentPt?.speed_kmh || 0)} km/h</div>
           </div>
-          <div className="rounded-xl border border-border bg-card/95 px-3 py-2 shadow backdrop-blur">
+          <div className="rounded-xl border border-border bg-card px-3 py-2 shadow">
             <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-normal text-muted-foreground">
               <Route className="h-3 w-3" /> Traveled
             </div>
             <div className="font-grotesk text-lg font-bold">{formatDistance(displayCurrentDistanceKm)}</div>
           </div>
-          <div className="rounded-xl border border-border bg-card/95 px-3 py-2 shadow backdrop-blur">
+          <div className="rounded-xl border border-border bg-card px-3 py-2 shadow">
             <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-normal text-muted-foreground">
               <Clock className="h-3 w-3" /> Time
             </div>
             <div className="font-grotesk text-lg font-bold">{formatDuration(elapsedSeconds)}</div>
           </div>
-          <div className="rounded-xl border border-border bg-card/95 px-3 py-2 shadow backdrop-blur">
+          <div className="rounded-xl border border-border bg-card px-3 py-2 shadow">
             <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-normal text-muted-foreground">
               <Activity className="h-3 w-3" /> Heading
             </div>
@@ -866,7 +916,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
         </div>
 
         {currentEvent && (
-          <div className="absolute bottom-3 left-3 right-3 z-10 bg-black/70 backdrop-blur text-white rounded-xl px-3 py-2 text-xs font-medium flex items-center gap-2"
+          <div className="absolute bottom-3 left-3 right-3 z-10 bg-black/80 text-white rounded-xl px-3 py-2 text-xs font-medium flex items-center gap-2"
             style={{ borderLeft: `3px solid ${EVENT_COLORS[currentEvent.type] || '#6b7280'}` }}>
             <span className="grid h-5 w-5 place-items-center rounded-full bg-white/15" style={{ color: EVENT_COLORS[currentEvent.type] }}>
               {EVENT_LABELS[currentEvent.type] || '!'}

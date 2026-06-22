@@ -81,7 +81,7 @@ export default function Layout() {
   }, []);
 
   return (
-    <div className="min-h-screen min-w-0 bg-background flex flex-col">
+    <div className="min-h-dvh min-w-0 bg-background flex flex-col">
       <a
         href="#main-content"
         className="sr-only fixed left-3 top-3 z-[70] rounded-lg bg-primary px-4 py-3 font-semibold text-primary-foreground shadow-lg focus:not-sr-only"
@@ -89,7 +89,7 @@ export default function Layout() {
         Skip to main content
       </a>
       {/* Top Header */}
-      <header className="min-w-0 bg-card/80 backdrop-blur-xl border-b border-border/50 px-4 h-16 flex items-center justify-between pt-[env(safe-area-inset-top)]">
+      <header className="min-w-0 bg-card border-b border-border/50 px-4 h-16 flex items-center justify-between pt-[env(safe-area-inset-top)]">
         <div className="flex min-w-0 items-center gap-3">
           <BrandMark className="h-8 w-8" />
           <span className="truncate font-grotesk font-bold text-lg tracking-tight">Road Sage</span>
@@ -119,7 +119,7 @@ export default function Layout() {
                 to={item.path}
                 end={item.path === '/'}
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                  `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-150 ${
                     isActive
                       ? 'bg-primary text-primary-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
@@ -168,7 +168,7 @@ export default function Layout() {
                     to={item.path}
                     end={item.path === '/'}
                     className={({ isActive }) =>
-                      `flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                      `flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${
                         isActive
                           ? 'bg-primary text-primary-foreground'
                           : 'text-muted-foreground hover:text-foreground hover:bg-secondary'

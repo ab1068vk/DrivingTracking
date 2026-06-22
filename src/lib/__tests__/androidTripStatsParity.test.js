@@ -149,7 +149,7 @@ describe('Android auto-tracking stats parity', () => {
     expect(serviceSource).toContain('trip.put("start_source", completedStartSource);');
     expect(pluginSource).toContain('startNativeManualTrip');
     expect(pluginSource).toContain('hasNativeManualTripPermissions');
-    expect(dashboardSource).toContain('startNativeManualTrip({ startTime })');
+    expect(dashboardSource).toContain('startNativeManualTrip({ startTime, tripId: nativeManualTripId })');
     expect(dashboardSource).toContain('const needsManualForegroundConfirmation = false;');
     expect(dashboardSource).toContain('manual_background_tracking_fallback_foreground');
   });

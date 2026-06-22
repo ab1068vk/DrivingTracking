@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { motion } from 'framer-motion';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { tripQueryKeys, tripService } from '@/api/trips';
@@ -417,7 +416,7 @@ export default function MapScreen() {
 
   return (
     <div className="space-y-5 pb-4">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
+      <div>
         <h1 className="text-2xl font-grotesk font-bold">Map</h1>
         <p className="text-muted-foreground text-sm mt-1">
           {selectedTrip
@@ -438,7 +437,7 @@ export default function MapScreen() {
             </span>
           )}
         </p>
-      </motion.div>
+      </div>
 
       <div className="flex gap-2">
         <button onClick={() => setPlaybackMode(false)}
@@ -460,7 +459,7 @@ export default function MapScreen() {
         </button>
       </div>
 
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
+      <div>
         {playbackMode ? (
           selectedTrip ? (
             <>
@@ -506,24 +505,24 @@ export default function MapScreen() {
               height="400px"
             />
             {selectedTripId && selectedTripLoading && !selectedTripDetail && (
-              <div className="absolute inset-x-3 bottom-3 z-10 rounded-2xl border border-border bg-card/95 px-3 py-2 text-xs font-semibold text-muted-foreground shadow backdrop-blur">
+              <div className="absolute inset-x-3 bottom-3 z-10 rounded-2xl border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground shadow">
                 Loading route detail...
               </div>
             )}
             <div className="absolute top-3 right-3 flex flex-col gap-2 z-10">
               <button onClick={handleShowMyLocation}
-                className="w-10 h-10 bg-card/90 backdrop-blur rounded-xl border border-border shadow flex items-center justify-center hover:bg-card transition-colors"
+                className="w-10 h-10 bg-card rounded-xl border border-border shadow flex items-center justify-center hover:bg-secondary transition-colors"
                 title="Show my location">
                 <Crosshair className="w-4 h-4 text-primary" />
               </button>
               <button onClick={handleWhereParked}
-                className="w-10 h-10 bg-card/90 backdrop-blur rounded-xl border border-border shadow flex items-center justify-center hover:bg-card transition-colors"
+                className="w-10 h-10 bg-card rounded-xl border border-border shadow flex items-center justify-center hover:bg-secondary transition-colors"
                 title="Where did I park?">
                 <Car className="w-4 h-4 text-orange-500" />
               </button>
             </div>
             {parkedLocation && (
-              <div className="absolute bottom-3 right-3 left-3 z-10 rounded-2xl border border-border bg-card/95 p-3 text-xs shadow backdrop-blur">
+              <div className="absolute bottom-3 right-3 left-3 z-10 rounded-2xl border border-border bg-card p-3 text-xs shadow">
                 <div className="font-semibold text-foreground">📍 Parked here · {relativeTime(parkedLocation.timestamp)}</div>
                 <div className="mt-1 line-clamp-2 text-muted-foreground">
                   {parkedLocationIsPrivate
@@ -536,7 +535,7 @@ export default function MapScreen() {
               <button
                 type="button"
                 onClick={() => navigate('/privacy-intelligence')}
-                className="absolute bottom-3 right-3 z-10 inline-flex items-center gap-1.5 rounded-xl border border-border bg-card/95 px-3 py-2 text-xs font-semibold text-primary shadow backdrop-blur transition-colors hover:bg-card"
+                className="absolute bottom-3 right-3 z-10 inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-primary shadow transition-colors hover:bg-secondary"
               >
                 <Shield className="h-3.5 w-3.5" />
                 Privacy
@@ -551,7 +550,7 @@ export default function MapScreen() {
             {locError || parkingError}
           </div>
         )}
-      </motion.div>
+      </div>
 
       {selectedTrip && (
         <div className="bg-card border border-border rounded-2xl p-4">

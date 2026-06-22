@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
@@ -161,7 +160,10 @@ export default function TripHistory() {
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
   });
 
-  const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle]));
+  const vehicleById = useMemo(
+    () => new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle])),
+    [vehicles]
+  );
   const invalidateTrips = () => {
     qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
   };
@@ -171,43 +173,52 @@ export default function TripHistory() {
     onSuccess: invalidateTrips,
   });
 
-  const completed = trips.filter((trip) => trip.status === 'completed');
-  const recentChronological = [...completed]
-    .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
-    .slice(-5);
-  const sparklineData = recentChronological.map((trip, index) => ({
+  const completed = useMemo(() => trips.filter((trip) => trip.status === 'completed'), [trips]);
+  const recentChronological = useMemo(
+    () => [...completed]
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+      .slice(-5),
+    [completed]
+  );
+  const sparklineData = useMemo(() => recentChronological.map((trip, index) => ({
     index,
     score_overall: getTripComponentScore(trip, 'overall').value,
     score_safety: getTripComponentScore(trip, 'safety').value,
     score_smoothness: getTripComponentScore(trip, 'smoothness').value,
     score_eco: getTripComponentScore(trip, 'eco').value,
-  }));
-  const improvement = calculateRecentBrakingImprovement(completed);
-  const tripsByRecentOrder = [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+  })), [recentChronological]);
+  const improvement = useMemo(() => calculateRecentBrakingImprovement(completed), [completed]);
+  const tripsByRecentOrder = useMemo(
+    () => [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()),
+    [completed]
+  );
 
-  const filtered = completed.filter((trip) => {
-    if (!matchesQuickFilter(trip, filterBy)) return false;
-    if (selectedTag !== 'all' && !normalizeTripTags(trip).includes(selectedTag)) return false;
-    if (search) {
-      const vehicle = vehicleById.get(String(trip.vehicle_id));
-      if (!buildTripSearchText(trip, vehicle).includes(search.toLowerCase())) return false;
-    }
-    return true;
-  });
+  const normalizedSearch = search.trim().toLowerCase();
+  const sorted = useMemo(() => {
+    const filtered = completed.filter((trip) => {
+      if (!matchesQuickFilter(trip, filterBy)) return false;
+      if (selectedTag !== 'all' && !normalizeTripTags(trip).includes(selectedTag)) return false;
+      if (normalizedSearch) {
+        const vehicle = vehicleById.get(String(trip.vehicle_id));
+        if (!buildTripSearchText(trip, vehicle).includes(normalizedSearch)) return false;
+      }
+      return true;
+    });
 
-  const sorted = [...filtered].sort((a, b) => {
-    switch (sortBy) {
-      case 'date_desc': return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
-      case 'date_asc': return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
-      case 'score_desc': return sortableScore(b, 'desc') - sortableScore(a, 'desc');
-      case 'score_asc': return sortableScore(a, 'asc') - sortableScore(b, 'asc');
-      case 'distance_desc': return (b.distance_km ?? 0) - (a.distance_km ?? 0);
-      case 'distance_asc': return (a.distance_km ?? 0) - (b.distance_km ?? 0);
-      default: return 0;
-    }
-  });
+    return [...filtered].sort((a, b) => {
+      switch (sortBy) {
+        case 'date_desc': return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
+        case 'date_asc': return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
+        case 'score_desc': return sortableScore(b, 'desc') - sortableScore(a, 'desc');
+        case 'score_asc': return sortableScore(a, 'asc') - sortableScore(b, 'asc');
+        case 'distance_desc': return (b.distance_km ?? 0) - (a.distance_km ?? 0);
+        case 'distance_asc': return (a.distance_km ?? 0) - (b.distance_km ?? 0);
+        default: return 0;
+      }
+    });
+  }, [completed, filterBy, normalizedSearch, selectedTag, sortBy, vehicleById]);
   const visibleTrips = sorted.slice(0, visibleCount);
-  const historySummary = buildTripHistorySummary(sorted, units);
+  const historySummary = useMemo(() => buildTripHistorySummary(sorted, units), [sorted, units]);
   const activeFilterLabel = QUICK_FILTERS.find((option) => option.id === filterBy)?.label || 'Custom filter';
   const activeTagLabel = selectedTag === 'all'
     ? 'All tags'
@@ -269,10 +280,10 @@ export default function TripHistory() {
 
   return (
     <div className="space-y-5 pb-4">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
+      <div>
         <h1 className="text-2xl font-grotesk font-bold">Trip History</h1>
         <p className="text-muted-foreground text-sm mt-1">{sorted.length} of {completed.length} completed trips</p>
-      </motion.div>
+      </div>
 
       {reviewSpeedLimitConflicts && (
         <SpeedLimitConflictReview reviewMode />
@@ -332,7 +343,7 @@ export default function TripHistory() {
 
       {sparklineData.length > 1 && (
         <div className="grid grid-cols-2 gap-2">
-          {SCORE_SPARKLINES.map((score, index) => {
+          {SCORE_SPARKLINES.map((score) => {
             const latest = sparklineData[sparklineData.length - 1]?.[score.key];
             const scoreColor = latest == null ? 'text-muted-foreground' : getScoreColor(latest).color;
             const color = scoreColor.includes('green')
@@ -345,11 +356,8 @@ export default function TripHistory() {
                     ? '#f97316'
                     : '#ef4444';
             return (
-              <motion.div
+              <div
                 key={score.key}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.1 * index }}
                 className="flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2"
               >
                 <div>
@@ -363,7 +371,7 @@ export default function TripHistory() {
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-              </motion.div>
+              </div>
             );
           })}
         </div>

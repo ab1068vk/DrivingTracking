@@ -15,6 +15,14 @@ const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyrigh
 const DEFAULT_CENTER = [43.6532, -79.3832];
 const MAX_PERMANENT_LABELS = 80;
 
+const sectionKey = (section = {}) => String(
+  section.sectionKey ||
+  section.id ||
+  section.ruleId ||
+  section.geohash ||
+  `${section.lat},${section.lng}`
+);
+
 const formatLimitLabel = (limitKmh) => {
   const limit = Number(limitKmh);
   return Number.isFinite(limit) && limit > 0 ? `${Math.round(limit)} km/h` : 'Set speed';
@@ -50,7 +58,14 @@ function useOnlineStatus() {
   return online;
 }
 
-const isLatLng = (position = []) => Number.isFinite(position[0]) && Number.isFinite(position[1]);
+const isLatLng = (position = []) => (
+  Number.isFinite(position[0]) &&
+  Number.isFinite(position[1]) &&
+  position[0] >= -90 &&
+  position[0] <= 90 &&
+  position[1] >= -180 &&
+  position[1] <= 180
+);
 
 const sectionPositions = (section = {}) => (
   (section.sectionPoints?.length
@@ -62,6 +77,20 @@ const sectionPositions = (section = {}) => (
 const middlePosition = (positions = []) => (
   positions[Math.floor(positions.length / 2)] || positions[0] || null
 );
+
+const sectionCenter = (section = {}) => (
+  sectionPositions(section)[0] || null
+);
+
+const firstSectionCenter = (sectionLists = []) => {
+  for (const list of sectionLists) {
+    for (const section of Array.isArray(list) ? list : []) {
+      const center = sectionCenter(section);
+      if (center) return center;
+    }
+  }
+  return DEFAULT_CENTER;
+};
 
 const safeLeafletCall = (callback) => {
   try {
@@ -77,7 +106,16 @@ const stopLeafletMap = (map) => {
   safeLeafletCall(() => map?.closeTooltip?.());
 };
 
-const sectionDisplay = (section = {}, selected = false, showAllPermanentLabels = false) => {
+const safeMapSetView = (map, center, zoom, options = {}) => safeLeafletCall(() => (
+  map?.setView?.(center, zoom, { animate: false, ...options })
+));
+
+const safeMapFitBounds = (map, bounds, options = {}) => {
+  if (!bounds || (typeof bounds.isValid === 'function' && !bounds.isValid())) return null;
+  return safeLeafletCall(() => map?.fitBounds?.(bounds, { animate: false, ...options }));
+};
+
+const sectionDisplay = (section = {}, selected = false, showPermanentLabel = false) => {
   const displayLimitKmh = section.effectiveLimitKmh ?? section.limitKmh;
   const color = speedLimitColor(displayLimitKmh);
   const conflict = Boolean(section.conflict);
@@ -106,7 +144,7 @@ const sectionDisplay = (section = {}, selected = false, showAllPermanentLabels =
   const labelText = conflict
     ? `! ${formatLimitLabel(displayLimitKmh)}`
     : formatLimitLabel(displayLimitKmh);
-  const showPermanentLabel = showAllPermanentLabels || selected || conflict;
+  const shouldShowPermanentLabel = showPermanentLabel || selected || conflict;
 
   return {
     color,
@@ -116,7 +154,7 @@ const sectionDisplay = (section = {}, selected = false, showAllPermanentLabels =
     labelText,
     pathOptions,
     positions,
-    showPermanentLabel,
+    showPermanentLabel: shouldShowPermanentLabel,
   };
 };
 
@@ -124,14 +162,16 @@ const addSectionToLayer = ({
   section,
   layerGroup,
   selected = false,
-  showAllPermanentLabels = false,
+  showPermanentLabel = false,
   addMode = false,
   onSelect,
 }) => {
-  const display = sectionDisplay(section, selected, showAllPermanentLabels);
+  const display = sectionDisplay(section, selected, showPermanentLabel);
+  const fallbackPosition = sectionCenter(section);
+  if (display.positions.length < 2 && !fallbackPosition) return null;
   const layer = display.positions.length >= 2
     ? L.polyline(display.positions, display.pathOptions)
-    : L.circleMarker(display.positions[0] || [section.lat, section.lng], {
+    : L.circleMarker(display.positions[0] || fallbackPosition, {
       radius: selected ? 10 : 8,
       color: '#ffffff',
       weight: display.conflict ? 4 : 2,
@@ -202,6 +242,7 @@ export default function SpeedLimitEditorMap({
   const onAddPointRef = useRef(onAddPoint);
   const onMoveAddPointRef = useRef(onMoveAddPoint);
   const onMoveSectionPointRef = useRef(onMoveSectionPoint);
+  const [mapReady, setMapReady] = useState(false);
   addModeRef.current = addMode;
   onSelectRef.current = onSelect;
   onAddPointRef.current = onAddPoint;
@@ -218,10 +259,8 @@ export default function SpeedLimitEditorMap({
   const stats = useMemo(() => summarizeSpeedMapSections(rawSections), [rawSections]);
   const visibleStats = useMemo(() => summarizeSpeedMapSections(sections), [sections]);
   const center = sections.length
-    ? [sections[0].lat, sections[0].lng]
-    : rawSections.length
-      ? [rawSections[0].lat, rawSections[0].lng]
-    : DEFAULT_CENTER;
+    ? firstSectionCenter([sections, rawSections])
+    : firstSectionCenter([rawSections]);
   const layerState = { ...SPEED_MAP_LAYER_DEFAULTS, ...(layers || {}) };
   const toggleLayer = (key) => {
     onLayerChange?.({ ...layerState, [key]: !layerState[key] });
@@ -232,7 +271,18 @@ export default function SpeedLimitEditorMap({
     ['observed', 'Observed', stats.observed],
     ['unset', 'Unset', stats.unset],
   ];
-  const showAllPermanentLabels = sections.length <= MAX_PERMANENT_LABELS;
+  const permanentLabelKeys = useMemo(() => {
+    if (!sections.length) return new Set();
+    const prioritized = [...sections].sort((a, b) => {
+      const score = (section) => (
+        (section.conflict ? 4 : 0) +
+        (section.saved ? 3 : 0) +
+        (Number(section.effectiveLimitKmh ?? section.limitKmh ?? section.observedLimitKmh) > 0 ? 1 : 0)
+      );
+      return score(b) - score(a);
+    });
+    return new Set(prioritized.slice(0, MAX_PERMANENT_LABELS).map(sectionKey));
+  }, [sections]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return undefined;
@@ -240,15 +290,20 @@ export default function SpeedLimitEditorMap({
     const map = L.map(containerRef.current, {
       zoomControl: true,
       attributionControl: true,
+      fadeAnimation: false,
+      markerZoomAnimation: false,
+      preferCanvas: true,
+      zoomAnimation: false,
     });
     mapRef.current = map;
+    safeMapSetView(map, center, 13);
     sectionLayersRef.current = L.layerGroup().addTo(map);
     selectedLayerRef.current = L.layerGroup().addTo(map);
     editLayerRef.current = L.layerGroup().addTo(map);
-    map.setView(center, 13);
+    setMapReady(true);
 
     const timer = window.setTimeout(() => {
-      if (mapRef.current === map) safeLeafletCall(() => map.invalidateSize());
+      if (mapRef.current === map) safeLeafletCall(() => map.invalidateSize({ animate: false }));
     }, 0);
 
     return () => {
@@ -269,7 +324,7 @@ export default function SpeedLimitEditorMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return undefined;
+    if (!mapReady || !map) return undefined;
 
     const handleClick = (event) => {
       if (!addModeRef.current) return;
@@ -280,11 +335,11 @@ export default function SpeedLimitEditorMap({
     return () => {
       safeLeafletCall(() => map.off('click', handleClick));
     };
-  }, []);
+  }, [mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!mapReady || !map) return;
 
     safeLeafletCall(() => {
       if (tileLayerRef.current) {
@@ -298,12 +353,12 @@ export default function SpeedLimitEditorMap({
       attribution: TILE_ATTRIBUTION,
       maxZoom: 19,
     }).addTo(map);
-  }, [online]);
+  }, [mapReady, online]);
 
   useEffect(() => {
     const map = mapRef.current;
     const layers = sectionLayersRef.current;
-    if (!map || !layers) return;
+    if (!mapReady || !map || !layers) return;
 
     stopLeafletMap(map);
     safeLeafletCall(() => layers.clearLayers());
@@ -313,18 +368,18 @@ export default function SpeedLimitEditorMap({
         section,
         layerGroup: layers,
         selected: false,
-        showAllPermanentLabels,
+        showPermanentLabel: permanentLabelKeys.has(sectionKey(section)),
         addMode: false,
         onSelect: (section) => {
           if (!addModeRef.current) onSelectRef.current?.(section);
         },
       });
     });
-  }, [sections, showAllPermanentLabels]);
+  }, [mapReady, permanentLabelKeys, sections]);
 
   useEffect(() => {
     const layers = editLayerRef.current;
-    if (!layers) return;
+    if (!mapReady || !layers) return;
 
     safeLeafletCall(() => layers.clearLayers());
 
@@ -353,11 +408,11 @@ export default function SpeedLimitEditorMap({
       });
       if (index === addPath.length - 1) marker.bindTooltip('Tap to continue or drag points to adjust', { permanent: true });
     });
-  }, [addPath]);
+  }, [addPath, mapReady]);
 
   useEffect(() => {
     const selectedLayers = selectedLayerRef.current;
-    if (!selectedLayers) return;
+    if (!mapReady || !selectedLayers) return;
 
     safeLeafletCall(() => selectedLayers.clearLayers());
     const selectedSection = (
@@ -374,7 +429,7 @@ export default function SpeedLimitEditorMap({
       section: selectedSection,
       layerGroup: selectedLayers,
       selected: true,
-      showAllPermanentLabels: true,
+      showPermanentLabel: true,
       addMode: false,
       onSelect: (section) => {
         if (!addModeRef.current) onSelectRef.current?.(section);
@@ -411,29 +466,29 @@ export default function SpeedLimitEditorMap({
         });
       });
     }
-  }, [sections, selectedGeohash, selectedSectionOverride]);
+  }, [mapReady, sections, selectedGeohash, selectedSectionOverride]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!mapReady || !map) return;
     const points = sections.flatMap(sectionPositions);
     if (!points.length) {
-      safeLeafletCall(() => map.setView(center, 13));
+      safeMapSetView(map, center, 13);
       return;
     }
     if (points.length === 1) {
-      safeLeafletCall(() => map.setView(points[0], 15));
+      safeMapSetView(map, points[0], 15);
       return;
     }
-    safeLeafletCall(() => map.fitBounds(L.latLngBounds(points), { padding: [28, 28], maxZoom: 16 }));
-  }, [center, sections]);
+    safeMapFitBounds(map, L.latLngBounds(points), { padding: [28, 28], maxZoom: 16 });
+  }, [center, mapReady, sections]);
 
   return (
     <div className="relative z-0 isolate overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <div className={`relative w-full ${heightClassName}`}>
         <div ref={containerRef} className="h-full w-full" />
         {onLayerChange && (
-          <div className="absolute right-3 top-3 z-[500] w-[min(21rem,calc(100%-1.5rem))] rounded-xl border border-border bg-background/95 p-2 shadow-lg backdrop-blur">
+          <div className="absolute right-3 top-3 z-[500] w-[min(21rem,calc(100%-1.5rem))] rounded-xl border border-border bg-background p-2 shadow-lg">
             <div className="flex items-center justify-between gap-2 px-1 text-[11px] font-semibold text-muted-foreground">
               <span>{visibleStats.total} of {stats.total} sections visible</span>
               <span>{stats.savedRules} saved rules</span>

@@ -105,9 +105,9 @@ const speedKnowledgeTimeKey = (point) => {
 };
 
 const speedKnowledgeCoordKey = (point) => {
-  const lat = Number(point?.original_lat ?? point?.lat);
-  const lng = Number(point?.original_lng ?? point?.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const lat = finiteCoordinate(point?.original_lat ?? point?.lat);
+  const lng = finiteCoordinate(point?.original_lng ?? point?.lng);
+  if (lat == null || lng == null || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
   return `${lat.toFixed(5)},${lng.toFixed(5)}`;
 };
 
@@ -177,6 +177,27 @@ const timeMs = (value) => {
 const ROUTE_GAP_SECONDS = 120;
 const MIN_POLYLINE_ROUTE_POINTS = 3;
 
+const finiteCoordinate = (value) => {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+const validLatLngPoint = (point) => {
+  const lat = finiteCoordinate(point?.lat);
+  const lng = finiteCoordinate(point?.lng);
+  if (lat == null || lng == null) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { ...point, lat, lng };
+};
+
+const latLngForPoint = (point) => {
+  const normalized = validLatLngPoint(point);
+  return normalized ? [normalized.lat, normalized.lng] : null;
+};
+
+const hasValidLatLng = (point) => validLatLngPoint(point) != null;
+
 const isRouteGapSegment = (prev, curr) => {
   if (!prev || !curr) return false;
   if (curr.tracking_gap === true || curr.route_gap === true) return true;
@@ -191,13 +212,14 @@ const splitRoutePointSegments = (points = []) => {
   let current = [];
 
   (points || []).forEach((point) => {
-    if (!Number.isFinite(point?.lat) || !Number.isFinite(point?.lng)) return;
-    if (current.length > 0 && isRouteGapSegment(current[current.length - 1], point)) {
+    const validPoint = validLatLngPoint(point);
+    if (!validPoint) return;
+    if (current.length > 0 && isRouteGapSegment(current[current.length - 1], validPoint)) {
       if (current.length > 1) segments.push(current);
-      current = [point];
+      current = [validPoint];
       return;
     }
-    current.push(point);
+    current.push(validPoint);
   });
 
   if (current.length > 1) segments.push(current);
@@ -389,12 +411,13 @@ const detectStops = (points = []) => {
 const clusterEvents = (events = []) => {
   const groups = new Map();
   events
-    .filter((event) => Number.isFinite(Number(event.lat)) && Number.isFinite(Number(event.lng)))
+    .map(validLatLngPoint)
+    .filter(Boolean)
     .forEach((event) => {
-      const key = `${Math.round(Number(event.lat) * 1200)},${Math.round(Number(event.lng) * 1200)}`;
+      const key = `${Math.round(event.lat * 1200)},${Math.round(event.lng * 1200)}`;
       const group = groups.get(key) || { latSum: 0, lngSum: 0, events: [], typeCounts: new Map(), dominant: null };
-      group.latSum += Number(event.lat);
-      group.lngSum += Number(event.lng);
+      group.latSum += event.lat;
+      group.lngSum += event.lng;
       group.events.push(event);
       const typeCount = (group.typeCounts.get(event.type) || 0) + 1;
       group.typeCounts.set(event.type, typeCount);
@@ -505,6 +528,20 @@ const stopLeafletMap = (map) => {
   safeLeafletCall(() => map?.closeTooltip?.());
 };
 
+const safeMapSetView = (map, center, zoom, options = {}) => safeLeafletCall(() => (
+  map?.setView?.(center, zoom, { animate: false, ...options })
+));
+
+const safeMapFitBounds = (map, bounds, options = {}) => {
+  if (!bounds || (typeof bounds.isValid === 'function' && !bounds.isValid())) return null;
+  return safeLeafletCall(() => map?.fitBounds?.(bounds, { animate: false, ...options }));
+};
+
+const safeMapPanTo = (map, center, zoom = 15) => safeLeafletCall(() => {
+  if (!map?._loaded) return map?.setView?.(center, zoom, { animate: false });
+  return map.panTo(center, { animate: false });
+});
+
 export default function TripMap(props) {
   const resetKey = Array.isArray(props.routes)
     ? props.routes.map((route) => `${route.id || route.label || 'route'}:${route.selected ? '1' : '0'}:${route.route_points?.length || 0}`).join('|')
@@ -590,35 +627,55 @@ function TripMapContent({
 
   useEffect(() => {
     let cancelled = false;
+    let invalidateTimer = null;
 
     loadLeaflet().then(() => {
       if (cancelled || !mapRef.current || leafletMapRef.current) return;
 
-      const map = window.L.map(mapRef.current, {
-        zoomControl: true,
-        attributionControl: true,
-      });
+      try {
+        const map = window.L.map(mapRef.current, {
+          zoomControl: true,
+          attributionControl: true,
+          fadeAnimation: false,
+          markerZoomAnimation: false,
+          zoomAnimation: false,
+        });
 
-      leafletMapRef.current = map;
+        leafletMapRef.current = map;
+        safeMapSetView(map, TORONTO_CENTER, 12);
 
-      const tileConfig = TILE_STYLES.standard;
-      tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
-        attribution: tileConfig.attribution,
-        maxZoom: tileConfig.maxZoom,
-      })
-        .on('tileerror', () => setTileErrorCount((count) => count + 1))
-        .addTo(map);
+        const tileConfig = TILE_STYLES.standard;
+        tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
+          attribution: tileConfig.attribution,
+          maxZoom: tileConfig.maxZoom,
+        })
+          .on('tileerror', () => setTileErrorCount((count) => count + 1))
+          .addTo(map);
 
-      layersRef.current = window.L.layerGroup().addTo(map);
-      map.setView(TORONTO_CENTER, 12);
-      setReady(true);
-      setTimeout(() => map.invalidateSize(), 0);
+        layersRef.current = window.L.layerGroup().addTo(map);
+        setReady(true);
+        invalidateTimer = window.setTimeout(() => {
+          invalidateTimer = null;
+          if (leafletMapRef.current === map) safeLeafletCall(() => map.invalidateSize({ animate: false }));
+        }, 0);
+      } catch (error) {
+        console.error('Trip map failed to initialize', error);
+        if (!cancelled) setMapFailed(true);
+        stopLeafletMap(leafletMapRef.current);
+        safeLeafletCall(() => layersRef.current?.clearLayers?.());
+        safeLeafletCall(() => tileLayerRef.current?.remove?.());
+        safeLeafletCall(() => leafletMapRef.current?.remove?.());
+        leafletMapRef.current = null;
+        layersRef.current = null;
+        tileLayerRef.current = null;
+      }
     }).catch(() => {
       if (!cancelled) setMapFailed(true);
     });
 
     return () => {
       cancelled = true;
+      if (invalidateTimer) window.clearTimeout(invalidateTimer);
       if (leafletMapRef.current) {
         stopLeafletMap(leafletMapRef.current);
         safeLeafletCall(() => layersRef.current?.clearLayers?.());
@@ -658,8 +715,9 @@ function TripMapContent({
     const layers = layersRef.current;
     if (!ready || !map || !layers || !window.L) return;
 
-    stopLeafletMap(map);
-    safeLeafletCall(() => layers.clearLayers());
+    try {
+      stopLeafletMap(map);
+      safeLeafletCall(() => layers.clearLayers());
 
     const routeSets = Array.isArray(routes)
       ? routes
@@ -696,7 +754,7 @@ function TripMapContent({
     const displayPrivacyZones = privacySettings.show_privacy_circles === true
       ? getPrivacyZones(privacySettings)
         .map((zone) => getPrivacyZoneDisplayCircle(zone, undefined, privacyDisplayReferences))
-        .filter(Boolean)
+        .filter(hasValidLatLng)
       : [];
     const visiblePrivacyZones = getPrivacyZones(privacySettings);
     const validRoutes = routeSets
@@ -706,27 +764,34 @@ function TripMapContent({
           maxPoints: route.selected ? 900 : 450,
           smooth: smoothRoute,
         });
+        const routeVisualPoints = injectTimestampGapMarkers(visualPoints)
+          .map(validLatLngPoint)
+          .filter(Boolean);
         return {
           ...route,
           color: route.color || (route.selected ? '#3b82f6' : '#64748b'),
           opacity: route.opacity ?? (route.selected ? 0.9 : 0.45),
-          route_points: injectTimestampGapMarkers(visualPoints),
+          route_points: routeVisualPoints,
         };
       })
       .filter((route) => route.route_points.length > 1);
     const mapEvents = maskEventsForPrivacy(events || [], privacySettings);
     const isPrivatePoint = (point) => Boolean(isPointInPrivacyZone(point, visiblePrivacyZones));
     const segmentTouchesPrivacy = (segment) => {
-      const midpoint = segment?.from && segment?.to
+      const fromPoint = validLatLngPoint(segment?.from);
+      const toPoint = validLatLngPoint(segment?.to);
+      const midpoint = fromPoint && toPoint
         ? {
-          lat: (Number(segment.from.lat) + Number(segment.to.lat)) / 2,
-          lng: (Number(segment.from.lng) + Number(segment.to.lng)) / 2,
+          lat: (fromPoint.lat + toPoint.lat) / 2,
+          lng: (fromPoint.lng + toPoint.lng) / 2,
         }
         : null;
-      return [segment?.from, segment?.to, midpoint].some((point) => point && isPrivatePoint(point));
+      return [fromPoint, toPoint, midpoint].some((point) => point && isPrivatePoint(point));
     };
-    const safeCurrentLocation = currentLocation && !isPrivatePoint(currentLocation) ? currentLocation : null;
-    const safeParkedLocation = parkedLocation && !isPrivatePoint(parkedLocation) ? parkedLocation : null;
+    const normalizedCurrentLocation = validLatLngPoint(currentLocation);
+    const normalizedParkedLocation = validLatLngPoint(parkedLocation);
+    const safeCurrentLocation = normalizedCurrentLocation && !isPrivatePoint(normalizedCurrentLocation) ? normalizedCurrentLocation : null;
+    const safeParkedLocation = normalizedParkedLocation && !isPrivatePoint(normalizedParkedLocation) ? normalizedParkedLocation : null;
     const speedLimitInfoForSegment = (segment, route) => {
       const routeSegmentPoints = Array.isArray(route?.route_points) ? route.route_points : [];
       const from = segment?.from;
@@ -766,8 +831,13 @@ function TripMapContent({
     };
     const drawPrivacyZones = (bounds = null) => {
       displayPrivacyZones.forEach((zone) => {
-        const circle = window.L.circle([Number(zone.lat), Number(zone.lng)], {
-          radius: zone.radius_m,
+        const latLng = latLngForPoint(zone);
+        if (!latLng) return;
+        const radius = Number.isFinite(Number(zone.radius_m)) && Number(zone.radius_m) > 0
+          ? Number(zone.radius_m)
+          : 150;
+        const circle = window.L.circle(latLng, {
+          radius,
           color: '#2563eb',
           fillColor: '#3b82f6',
           fillOpacity: 0.08,
@@ -945,7 +1015,7 @@ function TripMapContent({
       lastBoundsRef.current = bounds;
       const nextFitKey = routeFitKey(validRoutes);
       if (nextFitKey && lastFitRouteKeyRef.current !== nextFitKey) {
-        safeLeafletCall(() => map.fitBounds(bounds, { padding: [20, 20] }));
+        safeMapFitBounds(map, bounds, { padding: [20, 20] });
         lastFitRouteKeyRef.current = nextFitKey;
       }
 
@@ -992,11 +1062,11 @@ function TripMapContent({
       const bounds = window.L.latLngBounds([]);
       drawPrivacyZones(bounds);
       lastBoundsRef.current = bounds;
-      safeLeafletCall(() => map.fitBounds(bounds, { padding: [20, 20] }));
+      safeMapFitBounds(map, bounds, { padding: [20, 20] });
     } else if (safeCurrentLocation) {
-      safeLeafletCall(() => map.setView([safeCurrentLocation.lat, safeCurrentLocation.lng], 15));
+      safeMapSetView(map, [safeCurrentLocation.lat, safeCurrentLocation.lng], 15);
     } else {
-      safeLeafletCall(() => map.setView(TORONTO_CENTER, 12));
+      safeMapSetView(map, TORONTO_CENTER, 12);
     }
 
     if (mapEvents && mapEvents.length > 0) {
@@ -1023,11 +1093,19 @@ function TripMapContent({
 
     if (showRouteRisk && Array.isArray(routeRiskSegments)) {
       routeRiskSegments
-        .filter((segment) => segment.riskLevel !== 'low' && !segmentTouchesPrivacy(segment))
+        .filter((segment) => (
+          segment.riskLevel !== 'low' &&
+          validLatLngPoint(segment?.from) &&
+          validLatLngPoint(segment?.to) &&
+          !segmentTouchesPrivacy(segment)
+        ))
         .forEach((segment) => {
+          const fromLatLng = latLngForPoint(segment.from);
+          const toLatLng = latLngForPoint(segment.to);
+          if (!fromLatLng || !toLatLng) return;
           const color = segment.riskLevel === 'high' ? '#ef4444' : '#f97316';
           window.L.polyline(
-            [[segment.from.lat, segment.from.lng], [segment.to.lat, segment.to.lng]],
+            [fromLatLng, toLatLng],
             { color, weight: 5, opacity: 0.55, smoothFactor: 1.5 }
           )
             .bindPopup(buildRouteRiskSegmentPopupHtml(segment))
@@ -1037,9 +1115,10 @@ function TripMapContent({
 
     if (showDangerZones && Array.isArray(dangerZones)) {
       dangerZones.filter((zone) => !isPrivatePoint(zone)).forEach((zone) => {
-        if (!Number.isFinite(Number(zone.lat)) || !Number.isFinite(Number(zone.lng))) return;
+        const latLng = latLngForPoint(zone);
+        if (!latLng) return;
         const color = RISK_COLORS[zone.riskLevel] || RISK_COLORS.low;
-        window.L.circle([zone.lat, zone.lng], {
+        window.L.circle(latLng, {
           radius: zone.radiusM || 100,
           color,
           fillColor: color,
@@ -1063,7 +1142,7 @@ function TripMapContent({
         .bindPopup('<b>You are here</b>')
         .addTo(layers);
     }
-    if (safeParkedLocation?.lat && safeParkedLocation?.lng) {
+    if (safeParkedLocation) {
       const parkedIcon = window.L.divIcon({
         html: '<div style="width:22px;height:22px;background:#f97316;border:3px solid white;border-radius:50%;box-shadow:0 0 0 8px rgba(249,115,22,0.24),0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:white;font-size:12px;font-weight:700">P</div>',
         className: '',
@@ -1074,22 +1153,29 @@ function TripMapContent({
         .bindPopup(`<b>Parked here</b><br>${escapeHtml(safeParkedLocation.address || `${safeParkedLocation.lat.toFixed(5)}, ${safeParkedLocation.lng.toFixed(5)}`)}`)
         .addTo(layers);
     }
+    } catch (error) {
+      console.error('Trip map drawing failed', error);
+      safeLeafletCall(() => layers.clearLayers());
+      setMapFailed(true);
+    }
   }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings]);
 
   useEffect(() => {
-    if (!leafletMapRef.current || !showCurrentLocation || !currentLocation) return;
-    if (isPointInPrivacyZone(currentLocation, getPrivacyZones(settings))) return;
+    const safeCurrentLocation = validLatLngPoint(currentLocation);
+    if (!leafletMapRef.current || !showCurrentLocation || !safeCurrentLocation) return;
+    if (isPointInPrivacyZone(safeCurrentLocation, getPrivacyZones(settings))) return;
     const map = leafletMapRef.current;
     stopLeafletMap(map);
-    safeLeafletCall(() => map.panTo([currentLocation.lat, currentLocation.lng], { animate: false }));
+    safeMapPanTo(map, [safeCurrentLocation.lat, safeCurrentLocation.lng], 15);
   }, [currentLocation, showCurrentLocation, settings]);
 
   useEffect(() => {
-    if (!leafletMapRef.current || !parkedLocation?.lat || !parkedLocation?.lng) return;
-    if (isPointInPrivacyZone(parkedLocation, getPrivacyZones(settings))) return;
+    const safeParkedLocation = validLatLngPoint(parkedLocation);
+    if (!leafletMapRef.current || !safeParkedLocation) return;
+    if (isPointInPrivacyZone(safeParkedLocation, getPrivacyZones(settings))) return;
     const map = leafletMapRef.current;
     stopLeafletMap(map);
-    safeLeafletCall(() => map.setView([parkedLocation.lat, parkedLocation.lng], 17, { animate: false }));
+    safeMapSetView(map, [safeParkedLocation.lat, safeParkedLocation.lng], 17);
   }, [parkedLocation, settings]);
 
   if (mapFailed) {
@@ -1108,15 +1194,16 @@ function TripMapContent({
     if (leafletMapRef.current && lastBoundsRef.current) {
       const map = leafletMapRef.current;
       stopLeafletMap(map);
-      safeLeafletCall(() => map.fitBounds(lastBoundsRef.current, { padding: [24, 24] }));
+      safeMapFitBounds(map, lastBoundsRef.current, { padding: [24, 24] });
     }
   };
 
   const handleCenterLive = () => {
-    if (leafletMapRef.current && currentLocation) {
+    const safeCurrentLocation = validLatLngPoint(currentLocation);
+    if (leafletMapRef.current && safeCurrentLocation) {
       const map = leafletMapRef.current;
       stopLeafletMap(map);
-      safeLeafletCall(() => map.setView([currentLocation.lat, currentLocation.lng], 16, { animate: false }));
+      safeMapSetView(map, [safeCurrentLocation.lat, safeCurrentLocation.lng], 16);
     }
   };
 
@@ -1134,7 +1221,7 @@ function TripMapContent({
           disabled={!hasRoute}
           title="Fit route"
           aria-label="Fit route"
-          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card/95 shadow backdrop-blur transition-colors hover:bg-card disabled:opacity-45"
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card shadow transition-colors hover:bg-secondary disabled:opacity-45"
         >
           <Maximize2 className="h-4 w-4 text-primary" />
         </button>
@@ -1143,7 +1230,7 @@ function TripMapContent({
           onClick={() => setTileStyle((style) => (style === 'standard' ? 'detail' : 'standard'))}
           title={`Map style: ${TILE_STYLES[tileStyle].label}`}
           aria-label="Toggle map style"
-          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card/95 shadow backdrop-blur transition-colors hover:bg-card"
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card shadow transition-colors hover:bg-secondary"
         >
           <Layers className="h-4 w-4 text-muted-foreground" />
         </button>
@@ -1153,14 +1240,14 @@ function TripMapContent({
             onClick={handleCenterLive}
             title="Center current location"
             aria-label="Center current location"
-            className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card/95 shadow backdrop-blur transition-colors hover:bg-card"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card shadow transition-colors hover:bg-secondary"
           >
             <Crosshair className="h-4 w-4 text-blue-500" />
           </button>
         )}
       </div>
       {selectedSegment && (
-        <div className="absolute left-3 top-3 z-10 w-[min(340px,calc(100%-5.5rem))] rounded-2xl border border-border bg-card/95 p-3 text-xs shadow backdrop-blur">
+        <div className="absolute left-3 top-3 z-10 w-[min(340px,calc(100%-5.5rem))] rounded-2xl border border-border bg-card p-3 text-xs shadow">
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="font-semibold">Segment inspector</div>
             <button
@@ -1194,7 +1281,7 @@ function TripMapContent({
         </div>
       )}
       {showIncompleteRouteWarning && routeIncomplete && (
-        <div className="absolute left-3 top-3 z-10 w-[min(360px,calc(100%-5.5rem))] rounded-2xl border border-amber-200 bg-amber-50/95 p-3 text-xs text-amber-900 shadow backdrop-blur dark:border-amber-800/50 dark:bg-amber-950/90 dark:text-amber-100">
+        <div className="absolute left-3 top-3 z-10 w-[min(360px,calc(100%-5.5rem))] rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 shadow dark:border-amber-800/50 dark:bg-amber-950 dark:text-amber-100">
           <div className="font-semibold">Incomplete GPS route</div>
           <div className="mt-1">
             Only {telemetry.pointCount} usable GPS point{telemetry.pointCount === 1 ? '' : 's'} were saved, so the map is showing markers instead of drawing a straight-line route.
@@ -1205,7 +1292,7 @@ function TripMapContent({
         <button
           type="button"
           onClick={() => setShowInsights(false)}
-          className="absolute bottom-3 left-3 right-3 z-10 rounded-2xl border border-border bg-card/95 p-3 text-left shadow backdrop-blur sm:left-3 sm:right-auto sm:w-[min(360px,calc(100%-1.5rem))]"
+          className="absolute bottom-3 left-3 right-3 z-10 rounded-2xl border border-border bg-card p-3 text-left shadow sm:left-3 sm:right-auto sm:w-[min(360px,calc(100%-1.5rem))]"
           aria-label="Hide map trip summary"
         >
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -1250,7 +1337,7 @@ function TripMapContent({
         <button
           type="button"
           onClick={() => setShowInsights(true)}
-          className="absolute bottom-3 left-3 z-10 rounded-xl border border-border bg-card/95 px-3 py-2 text-xs font-semibold text-muted-foreground shadow backdrop-blur"
+          className="absolute bottom-3 left-3 z-10 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground shadow"
         >
           Route diagnostics
         </button>
@@ -1277,12 +1364,13 @@ function OfflineRoutePreview({
     route_points: injectTimestampGapMarkers(prepareMapRoutePoints(
       maskRoutePointsForPrivacy(route.route_points || [], settings),
       { maxPoints: route.selected ? 900 : 450 }
-    )),
+    )).map(validLatLngPoint).filter(Boolean),
   })).filter((route) => route.route_points.length > 1);
   const allPoints = maskedRoutes.flatMap((route) => route.route_points);
   const validPrivacyZones = (showPrivacyCircles ? getPrivacyZones(settings) : [])
     .map((zone) => getPrivacyZoneDisplayCircle(zone, undefined, privacyDisplayReferences))
-    .filter((zone) => Number.isFinite(zone.lat) && Number.isFinite(zone.lng));
+    .map(validLatLngPoint)
+    .filter(Boolean);
   const zoneBounds = validPrivacyZones.flatMap((zone) => {
     const latDelta = zone.radius_m / 111320;
     const lngDelta = zone.radius_m / (111320 * Math.max(0.2, Math.cos(zone.lat * Math.PI / 180)));
@@ -1295,7 +1383,8 @@ function OfflineRoutePreview({
   });
   const referencePoints = [...allPoints, ...zoneBounds];
   const safeEvents = maskEventsForPrivacy(events, settings)
-    .filter((event) => Number.isFinite(event.lat) && Number.isFinite(event.lng));
+    .map(validLatLngPoint)
+    .filter(Boolean);
 
   if (!referencePoints.length) {
     return (
