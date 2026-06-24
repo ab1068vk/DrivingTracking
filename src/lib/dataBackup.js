@@ -712,6 +712,13 @@ const privacyZoneExportPlaceholders = (zones = []) => (
   }))
 );
 
+const privacySafeSettingsForBackup = (settings = {}, privacyZones = []) => {
+  const safe = { ...(settings || {}) };
+  delete safe.last_map_center;
+  safe.privacy_zones = privacyZoneExportPlaceholders(privacyZones);
+  return safe;
+};
+
 export function buildDriveSenseBackup({
   trips = [],
   vehicles = [],
@@ -729,10 +736,7 @@ export function buildDriveSenseBackup({
   const privacyZones = getPrivacyZones(settings);
   const zoneCommitments = privacyZones.map((zone) => commitZoneForExportSync(zone, exportId));
   const sanitizedSpeedKnowledge = sanitizeSpeedKnowledge(speedKnowledge, privacyZones);
-  const exportSettings = {
-    ...settings,
-    privacy_zones: privacyZoneExportPlaceholders(privacyZones),
-  };
+  const exportSettings = privacySafeSettingsForBackup(settings, privacyZones);
   const maskedTrips = trips.map((trip) => {
     const masked = /** @type {any} */ (maskTripForPrivacyExport(trip, settings, privacyExportSalt));
     return {

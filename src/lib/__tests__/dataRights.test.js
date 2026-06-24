@@ -9,6 +9,13 @@ import {
   PRIVACY_SCORE_HISTORY_KEY,
 } from '@/lib/privacyIntelligence';
 import {
+  NATIVE_PRIVACY_ZONES_KEY,
+  PRIVACY_ZONES_SECURE_KEY,
+  ZONE_STATS_KEY,
+} from '@/lib/privacyZones';
+import { SPEED_KNOWLEDGE_STORAGE_KEY } from '@/lib/speedKnowledgeRepository';
+import { TRANSMISSION_LOG_KEY } from '@/lib/transmissionLog';
+import {
   DATA_PORTABILITY_FORMAT,
   DATA_PORTABILITY_VERSION,
   buildDataPortabilityExport,
@@ -17,8 +24,10 @@ import {
 } from '@/lib/dataRights';
 
 describe('data rights exports and erasure manifest', () => {
-  it('includes every rotating encrypted JSON key plus audit and score-history anchors', () => {
-    const keys = getErasureKeyList().map((item) => item.key);
+  it('includes every privacy-sensitive local store in the erasure manifest', () => {
+    const manifest = getErasureKeyList();
+    const keys = manifest.map((item) => item.key);
+    const byKey = new Map(manifest.map((item) => [item.key, item]));
 
     ROTATING_ENCRYPTED_JSON_KEYS.forEach((key) => {
       expect(keys).toContain(key);
@@ -28,8 +37,22 @@ describe('data rights exports and erasure manifest', () => {
       PRIVACY_AUDIT_ANCHOR_KEY,
       LAST_CHECKPOINT_EXPORT_KEY,
       PRIVACY_SCORE_HISTORY_KEY,
+      PRIVACY_ZONES_SECURE_KEY,
+      NATIVE_PRIVACY_ZONES_KEY,
+      ZONE_STATS_KEY,
+      TRANSMISSION_LOG_KEY,
+      SPEED_KNOWLEDGE_STORAGE_KEY,
     ].forEach((key) => {
       expect(keys).toContain(key);
+    });
+    [
+      PRIVACY_ZONES_SECURE_KEY,
+      NATIVE_PRIVACY_ZONES_KEY,
+      ZONE_STATS_KEY,
+      TRANSMISSION_LOG_KEY,
+      PRIVACY_SCORE_HISTORY_KEY,
+    ].forEach((key) => {
+      expect(byKey.get(key)?.storage).toBe('encrypted_json');
     });
   });
 

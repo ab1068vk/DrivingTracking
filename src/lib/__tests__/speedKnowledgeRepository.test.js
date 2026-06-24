@@ -136,6 +136,23 @@ class FakeIndexedDb {
 
     return request;
   }
+
+  deleteDatabase(name) {
+    const request = {
+      error: null,
+      result: undefined,
+      onerror: null,
+      onsuccess: null,
+      onblocked: null,
+    };
+
+    queueMicrotask(() => {
+      this.databases.delete(name);
+      request.onsuccess?.({ target: request });
+    });
+
+    return request;
+  }
 }
 
 describe('speedKnowledgeRepository native mirror', () => {
@@ -260,5 +277,45 @@ describe('speedKnowledgeRepository native mirror', () => {
 
     expect(removeJson).toHaveBeenCalledWith(SPEED_KNOWLEDGE_STORAGE_KEY);
     expect(setJson).not.toHaveBeenCalled();
+  });
+
+  it('deletes indexed speed knowledge and its native mirror during data-rights erasure', async () => {
+    const indexedDb = new FakeIndexedDb();
+    indexedDb.databases.set('drivesense_speed_knowledge', {
+      version: 1,
+      stores: new Map([[
+        'knowledge',
+        {
+          records: new Map([[
+            'speed_knowledge_v1',
+            {
+              key: 'speed_knowledge_v1',
+              value: { cells: {}, corrections: [{ id: 'stored-rule', lat: 43.65, lng: -79.38 }] },
+            },
+          ]]),
+        },
+      ]]),
+    });
+    vi.stubGlobal('indexedDB', indexedDb);
+
+    const {
+      SPEED_KNOWLEDGE_DB_NAME,
+      SPEED_KNOWLEDGE_STORAGE_KEY,
+      eraseSpeedKnowledgeForDataRights,
+    } = await import('@/lib/speedKnowledgeRepository');
+
+    const result = await eraseSpeedKnowledgeForDataRights();
+
+    expect(result).toMatchObject({
+      indexedDbDeleted: true,
+      fallbackKey: SPEED_KNOWLEDGE_STORAGE_KEY,
+      fallbackRemoved: true,
+    });
+    expect(indexedDb.databases.has(SPEED_KNOWLEDGE_DB_NAME)).toBe(false);
+    expect(setJson).toHaveBeenCalledWith(
+      SPEED_KNOWLEDGE_STORAGE_KEY,
+      expect.objectContaining({ _secure_delete_tombstone: true })
+    );
+    expect(removeJson).toHaveBeenCalledWith(SPEED_KNOWLEDGE_STORAGE_KEY);
   });
 });

@@ -31,11 +31,18 @@ import {
   createPrivacyExportSalt,
   getHydratedPrivacyZones,
   maskTripForPrivacyExport,
+  NATIVE_PRIVACY_ZONES_KEY,
+  PRIVACY_ZONES_SECURE_KEY,
+  ZONE_STATS_KEY,
 } from '@/lib/privacyZones';
 import { PRIVACY_ZONE_SUGGESTION_DISMISSALS_KEY } from '@/lib/privacyZoneSuggestions';
 import { RESCORING_QUEUE_KEY } from '@/lib/rescoringQueue';
 import { ROAD_CONTEXT_QUEUE_STORAGE_KEY } from '@/lib/roadContextQueue';
 import { ENCRYPTION_KEY_META_KEY } from '@/lib/securePayloadCrypto';
+import {
+  eraseSpeedKnowledgeForDataRights,
+  SPEED_KNOWLEDGE_STORAGE_KEY,
+} from '@/lib/speedKnowledgeRepository';
 import {
   ACTIVE_TRIP_KEY,
   LAST_PARKED_KEY,
@@ -46,6 +53,7 @@ import {
 import { clearNativeCompletedTrips } from '@/lib/activityRecognition';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { logSystemFailure } from '@/lib/systemLog';
+import { TRANSMISSION_LOG_KEY } from '@/lib/transmissionLog';
 
 export const DATA_RIGHTS_ERASURE_RECEIPT_FORMAT = 'road-sage-erasure-receipt';
 export const DATA_RIGHTS_ERASURE_RECEIPT_VERSION = 1;
@@ -63,6 +71,10 @@ const extraErasureKeys = Object.freeze([
   LAST_CHECKPOINT_EXPORT_KEY,
   PRIVACY_SCORE_HISTORY_KEY,
   PRIVACY_POSTURE_SNAPSHOT_KEY,
+  PRIVACY_ZONES_SECURE_KEY,
+  NATIVE_PRIVACY_ZONES_KEY,
+  ZONE_STATS_KEY,
+  TRANSMISSION_LOG_KEY,
   KEY_ROTATION_LOG_KEY,
   ENCRYPTION_KEY_META_KEY,
   DB_NAME_META_KEY,
@@ -73,6 +85,19 @@ const extraErasureKeys = Object.freeze([
   PRIVACY_ZONE_SUGGESTION_DISMISSALS_KEY,
   RESCORING_QUEUE_KEY,
   ROAD_CONTEXT_QUEUE_STORAGE_KEY,
+  SPEED_KNOWLEDGE_STORAGE_KEY,
+]);
+
+const encryptedErasureKeys = new Set([
+  ...ROTATING_ENCRYPTED_JSON_KEYS,
+  PRIVACY_SCORE_HISTORY_KEY,
+  PRIVACY_POSTURE_SNAPSHOT_KEY,
+  PRIVACY_ZONES_SECURE_KEY,
+  ZONE_STATS_KEY,
+  TRANSMISSION_LOG_KEY,
+  KEY_ROTATION_LOG_KEY,
+  PRIVACY_ZONE_SUGGESTION_DISMISSALS_KEY,
+  NATIVE_PRIVACY_ZONES_KEY,
 ]);
 
 const unique = (items = []) => Array.from(new Set(items.filter(Boolean)));
@@ -104,11 +129,7 @@ export function getErasureKeyList() {
     ...extraErasureKeys,
   ]).map((key) => ({
     key,
-    storage: ROTATING_ENCRYPTED_JSON_KEYS.includes(key) ||
-      key === PRIVACY_SCORE_HISTORY_KEY ||
-      key === PRIVACY_POSTURE_SNAPSHOT_KEY ||
-      key === KEY_ROTATION_LOG_KEY ||
-      key === PRIVACY_ZONE_SUGGESTION_DISMISSALS_KEY
+    storage: encryptedErasureKeys.has(key)
       ? 'encrypted_json'
       : 'json_or_preferences',
   }));
@@ -286,6 +307,7 @@ export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now() } = {}
     const startedAt = new Date(now).toISOString();
     const keyList = getErasureKeyList();
     const tripRepository = await eraseTripRepositoryForDataRights();
+    const speedKnowledge = await eraseSpeedKnowledgeForDataRights();
     const wipedKeys = [];
     for (const item of keyList) {
       wipedKeys.push(await overwriteThenRemoveKey(item.key));
@@ -306,6 +328,7 @@ export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now() } = {}
       erasedKeys: keyList,
       wipedKeys,
       tripRepository,
+      speedKnowledge,
       nativeCompletedTripsCleared,
       limitation: 'This receipt records Road Sage app-level overwrite/remove operations. A rooted device, compromised app bundle, browser cache, OS backup, or storage wear-leveling can remain outside what the app can verify from inside itself.',
     };

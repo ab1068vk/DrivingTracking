@@ -867,6 +867,7 @@ describe('backup export privacy', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const settings = {
       privacy_zones: [{ id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 }],
+      last_map_center: { lat: 43.65, lng: -79.38, source: 'privacy-zone-review' },
     };
     const trip = {
       id: 'trip-private-boundary',
@@ -925,7 +926,9 @@ describe('backup export privacy', () => {
     });
     expect(backup.settings.privacy_zones[0].radius_m).toBeUndefined();
     expect(backup.settings.privacy_zones[0].privacy_cell_hashes).toBeUndefined();
+    expect(backup.settings.last_map_center).toBeUndefined();
     expect(JSON.stringify(backup.settings.privacy_zones)).not.toContain('privacy_cell_hashes');
+    expect(JSON.stringify(backup.settings)).not.toContain('privacy-zone-review');
     expect(zoneCommitment).toMatchObject({
       zone_ref: 'private_area',
       export_id: backup.export_id,

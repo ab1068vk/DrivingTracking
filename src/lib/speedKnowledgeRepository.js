@@ -35,6 +35,18 @@ const openDb = () => new Promise((resolve, reject) => {
   request.onerror = () => reject(request.error);
 });
 
+const deleteDb = () => new Promise((resolve, reject) => {
+  if (!canUseIndexedDb() || typeof indexedDB.deleteDatabase !== 'function') {
+    resolve(false);
+    return;
+  }
+
+  const request = indexedDB.deleteDatabase(SPEED_KNOWLEDGE_DB_NAME);
+  request.onsuccess = () => resolve(true);
+  request.onerror = () => reject(request.error);
+  request.onblocked = () => reject(new Error(`IndexedDB delete blocked for ${SPEED_KNOWLEDGE_DB_NAME}`));
+});
+
 const readIndexedDb = async (key) => {
   const db = await openDb();
   try {
@@ -168,3 +180,32 @@ export const replaceSpeedKnowledgeData = async (value) => {
     }));
   }
 };
+
+export async function eraseSpeedKnowledgeForDataRights() {
+  const result = {
+    store: `indexeddb:${SPEED_KNOWLEDGE_DB_NAME}/${SPEED_KNOWLEDGE_STORE}`,
+    indexedDbDeleted: false,
+    fallbackKey: SPEED_KNOWLEDGE_STORAGE_KEY,
+    fallbackRemoved: false,
+    method: 'indexeddb_delete_and_mirror_remove',
+  };
+
+  try {
+    result.indexedDbDeleted = await deleteDb();
+    migrationPromise = null;
+  } catch (error) {
+    result.method = 'mirror_remove_indexeddb_delete_failed';
+    logSystemFailure('speed_knowledge_data_erasure_indexeddb', error, {});
+  }
+
+  await Promise.resolve(setJson(SPEED_KNOWLEDGE_STORAGE_KEY, {
+    _secure_delete_tombstone: true,
+    _secure_delete_at: Date.now(),
+    random_padding: Math.random().toString(36).repeat(128),
+  })).catch(() => {});
+  await Promise.resolve(removeJson(SPEED_KNOWLEDGE_STORAGE_KEY)).then(() => {
+    result.fallbackRemoved = true;
+  }).catch(() => {});
+
+  return result;
+}
