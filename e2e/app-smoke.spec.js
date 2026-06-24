@@ -29,7 +29,7 @@ test('navigates the core dashboard and settings flow', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
 
   await page.getByPlaceholder(/Search settings/).fill('OSRM');
-  await expect(page.getByRole('button', { name: /Advanced models.*Advanced/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /OSRM timeout and endpoint.*Speed & Road Data/i })).toBeVisible();
 });
 
 test('opens empty trip history without leaving the app shell', async ({ page }) => {
