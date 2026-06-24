@@ -584,6 +584,50 @@ describe('privacyZones', () => {
     expect(second).toEqual(first);
   });
 
+  it('matches saved redacted records to a re-added zone when the old zone id changed', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-13T16:00:00.000Z'));
+    const protectedAt = '2026-06-13T14:00:00.000Z';
+    const readdedZone = { ...zone, id: 'home-readded' };
+    const trips = [{
+      id: 'protected-trip-before-readd',
+      start_time: protectedAt,
+      route_points: [
+        {
+          lat: null,
+          lng: null,
+          timestamp: protectedAt,
+          masked_for_privacy: true,
+          privacy_gap: true,
+          privacy_zone_id: 'home-deleted',
+          privacy_zone_label: 'Home',
+          privacy_zone_radius_m: 100,
+        },
+      ],
+      driving_events: [
+        {
+          type: 'harsh_brake',
+          lat: null,
+          lng: null,
+          timestamp: protectedAt,
+          masked_for_privacy: true,
+          privacy_event_redacted: true,
+          privacy_zone_id: 'home-deleted',
+          privacy_zone_label: 'Home',
+          privacy_zone_radius_m: 100,
+        },
+      ],
+    }];
+
+    const [stats] = deriveZoneStatsFromTrips(trips, { privacy_zones: [readdedZone] });
+
+    expect(stats.id).toBe('home-readded');
+    expect(stats.today).toMatchObject({ hidden: 1, events: 1 });
+    expect(stats.week).toMatchObject({ hidden: 1, events: 1 });
+    expect(stats.allTime).toMatchObject({ hidden: 1, events: 1 });
+    expect(stats.lastActive).toBe(Date.parse(protectedAt));
+  });
+
   it('derives zone activity from saved local route points inside privacy zones', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-13T16:00:00.000Z'));

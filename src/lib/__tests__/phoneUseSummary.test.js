@@ -156,6 +156,36 @@ describe('phone use summary', () => {
     expect(summary.phone_use_summary.worstEvent.lng).toBeUndefined();
   });
 
+  it('keeps route point counts in summaries without retaining route geometry', () => {
+    const routePoints = Array.from({ length: 20 }, (_, index) => ({
+      timestamp: new Date(Date.parse('2026-06-18T12:00:00.000Z') + index * 1000).toISOString(),
+      lat: 43.65 + index * 0.0001,
+      lng: -79.38 - index * 0.0001,
+      speed_kmh: index === 0 ? 0 : 42,
+    }));
+    const summary = buildTripSummary({
+      id: 'trip-list-route-counts',
+      status: 'completed',
+      route_points: routePoints,
+      route_points_raw_count: 24,
+    });
+    const expired = buildTripSummary({
+      id: 'expired-route',
+      status: 'completed',
+      route_points: [],
+      route_points_raw_count: 24,
+      route_points_map_count: 0,
+      route_replay_available: true,
+      route_data_expired_at: '2026-06-18T13:00:00.000Z',
+    });
+
+    expect(summary.route_points).toBeUndefined();
+    expect(summary.route_points_map_count).toBe(20);
+    expect(summary.route_replay_available).toBe(true);
+    expect(expired.route_points_map_count).toBe(0);
+    expect(expired.route_replay_available).toBe(false);
+  });
+
   it('adds only supported road, intersection, weather, and nearby-event context', () => {
     const event = phoneUseEvent({
       startTime: '2026-06-18T12:05:00.000Z',

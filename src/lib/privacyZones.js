@@ -180,6 +180,39 @@ const zoneStatsTimestampMs = (value, fallback = null) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const normalizeZoneMetadataLabel = (value) => String(value || '').trim().toLowerCase();
+
+const zoneMetadataId = (item = {}) => String(item?.privacy_zone_id ?? item?.zone_id ?? '').trim();
+
+const zoneMetadataLabel = (item = {}) => normalizeZoneMetadataLabel(
+  item?.privacy_zone_label ?? item?.zone_label ?? item?.privacy_zone_name ?? item?.zone_name
+);
+
+const zoneMetadataRadiusM = (item = {}) => {
+  const value = Number(
+    item?.privacy_zone_radius_m ?? item?.zone_radius_m ?? item?.privacy_radius_m ?? item?.radius_m
+  );
+  return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+const metadataMatchesZone = (item = {}, zone = {}) => {
+  const itemLabel = zoneMetadataLabel(item);
+  const zoneLabel = normalizeZoneMetadataLabel(zone?.label);
+  if (!itemLabel || !zoneLabel || itemLabel !== zoneLabel) return false;
+
+  const itemRadius = zoneMetadataRadiusM(item);
+  const zoneRadius = Number(zone?.radius_m);
+  return itemRadius == null || !Number.isFinite(zoneRadius) || Math.abs(itemRadius - zoneRadius) <= 5;
+};
+
+const zoneFromPrivacyMetadata = (item = {}, statsByZone = new Map(), zones = []) => {
+  const itemZoneId = zoneMetadataId(item);
+  if (itemZoneId && statsByZone.has(itemZoneId)) return statsByZone.get(itemZoneId) || null;
+
+  const matchedZone = zones.find((zone) => metadataMatchesZone(item, zone));
+  return matchedZone ? statsByZone.get(matchedZone.id) || null : null;
+};
+
 export function deriveZoneStatsFromTrips(trips = [], settings = localSettings.get()) {
   const zones = getPrivacyZones(settings);
   const today = startOfDay();
@@ -194,8 +227,16 @@ export function deriveZoneStatsFromTrips(trips = [], settings = localSettings.ge
   }]));
   const protectedZoneForRoutePoint = (point) => {
     if (point?.privacy_boundary === true) return null;
-    if (point?.masked_for_privacy === true && point?.privacy_zone_id) {
-      return statsByZone.get(point.privacy_zone_id) || null;
+    if (
+      point?.masked_for_privacy === true ||
+      point?.privacy_gap === true ||
+      point?.privacy_purged === true ||
+      point?.privacy_live_redacted === true ||
+      point?.privacy_zone_id ||
+      point?.privacy_zone_label
+    ) {
+      const metadataZone = zoneFromPrivacyMetadata(point, statsByZone, zones);
+      if (metadataZone) return metadataZone;
     }
     const zone = isPointInPrivacyZone(point, zones);
     if (zone) return statsByZone.get(zone.id) || null;
@@ -203,8 +244,14 @@ export function deriveZoneStatsFromTrips(trips = [], settings = localSettings.ge
     return fallbackZone ? statsByZone.get(fallbackZone.id) || null : null;
   };
   const protectedZoneForEvent = (event) => {
-    if (event?.privacy_event_redacted === true && event?.privacy_zone_id) {
-      return statsByZone.get(event.privacy_zone_id) || null;
+    if (
+      event?.privacy_event_redacted === true ||
+      event?.masked_for_privacy === true ||
+      event?.privacy_zone_id ||
+      event?.privacy_zone_label
+    ) {
+      const metadataZone = zoneFromPrivacyMetadata(event, statsByZone, zones);
+      if (metadataZone) return metadataZone;
     }
     const zone = isPointInPrivacyZone(event, zones, ZONE_EVENT_GUARD_M);
     if (zone) return statsByZone.get(zone.id) || null;

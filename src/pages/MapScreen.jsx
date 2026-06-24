@@ -62,9 +62,21 @@ const relativeTime = (value) => {
   return `${Math.round(hours / 24)}d ago`;
 };
 
+const pointCount = (value) => {
+  const count = Number(value);
+  return Number.isFinite(count) && count >= 0 ? Math.floor(count) : null;
+};
+
 const tripPointSummary = (trip) => {
-  const mapPoints = trip?.route_points?.length || 0;
-  const recorded = Number(trip?.route_points_raw_count) || mapPoints;
+  const routePointCount = Array.isArray(trip?.route_points) ? trip.route_points.length : null;
+  const storedMapPointCount = pointCount(trip?.route_points_map_count);
+  const mapPoints = routePointCount ?? storedMapPointCount;
+  const recorded = pointCount(trip?.route_points_raw_count) ?? mapPoints ?? 0;
+
+  if (mapPoints == null) {
+    return recorded > 0 ? `${recorded} GPS readings` : 'Route details unavailable';
+  }
+
   return recorded !== mapPoints
     ? `${recorded} GPS readings - ${mapPoints} map/playback points`
     : `${mapPoints} GPS points`;
@@ -76,7 +88,12 @@ const completedTripSummaryLabel = (count) => (
 
 const hasPlayableRouteGps = (trip) => (trip?.route_points?.length || 0) > 1;
 const hasReplayableRoute = (trip) => (
-  hasPlayableRouteGps(trip) || trip?.route_replay_available === true
+  !trip?.route_data_expired_at &&
+  (
+    hasPlayableRouteGps(trip) ||
+    trip?.route_replay_available === true ||
+    (pointCount(trip?.route_points_map_count) ?? 0) > 1
+  )
 );
 const tripRouteKey = (trip) => trip?.route_key || routeKeyForTrip(trip);
 

@@ -624,6 +624,9 @@ export const SPEED_MAP_LAYER_FOCUSED_DEFAULTS = {
   unset: false,
 };
 
+const ROAD_STATE_LAYER_KEYS = ['conflicts', 'saved', 'observed', 'unset'];
+const INTELLIGENCE_LAYER_KEYS = ['posted', 'estimates', 'lowConfidence', 'stale', 'expiring', 'missingGeometry'];
+
 function hasSpeedLimit(section = {}) {
   const limit = Number(section.effectiveLimitKmh ?? section.limitKmh ?? section.observedLimitKmh);
   return Number.isFinite(limit) && limit > 0;
@@ -725,16 +728,32 @@ export function filterSpeedMapSections(sections = [], {
 } = {}) {
   const normalizedQuery = String(query || '').trim().toLowerCase();
   const layerState = { ...SPEED_MAP_LAYER_DEFAULTS, ...(layers || {}) };
+  const activeRoadLayers = ROAD_STATE_LAYER_KEYS.filter((key) => layerState[key] !== false);
+  const activeIntelligenceLayers = INTELLIGENCE_LAYER_KEYS.filter((key) => layerState[key] !== false);
+  const allFiltersOff = activeRoadLayers.length === 0 && activeIntelligenceLayers.length === 0;
+  const shouldMatchIntelligence = activeIntelligenceLayers.length > 0 && (
+    activeRoadLayers.length === 0 ||
+    activeIntelligenceLayers.length < INTELLIGENCE_LAYER_KEYS.length
+  );
+  const matchesIntelligenceLayer = (flags, key) => {
+    if (key === 'posted') return flags.posted;
+    if (key === 'estimates') return flags.estimate;
+    if (key === 'lowConfidence') return flags.lowConfidence;
+    if (key === 'stale') return flags.stale;
+    if (key === 'expiring') return flags.expiring || flags.expired;
+    if (key === 'missingGeometry') return flags.missingGeometry;
+    return false;
+  };
+
   return (sections || [])
     .filter((section) => {
+      if (allFiltersOff) return false;
       const flags = speedMapSectionFlags(section);
-      if (layerState[flags.layer] === false) return false;
-      if (flags.posted && layerState.posted === false) return false;
-      if (flags.estimate && layerState.estimates === false) return false;
-      if (flags.lowConfidence && layerState.lowConfidence === false) return false;
-      if (flags.stale && layerState.stale === false) return false;
-      if ((flags.expiring || flags.expired) && layerState.expiring === false) return false;
-      if (flags.missingGeometry && layerState.missingGeometry === false) return false;
+      if (activeRoadLayers.length > 0 && !activeRoadLayers.includes(flags.layer)) return false;
+      if (
+        shouldMatchIntelligence &&
+        !activeIntelligenceLayers.some((key) => matchesIntelligenceLayer(flags, key))
+      ) return false;
       return true;
     })
     .filter((section) => !normalizedQuery || normalizedSearchText(section).includes(normalizedQuery));

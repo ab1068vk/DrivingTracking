@@ -10,7 +10,7 @@ import {
   summarizeSpeedMapSections,
 } from '@/lib/speedLimitMapSections';
 import { beginMeasure, measureSync } from '@/lib/performanceTriage';
-import { Maximize2 } from 'lucide-react';
+import { Maximize2, SlidersHorizontal } from 'lucide-react';
 import MapErrorBoundary from '@/components/MapErrorBoundary';
 import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 import useLocalSettings from '@/hooks/useLocalSettings';
@@ -617,21 +617,28 @@ function SpeedLimitEditorMapContent({
       <div className={`relative w-full ${heightClassName}`}>
         <div ref={containerRef} className="h-full w-full" />
         {onLayerChange && (
-          <div className="absolute right-3 top-3 z-[500] w-[min(21rem,calc(100%-1.5rem))] rounded-xl border border-border bg-background p-2 shadow-lg">
-            <div className="flex items-center justify-between gap-2 px-1 text-[11px] font-semibold text-muted-foreground">
-              <span>{visibleStats.total} of {stats.total} sections visible</span>
-              <span>{stats.savedRules} saved rules</span>
-            </div>
-            <button
-              type="button"
-              onClick={handleFitVisible}
-              disabled={sections.length === 0}
-              className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-2 py-1.5 text-[11px] font-semibold text-foreground hover:bg-secondary disabled:opacity-45"
-            >
-              <Maximize2 className="h-3.5 w-3.5 text-primary" />
-              Fit visible
-            </button>
-            <div className="mt-2 space-y-2">
+          <details className="absolute right-3 top-3 z-[500] w-[min(21rem,calc(100%-1.5rem))] rounded-xl border border-border bg-background/95 p-2 shadow-lg backdrop-blur [&>summary::-webkit-details-marker]:hidden">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-lg px-1 py-0.5 text-[11px] font-semibold text-muted-foreground">
+              <span>{visibleStats.total} of {stats.total} visible</span>
+              <span className="inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-1 text-foreground">
+                <SlidersHorizontal className="h-3.5 w-3.5 text-primary" />
+                Filters
+              </span>
+            </summary>
+            <div className="mt-2 border-t border-border/70 pt-2">
+              <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-muted-foreground">
+                <span>{stats.savedRules} saved rules</span>
+                <button
+                  type="button"
+                  onClick={handleFitVisible}
+                  disabled={sections.length === 0}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-2 py-1.5 text-[11px] font-semibold text-foreground hover:bg-secondary disabled:opacity-45"
+                >
+                  <Maximize2 className="h-3.5 w-3.5 text-primary" />
+                  Fit visible
+                </button>
+              </div>
+              <div className="mt-2 space-y-2">
               <div>
                 <div className="px-1 text-[10px] font-semibold uppercase text-muted-foreground">Road state</div>
                 <div className="mt-1 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
@@ -674,7 +681,8 @@ function SpeedLimitEditorMapContent({
                 </div>
               </div>
             </div>
-          </div>
+            </div>
+          </details>
         )}
         {(!online || !remoteTilesAllowed) && (
           <div className="pointer-events-none absolute bottom-20 left-4 z-[500] max-w-[14rem] rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950 shadow-lg dark:border-amber-800 dark:bg-amber-950/90 dark:text-amber-100">

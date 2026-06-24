@@ -879,7 +879,7 @@ export function ZonesTab({ data, onAcceptSuggestion, onDismissSuggestion }) {
         onDismissSuggestion={onDismissSuggestion}
       />
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-        <div className="flex items-start gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="font-semibold">How these counts work</div><p className="mt-1 text-xs text-muted-foreground">GPS samples and driving events are counted from redacted records saved with each trip. Reopening maps or refreshing this page does not increase them.</p></div></div>
+        <div className="flex items-start gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="font-semibold">How these counts work</div><p className="mt-1 text-xs text-muted-foreground">Zone counts come from saved trip records, not from refreshing this page. The score input self-test uses a synthetic zone and only proves the scoring pipeline is masking private inputs; it is not a count of your real drives.</p></div></div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard icon={MapPin} label="Configured zones" value={summary.zoneCount || 0} detail={`${summary.activeZoneCount || 0} have protected trip activity`} />

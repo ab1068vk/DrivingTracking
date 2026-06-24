@@ -196,6 +196,17 @@ const SPEED_WORKSPACES = [
 ];
 const MAP_MODEL_WORKSPACES = new Set(['map', 'review']);
 
+const speedSummaryMetrics = (rows, mapStats) => [
+  { key: 'saved', label: 'Saved', value: rows.length, Icon: ShieldCheck, className: 'text-foreground' },
+  { key: 'conflicts', label: 'Conflicts', value: mapStats.conflicts, Icon: AlertTriangle, className: 'text-red-600' },
+  { key: 'observed', label: 'Observed only', value: mapStats.observedOnly, Icon: Layers, className: 'text-sky-600' },
+  { key: 'sections', label: 'Map sections', value: mapStats.total, Icon: MapPin, className: 'text-foreground' },
+  { key: 'posted', label: 'Posted', value: mapStats.posted, Icon: CheckSquare2, className: 'text-emerald-600' },
+  { key: 'estimates', label: 'Estimates', value: mapStats.estimates, Icon: Gauge, className: 'text-sky-600' },
+  { key: 'lowConfidence', label: 'Low conf.', value: mapStats.lowConfidence, Icon: Info, className: 'text-amber-600' },
+  { key: 'missingGeometry', label: 'Needs line', value: mapStats.missingGeometry, Icon: MapPin, className: 'text-foreground' },
+];
+
 const distanceMeters = (a, b) => {
   const lat1 = Number(a?.lat) * Math.PI / 180;
   const lat2 = Number(b?.lat) * Math.PI / 180;
@@ -1912,62 +1923,15 @@ export default function SpeedLimits() {
         </div>
       )}
 
-      <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
-        <div className="rounded-xl border border-border bg-card px-3 py-2">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-muted-foreground">
-            <ShieldCheck className="h-3.5 w-3.5" />
-            Saved rules
-          </div>
-          <div className="mt-1 text-2xl font-bold">{rows.length}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card px-3 py-2">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-muted-foreground">
-            <AlertTriangle className="h-3.5 w-3.5" />
-            Conflicts
-          </div>
-          <div className="mt-1 text-2xl font-bold text-red-600">{mapStats.conflicts}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card px-3 py-2">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-muted-foreground">
-            <Layers className="h-3.5 w-3.5" />
-            Observed only
-          </div>
-          <div className="mt-1 text-2xl font-bold">{mapStats.observedOnly}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card px-3 py-2">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-muted-foreground">
-            <MapPin className="h-3.5 w-3.5" />
-            Map sections
-          </div>
-          <div className="mt-1 text-2xl font-bold">{mapStats.total}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card px-3 py-2">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-muted-foreground">
-            <CheckSquare2 className="h-3.5 w-3.5" />
-            Posted
-          </div>
-          <div className="mt-1 text-2xl font-bold text-emerald-600">{mapStats.posted}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card px-3 py-2">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-muted-foreground">
-            <Gauge className="h-3.5 w-3.5" />
-            Estimates
-          </div>
-          <div className="mt-1 text-2xl font-bold text-sky-600">{mapStats.estimates}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card px-3 py-2">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-muted-foreground">
-            <Info className="h-3.5 w-3.5" />
-            Low conf.
-          </div>
-          <div className="mt-1 text-2xl font-bold text-amber-600">{mapStats.lowConfidence}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card px-3 py-2">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-muted-foreground">
-            <MapPin className="h-3.5 w-3.5" />
-            Needs line
-          </div>
-          <div className="mt-1 text-2xl font-bold">{mapStats.missingGeometry}</div>
+      <section className="rounded-xl border border-border bg-card px-3 py-2 shadow-sm">
+        <div className="flex gap-1.5 overflow-x-auto thin-scrollbar">
+          {speedSummaryMetrics(rows, mapStats).map(({ key, label, value, Icon, className }) => (
+            <div key={key} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-secondary/55 px-2.5 py-1.5 text-xs">
+              <Icon className={`h-3.5 w-3.5 ${className}`} />
+              <span className="font-semibold text-muted-foreground">{label}</span>
+              <span className={`font-grotesk text-sm font-bold ${className}`}>{value}</span>
+            </div>
+          ))}
         </div>
       </section>
 

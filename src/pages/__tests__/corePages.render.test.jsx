@@ -536,6 +536,23 @@ describe('core page component renders', () => {
     expect(html).not.toContain('3 completed trip summaries are hidden');
   });
 
+  it('uses summary map point counts on the map trip list', async () => {
+    setTripSummaries([{
+      ...sampleTrip,
+      id: 'summary-map-count',
+      route_points: undefined,
+      route_points_raw_count: 72,
+      route_points_map_count: 64,
+      route_replay_available: true,
+    }]);
+
+    const { default: MapScreen } = await import('@/pages/MapScreen');
+    const html = renderToStaticMarkup(<MapScreen />);
+
+    expect(html).toContain('72 GPS readings - 64 map/playback points');
+    expect(html).not.toContain('72 GPS readings - 0 map/playback points');
+  });
+
   it('renders Diagnostics recovery compatibility as read-only identity facts', async () => {
     queryData.set(JSON.stringify(['diagnostics-trips']), [sampleTrip]);
     const { buildRecoveryCompatibilitySnapshot, default: Diagnostics } = await import('@/pages/Diagnostics');

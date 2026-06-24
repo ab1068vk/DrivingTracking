@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSplitCorrections,
+  filterSpeedMapSections,
   findOverlappingSpeedSections,
   snapSectionPointsToTripRoutesWithStats,
 } from '@/lib/speedLimitMapSections';
@@ -127,5 +128,55 @@ describe('speedLimitMapSections', () => {
     };
 
     expect(findOverlappingSpeedSections(secondHalf, [firstHalf], { excludeKey: 'split-2' })).toEqual([]);
+  });
+
+  it('shows intelligence matches when road-state layers are all disabled', () => {
+    const sections = [
+      {
+        id: 'posted-section',
+        saved: true,
+        limitKmh: 50,
+        source: 'user_confirmed_posted_sign',
+        sectionPoints: [
+          { lat: 43.65, lng: -79.38 },
+          { lat: 43.651, lng: -79.381 },
+        ],
+      },
+      {
+        id: 'estimate-section',
+        saved: true,
+        limitKmh: 60,
+        source: 'user_entered_estimate',
+        sectionPoints: [
+          { lat: 43.66, lng: -79.39 },
+          { lat: 43.661, lng: -79.391 },
+        ],
+      },
+      {
+        id: 'unset-section',
+        saved: false,
+        sectionPoints: [
+          { lat: 43.67, lng: -79.40 },
+          { lat: 43.671, lng: -79.401 },
+        ],
+      },
+    ];
+
+    const filtered = filterSpeedMapSections(sections, {
+      layers: {
+        conflicts: false,
+        saved: false,
+        observed: false,
+        unset: false,
+        posted: true,
+        estimates: false,
+        lowConfidence: false,
+        stale: false,
+        expiring: false,
+        missingGeometry: false,
+      },
+    });
+
+    expect(filtered.map((section) => section.id)).toEqual(['posted-section']);
   });
 });

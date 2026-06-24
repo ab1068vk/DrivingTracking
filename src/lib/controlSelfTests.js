@@ -256,7 +256,7 @@ export const selfTestScoreInputMasking = () => withCache('score_input_masking', 
   const settings = {
     privacy_zones: [{
       id: 'score-input-zone',
-      label: 'Score input self test',
+      label: 'Synthetic score input self test',
       lat: 43,
       lng: -79,
       radius_m: 120,
