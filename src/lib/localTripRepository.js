@@ -1270,11 +1270,13 @@ export async function eraseTripRepositoryForDataRights() {
   return result;
 }
 
-const pruneExpiredTrips = async () => {
+export const enforceTripDataRetention = async ({ now = Date.now() } = {}) => {
   const retentionDays = Number(localSettings.get().data_retention_days || 0);
-  if (!retentionDays) return;
+  if (!retentionDays) {
+    return { enabled: false, retentionDays: 0, deletedTrips: 0 };
+  }
 
-  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
   const trips = await getAllTrips();
   const expired = trips.filter((trip) => {
     const when = new Date(trip.end_time || trip.start_time || trip.created_at || 0).getTime();
@@ -1284,6 +1286,24 @@ const pruneExpiredTrips = async () => {
   for (const trip of expired) {
     await deleteTrip(trip.id);
   }
+
+  if (expired.length) {
+    await invalidateTripDerivedCaches();
+    recordSystemEvent('trip_data_retention_enforced', {
+      retention_days: retentionDays,
+      deleted_trip_count: expired.length,
+    }, {
+      category: 'storage',
+      title: 'Expired trips deleted',
+      message: `Deleted ${expired.length} trip${expired.length === 1 ? '' : 's'} older than ${retentionDays} days.`,
+    });
+  }
+
+  return {
+    enabled: true,
+    retentionDays,
+    deletedTrips: expired.length,
+  };
 };
 
 const coordinateFields = [
@@ -1434,7 +1454,7 @@ export async function runTripRepositoryMaintenance() {
   repositoryMaintenancePromise = (async () => {
     await migrateLegacyTripStorageToEncrypted();
     await importNativeCompletedTrips();
-    await pruneExpiredTrips();
+    await enforceTripDataRetention();
     await enforceRawGpsRetention();
     await migrateRetiredTripEventTypesOnce();
     const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
@@ -1482,7 +1502,7 @@ export const localTripRepository = {
 
   async list({ sort = '-start_time', limit = 100 } = {}) {
     await importNativeCompletedTrips();
-    await pruneExpiredTrips();
+    await enforceTripDataRetention();
     await migrateRetiredTripEventTypesOnce();
     const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
     const trips = await rescoreTripsIfNeeded(taggedTrips);
@@ -1491,7 +1511,7 @@ export const localTripRepository = {
 
   async listAll({ sort = '-start_time' } = {}) {
     await importNativeCompletedTrips();
-    await pruneExpiredTrips();
+    await enforceTripDataRetention();
     await migrateRetiredTripEventTypesOnce();
     const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
     const trips = await rescoreTripsIfNeeded(taggedTrips);
@@ -1518,7 +1538,7 @@ export const localTripRepository = {
     const storageSaved = await sanitizeTripForPrivacyStorageAsync(saved);
     await putTrip(storageSaved);
     if (storageSaved.status === 'completed') await invalidateTripDerivedCaches();
-    await pruneExpiredTrips();
+    await enforceTripDataRetention();
     return storageSaved;
   },
 
@@ -1565,7 +1585,7 @@ export const localTripRepository = {
     const normalized = await sanitizeTripsForPrivacyStorage(rescoredTrips);
     await putTrips(normalized);
     if (normalized.some((trip) => trip.status === 'completed')) await invalidateTripDerivedCaches();
-    await pruneExpiredTrips();
+    await enforceTripDataRetention();
     return normalized;
   },
 
@@ -1589,7 +1609,7 @@ export const localTripRepository = {
 
   async rescoreCompletedTrips({ onlyProvenanceMismatch = false, reason = 'manual' } = {}) {
     await importNativeCompletedTrips();
-    await pruneExpiredTrips();
+    await enforceTripDataRetention();
     await migrateRetiredTripEventTypesOnce();
     const thresholds = buildDrivingThresholds(localSettings.get());
     const trips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
@@ -1679,7 +1699,7 @@ export const localTripRepository = {
 
   async getScoreMigrationSummary() {
     await importNativeCompletedTrips();
-    await pruneExpiredTrips();
+    await enforceTripDataRetention();
     await migrateRetiredTripEventTypesOnce();
     const thresholds = buildDrivingThresholds(localSettings.get());
     const trips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());

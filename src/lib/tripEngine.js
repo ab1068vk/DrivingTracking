@@ -811,10 +811,18 @@ export function calculateAcceleration(speed1Kmh, speed2Kmh, durationSeconds) {
   return (v2 - v1) / durationSeconds;
 }
 
+const timestampMsCache = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+
 function timestampMs(point) {
+  if (point && typeof point === 'object') {
+    const cached = timestampMsCache?.get(point);
+    if (cached != null) return cached;
+  }
   const value = point?.timestamp ?? point?.time;
   const ms = value ? new Date(value).getTime() : NaN;
-  return Number.isFinite(ms) ? ms : Date.now();
+  const resolved = Number.isFinite(ms) ? ms : Date.now();
+  if (point && typeof point === 'object') timestampMsCache?.set(point, resolved);
+  return resolved;
 }
 
 function parseTimestampMs(value) {
@@ -4453,6 +4461,25 @@ export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thres
   let source = actualSource;
   let learnedLocalConfidence = null;
   let speedLimitConflict = null;
+  let resolutionReason = actualLimitKmh != null ? 'stored_trip_limit' : 'fallback_context';
+  let localSpeedRule = null;
+
+  if (localKnowledge && Number(localKnowledge.limitKmh) > 0) {
+    localSpeedRule = {
+      correctionId: localKnowledge.correctionId || null,
+      geohash: localKnowledge.geohash || null,
+      matchType: localKnowledge.matchType || null,
+      matchDistanceM: Number.isFinite(Number(localKnowledge.matchDistanceM))
+        ? Number(localKnowledge.matchDistanceM)
+        : null,
+      matchReason: localKnowledge.matchReason || null,
+      source: localKnowledge.source || null,
+      roadName: localKnowledge.roadName || null,
+      contextLabel: localKnowledge.contextLabel || null,
+      directionLabel: localKnowledge.directionLabel || null,
+      timeLabel: localKnowledge.timeLabel || null,
+    };
+  }
 
   if (localKnowledge?.source === 'user_confirmed_posted_sign' && Number(localKnowledge.limitKmh) > 0) {
     const savedLimitKmh = Number(localKnowledge.limitKmh);
@@ -4467,6 +4494,9 @@ export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thres
     if (conflictDeltaKmh > 10 && !conflictWasReviewed) {
       effectiveLimitKmh = Math.min(savedLimitKmh, actualLimitKmh);
       source = effectiveLimitKmh === actualLimitKmh ? actualSource : 'user_confirmed_posted_sign';
+      resolutionReason = source === 'user_confirmed_posted_sign'
+        ? 'user_confirmed_posted_sign_conflict_guard'
+        : 'stored_trip_limit_conflict_guard';
       speedLimitConflict = {
         savedLimitKmh,
         observedLimitKmh: actualLimitKmh,
@@ -4476,6 +4506,7 @@ export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thres
     } else {
       effectiveLimitKmh = savedLimitKmh;
       source = 'user_confirmed_posted_sign';
+      resolutionReason = 'user_confirmed_posted_sign';
     }
   } else if (
     localKnowledge &&
@@ -4492,9 +4523,15 @@ export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thres
       ? 'user_entered_estimate'
       : 'learned_local';
     learnedLocalConfidence = Number(localKnowledge.confidence);
+    resolutionReason = source === 'user_entered_estimate' ? 'user_entered_estimate' : 'learned_local_speed';
   } else if (actualLimitKmh != null) {
     effectiveLimitKmh = actualLimitKmh;
     source = actualSource;
+    resolutionReason = actualSource === 'openstreetmap'
+      ? 'openstreetmap_posted_limit'
+      : actualSource === 'osm_highway_default'
+        ? 'osm_road_type_default'
+        : 'stored_trip_limit';
   } else {
     const { countryCode, provinceCode } = speedDefaultRegionFromSettings(options.settings || {});
     const osmHighwayType = currentPoint.osmHighwayType || currentPoint.speed_limit_highway || currentPoint.highway || null;
@@ -4507,13 +4544,19 @@ export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thres
         ? Math.min(regionalDefaultEstimate, fallbackLimitKmh)
         : regionalDefaultEstimate;
       source = 'region_default_estimate';
+      resolutionReason = 'regional_default_estimate';
     }
   }
 
   if (effectiveLimitKmh == null && Number.isFinite(inferredLimitKmh) && inferredLimitKmh > 0) {
     effectiveLimitKmh = inferredLimitKmh;
     source = 'inferred';
+    resolutionReason = 'gps_inferred_limit';
   }
+
+  const fallbackReason = localSpeedRule == null && actualLimitKmh == null
+    ? resolutionReason
+    : null;
 
   const tier = tierForSource(source);
   const confidence = confidenceForSource(source, learnedLocalConfidence);
@@ -4532,6 +4575,9 @@ export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thres
     tier,
     confidence,
     alertMarginKmh,
+    resolutionReason,
+    fallbackReason,
+    localSpeedRule,
     speedLimitConflict,
     shouldAlert: (speedKmh) => (
       Number.isFinite(Number(speedKmh)) &&
@@ -6299,6 +6345,50 @@ function stopStartEvidenceDistances(routePoints = [], thresholds = DEFAULT_THRES
   };
 }
 
+const EMPTY_HEADING_DRIFT_STATS = Object.freeze({
+  heading_drift_beta_window_count: 0,
+  heading_drift_beta_weighted_contribution: 0,
+  heading_drift_beta_score: null,
+  heading_drift_beta_level: 'none',
+  heading_drift_beta_confidence: 'insufficient_data',
+});
+
+function headingDriftStatsFromTripStats(stats = {}) {
+  return Object.prototype.hasOwnProperty.call(stats, 'heading_drift_beta_score')
+    ? {
+      heading_drift_beta_window_count: stats.heading_drift_beta_window_count ?? 0,
+      heading_drift_beta_weighted_contribution: stats.heading_drift_beta_weighted_contribution ?? 0,
+      heading_drift_beta_score: stats.heading_drift_beta_score,
+      heading_drift_beta_level: stats.heading_drift_beta_level ?? 'none',
+      heading_drift_beta_confidence: stats.heading_drift_beta_confidence ?? 'insufficient_data',
+    }
+    : null;
+}
+
+function hillStatsFromTripStats(stats = {}) {
+  return Object.prototype.hasOwnProperty.call(stats, 'hill_driving_score')
+    ? {
+      climb_distance_km: stats.climb_distance_km ?? null,
+      descent_distance_km: stats.descent_distance_km ?? null,
+      hill_infraction_count: stats.hill_infraction_count ?? 0,
+      hill_infraction_rate_per_km: stats.hill_infraction_rate_per_km ?? 0,
+      hill_driving_score: stats.hill_driving_score,
+      hill_route: stats.hill_route ?? false,
+    }
+    : null;
+}
+
+function parkingStatsFromTripStats(stats = {}) {
+  return Object.prototype.hasOwnProperty.call(stats, 'parking_approach_score')
+    ? {
+      parking_approach_score: stats.parking_approach_score,
+      parking_approach_grade: stats.parking_approach_grade ?? 'insufficient_data',
+      parking_stop_detected: stats.parking_stop_detected ?? false,
+      parking_stop_duration_seconds: stats.parking_stop_duration_seconds ?? 0,
+    }
+    : null;
+}
+
 export function calculateTripScores(
   events,
   stats,
@@ -6451,16 +6541,10 @@ export function calculateTripScores(
   const engineStress = calculateEngineStressScore(scoringEvents, stats, routePoints, thresholds);
   const tireWear = calculateTireWearUnits(scoringEvents);
   const headingDrift = advancedSafetyEnabled
-    ? detectHeadingDriftBeta(routePoints, durationSeconds, thresholds)
-    : {
-      heading_drift_beta_window_count: 0,
-      heading_drift_beta_weighted_contribution: 0,
-      heading_drift_beta_score: null,
-      heading_drift_beta_level: 'none',
-      heading_drift_beta_confidence: 'insufficient_data',
-    };
-  const hill = calculateHillDrivingScore(routePoints, thresholds);
-  const parking = analyzeParkingApproach(routePoints, thresholds, options.endTime ?? null);
+    ? headingDriftStatsFromTripStats(stats) || detectHeadingDriftBeta(routePoints, durationSeconds, thresholds)
+    : EMPTY_HEADING_DRIFT_STATS;
+  const hill = hillStatsFromTripStats(stats) || calculateHillDrivingScore(routePoints, thresholds);
+  const parking = parkingStatsFromTripStats(stats) || analyzeParkingApproach(routePoints, thresholds, options.endTime ?? null);
   const closeProximityCount = counts[EVENT_TYPES.CLOSE_PROXIMITY];
   const closeProximityScore = closeProximityCount === 0
     ? null

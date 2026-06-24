@@ -108,7 +108,7 @@ The production technical reference is [docs/TECHNICAL_REFERENCE.md](docs/TECHNIC
 
 Other project documentation lives in [docs/](docs/):
 
-- [UI and loading performance guide](docs/UI_LOADING_PERFORMANCE.md) covers the app-wide loading model, Saved road speeds lag analysis, UI loading states, and optimization snippets.
+- [UI and loading performance guide](docs/UI_LOADING_PERFORMANCE.md) covers the app-wide lag incident playbook, Saved road speeds analysis, UI loading states, measurement plan, AI handoff prompt, and optimization snippets.
 - [Privacy Intelligence](docs/PRIVACY_INTELLIGENCE.md) covers the privacy dashboard, score model, protection checks, transmission logging, audit chain, storage/encryption behavior, test gaps, and release-readiness limits.
 - [Speed and fallback behavior](docs/speed-and-fallbacks.md) covers speed capture, limit inference, OpenStreetMap enrichment, and live voice alerts.
 - [Recovery plan](docs/RECOVERY_PLAN.md), [upgrade verification](docs/UPGRADE_VERIFICATION.md), and [version code 2 verification](docs/VERSION_CODE_2_VERIFICATION.md) record Android in-place upgrade safety work.

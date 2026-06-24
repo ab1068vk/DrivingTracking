@@ -21,6 +21,7 @@ export default function TripCard({
   index: _index = 0,
   scoreDelta = null,
   onToggleFavorite = null,
+  onIntent = null,
 }) {
   const navigate = useNavigate();
   const overallScore = getTripComponentScore(trip, 'overall');
@@ -52,6 +53,9 @@ export default function TripCard({
     <div className="render-lazy relative bg-card border border-border rounded-2xl p-4 hover:border-primary/30 transition-colors group">
       <button
         type="button"
+        onPointerDown={() => onIntent?.(trip)}
+        onMouseEnter={() => onIntent?.(trip)}
+        onFocus={() => onIntent?.(trip)}
         onClick={openTrip}
         aria-label={`Open trip: ${title}`}
         className="absolute inset-0 rounded-2xl cursor-pointer"

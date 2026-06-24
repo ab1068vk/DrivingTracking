@@ -377,7 +377,7 @@ export default function PrivacyIntelligence() {
         <ZonesTab
           data={data}
           onAcceptSuggestion={(suggestion) => navigate('/settings?section=settings-privacy-data', {
-            state: { privacyZoneSuggestion: suggestion },
+            state: { privacyZoneSuggestion: suggestion, previewPrivacyZoneSuggestion: true },
           })}
           onDismissSuggestion={async (suggestion) => {
             await dismissPrivacyZoneSuggestion(suggestion);
@@ -953,9 +953,9 @@ function ZoneSuggestionCards({
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div className="font-semibold">You stop here often - protect it?</div>
+          <div className="font-semibold">Frequent stop suggestion</div>
           <p className="mt-1 text-xs opacity-85">
-            Seen on {suggestion.occurrenceDays} different days. Suggested radius: {suggestion.suggestedRadiusM} m. Last seen {formatRelativeTime(suggestion.lastSeenAt)}.
+            Seen on {suggestion.occurrenceDays} different days. Review the suggested {suggestion.suggestedRadiusM} m circle before saving. Last seen {formatRelativeTime(suggestion.lastSeenAt)}.
           </p>
         </div>
         <div className="flex shrink-0 gap-2">
@@ -971,7 +971,7 @@ function ZoneSuggestionCards({
             onClick={() => onAcceptSuggestion?.(suggestion)}
             className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
           >
-            Accept
+            Review area
           </button>
         </div>
       </div>

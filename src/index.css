@@ -139,6 +139,11 @@
     contain-intrinsic-size: 1px 160px;
   }
 
+  .settings-section {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 200px;
+  }
+
   .gradient-primary {
     background: linear-gradient(135deg, hsl(var(--ds-blue)), hsl(var(--ds-purple)));
   }

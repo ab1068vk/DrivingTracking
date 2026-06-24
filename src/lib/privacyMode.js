@@ -40,4 +40,5 @@ export const HEIGHTENED_PRIVACY_MODE_EFFECTS = Object.freeze([
   'Open-Meteo weather and Overpass speed-limit lookups are skipped.',
   'Request timing obfuscation is treated as on for this session.',
   'All privacy zones are treated as high sensitivity for this session.',
+  'When enabled, existing raw GPS inside configured privacy zones is permanently erased after confirmation.',
 ]);

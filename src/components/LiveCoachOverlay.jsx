@@ -22,6 +22,8 @@ import { buildPhoneUseFromAndroidUsage, mergePhoneUseSignals } from '@/lib/phone
 import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
 import { alertMarginForConfidence, shouldWarnForSpeed, VOICE_COOLDOWNS_BY_TIER } from '@/lib/speedLimitSource';
 import { buildSpeedingMessage, buildVoiceAlertMessage } from '@/lib/voiceAlertMessages';
+import { LocalSpeedKnowledge } from '@/lib/localSpeedKnowledge';
+import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 
 // CHANGES (session):
 // - Added tier-aware speed alert helpers for LiveCoachOverlay.
@@ -165,6 +167,7 @@ export default function LiveCoachOverlay({
   const queueRef = useRef([]);
   const lastCoachCheckRef = useRef(0);
   const lastDisplayedAlertRef = useRef({});
+  const localSpeedKnowledgeRef = useRef(null);
   const previousCountsRef = useRef({
     [EVENT_TYPES.HARSH_BRAKE]: currentEvents.filter((event) => event.type === EVENT_TYPES.HARSH_BRAKE).length,
     [EVENT_TYPES.RAPID_ACCELERATION]: currentEvents.filter((event) => event.type === EVENT_TYPES.RAPID_ACCELERATION).length,
@@ -253,11 +256,26 @@ export default function LiveCoachOverlay({
       const speedingEvents = events.filter((event) => event.type === EVENT_TYPES.SPEEDING);
       const latestSpeeding = speedingEvents[speedingEvents.length - 1];
       const latestSpeed = reliablePointSpeed(currentRoutePoints, currentRoutePoints.length - 1, thresholds) ?? 0;
+      const latestPoint = currentRoutePoints[currentRoutePoints.length - 1] || null;
+      if (!localSpeedKnowledgeRef.current) {
+        localSpeedKnowledgeRef.current = new LocalSpeedKnowledge(speedKnowledgeStore);
+      }
+      const pointTimeMs = new Date(latestPoint?.timestamp || Date.now()).getTime();
+      const localKnowledge = latestPoint &&
+        Number.isFinite(Number(latestPoint.lat)) &&
+        Number.isFinite(Number(latestPoint.lng))
+        ? await localSpeedKnowledgeRef.current.getForPoint(
+          Number(latestPoint.lat),
+          Number(latestPoint.lng),
+          Number.isFinite(pointTimeMs) ? pointTimeMs : Date.now(),
+          { headingDeg: latestPoint.heading ?? latestPoint.bearing ?? latestPoint.course ?? null }
+        ).catch(() => null)
+        : null;
       const latestSpeedLimitContext = resolveEffectiveSpeedLimitForIndex(
         currentRoutePoints,
         currentRoutePoints.length - 1,
         thresholds,
-        { settings }
+        { localKnowledge, settings }
       );
       const resolvedSpeedLimit = createTierAwareSpeedLimitContext(latestSpeedLimitContext, settings);
       const durationMins = Number.isFinite(tripStartMs) ? (now - tripStartMs) / 60000 : 0;

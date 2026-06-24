@@ -17,6 +17,7 @@ import { buildWeeklyCoachSummary } from '@/lib/weeklyCoaching';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { logError } from '@/lib/errorReporting';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 
 const focusLabels = {
   braking: 'Brake Earlier',
@@ -39,11 +40,11 @@ const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 export default function DrivingCoach() {
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
-  const { data: allTrips = [], isLoading } = useQuery({
+  const { data: completed = [], isLoading, isFetching } = useQuery({
     ...tripSummaryQueryOptions(),
+    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
 
-  const completed = allTrips.filter((trip) => trip.status === 'completed');
   const coach = buildDrivingCoachInsights(completed, settings);
   const coachBaselineRangeLabel = coach.baseline?.baseline_includes_older_scores
     ? coach.baseline.baseline_label
@@ -106,6 +107,7 @@ export default function DrivingCoach() {
           <Target className="w-5 h-5 text-primary" />
         </div>
       </motion.div>
+      <InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing coaching" />
 
       {isLoading ? (
         <div className="space-y-3">

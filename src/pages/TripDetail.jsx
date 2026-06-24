@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { calibrationLabelService } from '@/api/calibrationLabels';
-import { tripQueryKeys, tripService } from '@/api/trips';
+import { tripDetailQueryOptions, tripQueryKeys, tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { motion } from 'framer-motion';
 import {
@@ -313,7 +313,7 @@ export default function TripDetail() {
   const settings = useLocalSettings();
   const reviewSpeedLimitConflicts = new URLSearchParams(location.search || '').get('review') === 'speed-limit-conflicts';
   const units = settings.units || 'metric';
-  const privacyZones = getPrivacyZones(settings);
+  const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
   const [showCorneringHeatmap, setShowCorneringHeatmap] = useState(false);
   const [showSpeedLimitsOnMap, setShowSpeedLimitsOnMap] = useState(false);
   const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
@@ -334,10 +334,7 @@ export default function TripDetail() {
     qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
   };
 
-  const { data: trip, isLoading } = useQuery({
-    queryKey: ['trip', id],
-    queryFn: () => tripService.getById(id),
-  });
+  const { data: trip, isLoading } = useQuery(tripDetailQueryOptions(id));
   const showSpeedLimitReviewButton = Boolean(trip);
   const scrollToSpeedLimitReview = useCallback(() => {
     speedLimitReviewSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });

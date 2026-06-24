@@ -261,6 +261,41 @@ export function correctionMatchesPoint(correction, lat, lng, radiusKm = ROAD_SEC
   return geohashNeighboursInclude(correction?.geohash, lat, lng, LEGACY_CELL_MATCH_RADIUS_KM);
 }
 
+function correctionMatchDetails(correction, lat, lng, radiusKm = ROAD_SECTION_MATCH_RADIUS_KM, options = {}) {
+  if (!correctionActiveAt(correction, options.timestampMs ?? null)) {
+    return { matched: false, reason: 'time_rule_inactive' };
+  }
+  if (!correctionMatchesDirection(correction, options.headingDeg ?? null)) {
+    return { matched: false, reason: 'direction_mismatch' };
+  }
+
+  const points = Array.isArray(correction?.sectionPoints)
+    ? correction.sectionPoints.filter((point) => isUsableCoordinate(Number(point?.lat), Number(point?.lng)))
+    : [];
+  if (points.length >= 2) {
+    let bestDistanceKm = Infinity;
+    for (let index = 1; index < points.length; index++) {
+      bestDistanceKm = Math.min(bestDistanceKm, pointToSegmentDistanceKm(lat, lng, points[index - 1], points[index]));
+    }
+    return {
+      matched: bestDistanceKm <= radiusKm,
+      reason: bestDistanceKm <= radiusKm ? 'matched_traced_section' : 'too_far_from_traced_section',
+      matchType: 'traced_section',
+      matchDistanceM: Number.isFinite(bestDistanceKm) ? Math.round(bestDistanceKm * 1000) : null,
+    };
+  }
+
+  const center = correction?.geohash ? geohashDecode(correction.geohash) : null;
+  const distance = center ? distanceKm(center.lat, center.lng, Number(lat), Number(lng)) : Infinity;
+  const matched = Number.isFinite(distance) && distance <= LEGACY_CELL_MATCH_RADIUS_KM;
+  return {
+    matched,
+    reason: matched ? 'matched_geohash_cell' : 'too_far_from_geohash_cell',
+    matchType: 'geohash_cell',
+    matchDistanceM: Number.isFinite(distance) ? Math.round(distance * 1000) : null,
+  };
+}
+
 export function geohashNeighboursInclude(geohash, lat, lng, radiusKm) {
   if (!geohash || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) return false;
   const center = geohashDecode(geohash);
@@ -491,18 +526,22 @@ export class LocalSpeedKnowledge {
   }
 
   _resolveForPoint(data, lat, lng, timestampMs = null, options = {}) {
-    const correction = (data.corrections || [])
-      .filter((item) => (
-        isFreshCorrection(item) &&
-        correctionMatchesPoint(item, lat, lng, ROAD_SECTION_MATCH_RADIUS_KM, {
-          timestampMs,
-          headingDeg: options.headingDeg ?? options.heading ?? null,
-        })
-      ))
+    const correctionMatch = (data.corrections || [])
+      .map((item) => ({
+        correction: item,
+        match: isFreshCorrection(item)
+          ? correctionMatchDetails(item, lat, lng, ROAD_SECTION_MATCH_RADIUS_KM, {
+            timestampMs,
+            headingDeg: options.headingDeg ?? options.heading ?? null,
+          })
+          : { matched: false, reason: 'expired_rule' },
+      }))
+      .filter((item) => item.match.matched)
       .sort((a, b) => (
-        correctionSpecificity(b) - correctionSpecificity(a) ||
-        new Date(b.appliedAt || 0).getTime() - new Date(a.appliedAt || 0).getTime()
+        correctionSpecificity(b.correction) - correctionSpecificity(a.correction) ||
+        new Date(b.correction.appliedAt || 0).getTime() - new Date(a.correction.appliedAt || 0).getTime()
       ))[0];
+    const correction = correctionMatch?.correction;
     if (correction) {
       const source = correctionSource(correction);
       const evidence = assessSpeedLimitEvidence({
@@ -522,6 +561,13 @@ export class LocalSpeedKnowledge {
         needsReview: evidence.needsReview,
         geohash: correction.geohash,
         correctionId: correction.id || correction.ruleId || null,
+        matchType: correctionMatch.match.matchType,
+        matchDistanceM: correctionMatch.match.matchDistanceM,
+        matchReason: correctionMatch.match.reason,
+        roadName: correction.roadName || null,
+        contextLabel: correction.contextLabel || null,
+        directionLabel: correction.directionLabel || null,
+        timeLabel: correction.timeLabel || null,
         conflictResolution: correction.conflictResolution || null,
       };
     }
@@ -761,6 +807,9 @@ export class LocalSpeedKnowledge {
         : 'user_entered_estimate';
       const previousCorrection = data.corrections[index];
       const previousLimit = Number(previousCorrection.limitKmh);
+      const metadataLat = Number(metadata.lat);
+      const metadataLng = Number(metadata.lng);
+      const hasMetadataCoordinate = isUsableCoordinate(metadataLat, metadataLng);
       const conflictResolution = metadata.conflictResolution && typeof metadata.conflictResolution === 'object'
         ? {
           savedLimitKmh: Math.round(Number(metadata.conflictResolution.savedLimitKmh ?? limit)),
@@ -786,6 +835,11 @@ export class LocalSpeedKnowledge {
         evidenceCount: Math.max(1, Number(previousCorrection.evidenceCount) || 1),
         ...(conflictResolution ? { conflictResolution } : Number.isFinite(previousLimit) && Math.round(previousLimit) !== Math.round(limit) ? { conflictResolution: null } : {}),
         ...(metadata.expiresAt !== undefined ? { expiresAt: metadata.expiresAt || null } : {}),
+        ...(hasMetadataCoordinate ? {
+          geohash: geohashEncode(metadataLat, metadataLng, CELL_PRECISION),
+          lat: metadataLat,
+          lng: metadataLng,
+        } : {}),
         ...(metadata.roadName != null ? { roadName: String(metadata.roadName).trim() } : {}),
         ...(metadata.directionMode != null ? { directionMode: directionMode(metadata.directionMode) } : {}),
         ...(metadata.directionBearing != null ? {

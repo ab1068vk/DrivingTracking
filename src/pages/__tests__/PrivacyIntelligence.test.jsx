@@ -234,7 +234,8 @@ describe('Privacy Intelligence tabs', () => {
     expect(outputs[2]).toContain('Failing control');
     expect(outputs[2]).toContain('Unknown control');
     expect(outputs[3]).toContain('Raw points in zones');
-    expect(outputs[3]).toContain('You stop here often - protect it?');
+    expect(outputs[3]).toContain('Frequent stop suggestion');
+    expect(outputs[3]).toContain('Review the suggested 140 m circle before saving');
     expect(outputs[3]).toContain('2 raw points were just outside this zone');
     expect(outputs[3]).toContain('Route corridor');
     expect(outputs[3]).toContain('hours remaining');
@@ -266,8 +267,8 @@ describe('Privacy Intelligence tabs', () => {
       onDismissSuggestion: noop,
     });
 
-    expect(html).toContain('You stop here often - protect it?');
-    expect(html).toContain('Accept');
+    expect(html).toContain('Frequent stop suggestion');
+    expect(html).toContain('Review area');
     expect(html).toContain('Dismiss');
   });
 });

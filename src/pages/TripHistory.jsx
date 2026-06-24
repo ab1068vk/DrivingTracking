@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { tripDetailQueryOptions, tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { Search, Filter, Car, Tag, Star, CalendarDays, TrendingUp } from 'lucide-react';
 import TripCard from '@/components/TripCard';
 import SpeedLimitConflictReview from '@/components/SpeedLimitConflictReview';
-import useLocalSettings from '@/hooks/useLocalSettings';
+import { useLocalSettingSelector } from '@/hooks/useLocalSettings';
 import { formatDistance, formatDuration, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
@@ -18,8 +19,8 @@ import {
   isHighRiskTrip,
   normalizeTripTags,
 } from '@/lib/tripMetadata';
-
-const TRIP_PAGE_SIZE = 25;
+import InlineRefreshBadge from '@/components/InlineRefreshBadge';
+import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
 
 const SORT_OPTIONS = [
   { id: 'date_desc', label: 'Newest First' },
@@ -136,7 +137,9 @@ const matchesQuickFilter = (trip, filter) => {
 };
 
 export default function TripHistory() {
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
+  const [isFilterPending, startFilterTransition] = useTransition();
   const [sortBy, setSortBy] = useState('date_desc');
   const [filterBy, setFilterBy] = useState('all');
   const [selectedTag, setSelectedTag] = useState('all');
@@ -144,15 +147,15 @@ export default function TripHistory() {
   const [presetName, setPresetName] = useState('');
   const [savedFilters, setSavedFilters] = useState([]);
   const [savedFiltersLoaded, setSavedFiltersLoaded] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(TRIP_PAGE_SIZE);
+  const tripListRef = useRef(null);
   const location = useLocation();
-  const settings = useLocalSettings();
-  const units = settings.units || 'metric';
+  const units = useLocalSettingSelector((settings) => settings.units || 'metric');
   const qc = useQueryClient();
   const reviewSpeedLimitConflicts = new URLSearchParams(location.search || '').get('review') === 'speed-limit-conflicts';
 
-  const { data: trips = [], isLoading } = useQuery({
+  const { data: completed = [], isLoading, isFetching } = useQuery({
     ...tripSummaryQueryOptions(),
+    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
 
   const { data: vehicles = [] } = useQuery({
@@ -164,6 +167,16 @@ export default function TripHistory() {
     () => new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle])),
     [vehicles]
   );
+  const tripSearchIndex = useMemo(() => {
+    const index = new Map();
+    completed.forEach((trip) => {
+      index.set(
+        String(trip.id),
+        buildTripSearchText(trip, vehicleById.get(String(trip.vehicle_id)))
+      );
+    });
+    return index;
+  }, [completed, vehicleById]);
   const invalidateTrips = () => {
     qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
   };
@@ -173,7 +186,6 @@ export default function TripHistory() {
     onSuccess: invalidateTrips,
   });
 
-  const completed = useMemo(() => trips.filter((trip) => trip.status === 'completed'), [trips]);
   const recentChronological = useMemo(
     () => [...completed]
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
@@ -199,8 +211,7 @@ export default function TripHistory() {
       if (!matchesQuickFilter(trip, filterBy)) return false;
       if (selectedTag !== 'all' && !normalizeTripTags(trip).includes(selectedTag)) return false;
       if (normalizedSearch) {
-        const vehicle = vehicleById.get(String(trip.vehicle_id));
-        if (!buildTripSearchText(trip, vehicle).includes(normalizedSearch)) return false;
+        if (!tripSearchIndex.get(String(trip.id))?.includes(normalizedSearch)) return false;
       }
       return true;
     });
@@ -216,19 +227,41 @@ export default function TripHistory() {
         default: return 0;
       }
     });
-  }, [completed, filterBy, normalizedSearch, selectedTag, sortBy, vehicleById]);
-  const visibleTrips = sorted.slice(0, visibleCount);
+  }, [completed, filterBy, normalizedSearch, selectedTag, sortBy, tripSearchIndex]);
+  const tripVirtualizer = useVirtualizer({
+    count: sorted.length,
+    getScrollElement: () => tripListRef.current,
+    estimateSize: () => 190,
+    overscan: 5,
+  });
+  const virtualTrips = tripVirtualizer.getVirtualItems();
   const historySummary = useMemo(() => buildTripHistorySummary(sorted, units), [sorted, units]);
   const activeFilterLabel = QUICK_FILTERS.find((option) => option.id === filterBy)?.label || 'Custom filter';
   const activeTagLabel = selectedTag === 'all'
     ? 'All tags'
     : TRIP_TAG_OPTIONS.find((option) => option.id === selectedTag)?.label || 'Selected tag';
+  const setTripSearch = (value) => {
+    setSearchInput(value);
+    startFilterTransition(() => {
+      setSearch(value);
+    });
+  };
+  const setTripSort = (value) => startFilterTransition(() => setSortBy(value));
+  const setTripFilter = (value) => startFilterTransition(() => setFilterBy(value));
+  const setTripTag = (value) => startFilterTransition(() => setSelectedTag(value));
+  const handleTripIntent = useCallback((trip) => {
+    if (!trip?.id) return;
+    qc.prefetchQuery(tripDetailQueryOptions(trip.id)).catch(() => {});
+  }, [qc]);
 
   const clearFilters = () => {
-    setSearch('');
-    setFilterBy('all');
-    setSelectedTag('all');
-    setSortBy('date_desc');
+    setSearchInput('');
+    startFilterTransition(() => {
+      setSearch('');
+      setFilterBy('all');
+      setSelectedTag('all');
+      setSortBy('date_desc');
+    });
   };
 
   useEffect(() => {
@@ -249,8 +282,8 @@ export default function TripHistory() {
   }, [savedFilters, savedFiltersLoaded]);
 
   useEffect(() => {
-    setVisibleCount(TRIP_PAGE_SIZE);
-  }, [filterBy, search, selectedTag, sortBy]);
+    tripVirtualizer.scrollToIndex(0, { align: 'start' });
+  }, [filterBy, search, selectedTag, sortBy, tripVirtualizer]);
 
   const saveCurrentFilter = () => {
     const name = presetName.trim();
@@ -258,7 +291,7 @@ export default function TripHistory() {
     const preset = {
       id: `filter_${Date.now()}`,
       name,
-      search,
+      search: searchInput,
       sortBy,
       filterBy,
       selectedTag,
@@ -268,21 +301,34 @@ export default function TripHistory() {
   };
 
   const applySavedFilter = (preset) => {
-    setSearch(preset.search || '');
-    setSortBy(preset.sortBy || 'date_desc');
-    setFilterBy(preset.filterBy || 'all');
-    setSelectedTag(preset.selectedTag || 'all');
+    setSearchInput(preset.search || '');
+    startFilterTransition(() => {
+      setSearch(preset.search || '');
+      setSortBy(preset.sortBy || 'date_desc');
+      setFilterBy(preset.filterBy || 'all');
+      setSelectedTag(preset.selectedTag || 'all');
+    });
   };
 
   const removeSavedFilter = (id) => {
     setSavedFilters((current) => current.filter((item) => item.id !== id));
   };
 
+  if (isLoading && completed.length === 0) {
+    return <PageLoadingSkeleton title="Loading trip history" />;
+  }
+
   return (
     <div className="space-y-5 pb-4">
-      <div>
-        <h1 className="text-2xl font-grotesk font-bold">Trip History</h1>
-        <p className="text-muted-foreground text-sm mt-1">{sorted.length} of {completed.length} completed trips</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-grotesk font-bold">Trip History</h1>
+          <p className="text-muted-foreground text-sm mt-1">{sorted.length} of {completed.length} completed trips</p>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing trip history" />
+          <InlineRefreshBadge visible={isFilterPending} label="Updating filters" />
+        </div>
       </div>
 
       {reviewSpeedLimitConflicts && (
@@ -295,8 +341,8 @@ export default function TripHistory() {
           type="text"
           aria-label="Search trip history"
           placeholder="Search location, vehicle, tag, note, score, or date"
-          value={search}
-          onChange={event => setSearch(event.target.value)}
+          value={searchInput}
+          onChange={event => setTripSearch(event.target.value)}
           className="w-full pl-10 pr-4 py-3 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary transition-colors"
         />
       </div>
@@ -392,7 +438,7 @@ export default function TripHistory() {
         <select
           aria-label="Sort trips"
           value={sortBy}
-          onChange={event => setSortBy(event.target.value)}
+          onChange={event => setTripSort(event.target.value)}
           className="flex-shrink-0 bg-card border border-border rounded-xl text-xs font-medium px-3 py-2 text-muted-foreground outline-none"
         >
           {SORT_OPTIONS.map(option => (
@@ -403,7 +449,7 @@ export default function TripHistory() {
         {QUICK_FILTERS.map(option => (
           <button
             key={option.id}
-            onClick={() => setFilterBy(option.id)}
+            onClick={() => setTripFilter(option.id)}
             aria-pressed={filterBy === option.id}
             className={`flex-shrink-0 px-3 py-2 rounded-xl text-xs font-medium border transition-all ${
               filterBy === option.id
@@ -424,7 +470,7 @@ export default function TripHistory() {
           </div>
           <div className="flex flex-wrap gap-2">
             <button
-              onClick={() => setSelectedTag('all')}
+              onClick={() => setTripTag('all')}
               aria-pressed={selectedTag === 'all'}
               className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
                 selectedTag === 'all' ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground'
@@ -435,7 +481,7 @@ export default function TripHistory() {
             {TRIP_TAG_OPTIONS.map(option => (
               <button
                 key={option.id}
-                onClick={() => setSelectedTag(option.id)}
+                onClick={() => setTripTag(option.id)}
                 aria-pressed={selectedTag === option.id}
                 className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
                   selectedTag === option.id ? 'border-primary bg-primary text-primary-foreground' : option.className
@@ -519,29 +565,41 @@ export default function TripHistory() {
       </div>
 
       {!isLoading && sorted.length > 0 && (
-        <div className="space-y-3">
-          {visibleTrips.map((trip, index) => (
-            <TripCard
-              key={trip.id}
-              trip={trip}
-              units={units}
-              index={index}
-              scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
-              onToggleFavorite={(target) => updateTripMut.mutate({
-                id: target.id,
-                patch: { is_favorite: target.is_favorite !== true },
-              })}
-            />
-          ))}
-          {visibleCount < sorted.length && (
-            <button
-              type="button"
-              onClick={() => setVisibleCount((count) => Math.min(sorted.length, count + TRIP_PAGE_SIZE))}
-              className="w-full rounded-xl border border-border bg-card px-4 py-3 text-sm font-semibold hover:bg-secondary"
-            >
-              Show {Math.min(TRIP_PAGE_SIZE, sorted.length - visibleCount)} more trips
-            </button>
-          )}
+        <div
+          ref={tripListRef}
+          className="max-h-[72vh] overflow-y-auto pr-1 thin-scrollbar"
+          aria-label="Virtualized trip history list"
+        >
+          <div
+            className="relative w-full"
+            style={{ height: `${tripVirtualizer.getTotalSize()}px` }}
+          >
+            {virtualTrips.map((virtualItem) => {
+              const trip = sorted[virtualItem.index];
+              if (!trip) return null;
+              return (
+                <div
+                  key={trip.id}
+                  ref={tripVirtualizer.measureElement}
+                  data-index={virtualItem.index}
+                  className="absolute left-0 top-0 w-full pb-3"
+                  style={{ transform: `translateY(${virtualItem.start}px)` }}
+                >
+                  <TripCard
+                    trip={trip}
+                    units={units}
+                    index={virtualItem.index}
+                    scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
+                    onToggleFavorite={(target) => updateTripMut.mutate({
+                      id: target.id,
+                      patch: { is_favorite: target.is_favorite !== true },
+                    })}
+                    onIntent={handleTripIntent}
+                  />
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

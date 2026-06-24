@@ -254,6 +254,43 @@ public class DriveSenseAutoTrackingServiceTest {
     }
 
     @Test
+    public void nativeBackgroundSpeedLookupRespectsAdjacentUserLabeledSections() throws Exception {
+        double lat = 43.65320d;
+        JSONObject data = new JSONObject()
+            .put("corrections", new JSONArray()
+                .put(new JSONObject()
+                    .put("geohash", DriveSenseAutoTrackingService.geohashEncode(lat, -79.3857d, 6))
+                    .put("limitKmh", 50d)
+                    .put("source", "user_confirmed_posted_sign")
+                    .put("appliedAt", "2026-06-23T12:00:00Z")
+                    .put("sectionPoints", new JSONArray()
+                        .put(new JSONObject().put("lat", lat).put("lng", -79.3860d))
+                        .put(new JSONObject().put("lat", lat).put("lng", -79.3852d))))
+                .put(new JSONObject()
+                    .put("geohash", DriveSenseAutoTrackingService.geohashEncode(lat, -79.3827d, 6))
+                    .put("limitKmh", 60d)
+                    .put("source", "user_confirmed_posted_sign")
+                    .put("appliedAt", "2026-06-23T12:01:00Z")
+                    .put("sectionPoints", new JSONArray()
+                        .put(new JSONObject().put("lat", lat).put("lng", -79.3830d))
+                        .put(new JSONObject().put("lat", lat).put("lng", -79.3822d)))));
+        long activeTime = Instant.parse("2026-06-23T12:05:00Z").toEpochMilli();
+
+        DriveSenseAutoTrackingService.NativeSpeedLimit firstHalf =
+            DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, -79.38555d, activeTime);
+        DriveSenseAutoTrackingService.NativeSpeedLimit secondHalf =
+            DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, -79.38255d, activeTime);
+
+        assertNotNull(firstHalf);
+        assertEquals(50d, firstHalf.limitKmh, 0.0d);
+        assertEquals("user_confirmed_posted_sign", firstHalf.source);
+        assertNotNull(secondHalf);
+        assertEquals(60d, secondHalf.limitKmh, 0.0d);
+        assertEquals("user_confirmed_posted_sign", secondHalf.source);
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, -79.38410d, activeTime));
+    }
+
+    @Test
     public void nativeBackgroundSpeedLookupHonorsDirectionAndTimeRules() throws Exception {
         double sectionLat = 43.65320d;
         double sectionLng = -79.38320d;

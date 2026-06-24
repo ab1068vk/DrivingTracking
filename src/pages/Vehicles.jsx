@@ -235,6 +235,7 @@ export default function Vehicles() {
 
   const { data: trips = [] } = useQuery({
     ...tripSummaryQueryOptions(),
+    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['vehicles'] });

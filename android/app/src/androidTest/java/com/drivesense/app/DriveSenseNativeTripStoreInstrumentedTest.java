@@ -327,12 +327,95 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
         point.put("lat", 43.6532);
         point.put("lng", -79.3832);
         point.put("timestamp", "2026-06-08T12:00:00.000Z");
+        point.put("speed_kmh", 64);
+        point.put("heading", 92);
+        point.put("accuracy", 4);
+        point.put("acceleration_x", 1.2);
         points.put(point);
 
         JSONArray redacted = PrivacyZoneChecker.redactRoutePoints(context, points);
         assertTrue(redacted.getJSONObject(0).isNull("lat"));
         assertTrue(redacted.getJSONObject(0).isNull("lng"));
+        assertTrue(redacted.getJSONObject(0).isNull("speed_kmh"));
+        assertTrue(redacted.getJSONObject(0).isNull("heading"));
+        assertTrue(redacted.getJSONObject(0).isNull("accuracy"));
+        assertTrue(redacted.getJSONObject(0).isNull("acceleration_x"));
         assertEquals("home-cell", redacted.getJSONObject(0).getString("privacy_zone_id"));
+    }
+
+    @Test
+    public void nativePrivacyCheckerHonorsTemporaryZoneExpiry() throws Exception {
+        JSONArray zones = new JSONArray();
+        JSONObject expiredZone = new JSONObject();
+        expiredZone.put("id", "expired-home");
+        expiredZone.put("label", "Expired home");
+        expiredZone.put("lat", 43.6532);
+        expiredZone.put("lng", -79.3832);
+        expiredZone.put("radius_m", 100);
+        expiredZone.put("expiresAt", Instant.now().minusSeconds(60).toString());
+        zones.put(expiredZone);
+
+        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+            .edit()
+            .putString("privacy_zones_v1", zones.toString())
+            .commit();
+
+        JSONArray points = new JSONArray();
+        JSONObject point = new JSONObject();
+        point.put("lat", 43.6532);
+        point.put("lng", -79.3832);
+        point.put("speed_kmh", 45);
+        points.put(point);
+
+        JSONArray expiredResult = PrivacyZoneChecker.redactRoutePoints(context, points);
+        assertEquals(43.6532, expiredResult.getJSONObject(0).getDouble("lat"), 0.000001);
+        assertEquals(45, expiredResult.getJSONObject(0).getDouble("speed_kmh"), 0.001);
+
+        expiredZone.put("expiresAt", Instant.now().plusSeconds(3600).toString());
+        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+            .edit()
+            .putString("privacy_zones_v1", zones.toString())
+            .commit();
+
+        JSONArray activeResult = PrivacyZoneChecker.redactRoutePoints(context, points);
+        assertTrue(activeResult.getJSONObject(0).isNull("lat"));
+        assertTrue(activeResult.getJSONObject(0).isNull("speed_kmh"));
+        assertEquals("expired-home", activeResult.getJSONObject(0).getString("privacy_zone_id"));
+    }
+
+    @Test
+    public void nativeCorridorProtectionMatchesJavaScriptCoverageCellHashes() throws Exception {
+        JSONArray zones = new JSONArray();
+        JSONObject corridor = new JSONObject();
+        corridor.put("id", "commute-corridor");
+        corridor.put("label", "Private commute");
+        corridor.put("type", "corridor");
+        corridor.put("radius_m", 80);
+        corridor.put("width_m", 80);
+        corridor.put("privacy_cell_size_m", 50);
+        corridor.put("privacy_cell_hashes", new JSONArray()
+            // Static outputs from the JavaScript privacy-cell hash algorithm.
+            .put("pzc_1d8k9eb")
+            .put("pzc_712ohe"));
+        zones.put(corridor);
+
+        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+            .edit()
+            .putString("privacy_zones_v1", zones.toString())
+            .commit();
+
+        JSONArray points = new JSONArray()
+            .put(new JSONObject().put("lat", 43.6532).put("lng", -79.3840).put("speed_kmh", 50))
+            .put(new JSONObject().put("lat", 43.6537).put("lng", -79.3840).put("speed_kmh", 45))
+            .put(new JSONObject().put("lat", 43.6555).put("lng", -79.3840).put("speed_kmh", 40));
+
+        JSONArray redacted = PrivacyZoneChecker.redactRoutePoints(context, points);
+        assertTrue(redacted.getJSONObject(0).isNull("lat"));
+        assertTrue(redacted.getJSONObject(0).isNull("speed_kmh"));
+        assertTrue(redacted.getJSONObject(1).isNull("lat"));
+        assertTrue(redacted.getJSONObject(1).isNull("speed_kmh"));
+        assertEquals(43.6555, redacted.getJSONObject(2).getDouble("lat"), 0.000001);
+        assertEquals(40, redacted.getJSONObject(2).getDouble("speed_kmh"), 0.001);
     }
 
     @Test

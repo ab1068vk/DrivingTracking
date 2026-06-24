@@ -21,16 +21,20 @@ import { APP_LOCK_SETTING_EVENT, authenticateDevice } from '@/lib/biometricGate'
 import { checkIntegrity } from '@/lib/rasp';
 import { checkAndRotateEncryptionKey } from '@/lib/keyRotationManager';
 import { Lock, Route as RouteIcon } from 'lucide-react';
+import { beginMeasure, measureAsync, measureSync } from '@/lib/performanceTriage';
 
 import Layout from '@/components/Layout';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LegalNoticeDialog from '@/components/LegalNoticeDialog';
+import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
 import { LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
 
 async function syncNativeCompletedTripsToLocalStore() {
   if (!isAndroid()) return;
-  const { syncNativeCompletedTrips } = await import('@/lib/localTripRepository');
-  const result = await syncNativeCompletedTrips();
+  const result = await measureAsync('app.nativeTripSync', async () => {
+    const { syncNativeCompletedTrips } = await import('@/lib/localTripRepository');
+    return syncNativeCompletedTrips();
+  });
   if (result.importedTrips.length) {
     queryClientInstance.invalidateQueries({ queryKey: tripQueryKeys.summaries }).catch(() => {});
   }
@@ -45,6 +49,21 @@ async function syncNativeCompletedTripsToLocalStore() {
 }
 
 let privacyZoneExpirySweep = null;
+const pendingIdleResumeTasks = new Set();
+const scheduleIdleResumeTask = (name, task, source) => {
+  if (pendingIdleResumeTasks.has(name)) return;
+  pendingIdleResumeTasks.add(name);
+  const run = () => {
+    pendingIdleResumeTasks.delete(name);
+    measureAsync(`app.resume.${name}`, task, { source })
+      .catch((error) => logSystemFailure(`app_resume_${name}`, error));
+  };
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(run, { timeout: 2000 });
+  } else {
+    window.setTimeout(run, 250);
+  }
+};
 const sweepExpiredZonesOnForeground = () => {
   if (!privacyZoneExpirySweep) {
     privacyZoneExpirySweep = sweepExpiredPrivacyZones()
@@ -76,10 +95,16 @@ const Insights = lazy(() => import('@/pages/Insights'));
 
 function AppRouteBoundary({ context, title = 'Page unavailable', message = 'Something went wrong while opening this page. Reload to try again.', children }) {
   return (
-    <SectionErrorBoundary context={context} title={title} message={message}>
-      {children}
-    </SectionErrorBoundary>
+    <Suspense fallback={<PageLoadingSkeleton title={`Loading ${title.toLowerCase()}`} />}>
+      <SectionErrorBoundary context={context} title={title} message={message}>
+        {children}
+      </SectionErrorBoundary>
+    </Suspense>
   );
+}
+
+function PageRouteSuspense({ title, children }) {
+  return <Suspense fallback={<PageLoadingSkeleton title={title} />}>{children}</Suspense>;
 }
 
 function AppLoading() {
@@ -134,11 +159,12 @@ const AuthenticatedApp = () => {
 
   useEffect(() => {
     const bootstrapSettings = async () => {
+      const endBootstrap = beginMeasure('app.coldBootstrap');
       const notificationService = import('@/lib/notificationService');
       notificationService
         .then(({ configureNotificationChannels }) => configureNotificationChannels())
         .catch((error) => logSystemFailure('notification_channels_configure', error));
-      const settings = await localSettings.hydrateFromNative();
+      const settings = await measureAsync('app.bootstrap.settingsHydrate', () => localSettings.hydrateFromNative());
       const lockEnabled = isAndroid() && settings.app_lock_enabled === true;
       setAppLockEnabled(lockEnabled);
       setAppLocked(lockEnabled);
@@ -168,13 +194,13 @@ const AuthenticatedApp = () => {
       }
 
       const runDeferredMaintenance = async () => {
-        await import('@/lib/localTripRepository')
-          .then(({ runTripRepositoryMaintenance }) => runTripRepositoryMaintenance())
+        await measureAsync('app.bootstrap.tripRepositoryMaintenance', () => import('@/lib/localTripRepository')
+          .then(({ runTripRepositoryMaintenance }) => runTripRepositoryMaintenance()))
           .catch((error) => logSystemFailure('trip_repository_maintenance', error));
-        await checkAndRotateEncryptionKey()
+        await measureAsync('app.bootstrap.keyRotation', () => checkAndRotateEncryptionKey())
           .catch((error) => logSystemFailure('encryption_key_rotation_check', error));
-        import('@/lib/roadContextQueue')
-          .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs())
+        measureAsync('app.bootstrap.roadContextQueue', () => import('@/lib/roadContextQueue')
+          .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs()))
           .catch((error) => logSystemFailure('road_context_queue_resume', error));
         import('@/lib/rescoringWorker')
           .then(({ startRescoringWorker }) => startRescoringWorker())
@@ -185,6 +211,7 @@ const AuthenticatedApp = () => {
       } else {
         window.setTimeout(runDeferredMaintenance, 0);
       }
+      endBootstrap({ outcome: 'success' });
     };
     bootstrapSettings().catch((error) => {
       logSystemFailure('app_bootstrap', error);
@@ -228,18 +255,16 @@ const AuthenticatedApp = () => {
 
     CapacitorApp.addListener('appStateChange', ({ isActive }) => {
       if (isActive) {
-        sweepExpiredZonesOnForeground()
+        measureAsync('app.resume.privacyZoneSweep', () => sweepExpiredZonesOnForeground(), { source: 'appStateChange' })
           .catch((error) => logSystemFailure('app_resume_privacy_zone_expiry', error));
-        syncNativeCompletedTripsToLocalStore()
+        measureAsync('app.resume.nativeTripSync', () => syncNativeCompletedTripsToLocalStore(), { source: 'appStateChange' })
           .catch((error) => logSystemFailure('app_resume_native_completed_trips_sync', error));
-        checkAndRotateEncryptionKey()
+        measureAsync('app.resume.keyRotation', () => checkAndRotateEncryptionKey(), { source: 'appStateChange' })
           .catch((error) => logSystemFailure('app_resume_key_rotation_check', error));
-        import('@/lib/roadContextQueue')
-          .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs())
-          .catch((error) => logSystemFailure('app_resume_road_context_queue', error));
-        import('@/lib/localTripRepository')
-          .then(({ enforceRawGpsRetention }) => enforceRawGpsRetention())
-          .catch((error) => logSystemFailure('app_resume_raw_gps_retention', error));
+        scheduleIdleResumeTask('roadContextQueue', () => import('@/lib/roadContextQueue')
+          .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs()), 'appStateChange');
+        scheduleIdleResumeTask('rawGpsRetention', () => import('@/lib/localTripRepository')
+          .then(({ enforceRawGpsRetention }) => enforceRawGpsRetention()), 'appStateChange');
       }
       if (!appLockEnabled) return;
       if (!isActive) {
@@ -263,16 +288,14 @@ const AuthenticatedApp = () => {
   useEffect(() => {
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        sweepExpiredZonesOnForeground()
+        measureAsync('app.resume.privacyZoneSweep', () => sweepExpiredZonesOnForeground(), { source: 'visibilitychange' })
           .catch((error) => logSystemFailure('visibility_privacy_zone_expiry', error));
-        checkAndRotateEncryptionKey()
+        measureAsync('app.resume.keyRotation', () => checkAndRotateEncryptionKey(), { source: 'visibilitychange' })
           .catch((error) => logSystemFailure('visibility_key_rotation_check', error));
-        import('@/lib/roadContextQueue')
-          .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs())
-          .catch((error) => logSystemFailure('visibility_road_context_queue', error));
-        import('@/lib/localTripRepository')
-          .then(({ enforceRawGpsRetention }) => enforceRawGpsRetention())
-          .catch((error) => logSystemFailure('visibility_raw_gps_retention', error));
+        scheduleIdleResumeTask('roadContextQueue', () => import('@/lib/roadContextQueue')
+          .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs()), 'visibilitychange');
+        scheduleIdleResumeTask('rawGpsRetention', () => import('@/lib/localTripRepository')
+          .then(({ enforceRawGpsRetention }) => enforceRawGpsRetention()), 'visibilitychange');
       }
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
@@ -346,7 +369,6 @@ const AuthenticatedApp = () => {
 
   return (
     <>
-      <Suspense fallback={<AppLoading />}>
       <Routes>
         {/* Onboarding (no layout) - only shown to new users */}
         {!onboardingDone && (
@@ -373,22 +395,26 @@ const AuthenticatedApp = () => {
             </AppRouteBoundary>
           )} />
           <Route path="/trips/:id" element={(
-            <SectionErrorBoundary
-              context="trip_detail_page"
-              title="Trip detail unavailable"
-              message="Something went wrong while opening this trip. Reload to try again."
-            >
-              <TripDetail />
-            </SectionErrorBoundary>
+            <PageRouteSuspense title="Loading trip detail">
+              <SectionErrorBoundary
+                context="trip_detail_page"
+                title="Trip detail unavailable"
+                message="Something went wrong while opening this trip. Reload to try again."
+              >
+                <TripDetail />
+              </SectionErrorBoundary>
+            </PageRouteSuspense>
           )} />
           <Route path="/trips/:id/speed" element={(
-            <SectionErrorBoundary
-              context="speed_analysis_page"
-              title="Speed analysis unavailable"
-              message="Something went wrong while opening speed analysis for this trip. Reload to try again."
-            >
-              <SpeedAnalysis />
-            </SectionErrorBoundary>
+            <PageRouteSuspense title="Loading speed analysis">
+              <SectionErrorBoundary
+                context="speed_analysis_page"
+                title="Speed analysis unavailable"
+                message="Something went wrong while opening speed analysis for this trip. Reload to try again."
+              >
+                <SpeedAnalysis />
+              </SectionErrorBoundary>
+            </PageRouteSuspense>
           )} />
           <Route path="/map" element={(
             <AppRouteBoundary context="map_page" title="Map unavailable">
@@ -460,7 +486,6 @@ const AuthenticatedApp = () => {
           </AppRouteBoundary>
         )} />
       </Routes>
-      </Suspense>
       <LegalNoticeDialog
         open={legalNoticeOpen}
         onOpenChange={(open) => {
@@ -477,14 +502,22 @@ function RouteLogger() {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search || '');
-    recordSystemEvent('route_changed', {
+    const payload = {
       pathname: location.pathname,
       has_search: Boolean(location.search),
       search_param_keys: [...params.keys()].slice(0, 20),
-    }, {
-      title: 'Page opened',
-      category: 'navigation',
-    });
+    };
+    const run = () => measureSync('RouteLogger.recordSystemEvent', () => {
+      recordSystemEvent('route_changed', payload, {
+        title: 'Page opened',
+        category: 'navigation',
+      });
+    }, { pathname: location.pathname });
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(run, { timeout: 2000 });
+    } else {
+      window.setTimeout(run, 250);
+    }
   }, [location.pathname, location.search]);
 
   return null;

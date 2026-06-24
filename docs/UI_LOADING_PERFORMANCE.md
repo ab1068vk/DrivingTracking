@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-06-22
 
-This document explains why the Road Sage UI can feel laggy, especially the Saved road speeds page, and gives a detailed loading plan for the whole app. It is written as an implementation guide: it shows the current code paths, the likely bottlenecks, and the specific UI and data-loading patterns that should be used when improving the app.
+This document explains why the Road Sage UI can feel laggy across the whole app, with extra focus on the Saved road speeds page because it is one of the heaviest screens. It is written as an implementation guide and incident playbook: it shows the current code paths, likely bottlenecks, emergency triage steps, and the specific UI and data-loading patterns that should be used when improving the app.
 
 The main goal is simple: every page should show useful content quickly, keep already loaded content visible during background refreshes, and avoid rebuilding expensive map or trip data unless the user actually needs it.
 
@@ -29,6 +29,352 @@ The biggest lag risks are:
 The most important product rule:
 
 > Do not block the first paint of a page on data that is only needed for secondary panels, maps, diagnostics, or background recalculation.
+
+## Current Incident Update
+
+User report on 2026-06-22: the whole app feels very laggy, not just the Saved road speeds page. Treat this as an app-wide performance incident until proven otherwise.
+
+Important clarification: adding or editing `docs/UI_LOADING_PERFORMANCE.md` does not by itself slow the production app unless the document is imported, rendered, indexed, or processed by a running app screen or build task. A markdown file sitting in `docs/` is not part of the React runtime bundle by default. The more likely issue is that the same underlying heavy code paths described here are now being noticed across normal navigation.
+
+The incident hypothesis is:
+
+1. App startup and resume are doing too much background work close to first paint.
+2. Multiple pages request broad trip history or full trip detail data.
+3. Maps and playback components rebuild many Leaflet layers on the main thread.
+4. Settings and storage listeners can cause wide re-renders.
+5. Saved road speed analysis can load hundreds of full trips and rebuild map sections.
+6. Some loading states still block or replace content instead of keeping stale UI visible.
+
+Immediate operating rule while fixing this:
+
+> No new page should call `tripService.list()`, `tripService.listAll()`, or `tripService.listAllSummaries()` during first paint unless the first visible screen truly needs that entire data set.
+
+## Stop-The-Bleed Checklist
+
+Use this checklist before deeper refactors. It is meant to reduce obvious app-wide lag quickly.
+
+1. Check whether a page is using full trips when summaries are enough.
+
+Bad for first paint:
+
+```js
+tripService.list({ sort: '-start_time', limit: 500 })
+tripService.listAll({ sort: '-start_time' })
+```
+
+Better for first paint:
+
+```js
+tripService.listSummaries({ sort: '-start_time', limit: 50 })
+```
+
+2. Keep existing UI visible during refresh.
+
+Bad:
+
+```jsx
+{isLoading ? <FullPageLoading /> : <PageContent />}
+```
+
+Better:
+
+```jsx
+{isInitialLoading ? <PageSkeleton /> : <PageContent refreshing={isFetching} />}
+```
+
+3. Defer maps, playback, diagnostics, and health checks until after primary content.
+
+```js
+const [enhancementsReady, setEnhancementsReady] = useState(false);
+
+useEffect(() => {
+  const timer = window.setTimeout(() => setEnhancementsReady(true), 0);
+  return () => window.clearTimeout(timer);
+}, []);
+```
+
+4. Disable automatic map fitting after the first draw.
+
+Map fitting is useful, but repeated `fitBounds` during filters or refreshes makes the UI feel jumpy and expensive.
+
+5. Add measurements before rewriting large modules.
+
+```js
+performance.mark('page-heavy-work:start');
+// expensive work
+performance.mark('page-heavy-work:end');
+performance.measure('page-heavy-work', 'page-heavy-work:start', 'page-heavy-work:end');
+```
+
+6. Prefer a temporary feature gate over shipping a half-refactor.
+
+For example, a temporary `showMap={false}` or `loadMapOnOpen={false}` mode can prove whether maps are the cause of app-wide jank before changing storage or scoring code.
+
+## Global Lag Suspects
+
+These are app-wide suspects that can make every page feel slow even when a single page is not obviously broken.
+
+### Startup and resume work
+
+`src/App.jsx` performs several tasks around startup and app resume. Some are already deferred, but several resume paths can still run close to user interaction.
+
+```jsx
+if (isActive) {
+  syncNativeCompletedTripsToLocalStore()
+    .catch((error) => logSystemFailure('app_resume_native_completed_trips_sync', error));
+  checkAndRotateEncryptionKey()
+    .catch((error) => logSystemFailure('app_resume_key_rotation_check', error));
+  import('@/lib/roadContextQueue')
+    .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs())
+    .catch((error) => logSystemFailure('app_resume_road_context_queue', error));
+  import('@/lib/localTripRepository')
+    .then(({ enforceRawGpsRetention }) => enforceRawGpsRetention())
+    .catch((error) => logSystemFailure('app_resume_raw_gps_retention', error));
+}
+```
+
+Risk:
+
+- App resume can trigger native trip sync, key rotation, road context queue work, and raw GPS retention.
+- If any of those touches large trip storage, the app can feel slow immediately after opening or switching back.
+
+Recommended:
+
+- Keep security-critical checks.
+- Move large storage maintenance to idle time.
+- Record how long each resume task takes.
+- Never block route rendering on retention, queue resume, or completed-trip import unless data correctness requires it.
+
+### Route logging on every navigation
+
+`RouteLogger` records every route change:
+
+```jsx
+useEffect(() => {
+  const params = new URLSearchParams(location.search || '');
+  recordSystemEvent('route_changed', {
+    pathname: location.pathname,
+    has_search: Boolean(location.search),
+    search_param_keys: [...params.keys()].slice(0, 20),
+  }, {
+    title: 'Page opened',
+    category: 'navigation',
+  });
+}, [location.pathname, location.search]);
+```
+
+Risk:
+
+- If `recordSystemEvent` writes to storage synchronously or does expensive sanitization, every navigation can feel delayed.
+
+Recommended:
+
+- Fire-and-forget route logging behind `requestIdleCallback`.
+- Batch route events.
+- Drop route logging entirely in performance emergency builds if needed.
+
+Example:
+
+```js
+const recordRouteChangeIdle = (event) => {
+  const run = () => recordSystemEvent('route_changed', event, {
+    title: 'Page opened',
+    category: 'navigation',
+  });
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(run, { timeout: 2000 });
+  } else {
+    window.setTimeout(run, 250);
+  }
+};
+```
+
+### Shared settings refreshes
+
+`useLocalSettings()` reads the full settings object and compares it with `JSON.stringify`.
+
+```jsx
+setSettings((current) => (
+  JSON.stringify(current) === JSON.stringify(next) ? current : next
+));
+```
+
+Risk:
+
+- Any focus, storage, or settings change can make many components compare and potentially re-render.
+- Hot map and dashboard components use settings, so broad settings updates can amplify lag.
+
+Recommended:
+
+- Add selector-based settings hooks for hot components.
+- Avoid full-object compare in components that only need one value such as `units`, `show_privacy_circles`, or `speed_warning_enabled`.
+
+### Layout polling
+
+`Layout` checks tracking state every 5 seconds and on focus/storage changes:
+
+```jsx
+const interval = setInterval(checkTrackingWhenVisible, 5000);
+window.addEventListener('storage', checkTracking);
+window.addEventListener('focus', checkTracking);
+document.addEventListener('visibilitychange', checkTrackingWhenVisible);
+```
+
+Risk:
+
+- This should be cheap if `activeTripStore.get()` is cheap.
+- If active trip storage grows or parsing gets heavier, this becomes app-wide recurring work.
+
+Recommended:
+
+- Confirm `activeTripStore.get()` is memory-backed or cheap.
+- Prefer event-driven active-trip changes over polling if this shows up in measurements.
+
+### All-summary queries on first paint
+
+Several pages use `tripSummaryQueryOptions()`, which currently asks for all summaries:
+
+```js
+export const tripSummaryQueryOptions = () => ({
+  queryKey: tripQueryKeys.summaries,
+  queryFn: () => tripService.listAllSummaries({ sort: '-start_time' }),
+  staleTime: 5 * 60 * 1000,
+});
+```
+
+Risk:
+
+- On a large local history, even summaries can be expensive to decrypt, sort, map, and analyze.
+- Pages then run their own `useMemo` filters and summaries after the query resolves.
+
+Recommended:
+
+- Add a separate limited query option for first paint:
+
+```js
+export const limitedTripSummaryQueryOptions = (limit = 50) => ({
+  queryKey: [...tripQueryKeys.summaries, 'limited', limit],
+  queryFn: () => tripService.listSummaries({ sort: '-start_time', limit }),
+  staleTime: 2 * 60 * 1000,
+});
+```
+
+- Use all summaries only for reports, full history, and analytics sections that visibly need all history.
+
+## AI Implementation Handoff
+
+This section is written for another coding agent or assistant that is asked to implement the fixes from this document.
+
+### Short answer
+
+Yes, this document should be enough for an experienced coding agent to start improving the app, but it should not jump straight into a broad rewrite. The safest path is to first add measurement, then make one or two low-risk loading changes, then verify whether the app feels better.
+
+The agent should treat this as a performance-debugging task, not a design refresh.
+
+### Current branch and scope
+
+Expected branch:
+
+```text
+codex/laggy-fix
+```
+
+Current documentation files:
+
+```text
+docs/UI_LOADING_PERFORMANCE.md
+docs/README.md
+README.md
+```
+
+Primary code areas to inspect before editing:
+
+```text
+src/App.jsx
+src/lib/query-client.js
+src/api/trips.js
+src/lib/localTripRepository.js
+src/hooks/useLocalSettings.jsx
+src/pages/Dashboard.jsx
+src/pages/TripHistory.jsx
+src/pages/MapScreen.jsx
+src/pages/SpeedLimits.jsx
+src/components/SpeedLimitEditorMap.jsx
+src/components/TripMap.jsx
+src/lib/speedLimitMapSections.js
+```
+
+### First prompt to give another AI
+
+Use this prompt if handing the work to another assistant:
+
+```text
+You are working in the Road Sage React/Vite/Capacitor app. The whole app feels laggy, especially Saved road speeds, Map, Dashboard, Settings toggles/check marks, and trip-history-related screens. Read docs/UI_LOADING_PERFORMANCE.md first and follow its Phase 0 incident triage before making broad changes.
+
+Goal: implement the lowest-risk performance fixes that improve perceived responsiveness without changing scoring, storage correctness, privacy behavior, or trip data semantics.
+
+Start by inspecting these files: src/App.jsx, src/api/trips.js, src/lib/localTripRepository.js, src/pages/Dashboard.jsx, src/pages/Settings.jsx, src/pages/SpeedLimits.jsx, src/components/SpeedLimitEditorMap.jsx, src/components/TripMap.jsx, src/hooks/useLocalSettings.jsx, and src/lib/trackingStore.js.
+
+Make small changes in this order:
+1. Add or use lightweight performance marks around app bootstrap/resume, route logging, trip summary queries, full trip list queries, SpeedLimit map-section building, and map drawing.
+2. Make route logging and non-critical resume work idle/deferred if it is not already.
+3. Add a limited trip summary query for first-paint Dashboard usage instead of all summaries.
+4. Change Saved road speeds so saved rows load separately from the heavy map model, and show a map-building state instead of blocking or blanking the page.
+5. Avoid mounting or drawing the speed map when the active workspace does not need it.
+6. Stop automatic map fit-bounds from running on every filter/layer change.
+7. Fix Settings toggle/check mark responsiveness with selector-based setting reads, optimistic local toggle state, and deferred persistence/side effects after paint.
+
+Do not rewrite scoring, trip persistence, encryption, privacy-zone handling, or native Android services unless measurements prove they are the top cause. Preserve tests and existing behavior.
+
+After each change, run the relevant tests/build and report exactly what changed, what was measured, and what remains risky.
+```
+
+### Required agent behavior
+
+The agent should:
+
+- Read the relevant code before editing.
+- Preserve all privacy, encryption, scoring, and trip-storage behavior.
+- Prefer small commits or small patches.
+- Keep stale UI visible during background refresh.
+- Add page-local skeletons or inline refresh badges instead of full-screen blockers.
+- Use summaries for first paint and full trips only for selected maps/playback/export/recalculation paths.
+- Verify with tests or a build after code changes.
+
+The agent should not:
+
+- Rewrite the app shell.
+- Replace React Query.
+- Change scoring formulas.
+- Change trip schema or migrations.
+- Remove security checks.
+- Delete route logging permanently without a clear product decision.
+- Turn off privacy protections to make maps faster.
+- Load every full trip during app startup.
+
+### Minimum useful implementation
+
+If the agent only has time for one safe pass, implement these three changes:
+
+1. Defer route logging with `requestIdleCallback`.
+2. Add a limited dashboard summary query using `tripService.listSummaries({ sort: '-start_time', limit: 50 })`.
+3. Split Saved road speeds into row loading and map-model loading, with a visible "Building map..." state.
+
+This minimum pass should improve perceived responsiveness without touching scoring or persistence internals.
+
+### What extra information helps
+
+If available, give the agent:
+
+- A video or description of which screen freezes first.
+- Whether lag happens on cold launch, after app resume, after opening Saved road speeds, or after switching tabs.
+- Approximate trip count and whether many trips have route points.
+- Android device model and OS version.
+- Whether the app is running as Vite dev, web build, or installed Android app.
+- Console logs from performance marks.
+- Any React error or warning logs.
+
+Without that information, the agent should still begin with Phase 0 measurement and the low-risk fixes above.
 
 ## Source Map
 
@@ -1032,6 +1378,7 @@ Recommended:
 
 - Add a selector-based hook for hot paths.
 - Keep the existing hook for simple pages.
+- Treat freezing toggles, checkboxes, and check marks as a separate high-priority settings performance bug.
 
 Suggested hook:
 
@@ -1064,6 +1411,158 @@ Example:
 ```js
 const units = useLocalSettingSelector((settings) => settings.units || 'metric');
 ```
+
+### Settings freezes, toggles, and check marks
+
+User report on 2026-06-22: Settings interactions are also laggy or freezing, especially toggles and check marks. This matters because Settings is not just a read-only page; it contains high-frequency controls where the UI must respond immediately.
+
+Likely causes:
+
+1. A toggle calls `localSettings.update()` or another persistence path synchronously on the same interaction tick.
+2. A setting change dispatches `SETTINGS_CHANGED_EVENT`, causing many settings subscribers to re-read and compare the full settings object.
+3. The Settings page re-renders a very large component tree after every small checkbox/toggle change.
+4. Expensive derived values such as settings search results, trip summaries, migration summaries, privacy delete impact, vehicles, calibration coverage, or report/export state recompute after unrelated setting changes.
+5. Native settings sync, secure storage, or system logging runs too close to the input event.
+
+Current broad settings hook:
+
+```jsx
+export default function useLocalSettings() {
+  const [settings, setSettings] = useState(() => localSettings.get());
+
+  useEffect(() => {
+    const refresh = (event) => {
+      const next = event?.detail?.settings || localSettings.get();
+      setSettings((current) => (
+        JSON.stringify(current) === JSON.stringify(next) ? current : next
+      ));
+    };
+    window.addEventListener(SETTINGS_CHANGED_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.removeEventListener(SETTINGS_CHANGED_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
+
+  return settings;
+}
+```
+
+Why this can freeze toggles:
+
+- A tiny checkbox change can create a whole new settings object.
+- The whole Settings page sees the new object.
+- Any component using `useLocalSettings()` sees the entire object as changed.
+- `JSON.stringify` itself can be non-trivial as settings grow.
+- The browser may not paint the checked state until after persistence, event dispatch, and re-render work finish.
+
+Recommended UX contract for toggles:
+
+> The visible toggle/check mark should update immediately. Persistence, native sync, logging, and heavyweight recalculation should happen after the paint.
+
+Preferred local toggle pattern:
+
+```jsx
+function SettingsToggle({ settingKey, label }) {
+  const value = useLocalSettingSelector((settings) => settings[settingKey] === true);
+  const [optimisticValue, setOptimisticValue] = useState(value);
+
+  useEffect(() => {
+    setOptimisticValue(value);
+  }, [value]);
+
+  const onChange = (nextValue) => {
+    setOptimisticValue(nextValue);
+    window.setTimeout(() => {
+      localSettings.update({ [settingKey]: nextValue });
+    }, 0);
+  };
+
+  return (
+    <label className="flex items-center justify-between gap-3">
+      <span>{label}</span>
+      <input
+        type="checkbox"
+        checked={optimisticValue}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+    </label>
+  );
+}
+```
+
+For app settings with security or native side effects, keep validation but still separate immediate UI feedback from slow side effects:
+
+```js
+const updateSettingAfterPaint = (patch) => {
+  const run = () => localSettings.update(patch);
+  if (typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(() => window.setTimeout(run, 0));
+  } else {
+    window.setTimeout(run, 0);
+  }
+};
+```
+
+Settings page refactor target:
+
+- Split `Settings.jsx` into smaller memoized sections.
+- Use selector hooks for individual settings.
+- Keep local optimistic state for toggles and checkboxes.
+- Debounce settings search input.
+- Defer expensive impact calculations until the relevant section is visible.
+- Do not load all trip history just because Settings opened.
+- Do not recompute calibration/report/privacy impact for every toggle.
+
+Example section split:
+
+```jsx
+const PrivacySettingsSection = memo(function PrivacySettingsSection() {
+  const allowScreenCapture = useLocalSettingSelector(
+    (settings) => settings.allow_screen_capture === true
+  );
+
+  return (
+    <SettingsSwitch
+      checked={allowScreenCapture}
+      settingKey="allow_screen_capture"
+      label="Allow screenshots"
+    />
+  );
+});
+```
+
+Settings-specific Phase 0 measurement:
+
+```js
+const measureSettingToggle = (settingKey, callback) => {
+  performance.mark(`settings.${settingKey}:start`);
+  try {
+    callback();
+  } finally {
+    requestAnimationFrame(() => {
+      performance.mark(`settings.${settingKey}:paint`);
+      performance.measure(
+        `settings.${settingKey}.toPaint`,
+        `settings.${settingKey}:start`,
+        `settings.${settingKey}:paint`
+      );
+    });
+  }
+};
+```
+
+Acceptance criteria for Settings:
+
+- Tapping a toggle visibly changes the switch/check mark in under 100 ms.
+- The page does not freeze after changing a checkbox.
+- Search typing stays responsive.
+- Settings sections that are not visible do not perform trip-history or calibration work.
+- Security-sensitive settings still persist and sync correctly after the immediate UI update.
+- A failed persistence path reverts the optimistic value and shows a compact error.
 
 ### Vehicles, Achievements, Insights, Coach, Diagnostics, Privacy Intelligence
 
@@ -1351,6 +1850,55 @@ These are practical targets for a smooth mobile feel:
 
 ## Implementation Plan
 
+### Phase 0: incident triage
+
+Do this first when the whole app feels laggy.
+
+1. Add temporary performance marks around app bootstrap, route logging, `tripSummaryQueryOptions()`, `tripService.list()`, `tripService.listAllSummaries()`, `TripMap` draw, `SpeedLimitEditorMap` draw, and `buildSpeedMapSections()`.
+2. Open Dashboard, Trip History, Map, Saved road speeds, Settings, and Trip Detail on the same device and record the slowest mark for each page.
+3. Temporarily disable map mounting on Saved road speeds and Map overview. If the app becomes responsive, prioritize map rendering and full-trip loading fixes.
+4. Temporarily replace `tripSummaryQueryOptions()` usage on Dashboard with `tripService.listSummaries({ limit: 50 })`. If Dashboard becomes responsive, prioritize limited first-paint queries.
+5. Move route logging and non-critical resume work behind `requestIdleCallback`.
+6. Do not start major UI redesign work until the top two measured blockers are known.
+
+Emergency code to prove whether route logging is contributing:
+
+```jsx
+function RouteLogger() {
+  const location = useLocation();
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || '');
+    const payload = {
+      pathname: location.pathname,
+      has_search: Boolean(location.search),
+      search_param_keys: [...params.keys()].slice(0, 20),
+    };
+    const run = () => recordSystemEvent('route_changed', payload, {
+      title: 'Page opened',
+      category: 'navigation',
+    });
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(run, { timeout: 2000 });
+    } else {
+      window.setTimeout(run, 250);
+    }
+  }, [location.pathname, location.search]);
+
+  return null;
+}
+```
+
+Emergency code to prove whether all-summary first paint is contributing:
+
+```jsx
+const { data: recentTrips = [], isLoading } = useQuery({
+  queryKey: ['dashboard-trip-summaries', 50],
+  queryFn: () => tripService.listSummaries({ sort: '-start_time', limit: 50 }),
+  staleTime: 2 * 60 * 1000,
+});
+```
+
 ### Phase 1: quick UI wins
 
 1. Replace `Loading saved speeds...` with a layout-matching skeleton.
@@ -1358,6 +1906,8 @@ These are practical targets for a smooth mobile feel:
 3. Debounce `mapQuery` and `rowQuery`.
 4. Show a separate "Building map..." or "Refreshing map..." badge when full trip data is loading.
 5. Avoid mounting the map workspace when the user is on Saved roads.
+6. Keep the shared layout visible during page-level loading.
+7. Add compact inline refresh badges instead of replacing full sections during background refetch.
 
 ### Phase 2: Saved road speeds data split
 
@@ -1382,8 +1932,17 @@ These are practical targets for a smooth mobile feel:
 3. Add selector-based settings hooks for hot components.
 4. Standardize page skeleton, inline refresh, and load error components.
 5. Add performance marks behind a development flag.
+6. Add a small performance regression checklist to future PRs that touch trip loading, map drawing, app bootstrap, settings, or storage maintenance.
 
 ## Acceptance Criteria
+
+Incident triage is complete when:
+
+- At least two measured slow paths are identified with timing numbers.
+- One temporary disable test has confirmed or ruled out map rendering as the top cause.
+- One limited-query test has confirmed or ruled out all-summary loading as the top cause.
+- App resume is measured separately from cold launch.
+- A narrow first fix can be chosen without guessing.
 
 Saved road speeds should feel fixed when:
 
@@ -1404,4 +1963,3 @@ The whole app should feel fixed when:
 - Previous content remains visible during background refresh.
 - Every long operation has a visible but compact status.
 - Full trip detail is only loaded for selected trips or explicit exports.
-

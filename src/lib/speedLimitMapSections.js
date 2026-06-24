@@ -1,6 +1,7 @@
 import { geohashCenter, geohashEncode } from '@/lib/localSpeedKnowledge';
 import { isPublicPoint } from '@/lib/roadSectionIdentity';
 import { assessSpeedLimitEvidence } from '@/lib/speedLimitConfidence';
+import { measureSync } from '@/lib/performanceTriage';
 
 const pointRoadName = (point = {}) => String(point.speed_limit_road_name || '').trim();
 const pointSource = (point = {}) => point.speed_limit_source ?? point.limitSource ?? point.speedLimitSource ?? point.source ?? null;
@@ -54,16 +55,72 @@ const distanceMeters = (a, b) => {
   return 6371000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
 };
 
+const interpolatePoint = (start, end, ratio) => ({
+  lat: Number(start.lat) + (Number(end.lat) - Number(start.lat)) * ratio,
+  lng: Number(start.lng) + (Number(end.lng) - Number(start.lng)) * ratio,
+});
+
+const samePoint = (a, b) => (
+  Math.abs(Number(a?.lat) - Number(b?.lat)) < 1e-9 &&
+  Math.abs(Number(a?.lng) - Number(b?.lng)) < 1e-9
+);
+
+const splitGeometryAtMidpoint = (points = []) => {
+  const geometry = cleanGeometry(points);
+  if (geometry.length < 2) return [];
+  const segmentLengths = geometry.map((point, index) => (
+    index === 0 ? 0 : distanceMeters(geometry[index - 1], point)
+  ));
+  const totalLength = segmentLengths.reduce((sum, length) => sum + length, 0);
+  if (!Number.isFinite(totalLength) || totalLength <= 0) return [];
+
+  const target = totalLength / 2;
+  let travelled = 0;
+  for (let index = 1; index < geometry.length; index++) {
+    const segmentLength = segmentLengths[index];
+    if (travelled + segmentLength < target) {
+      travelled += segmentLength;
+      continue;
+    }
+    const ratio = segmentLength > 0 ? (target - travelled) / segmentLength : 0;
+    const midpoint = interpolatePoint(geometry[index - 1], geometry[index], Math.max(0, Math.min(1, ratio)));
+    const first = geometry.slice(0, index);
+    if (!samePoint(first.at(-1), midpoint)) first.push(midpoint);
+    const second = geometry.slice(index);
+    if (!samePoint(second[0], midpoint)) second.unshift(midpoint);
+    return [first, second].filter((part) => part.length >= 2);
+  }
+  return [];
+};
+
 const normalizedRoadName = (value) => String(value || '').trim().toLowerCase();
 
 export function snapSectionPointsToTripRoutes(sectionPoints = [], trips = [], maxDistanceM = 80) {
+  return snapSectionPointsToTripRoutesWithStats(sectionPoints, trips, maxDistanceM).points;
+}
+
+export function snapSectionPointsToTripRoutesWithStats(sectionPoints = [], trips = [], maxDistanceM = 80) {
   const routePoints = (trips || [])
     .flatMap((trip) => Array.isArray(trip?.route_points) ? trip.route_points : [])
     .filter(isPublicPoint)
     .map((point) => ({ lat: Number(point.lat), lng: Number(point.lng) }));
-  if (!routePoints.length) return cleanGeometry(sectionPoints);
+  const originalPoints = cleanGeometry(sectionPoints);
+  if (!routePoints.length) {
+    return {
+      points: originalPoints,
+      changedCount: 0,
+      snappedCount: 0,
+      maxMoveM: 0,
+      averageMoveM: 0,
+      routePointCount: 0,
+    };
+  }
 
-  return cleanGeometry(sectionPoints).map((point) => {
+  let changedCount = 0;
+  let snappedCount = 0;
+  let totalMoveM = 0;
+  let maxMoveM = 0;
+  const points = originalPoints.map((point) => {
     let nearest = null;
     let nearestDistanceM = Infinity;
     for (const routePoint of routePoints) {
@@ -73,8 +130,22 @@ export function snapSectionPointsToTripRoutes(sectionPoints = [], trips = [], ma
         nearestDistanceM = candidateDistanceM;
       }
     }
-    return nearest && nearestDistanceM <= maxDistanceM ? nearest : point;
+    if (!nearest || nearestDistanceM > maxDistanceM) return point;
+    snappedCount += 1;
+    const changed = !samePoint(point, nearest);
+    if (changed) changedCount += 1;
+    totalMoveM += nearestDistanceM;
+    maxMoveM = Math.max(maxMoveM, nearestDistanceM);
+    return nearest;
   });
+  return {
+    points,
+    changedCount,
+    snappedCount,
+    maxMoveM: Math.round(maxMoveM),
+    averageMoveM: snappedCount ? Math.round(totalMoveM / snappedCount) : 0,
+    routePointCount: routePoints.length,
+  };
 }
 
 export function findMergeableSpeedSection(section = {}, sections = [], maxDistanceM = 150) {
@@ -227,14 +298,13 @@ function conflictFor(correction, candidate) {
 /** @returns {any[]} */
 export function buildSplitCorrections(section = {}, splitIndex = null) {
   const points = cleanGeometry(section.sectionPoints || []);
-  if (points.length < 3) return [];
-  const index = Number.isInteger(splitIndex)
-    ? Math.max(1, Math.min(points.length - 2, splitIndex))
-    : Math.floor(points.length / 2);
-  const halves = [
-    points.slice(0, index + 1),
-    points.slice(index),
-  ].filter((part) => part.length >= 2);
+  if (points.length < 2) return [];
+  const halves = Number.isInteger(splitIndex) && points.length >= 3
+    ? [
+      points.slice(0, Math.max(1, Math.min(points.length - 2, splitIndex)) + 1),
+      points.slice(Math.max(1, Math.min(points.length - 2, splitIndex))),
+    ].filter((part) => part.length >= 2)
+    : splitGeometryAtMidpoint(points);
 
   return halves.map((sectionPoints, partIndex) => {
     const center = sectionPoints[Math.floor(sectionPoints.length / 2)];
@@ -326,6 +396,14 @@ export function filterSpeedMapSections(sections = [], {
 }
 
 export function buildSpeedMapSections(trips = [], corrections = []) {
+  return measureSync('buildSpeedMapSections', () => buildSpeedMapSectionsInternal(trips, corrections), {
+    tripCount: trips?.length || 0,
+    correctionCount: corrections?.length || 0,
+    routePointCount: (trips || []).reduce((sum, trip) => sum + (trip?.route_points?.length || 0), 0),
+  });
+}
+
+function buildSpeedMapSectionsInternal(trips = [], corrections = []) {
   const candidates = new Map();
 
   for (const trip of trips || []) {

@@ -641,6 +641,8 @@ export async function syncZonesToNative(zones = getPrivacyZones()) {
         id: String(zone.id || ''),
         label: String(zone.label || 'Private place'),
         radius_m: Number(zone.radius_m),
+        sensitivity: zone?.sensitivity === 'high' ? 'high' : 'standard',
+        ...(zone.expiresAt ? { expiresAt: zone.expiresAt } : {}),
         privacy_cell_schema: zone.privacy_cell_schema || PRIVACY_CELL_SCHEMA,
         privacy_cell_size_m: Number(zone.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M,
         privacy_cell_hashes: normalizePrivacyCellHashes(zone),
@@ -1826,6 +1828,25 @@ async function purgeZoneFromTripRepository(zone) {
     }, { rescoreTrip: rescoreTripForQueue });
   }
   return result;
+}
+
+export async function purgeExistingGpsForHeightenedPrivacy(settings = localSettings.get()) {
+  const zones = await getHydratedPrivacyZones(settings);
+  const totals = {
+    zoneCount: zones.length,
+    tripsAffected: 0,
+    pointsPurged: 0,
+    eventsPurged: 0,
+  };
+
+  for (const zone of zones) {
+    const result = await purgeZoneFromTripRepository(zone);
+    totals.tripsAffected += result.tripsAffected;
+    totals.pointsPurged += result.pointsPurged;
+    totals.eventsPurged += result.eventsPurged;
+  }
+
+  return totals;
 }
 
 export async function upsertPrivacyZone(zone, settings = localSettings.get()) {

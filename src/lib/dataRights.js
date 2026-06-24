@@ -202,7 +202,12 @@ export async function buildDataPortabilityExport({
   return bundle;
 }
 
-export async function downloadJsonFile(filename, payload, mimeType = 'application/json') {
+export async function downloadJsonFile(
+  filename,
+  payload,
+  mimeType = 'application/json',
+  { logNativeFailure = true } = {}
+) {
   const data = `${JSON.stringify(payload, null, 2)}\n`;
   try {
     if (isNativePlatform()) {
@@ -210,10 +215,12 @@ export async function downloadJsonFile(filename, payload, mimeType = 'applicatio
       return { native: true, filename, uri: result.uri };
     }
   } catch (error) {
-    logSystemFailure('privacy_export_native_save_failed', error, {
-      filename,
-      native_fallback: true,
-    });
+    if (logNativeFailure) {
+      logSystemFailure('privacy_export_native_save_failed', error, {
+        filename,
+        native_fallback: true,
+      });
+    }
     // Browser fallback below keeps export available even if native file saving fails.
   }
   const blob = new Blob([data], { type: `${mimeType};charset=utf-8;` });
@@ -285,15 +292,21 @@ export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now() } = {}
 }
 
 export async function eraseAllLocalDataAndDownloadReceipt() {
+  const receipt = await eraseAllLocalDataAndBuildReceipt();
+  const filename = `road-sage-erasure-receipt-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
   try {
-    const receipt = await eraseAllLocalDataAndBuildReceipt();
-    const filename = `road-sage-erasure-receipt-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
     return {
       receipt,
-      ...(await downloadJsonFile(filename, receipt)),
+      ...(await downloadJsonFile(filename, receipt, 'application/json', { logNativeFailure: false })),
     };
   } catch (error) {
-    logSystemFailure('data_erasure_receipt_export_failed', error, {});
-    throw error;
+    const receiptError = error instanceof Error
+      ? error
+      : new Error('Local data was erased, but the erasure receipt could not be saved.');
+    Object.assign(receiptError, {
+      dataErased: true,
+      receiptFilename: filename,
+    });
+    throw receiptError;
   }
 }

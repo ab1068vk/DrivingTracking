@@ -17,6 +17,7 @@ import {
   buildTripCalendarMonth,
   buildWeeklyDriverSummary,
 } from '@/lib/mediumInsights';
+import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 
 const dayInitials = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const nhtsaDistractedDrivingFacts = [
@@ -57,11 +58,11 @@ export default function Insights() {
     return date;
   }, [monthOffset]);
 
-  const { data: trips = [], isLoading } = useQuery({
+  const { data: completed = [], isLoading, isFetching } = useQuery({
     ...tripSummaryQueryOptions(),
+    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
 
-  const completed = trips.filter((trip) => trip.status === 'completed');
   const driverCompleted = completed.filter(isDriverMetricEligible);
   const routes = buildRouteComparisons(driverCompleted);
   const commutes = buildCommuteDetections(driverCompleted);
@@ -85,6 +86,7 @@ export default function Insights() {
         <h1 className="text-2xl font-grotesk font-bold">Driving Insights</h1>
         <p className="mt-1 text-sm text-muted-foreground">Routes, calendar patterns, weekly summary, and custom goals</p>
       </motion.div>
+      <InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing insights" />
 
       {isLoading ? (
         <div className="space-y-3">

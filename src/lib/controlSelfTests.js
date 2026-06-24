@@ -7,6 +7,7 @@ import {
   maskRoutePointsForPrivacy,
   maskRoutePointsForPrivacyExport,
 } from '@/lib/privacyZones';
+import { privacyGatedFetch } from '@/lib/privacyGatedFetch';
 import { DEFAULT_THRESHOLDS } from '@/lib/tripEngine';
 import {
   assertScoreInputsDoNotContainRawZoneKinematics,
@@ -211,6 +212,45 @@ export const selfTestKinematicNulling = () => withCache('kinematic_nulling', asy
     : ok('Boundary placeholder contains no speed, heading, bearing, accuracy, or altitude');
 });
 
+export const selfTestPrivacyZoneProtection = () => withCache('privacy_zone_protection', async () => {
+  const timestamp = new Date().toISOString();
+  const settings = {
+    privacy_zones: [{
+      id: 'zone-protection-self-test',
+      label: 'Self test',
+      lat: 43,
+      lng: -79,
+      radius_m: 120,
+    }],
+  };
+  const masked = maskRoutePointsForPrivacy([
+    { lat: 43, lng: -79, timestamp, speed_kmh: 48, heading: 90, accuracy: 4 },
+  ], settings);
+  const protectedPoint = masked[0];
+  if (
+    protectedPoint?.lat != null ||
+    protectedPoint?.lng != null ||
+    protectedPoint?.speed_kmh != null ||
+    protectedPoint?.masked_for_privacy !== true
+  ) {
+    return error('Synthetic private GPS was not fully redacted before storage');
+  }
+
+  const outbound = await privacyGatedFetch('privacy-self-test', { url: 'https://invalid.local/self-test' }, {
+    type: 'Privacy-zone outbound self-test',
+    coordinateDisclosure: 'blocked',
+    block: {
+      reason: 'privacy_zone_self_test',
+      privacyVerificationEvidence: ['synthetic privacy-zone request blocked before network send'],
+      protections: ['privacy-zone outbound guard'],
+    },
+  });
+  if (outbound?.blocked !== true || Number(outbound?.logRecord?.bytesOut ?? 0) !== 0) {
+    return error('Synthetic outbound request was not blocked with zero bytes sent');
+  }
+  return ok('Synthetic private GPS was redacted and a synthetic outbound request was blocked with zero bytes sent');
+});
+
 export const selfTestScoreInputMasking = () => withCache('score_input_masking', async () => {
   const timestamp = Date.now();
   const settings = {
@@ -322,6 +362,7 @@ export async function runAllSelfTests() {
     request_obfuscation: selfTestRequestObfuscation,
     timestamp_fuzzing: selfTestTimestampFuzzing,
     kinematic_nulling: selfTestKinematicNulling,
+    privacy_zone_protection: selfTestPrivacyZoneProtection,
     score_input_masking: selfTestScoreInputMasking,
     differential_privacy: selfTestDifferentialPrivacy,
     commitment_scheme: selfTestCommitmentScheme,

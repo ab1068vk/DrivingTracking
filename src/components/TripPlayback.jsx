@@ -14,7 +14,7 @@ import {
   maskEventsForPrivacy,
   maskRoutePointsForPrivacy,
 } from '@/lib/privacyZones';
-import SectionErrorBoundary from '@/components/SectionErrorBoundary';
+import MapErrorBoundary from '@/components/MapErrorBoundary';
 import useLocalSettings from '@/hooks/useLocalSettings';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -339,14 +339,15 @@ const buildProgressLatLngs = (segments = [], position = {}) => {
 
 export default function TripPlayback(props) {
   return (
-    <SectionErrorBoundary
+    <MapErrorBoundary
       context="trip_playback"
       title="Playback unavailable"
-      message="Something went wrong while preparing this trip playback. Reload to try again."
+      message="Something went wrong while preparing this trip playback. Trip details are still available."
       resetKey={`${props.trip?.id || 'trip'}:${props.secondaryTrip?.id || 'none'}`}
+      height={props.height || '380px'}
     >
       <TripPlaybackContent {...props} />
-    </SectionErrorBoundary>
+    </MapErrorBoundary>
   );
 }
 

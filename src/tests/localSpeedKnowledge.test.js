@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { LocalSpeedKnowledge, STORAGE_KEY, timeToBucket } from '@/lib/localSpeedKnowledge';
+import { geohashEncode, LocalSpeedKnowledge, STORAGE_KEY, timeToBucket } from '@/lib/localSpeedKnowledge';
 import { applySafetyGuards } from '@/lib/speedLimitSource';
 
 // CHANGES (session):
@@ -194,6 +194,37 @@ describe('LocalSpeedKnowledge', () => {
     await expect(lsk.removeUserCorrection(eastbound.id)).resolves.toBe(true);
     await expect(lsk.listUserCorrections()).resolves.toHaveLength(1);
     await expect(lsk.getForPoint(43.6500, -79.3805, null, { headingDeg: 270 })).resolves.toMatchObject({ limitKmh: 60 });
+  });
+
+  it('updates a saved correction center when snapped geometry moves', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+
+    await lsk.saveUserCorrection(43.6500, -79.3805, 50, 'Original', null, [], 'user_confirmed_posted_sign', {
+      sectionPoints: [
+        { lat: 43.6500, lng: -79.3810 },
+        { lat: 43.6500, lng: -79.3800 },
+      ],
+    });
+    const [saved] = await lsk.listUserCorrections();
+
+    await expect(lsk.updateUserCorrection(saved.id, 50, 'user_confirmed_posted_sign', 'Snapped', {
+      lat: 43.6510,
+      lng: -79.3790,
+      sectionPoints: [
+        { lat: 43.6510, lng: -79.3795 },
+        { lat: 43.6510, lng: -79.3785 },
+      ],
+    })).resolves.toBe(true);
+
+    const [updated] = await lsk.listUserCorrections();
+    expect(updated.lat).toBeCloseTo(43.6510);
+    expect(updated.lng).toBeCloseTo(-79.3790);
+    expect(updated.geohash).toBe(geohashEncode(43.6510, -79.3790));
+    expect(updated.sectionPoints).toEqual([
+      { lat: 43.6510, lng: -79.3795 },
+      { lat: 43.6510, lng: -79.3785 },
+    ]);
   });
 
   it('does not match a directional rule when heading differs by more than 60 degrees', async () => {

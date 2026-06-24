@@ -25,7 +25,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { tripQueryKeys, tripService } from '@/api/trips';
+import { tripDetailQueryOptions } from '@/api/trips';
 import {
   calculateSegmentMetrics,
   formatDateTime,
@@ -85,11 +85,25 @@ const localLimitSourceLabel = (source) => {
 
 function applyLocalSpeedKnowledgeToTrip(trip = {}, localKnowledgeResults = []) {
   const points = Array.isArray(trip?.route_points) ? trip.route_points : [];
+  const routePointCount = points.length;
   if (!points.length || !localKnowledgeResults.some((item) => Number(item?.limitKmh) > 0)) {
-    return { trip, savedLimitCount: 0, confirmedCount: 0, estimateCount: 0, learnedCount: 0, sources: [] };
+    return {
+      trip,
+      routePointCount,
+      savedLimitCount: 0,
+      unmatchedPointCount: routePointCount,
+      savedCoveragePercent: 0,
+      confirmedCount: 0,
+      estimateCount: 0,
+      learnedCount: 0,
+      distinctRuleCount: 0,
+      sources: [],
+      rules: [],
+    };
   }
 
   const sourceCounts = new Map();
+  const ruleCounts = new Map();
   let savedLimitCount = 0;
   let confirmedCount = 0;
   let estimateCount = 0;
@@ -108,6 +122,17 @@ function applyLocalSpeedKnowledgeToTrip(trip = {}, localKnowledgeResults = []) {
     else if (source === 'user_entered_estimate') estimateCount++;
     else learnedCount++;
     sourceCounts.set(source, (sourceCounts.get(source) || 0) + 1);
+    const ruleKey = knowledge.correctionId || `${source}:${knowledge.geohash || index}:${Math.round(limitKmh)}`;
+    const existingRule = ruleCounts.get(ruleKey) || {
+      key: ruleKey,
+      source,
+      limitKmh,
+      label: knowledge.roadName || knowledge.contextLabel || knowledge.geohash || localLimitSourceLabel(source),
+      matchType: knowledge.matchType || null,
+      count: 0,
+    };
+    existingRule.count += 1;
+    ruleCounts.set(ruleKey, existingRule);
     return {
       ...point,
       speed_limit_kmh: limitKmh,
@@ -119,16 +144,26 @@ function applyLocalSpeedKnowledgeToTrip(trip = {}, localKnowledgeResults = []) {
       speed_limit_needs_review: knowledge.needsReview ?? point.speed_limit_needs_review,
       speed_limit_road_name: knowledge.roadName || point.speed_limit_road_name,
       speed_limit_from_local_knowledge: true,
+      speed_limit_local_rule_id: knowledge.correctionId || point.speed_limit_local_rule_id,
+      speed_limit_local_match_type: knowledge.matchType || point.speed_limit_local_match_type,
+      speed_limit_local_match_distance_m: knowledge.matchDistanceM ?? point.speed_limit_local_match_distance_m,
+      speed_limit_local_match_reason: knowledge.matchReason || point.speed_limit_local_match_reason,
     };
   });
 
+  const unmatchedPointCount = Math.max(0, routePointCount - savedLimitCount);
   return {
     trip: { ...trip, route_points },
+    routePointCount,
     savedLimitCount,
+    unmatchedPointCount,
+    savedCoveragePercent: routePointCount > 0 ? Math.round((savedLimitCount / routePointCount) * 100) : 0,
     confirmedCount,
     estimateCount,
     learnedCount,
+    distinctRuleCount: ruleCounts.size,
     sources: [...sourceCounts.entries()].map(([source, count]) => ({ source, count, label: localLimitSourceLabel(source) })),
+    rules: [...ruleCounts.values()].sort((a, b) => b.count - a.count),
   };
 }
 
@@ -268,10 +303,7 @@ export default function SpeedAnalysis() {
   const units = settings.units || 'metric';
   const [speedKnowledgeRevision, setSpeedKnowledgeRevision] = useState(0);
   const [speedLimitLocalKnowledgeResults, setSpeedLimitLocalKnowledgeResults] = useState([]);
-  const { data: trip, isLoading } = useQuery({
-    queryKey: tripQueryKeys.detail(id),
-    queryFn: () => tripService.getById(id),
-  });
+  const { data: trip, isLoading } = useQuery(tripDetailQueryOptions(id));
   useEffect(() => {
     let cancelled = false;
     const loadLocalSpeedKnowledge = async () => {
@@ -355,7 +387,7 @@ export default function SpeedAnalysis() {
           </div>
           {localSpeedKnowledge.savedLimitCount > 0 && (
             <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">
-              {localSpeedKnowledge.confirmedCount > 0 ? `${localSpeedKnowledge.confirmedCount} confirmed sign` : `${localSpeedKnowledge.savedLimitCount} saved speed`} point{(localSpeedKnowledge.confirmedCount || localSpeedKnowledge.savedLimitCount) === 1 ? '' : 's'}
+              {localSpeedKnowledge.savedCoveragePercent}% user-labeled coverage
             </div>
           )}
         </div>
@@ -425,6 +457,14 @@ export default function SpeedAnalysis() {
             <div className="text-xs text-muted-foreground">Points above limit + margin</div>
           </div>
         </div>
+        {localSpeedKnowledge.savedLimitCount > 0 && (
+          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
+            <div className="font-semibold">User-labeled speed coverage</div>
+            <div className="mt-1 text-emerald-800/80 dark:text-emerald-100/80">
+              Saved rules matched {localSpeedKnowledge.savedLimitCount} of {localSpeedKnowledge.routePointCount} route points ({localSpeedKnowledge.savedCoveragePercent}%). {localSpeedKnowledge.unmatchedPointCount} point{localSpeedKnowledge.unmatchedPointCount === 1 ? '' : 's'} used trip, map, regional, or inferred fallback speed context.
+            </div>
+          </div>
+        )}
         <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1fr]">
           <div className="rounded-xl border border-border bg-secondary/30 p-3">
             <div className="text-xs font-semibold">Evidence sources</div>
@@ -440,9 +480,14 @@ export default function SpeedAnalysis() {
             </div>
           </div>
           <div className="rounded-xl border border-border bg-background p-3">
-            <div className="text-xs font-semibold">Recommended actions</div>
+            <div className="text-xs font-semibold">{localSpeedKnowledge.rules.length ? 'Matched user rules' : 'Recommended actions'}</div>
             <div className="mt-2 space-y-2 text-xs text-muted-foreground">
-              {limitIntelligence.recommendations.map((recommendation) => (
+              {localSpeedKnowledge.rules.length ? localSpeedKnowledge.rules.slice(0, 5).map((rule) => (
+                <div key={rule.key} className="flex items-center justify-between gap-3">
+                  <span>{Math.round(rule.limitKmh)} km/h - {rule.label}</span>
+                  <span className="font-semibold text-foreground">{rule.count} point{rule.count === 1 ? '' : 's'}</span>
+                </div>
+              )) : limitIntelligence.recommendations.map((recommendation) => (
                 <div key={recommendation} className="flex gap-2">
                   <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
                   <span>{recommendation}</span>
@@ -483,7 +528,7 @@ export default function SpeedAnalysis() {
           </div>
           {localSpeedKnowledge.savedLimitCount > 0 && (
             <div className="mb-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
-              This map is using saved local road-speed knowledge first. {localSpeedKnowledge.sources.map((source) => `${source.count} ${source.label}`).join(', ')}.
+              This map is using saved local road-speed knowledge first. {localSpeedKnowledge.sources.map((source) => `${source.count} ${source.label}`).join(', ')}. Coverage: {localSpeedKnowledge.savedCoveragePercent}% of route points.
             </div>
           )}
           <Suspense fallback={<div className="flex h-[420px] items-center justify-center rounded-2xl bg-secondary/50 text-sm text-muted-foreground">Loading speed replay...</div>}>

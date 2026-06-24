@@ -34,7 +34,7 @@ describe('privacyMode', () => {
       { id: 'home', sensitivity: 'high' },
       { id: 'work', sensitivity: 'high' },
     ]);
-    expect(HEIGHTENED_PRIVACY_MODE_EFFECTS).toHaveLength(4);
+    expect(HEIGHTENED_PRIVACY_MODE_EFFECTS).toHaveLength(5);
   });
 
   it('leaves normal settings and zones untouched when heightened mode is off', () => {

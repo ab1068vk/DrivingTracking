@@ -32,9 +32,11 @@ import {
   PRIVACY_ZONES_SECURE_KEY,
   privacyBoundaryPoint,
   privacyZonesForRoute,
+  purgeExistingGpsForHeightenedPrivacy,
   purgeGpsWithinPrivacyZone,
   purgeTripGpsWithinPrivacyZone,
   redactRoutePointForPrivacyStorage,
+  savePrivacyZonesToStorage,
   sanitizeKinematics,
   sweepExpiredPrivacyZones,
   syncZonesToNative,
@@ -787,7 +789,26 @@ describe('privacyZones', () => {
     expect(payload.value).not.toContain('-79.38');
     expect(payload.value).not.toContain('"lat"');
     expect(payload.value).not.toContain('"lng"');
-    expect(JSON.parse(payload.value)[0].privacy_cell_size_m).toBe(50);
+    expect(JSON.parse(payload.value)[0]).toMatchObject({
+      sensitivity: 'standard',
+      privacy_cell_size_m: 50,
+    });
+  });
+
+  it('syncs temporary-zone expiry and high sensitivity to the native privacy guard', async () => {
+    Capacitor.isNativePlatform.mockReturnValue(true);
+    Capacitor.getPlatform.mockReturnValue('android');
+    vi.stubGlobal('window', {});
+    const expiresAt = '2026-06-24T12:00:00.000Z';
+
+    await syncZonesToNative([{ ...zone, sensitivity: 'high', expiresAt }]);
+
+    const payload = secureSetPreference.mock.calls[0][0];
+    expect(JSON.parse(payload.value)[0]).toMatchObject({
+      id: 'home',
+      sensitivity: 'high',
+      expiresAt,
+    });
   });
 
   it('fails closed and pauses native tracking settings when native privacy sync fails', async () => {
@@ -938,6 +959,24 @@ describe('privacyZones', () => {
     expect(createPrivacyCellHashes(corridor).length).toBeGreaterThan(0);
   });
 
+  it('generates corridor coverage hashes consumed by the Android privacy checker', () => {
+    const corridor = {
+      id: 'commute-corridor',
+      type: 'corridor',
+      width_m: 80,
+      radius_m: 80,
+      waypoints: [
+        { lat: 43.6532, lng: -79.3860 },
+        { lat: 43.6532, lng: -79.3820 },
+      ],
+    };
+    const hashes = createPrivacyCellHashes(corridor);
+
+    expect(hashes).toContain('pzc_1d8k9eb');
+    expect(hashes).toContain('pzc_712ohe');
+    expect(hashes).not.toContain('pzc_hajz95');
+  });
+
   it('downsamples a saved route to the corridor waypoint limit while preserving endpoints', () => {
     const route = Array.from({ length: 60 }, (_, index) => ({
       lat: 43.65 + index * 0.0001,
@@ -1015,6 +1054,34 @@ describe('privacyZones', () => {
         route_points: [expect.objectContaining({ privacy_purged: true })],
       })
     );
+  });
+
+  it('purges existing raw GPS from every zone when heightened privacy is enabled', async () => {
+    await savePrivacyZonesToStorage([], localSettings.get());
+    privacyZoneMocks.listTrips.mockResolvedValue([{
+      id: 'heightened-trip',
+      route_points: [
+        point(43.65, -79.38),
+        point(43.72, -79.42),
+      ],
+      driving_events: [],
+    }]);
+    const work = { id: 'work', label: 'Work', lat: 43.72, lng: -79.42, radius_m: 100 };
+
+    await upsertPrivacyZone(zone, localSettings.get());
+    await upsertPrivacyZone(work, localSettings.get());
+    privacyZoneMocks.updateTrip.mockClear();
+
+    const result = await purgeExistingGpsForHeightenedPrivacy({
+      ...localSettings.get(),
+      heightened_privacy_mode: true,
+    });
+
+    expect(result).toMatchObject({
+      zoneCount: 2,
+      pointsPurged: 2,
+    });
+    expect(privacyZoneMocks.updateTrip).toHaveBeenCalledTimes(2);
   });
 
   it('suggests the smallest wider radius that catches raw near-misses', () => {

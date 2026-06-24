@@ -40,6 +40,7 @@ import {
   identifyCommutePatterns,
   calculatePeakHourStress,
 } from '@/lib/tripInsights';
+import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 
 const PERIODS = [
   { id: 'week', label: 'This Week', days: 7 },
@@ -75,8 +76,9 @@ export default function Reports() {
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
 
-  const { data: allTrips = [], isLoading } = useQuery({
+  const { data: completed = [], isLoading, isFetching } = useQuery({
     ...tripSummaryQueryOptions(),
+    select: (trips) => trips.filter(t => t.status === 'completed' && isDriverMetricEligible(t)),
   });
 
   const { data: vehicles = [] } = useQuery({
@@ -84,7 +86,6 @@ export default function Reports() {
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
   });
 
-  const completed = allTrips.filter(t => t.status === 'completed' && isDriverMetricEligible(t));
   const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle]));
 
   // Filter by period
@@ -355,6 +356,7 @@ export default function Reports() {
           </button>
         </div>
       </motion.div>
+      <InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing reports" />
 
       {/* Period selector */}
       <div className="flex gap-2">

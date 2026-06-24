@@ -1,4 +1,5 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import { isNativePlatform } from '@/lib/nativePlatform';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 
 export const SPEED_KNOWLEDGE_STORAGE_KEY = 'speed_knowledge_v1';
@@ -62,19 +63,56 @@ const writeIndexedDb = async (key, value) => {
 
 let migrationPromise = null;
 
+const nativeSpeedKnowledgeMirror = (value) => ({
+  cells: {},
+  corrections: Array.isArray(value?.corrections)
+    ? value.corrections.map((correction) => ({
+      id: correction?.id,
+      ruleId: correction?.ruleId,
+      geohash: correction?.geohash,
+      lat: correction?.lat,
+      lng: correction?.lng,
+      coordinateSource: correction?.coordinateSource,
+      limitKmh: correction?.limitKmh,
+      source: correction?.source,
+      appliedAt: correction?.appliedAt,
+      expiresAt: correction?.expiresAt,
+      directionMode: correction?.directionMode,
+      directionBearing: correction?.directionBearing,
+      timeRule: correction?.timeRule,
+      sectionPoints: Array.isArray(correction?.sectionPoints)
+        ? correction.sectionPoints.map((point) => ({ lat: point?.lat, lng: point?.lng }))
+        : undefined,
+    }))
+    : [],
+});
+
+const syncNativeSpeedKnowledgeMirror = async (key, value) => {
+  if (!isNativePlatform()) {
+    await removeJson(key);
+    return;
+  }
+  await setJson(key, nativeSpeedKnowledgeMirror(value));
+};
+
 export const migrateSpeedKnowledgeToIndexedDb = async () => {
   if (!canUseIndexedDb()) return false;
   if (!migrationPromise) {
     migrationPromise = (async () => {
       const indexedValue = await readIndexedDb(SPEED_KNOWLEDGE_STORAGE_KEY);
-      if (indexedValue != null) return false;
+      if (indexedValue != null) {
+        await syncNativeSpeedKnowledgeMirror(SPEED_KNOWLEDGE_STORAGE_KEY, indexedValue);
+        return false;
+      }
       const legacyValue = await getJson(SPEED_KNOWLEDGE_STORAGE_KEY, null);
       if (legacyValue == null) {
-        await writeIndexedDb(SPEED_KNOWLEDGE_STORAGE_KEY, { cells: {}, corrections: [] });
+        const emptyValue = { cells: {}, corrections: [] };
+        await writeIndexedDb(SPEED_KNOWLEDGE_STORAGE_KEY, emptyValue);
+        await syncNativeSpeedKnowledgeMirror(SPEED_KNOWLEDGE_STORAGE_KEY, emptyValue);
         return false;
       }
       await writeIndexedDb(SPEED_KNOWLEDGE_STORAGE_KEY, legacyValue);
-      await removeJson(SPEED_KNOWLEDGE_STORAGE_KEY);
+      await syncNativeSpeedKnowledgeMirror(SPEED_KNOWLEDGE_STORAGE_KEY, legacyValue);
       recordSystemEvent('speed_knowledge_indexeddb_migrated', {
         cell_count: Object.keys(legacyValue.cells || {}).length,
         correction_count: Array.isArray(legacyValue.corrections) ? legacyValue.corrections.length : 0,
@@ -112,7 +150,7 @@ export const speedKnowledgeStore = {
     try {
       await migrateSpeedKnowledgeToIndexedDb();
       await writeIndexedDb(key, value);
-      await removeJson(key);
+      await syncNativeSpeedKnowledgeMirror(key, value);
     } catch (error) {
       logSystemFailure('speed_knowledge_indexeddb_write', error, { key });
       await setJson(key, value);

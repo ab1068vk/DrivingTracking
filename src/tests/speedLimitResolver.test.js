@@ -160,6 +160,26 @@ describe('resolveEffectiveSpeedLimitForIndex priority', () => {
     expect(resolved.limitKmh).toBe(40);
     expect(resolved.tier).toBe('LEARNED_LOCAL');
     expect(resolved.limitSource).toBe('user_entered_estimate');
+    expect(resolved.resolutionReason).toBe('user_entered_estimate');
+    expect(resolved.localSpeedRule).toMatchObject({
+      source: 'user_entered_estimate',
+    });
+    expect(resolved.fallbackReason).toBeNull();
+  });
+
+  it('reports when it falls back because no saved or posted road speed matched', () => {
+    const points = [
+      { lat: 43.65, lng: -79.38, speed_kmh: 42, timestamp: '2026-01-01T12:00:00.000Z' },
+      { lat: 43.6501, lng: -79.38, speed_kmh: 44, timestamp: '2026-01-01T12:00:05.000Z' },
+    ];
+    const resolved = resolveEffectiveSpeedLimitForIndex(points, 1, DEFAULT_THRESHOLDS, {
+      settings: { configurable_country_defaults: 'CA-ON' },
+    });
+    expect(resolved.limitKmh).toBe(50);
+    expect(resolved.tier).toBe('REGION_DEFAULT');
+    expect(resolved.resolutionReason).toBe('regional_default_estimate');
+    expect(resolved.fallbackReason).toBe('regional_default_estimate');
+    expect(resolved.localSpeedRule).toBeNull();
   });
 });
 

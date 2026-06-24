@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   readonly VITE_DEFAULT_OSRM_URL?: string;
   readonly VITE_OSRM_TIMEOUT_MS?: string;
   readonly VITE_SHOW_DEBUG_ROUTES?: string;
+  readonly VITE_TRIAGE_DISABLE_MAPS?: string;
+  readonly VITE_TRIAGE_DASHBOARD_LIMITED_SUMMARIES?: string;
 }
 
 interface ImportMeta {
@@ -16,6 +18,7 @@ interface ImportMeta {
 interface Window {
   L?: any;
   __roadSageErrorReportingInitialized?: boolean;
+  __PERF_TRIAGE__?: any[];
 }
 
 declare module '@capacitor/app' {

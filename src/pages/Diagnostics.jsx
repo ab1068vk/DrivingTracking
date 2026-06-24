@@ -17,7 +17,7 @@ import {
   SlidersHorizontal,
   Trash2,
 } from 'lucide-react';
-import { tripQueryKeys, tripService } from '@/api/trips';
+import { tripDetailQueryOptions, tripService } from '@/api/trips';
 import { getPermissionStatus } from '@/lib/permissions';
 import {
   clearNativeDiagnostics,
@@ -189,12 +189,7 @@ export default function Diagnostics() {
     enabled: import.meta.env.DEV,
   });
   const latestTripSummary = trips.find((trip) => trip.status === 'completed') || null;
-  const { data: latestTripDetail } = useQuery({
-    queryKey: latestTripSummary?.id ? tripQueryKeys.detail(latestTripSummary.id) : ['diagnostics-latest-trip-detail', 'none'],
-    queryFn: () => tripService.getById(latestTripSummary.id),
-    enabled: Boolean(latestTripSummary?.id),
-    staleTime: 2 * 60 * 1000,
-  });
+  const { data: latestTripDetail } = useQuery(tripDetailQueryOptions(latestTripSummary?.id));
   const latestTrip = latestTripDetail || latestTripSummary;
   const localTestTripCount = storedTestTrips.length;
 

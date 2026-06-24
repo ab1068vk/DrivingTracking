@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { tripQueryKeys, tripService } from '@/api/trips';
+import { limitedTripSummaryQueryOptions, tripDetailQueryOptions, tripQueryKeys } from '@/api/trips';
 import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers, ChevronLeft, ChevronRight, Shield } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
@@ -27,6 +27,8 @@ import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 import { MAX_VISIBLE_DANGER_ZONES } from '@/lib/appConstants';
 import { pinnedFetch } from '@/lib/pinnedFetch';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { TRIAGE_DISABLE_MAPS } from '@/lib/performanceTriage';
+import InlineLoadError from '@/components/InlineLoadError';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -36,7 +38,8 @@ const MAP_FILTERS = [
 
 const MAP_ROUTE_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#06b6d4', '#ef4444'];
 const TRIP_CARD_PAGE_SIZE = 30;
-const MAP_OVERVIEW_ROUTE_LIMIT = 24;
+const MAP_OVERVIEW_SUMMARY_LIMIT = 50;
+const MAP_OVERVIEW_ROUTE_LIMIT = 8;
 const scheduleIdleWork = (callback) => {
   if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
     const idleId = window.requestIdleCallback(callback, { timeout: 1000 });
@@ -99,6 +102,7 @@ export default function MapScreen() {
   const [tripListPage, setTripListPage] = useState(0);
   const [speedLimitKnowledgeRevision, setSpeedLimitKnowledgeRevision] = useState(0);
   const [speedLimitLocalKnowledgeResults, setSpeedLimitLocalKnowledgeResults] = useState([]);
+  const overviewMapTripsRef = useRef({ key: '', trips: [] });
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
   const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
@@ -110,10 +114,9 @@ export default function MapScreen() {
   ])), [privacyZones]);
   const osrmConfigured = isOsrmMapMatchingConfigured(settings);
 
-  const { data: trips = [], isLoading: tripsLoading } = useQuery({
-    queryKey: tripQueryKeys.map,
-    queryFn: () => tripService.listSummaries({ sort: '-start_time', limit: 500 }),
-    staleTime: 2 * 60 * 1000,
+  const { data: completedSummaries = [], isLoading: tripsLoading } = useQuery({
+    ...limitedTripSummaryQueryOptions(MAP_OVERVIEW_SUMMARY_LIMIT),
+    select: (trips) => trips.filter(t => t.status === 'completed'),
   });
   const contextMutation = useMutation({
     mutationFn: async () => {
@@ -127,11 +130,11 @@ export default function MapScreen() {
     onSuccess: (updatedTrip) => {
       if (updatedTrip) {
         qc.setQueryData(tripQueryKeys.detail(updatedTrip.id), updatedTrip);
-        qc.setQueryData(tripQueryKeys.map, (old = []) => (
+        qc.setQueryData(tripQueryKeys.limitedSummaries(MAP_OVERVIEW_SUMMARY_LIMIT), (old = []) => (
           Array.isArray(old) ? old.map((trip) => String(trip.id) === String(updatedTrip.id) ? updatedTrip : trip) : old
         ));
       }
-      qc.invalidateQueries({ queryKey: tripQueryKeys.map });
+      qc.invalidateQueries({ queryKey: tripQueryKeys.limitedSummaries(MAP_OVERVIEW_SUMMARY_LIMIT) });
       qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
       if (selectedTripId) qc.invalidateQueries({ queryKey: tripQueryKeys.detail(selectedTripId) });
       const hasSpeedLimits = (updatedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
@@ -145,10 +148,6 @@ export default function MapScreen() {
     },
   });
 
-  const completedSummaries = useMemo(
-    () => trips.filter(t => t.status === 'completed'),
-    [trips]
-  );
   const allCompleted = useMemo(
     () => completedSummaries.filter(hasReplayableRoute),
     [completedSummaries]
@@ -169,19 +168,13 @@ export default function MapScreen() {
     () => allCompleted.find(t => String(t.id) === String(secondaryTripId)),
     [allCompleted, secondaryTripId]
   );
-  const { data: selectedTripDetailRaw, isFetching: selectedTripLoading } = useQuery({
-    queryKey: tripQueryKeys.detail(selectedTripId || 'none'),
-    queryFn: () => tripService.getById(selectedTripId),
-    enabled: Boolean(selectedTripId),
-    staleTime: 2 * 60 * 1000,
-  });
+  const { data: selectedTripDetailRaw, isFetching: selectedTripLoading } = useQuery(
+    tripDetailQueryOptions(selectedTripId)
+  );
   const selectedTripDetail = /** @type {any} */ (selectedTripDetailRaw);
-  const { data: secondaryTripDetailRaw } = useQuery({
-    queryKey: tripQueryKeys.detail(secondaryTripId || 'none'),
-    queryFn: () => tripService.getById(secondaryTripId),
-    enabled: Boolean(secondaryTripId),
-    staleTime: 2 * 60 * 1000,
-  });
+  const { data: secondaryTripDetailRaw } = useQuery(
+    tripDetailQueryOptions(secondaryTripId)
+  );
   const secondaryTripDetail = /** @type {any} */ (secondaryTripDetailRaw);
   const overviewTripsForMap = useMemo(
     () => selectedTripId ? [] : completed.slice(0, MAP_OVERVIEW_ROUTE_LIMIT),
@@ -189,15 +182,28 @@ export default function MapScreen() {
   );
   const overviewTripDetails = useQueries({
     queries: overviewTripsForMap.map((trip) => ({
-      queryKey: tripQueryKeys.detail(trip.id),
-      queryFn: () => tripService.getById(trip.id),
-      staleTime: 2 * 60 * 1000,
+      ...tripDetailQueryOptions(trip.id),
     })),
   });
-  const overviewMapTrips = useMemo(
-    () => /** @type {any[]} */ (overviewTripDetails.map((query) => query.data).filter(hasPlayableRouteGps)),
-    [overviewTripDetails]
-  );
+  const overviewDetailError = overviewTripDetails.some((query) => query.isError);
+  const retryOverviewDetails = () => {
+    overviewTripsForMap.forEach((trip) => {
+      qc.invalidateQueries({ queryKey: tripQueryKeys.detail(trip.id) });
+    });
+  };
+  const overviewMapTripKey = overviewTripDetails
+    .map((query) => {
+      const trip = /** @type {any} */ (query.data);
+      return trip?.id ? `${trip.id}:${trip.route_points?.length || 0}:${trip.updated_at || trip.end_time || ''}` : 'pending';
+    })
+    .join('|');
+  if (overviewMapTripsRef.current.key !== overviewMapTripKey) {
+    overviewMapTripsRef.current = {
+      key: overviewMapTripKey,
+      trips: /** @type {any[]} */ (overviewTripDetails.map((query) => query.data).filter(hasPlayableRouteGps)),
+    };
+  }
+  const overviewMapTrips = overviewMapTripsRef.current.trips;
   const selectedTrip = selectedTripDetail || selectedTripSummary || null;
   const secondaryTrip = secondaryTripDetail || secondaryTripSummary || null;
   const selectedEvents = useMemo(() => (
@@ -362,8 +368,8 @@ export default function MapScreen() {
     let cancelled = false;
     const rebuildOverlays = async () => {
       if (!overlaySourceTrips.length) {
-        setDangerZones([]);
-        setRouteRiskIndex(new Map());
+        setDangerZones((current) => (current.length ? [] : current));
+        setRouteRiskIndex((current) => (current.size ? new Map() : current));
         return;
       }
 
@@ -491,7 +497,11 @@ export default function MapScreen() {
           )
         ) : (
           <div className="rounded-2xl overflow-hidden border border-border shadow-sm relative">
-            <TripMap
+            {TRIAGE_DISABLE_MAPS ? (
+              <div className="flex h-[400px] items-center justify-center bg-secondary/30 text-sm text-muted-foreground">
+                Map disabled for Phase 0 timing test
+              </div>
+            ) : <TripMap
               routes={mapRoutes}
               events={selectedEvents}
               showCurrentLocation={showCurrentLoc}
@@ -505,10 +515,18 @@ export default function MapScreen() {
               speedLimitKnowledgeResults={speedLimitLocalKnowledgeResults}
               rawPointCount={selectedTrip?.route_points_raw_count}
               height="400px"
-            />
+            />}
             {selectedTripId && selectedTripLoading && !selectedTripDetail && (
               <div className="absolute inset-x-3 bottom-3 z-10 rounded-2xl border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground shadow">
                 Loading route detail...
+              </div>
+            )}
+            {!selectedTripId && overviewDetailError && (
+              <div className="absolute inset-x-3 bottom-3 z-10">
+                <InlineLoadError
+                  message="Some overview routes could not load."
+                  onRetry={retryOverviewDetails}
+                />
               </div>
             )}
             <div className="absolute top-3 right-3 flex flex-col gap-2 z-10">

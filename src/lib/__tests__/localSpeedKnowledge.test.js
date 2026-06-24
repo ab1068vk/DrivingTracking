@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
+import { geohashEncode, LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 
 vi.mock('@/lib/privacyZones', () => ({
   isInsidePrivacyZone: vi.fn(() => false),
@@ -69,5 +69,57 @@ describe('LocalSpeedKnowledge events', () => {
     } finally {
       window.removeEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, listener);
     }
+  });
+
+  it('matches adjacent user-labeled 50 and 60 km/h traced road sections with rule metadata', async () => {
+    const store = memoryStore();
+    const knowledge = new LocalSpeedKnowledge(store);
+    await knowledge.replaceData({
+      cells: {},
+      corrections: [
+        {
+          id: 'posted-50-section',
+          geohash: geohashEncode(43.6532, -79.3857, 6),
+          limitKmh: 50,
+          source: 'user_confirmed_posted_sign',
+          appliedAt: '2026-06-23T12:00:00.000Z',
+          sectionPoints: [
+            { lat: 43.6532, lng: -79.3860 },
+            { lat: 43.6532, lng: -79.3852 },
+          ],
+        },
+        {
+          id: 'posted-60-section',
+          geohash: geohashEncode(43.6532, -79.3827, 6),
+          limitKmh: 60,
+          source: 'user_confirmed_posted_sign',
+          appliedAt: '2026-06-23T12:01:00.000Z',
+          sectionPoints: [
+            { lat: 43.6532, lng: -79.3830 },
+            { lat: 43.6532, lng: -79.3822 },
+          ],
+        },
+      ],
+    });
+
+    const firstHalf = await knowledge.getForPoint(43.6532, -79.38555);
+    const secondHalf = await knowledge.getForPoint(43.6532, -79.38255);
+    const gap = await knowledge.getForPoint(43.6532, -79.3841);
+
+    expect(firstHalf).toMatchObject({
+      limitKmh: 50,
+      source: 'user_confirmed_posted_sign',
+      correctionId: 'posted-50-section',
+      matchType: 'traced_section',
+      matchReason: 'matched_traced_section',
+    });
+    expect(secondHalf).toMatchObject({
+      limitKmh: 60,
+      source: 'user_confirmed_posted_sign',
+      correctionId: 'posted-60-section',
+      matchType: 'traced_section',
+      matchReason: 'matched_traced_section',
+    });
+    expect(gap).toBeNull();
   });
 });

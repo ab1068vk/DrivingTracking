@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, CheckSquare2, ChevronLeft, ChevronRight, Download, Gauge, GitMerge, HeartPulse, Info, Layers, Magnet, Map as MapIcon, MapPin, Pencil, Plus, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Trash2, Undo2, Upload, X } from 'lucide-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { AlertTriangle, ArrowLeft, CheckSquare2, Download, Gauge, GitMerge, HeartPulse, Info, Layers, Magnet, Map as MapIcon, MapPin, Pencil, Plus, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Trash2, Undo2, Upload, X } from 'lucide-react';
 import { geohashEncode, LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 import { refreshTripsCrossingLocalSpeedCorrection, refreshTripsForLocalSpeedKnowledgeChanges, tripCrossesCorrection } from '@/lib/localSpeedScoreRefresh';
 import { correctionSectionIdentity } from '@/lib/roadSectionIdentity';
 import RoadSectionPreview from '@/components/RoadSectionPreview';
 import SpeedLimitEditorMap from '@/components/SpeedLimitEditorMap';
+import { TRIAGE_DISABLE_MAPS } from '@/lib/performanceTriage';
 import {
   SPEED_MAP_LAYER_DEFAULTS,
   buildSpeedMapSections,
@@ -13,6 +15,7 @@ import {
   findMergeableSpeedSection,
   mergeSpeedSections,
   snapSectionPointsToTripRoutes,
+  snapSectionPointsToTripRoutesWithStats,
   speedLimitColor,
   summarizeSpeedMapSections,
 } from '@/lib/speedLimitMapSections';
@@ -32,9 +35,21 @@ import {
 } from '@/lib/speedLimitIntelligence';
 import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import { inspectSpeedKnowledgeHealth } from '@/lib/speedKnowledgeHealth';
+import { saveExportToDownloads } from '@/lib/nativeDownloads';
+import { isNativePlatform } from '@/lib/nativePlatform';
+import { logSystemFailure } from '@/lib/systemLog';
+import InlineRefreshBadge from '@/components/InlineRefreshBadge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { toast } from '@/components/ui/use-toast';
 
 const sourceLabel = (source) => speedLimitSourceLabel(source, { short: true });
 const correctionKey = (correction = {}) => correction?.id || correction?.ruleId || correction?.sectionKey || correction?.geohash;
+const SPEED_RULE_EXPORT_PRIVACY_WARNING = [
+  'This export contains precise road locations, map-line coordinates, and your saved speed rules.',
+  'Store it securely and share it only with people you trust.',
+  '',
+  'Continue with the export?',
+].join('\n');
 
 const formatSpeedLimit = (value) => {
   const number = Number(value);
@@ -146,7 +161,6 @@ const timeRuleFromDraft = (draft = {}) => {
   };
 };
 
-const SPEEDS_PER_PAGE = 10;
 const COMMON_SPEED_LIMITS_KMH = [30, 40, 50, 60, 70, 80, 100];
 const ROW_FILTERS = [
   ['all', 'All'],
@@ -167,6 +181,7 @@ const SPEED_WORKSPACES = [
   { value: 'review', label: 'Needs review', Icon: AlertTriangle },
   { value: 'saved', label: 'Saved roads', Icon: SlidersHorizontal },
 ];
+const MAP_MODEL_WORKSPACES = new Set(['map', 'review']);
 
 const distanceMeters = (a, b) => {
   const lat1 = Number(a?.lat) * Math.PI / 180;
@@ -235,6 +250,148 @@ const undoActionText = (action = '') => ({
   prune: 'cleanup',
 }[action] || 'change');
 
+const statusMessageText = (value) => (
+  typeof value === 'string' ? value : String(value?.message || '')
+);
+
+const speedStatusToast = (value) => {
+  const message = statusMessageText(value).trim();
+  if (!message) return null;
+  const lower = message.toLowerCase();
+  if (
+    lower.startsWith('could not') ||
+    lower.startsWith('cannot') ||
+    lower.startsWith('enter a valid') ||
+    lower.startsWith('tap at least') ||
+    lower.startsWith('this section needs') ||
+    lower.startsWith('this road section needs') ||
+    lower.startsWith('select ') ||
+    lower.startsWith('there is no') ||
+    lower.startsWith('speed-rule backup is too large') ||
+    lower.startsWith('snap to route needs') ||
+    lower.startsWith('no recorded route samples') ||
+    lower.includes('failed')
+  ) {
+    return { title: 'Saved road speed issue', description: message, variant: 'destructive' };
+  }
+  if (
+    lower.includes('matching trip scores are updating') ||
+    lower.includes('affected trips could not be recalculated') ||
+    lower.includes('matching trips could not be recalculated')
+  ) {
+    return { title: 'Saved road speed saved', description: message };
+  }
+  if (
+    lower.startsWith('saved ') ||
+    lower.startsWith('adding ') ||
+    lower.startsWith('add road section') ||
+    lower.startsWith('auto-snap ') ||
+    lower.startsWith('choose ') ||
+    lower.startsWith('saved road speeds refreshed') ||
+    lower.startsWith('restored ') ||
+    lower.startsWith('downloading ') ||
+    lower.startsWith('exported ') ||
+    lower.startsWith('change undone') ||
+    lower.startsWith('conflict resolved') ||
+    lower.startsWith('road section split') ||
+    lower.startsWith('deleted ') ||
+    lower.startsWith('confirmed ') ||
+    lower.startsWith('removed expired') ||
+    lower.startsWith('section snapped') ||
+    lower.startsWith('snapped the line') ||
+    lower.startsWith('saved snapped')
+  ) {
+    return { title: 'Saved road speed updated', description: message };
+  }
+  if (lower.startsWith('prepared a merged')) {
+    return { title: 'Saved road speed ready', description: message };
+  }
+  return null;
+};
+
+const downloadBrowserJson = (filename, payload) => {
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+    type: 'application/json;charset=utf-8;',
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+const saveSpeedKnowledgeExport = async (filename, payload) => {
+  const data = `${JSON.stringify(payload, null, 2)}\n`;
+  if (isNativePlatform()) {
+    try {
+      const result = await saveExportToDownloads({
+        filename,
+        data,
+        mimeType: 'application/json',
+      });
+      return { native: true, filename, uri: result?.uri || null };
+    } catch (error) {
+      logSystemFailure('speed_knowledge_native_export_failed', error, {
+        filename,
+        native_fallback: true,
+      });
+    }
+  }
+  downloadBrowserJson(filename, payload);
+  return { native: false, filename };
+};
+
+function SavedRoadSpeedsSkeleton() {
+  return (
+    <div className="space-y-5" role="status" aria-label="Loading saved road speeds">
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-56" />
+          <Skeleton className="h-4 w-96 max-w-[75vw]" />
+        </div>
+        <Skeleton className="h-9 w-24 rounded-xl" />
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {[1, 2, 3, 4].map((item) => <Skeleton key={item} className="h-20 rounded-xl" />)}
+      </div>
+      <Skeleton className="h-12 rounded-2xl" />
+      <div className="rounded-2xl border border-border bg-card p-3">
+        <Skeleton className="h-[28rem] min-h-[22rem] rounded-xl" />
+      </div>
+      <div className="space-y-3">
+        {[1, 2, 3].map((item) => (
+          <div key={item} className="rounded-xl border border-border bg-card p-4">
+            <Skeleton className="h-5 w-2/3" />
+            <Skeleton className="mt-3 h-4 w-full" />
+            <Skeleton className="mt-2 h-4 w-4/5" />
+          </div>
+        ))}
+      </div>
+      <span className="sr-only">Loading saved road speeds</span>
+    </div>
+  );
+}
+
+function MapModelSkeleton({ label = 'Loading map model...' }) {
+  return (
+    <div className="rounded-2xl border border-border bg-card p-3 shadow-sm" role="status" aria-label={label}>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="space-y-2">
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="h-4 w-72 max-w-[70vw]" />
+        </div>
+        <Skeleton className="h-8 w-24 rounded-xl" />
+      </div>
+      <Skeleton className="h-[28rem] min-h-[22rem] rounded-xl" />
+      <span className="sr-only">{label}</span>
+    </div>
+  );
+}
+
 export default function SpeedLimits() {
   const [searchParams] = useSearchParams();
   const tripId = searchParams.get('tripId');
@@ -245,6 +402,13 @@ export default function SpeedLimits() {
   const [rows, setRows] = useState([]);
   const [drafts, setDrafts] = useState({});
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [mapModelState, setMapModelState] = useState({ status: 'idle', error: null });
+  const mapModelStateRef = useRef({ status: 'idle', error: null });
+  const [recalculationBusy, setRecalculationBusy] = useState(false);
+  const recalculationCountRef = useRef(0);
+  const loadedOnceRef = useRef(false);
   const [busyGeohash, setBusyGeohash] = useState(null);
   const [status, setStatus] = useState(/** @type {string | { message: string, scoreDeltas?: any[], canUndo?: boolean }} */ (''));
   const [linkedTrip, setLinkedTrip] = useState(null);
@@ -253,10 +417,13 @@ export default function SpeedLimits() {
   const [addMode, setAddMode] = useState(false);
   const [addPath, setAddPath] = useState([]);
   const [mapQuery, setMapQuery] = useState('');
+  const deferredMapQuery = useDeferredValue(mapQuery);
   const [mapLayers, setMapLayers] = useState(SPEED_MAP_LAYER_DEFAULTS);
   const [activeWorkspace, setActiveWorkspace] = useState(initialWorkspace);
   const [autoSnapTrace, setAutoSnapTrace] = useState(true);
+  const [rowQueryInput, setRowQueryInput] = useState('');
   const [rowQuery, setRowQuery] = useState('');
+  const [isRowQueryPending, startRowQueryTransition] = useTransition();
   const [rowFilter, setRowFilter] = useState('all');
   const [rowSort, setRowSort] = useState('updated');
   const [selectedRows, setSelectedRows] = useState(() => new Set());
@@ -265,6 +432,9 @@ export default function SpeedLimits() {
   const restoreInputRef = useRef(null);
   const knowledgeReloadTimerRef = useRef(null);
   const mapTripsLoadRef = useRef(0);
+  const mapModelCancelRef = useRef(null);
+  const savedRowsListRef = useRef(null);
+  const lastStatusToastRef = useRef('');
   const [mapDraft, setMapDraft] = useState({
     limitKmh: '',
     source: 'user_confirmed_posted_sign',
@@ -276,9 +446,12 @@ export default function SpeedLimits() {
     endTime: '17:00',
     expiresAtDate: '',
   });
-  const [page, setPage] = useState(1);
   const settings = useLocalSettings();
   const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
+  const mapModelActive = MAP_MODEL_WORKSPACES.has(activeWorkspace);
+  const mapModelLoading = mapModelState.status === 'loading';
+  const mapModelLoaded = mapModelState.status === 'loaded';
+  const mapQueryPending = mapQuery !== deferredMapQuery;
   const mapSections = useMemo(() => buildSpeedMapSections(mapTrips, rows), [mapTrips, rows]);
   const mapStats = useMemo(() => summarizeSpeedMapSections(mapSections), [mapSections]);
   const conflictsByGeohash = useMemo(() => new Map(
@@ -294,10 +467,47 @@ export default function SpeedLimits() {
       .filter(({ row, conflict }) => !query || rowSearchText(row, conflict).includes(query));
     return sortRows(items, rowSort).map(({ row }) => row);
   }, [conflictsByGeohash, rowFilter, rowQuery, rowSort, rows]);
-  const pageCount = Math.max(1, Math.ceil(filteredRows.length / SPEEDS_PER_PAGE));
-  const visibleRows = filteredRows.slice(
-    (page - 1) * SPEEDS_PER_PAGE,
-    page * SPEEDS_PER_PAGE
+  const updateRowQuery = (value) => {
+    setRowQueryInput(value);
+    startRowQueryTransition(() => {
+      setRowQuery(value);
+    });
+  };
+  const updateRowFilter = (value) => startRowQueryTransition(() => setRowFilter(value));
+  const updateRowSort = (value) => startRowQueryTransition(() => setRowSort(value));
+  const rowCardModels = useMemo(() => (
+    filteredRows.map((row) => {
+      const key = correctionKey(row);
+      const draft = drafts[key] || {};
+      const conflict = conflictsByGeohash.get(key) || null;
+      return {
+        key,
+        row,
+        draft,
+        disabled: busyGeohash === key,
+        identity: correctionSectionIdentity(row, linkedTrip),
+        conflict,
+        evidence: assessSpeedLimitEvidence(row),
+        recommendation: buildSpeedLimitRecommendation({ ...row, conflict }),
+        impact: buildCorrectionImpactPreview(mapTrips, {
+          ...row,
+          limitKmh: Number(draft.limitKmh || row.limitKmh),
+          directionMode: draft.directionMode || row.directionMode,
+          timeRule: timeRuleFromDraft(draft),
+        }, draft.limitKmh || row.limitKmh),
+      };
+    })
+  ), [busyGeohash, conflictsByGeohash, drafts, filteredRows, linkedTrip, mapTrips]);
+  const savedRowsVirtualizer = useVirtualizer({
+    count: rowCardModels.length,
+    getScrollElement: () => savedRowsListRef.current,
+    estimateSize: () => 520,
+    overscan: 3,
+  });
+  const virtualRowItems = savedRowsVirtualizer.getVirtualItems();
+  const visibleRows = useMemo(
+    () => virtualRowItems.map((item) => filteredRows[item.index]).filter(Boolean),
+    [filteredRows, virtualRowItems]
   );
   const firstConflictSection = useMemo(() => mapSections.find((section) => section.conflict), [mapSections]);
   const attentionItems = useMemo(() => {
@@ -391,6 +601,56 @@ export default function SpeedLimits() {
     mapTrips.filter((trip) => trip?.status === 'completed' && tripCrossesCorrection(trip, correction))
   ), [mapTrips]);
 
+  const removeSavedRowsFromView = useCallback((removedRows = []) => {
+    const removedIds = new Set(
+      removedRows
+        .map((row) => row?.id || row?.ruleId || row?.sectionKey)
+        .filter(Boolean)
+    );
+    const removedFallbackGeohashes = new Set(
+      removedRows
+        .filter((row) => !(row?.id || row?.ruleId || row?.sectionKey))
+        .map((row) => row?.geohash)
+        .filter(Boolean)
+    );
+    if (!removedIds.size && !removedFallbackGeohashes.size) return;
+
+    setRows((current) => current.filter((row) => (
+      !removedIds.has(row?.id || row?.ruleId || row?.sectionKey) &&
+      !removedFallbackGeohashes.has(row?.geohash)
+    )));
+    setSelectedRows((current) => {
+      const next = new Set(current);
+      removedRows.forEach((row) => next.delete(correctionKey(row)));
+      return next;
+    });
+    setSelectedSection((current) => {
+      if (!current?.saved) return current;
+      const currentId = current.id || current.ruleId || current.sectionKey;
+      return removedIds.has(currentId) || (!currentId && removedFallbackGeohashes.has(current.geohash))
+        ? null
+        : current;
+    });
+  }, []);
+
+  const beginRecalculation = useCallback(() => {
+    recalculationCountRef.current += 1;
+    setRecalculationBusy(true);
+    return () => {
+      recalculationCountRef.current = Math.max(0, recalculationCountRef.current - 1);
+      if (recalculationCountRef.current === 0) setRecalculationBusy(false);
+    };
+  }, []);
+
+  const withRecalculation = useCallback(async (task) => {
+    const finish = beginRecalculation();
+    try {
+      return await task();
+    } finally {
+      finish();
+    }
+  }, [beginRecalculation]);
+
   const buildRecalculationStatus = useCallback((message, beforeTrips = [], updatedTrips = null) => {
     if (!Array.isArray(updatedTrips)) return message;
     return {
@@ -407,7 +667,9 @@ export default function SpeedLimits() {
   ), []);
 
   const loadRows = useCallback(async ({ silent = false } = {}) => {
-    if (!silent) setLoading(true);
+    const firstLoad = !loadedOnceRef.current;
+    if (firstLoad && !silent) setLoading(true);
+    else if (!silent) setRefreshing(true);
     const [nextRows, nextHistory, rawKnowledge] = await Promise.all([
       knowledge.listUserCorrections().catch(() => []),
       knowledge.getHistoryState().catch(() => ({ canUndo: false, canRedo: false, undoLabel: '', redoLabel: '' })),
@@ -440,32 +702,77 @@ export default function SpeedLimits() {
       }
       return next;
     });
-    if (!silent) setLoading(false);
+    loadedOnceRef.current = true;
+    setLoadedOnce(true);
+    if (!silent) {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [knowledge]);
 
+  const loadMapModel = useCallback(({ force = false } = {}) => {
+    if (TRIAGE_DISABLE_MAPS || !loadedOnceRef.current) return;
+    const currentStatus = mapModelStateRef.current.status;
+    if (!force && (currentStatus === 'loading' || currentStatus === 'loaded')) return;
+    mapModelCancelRef.current?.();
     const loadId = mapTripsLoadRef.current + 1;
     mapTripsLoadRef.current = loadId;
-    scheduleIdleWork(() => {
+    mapModelStateRef.current = { status: 'loading', error: null };
+    setMapModelState({ status: 'loading', error: null });
+    mapModelCancelRef.current = scheduleIdleWork(() => {
       tripService.list({ sort: '-start_time', limit: 500 })
         .then((nextTrips) => {
-          if (mapTripsLoadRef.current === loadId) setMapTrips(nextTrips);
+          if (mapTripsLoadRef.current !== loadId) return;
+          setMapTrips(Array.isArray(nextTrips) ? nextTrips : []);
+          mapModelStateRef.current = { status: 'loaded', error: null };
+          setMapModelState({ status: 'loaded', error: null });
         })
-        .catch(() => {
-          if (mapTripsLoadRef.current === loadId) setMapTrips([]);
+        .catch((error) => {
+          if (mapTripsLoadRef.current !== loadId) return;
+          setMapTrips([]);
+          mapModelStateRef.current = { status: 'error', error };
+          setMapModelState({ status: 'error', error });
+        })
+        .finally(() => {
+          if (mapTripsLoadRef.current === loadId) mapModelCancelRef.current = null;
         });
     });
-  }, [knowledge]);
+  }, []);
 
   useEffect(() => {
     loadRows();
   }, [loadRows]);
 
-  useEffect(() => {
-    setPage((current) => Math.min(current, pageCount));
-  }, [pageCount]);
+  useEffect(() => () => {
+    mapModelCancelRef.current?.();
+  }, []);
 
   useEffect(() => {
-    setPage(1);
-  }, [rowFilter, rowQuery, rowSort]);
+    if (loadedOnce && mapModelActive) loadMapModel();
+  }, [loadedOnce, loadMapModel, mapModelActive]);
+
+  useEffect(() => {
+    const nextToast = speedStatusToast(status);
+    if (!nextToast) return;
+    const key = `${nextToast.title}:${nextToast.description}`;
+    if (lastStatusToastRef.current === key) return;
+    lastStatusToastRef.current = key;
+    toast(nextToast);
+  }, [status]);
+
+  useEffect(() => {
+    if (!selectedSection?.saved) return;
+    const selectedKey = correctionKey(selectedSection);
+    const stillSaved = rows.some((row) => (
+      correctionKey(row) === selectedKey ||
+      (!selectedKey && row.geohash === selectedSection.geohash)
+    ));
+    if (!stillSaved) setSelectedSection(null);
+  }, [rows, selectedSection]);
+
+  useEffect(() => {
+    savedRowsVirtualizer.scrollToIndex(0, { align: 'start' });
+  }, [rowFilter, rowQuery, rowSort, savedRowsVirtualizer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -490,7 +797,7 @@ export default function SpeedLimits() {
       window.clearTimeout(knowledgeReloadTimerRef.current);
       knowledgeReloadTimerRef.current = window.setTimeout(() => {
         loadRows({ silent: true });
-      }, 80);
+      }, 200);
     };
     window.addEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, onKnowledgeChanged);
     return () => {
@@ -554,7 +861,9 @@ export default function SpeedLimits() {
       setBusyGeohash(null);
       setStatus(withUndo('Saved road speed updated. Matching trip scores are updating in the background.'));
       void (async () => {
-        const updatedTrips = await refreshTripsCrossingLocalSpeedCorrection(updatedCorrection).catch(() => null);
+        const updatedTrips = await withRecalculation(() => (
+          refreshTripsCrossingLocalSpeedCorrection(updatedCorrection).catch(() => null)
+        ));
         setStatus(withUndo(buildRecalculationStatus(
           updatedTrips
             ? `Saved road speed updated. Recalculated ${updatedTrips.length} matching trip${updatedTrips.length === 1 ? '' : 's'} locally.`
@@ -577,7 +886,10 @@ export default function SpeedLimits() {
     const beforeTrips = matchingTripsForCorrection(row);
     const removed = await knowledge.removeUserCorrection(key).catch(() => false);
     if (removed) {
-      const updatedTrips = await refreshTripsCrossingLocalSpeedCorrection(row).catch(() => null);
+      removeSavedRowsFromView([row]);
+      const updatedTrips = await withRecalculation(() => (
+        refreshTripsCrossingLocalSpeedCorrection(row).catch(() => null)
+      ));
       setStatus(withUndo(buildRecalculationStatus(
         updatedTrips
           ? `Saved road speed removed. Recalculated ${updatedTrips.length} matching trip${updatedTrips.length === 1 ? '' : 's'} using remaining speed data and fallbacks.`
@@ -702,7 +1014,9 @@ export default function SpeedLimits() {
 
     setStatus(withUndo(`Conflict resolved: updated this road section to ${Math.round(nextLimitKmh)} km/h. Matching trip scores are updating in the background.`));
     void (async () => {
-      const updatedTrips = await refreshTripsCrossingLocalSpeedCorrection(nextCorrection).catch(() => null);
+      const updatedTrips = await withRecalculation(() => (
+        refreshTripsCrossingLocalSpeedCorrection(nextCorrection).catch(() => null)
+      ));
       setStatus(withUndo(buildRecalculationStatus(
         updatedTrips
           ? `Conflict resolved: updated this road section to ${Math.round(nextLimitKmh)} km/h and recalculated ${updatedTrips.length} matching trip${updatedTrips.length === 1 ? '' : 's'} locally.`
@@ -715,6 +1029,10 @@ export default function SpeedLimits() {
   };
 
   const selectMapSection = (section) => {
+    if (!section) {
+      setStatus('Select a saved or observed road section before editing.');
+      return;
+    }
     setSelectedSection(section);
     setMapDraft({
       limitKmh: mapDraftLimitForSection(section),
@@ -747,8 +1065,8 @@ export default function SpeedLimits() {
       expiresAtDate: '',
     });
     setStatus(autoSnapTrace
-      ? 'Trace the road by tapping several points. Each tap will snap to nearby recorded trip geometry when possible.'
-      : 'Trace the road by tapping several points. Add more points around bends, then enter the speed and save.');
+      ? 'Adding road section started. Tap points along the road; each tap will snap to nearby recorded trip geometry when possible.'
+      : 'Adding road section started. Tap points around bends, then enter the speed and save.');
   };
 
   const selectNewMapPoint = (point) => {
@@ -822,9 +1140,14 @@ export default function SpeedLimits() {
 
   const undoAddPoint = () => {
     setAddPath((current) => {
+      if (!current.length) {
+        setStatus('Cannot undo a trace point because no trace points have been added yet.');
+        return current;
+      }
       const next = current.slice(0, -1);
       if (!next.length) {
         setSelectedSection(null);
+        setStatus('Removed the last trace point. Add road section mode is still active.');
       } else {
         const midpoint = next[Math.floor(next.length / 2)];
         setSelectedSection((section) => ({
@@ -833,13 +1156,17 @@ export default function SpeedLimits() {
           geohash: geohashEncode(midpoint.lat, midpoint.lng),
           sectionPoints: next,
         }));
+        setStatus(`Removed one trace point. ${next.length} point${next.length === 1 ? '' : 's'} remain.`);
       }
       return next;
     });
   };
 
-  const snapSelectedSectionToTrips = () => {
-    if (!selectedSection) return;
+  const snapSelectedSectionToTrips = async () => {
+    if (!selectedSection) {
+      setStatus('Select or trace a road section before using Snap to route.');
+      return;
+    }
     const currentPoints = selectedSection.sectionPoints || addPath;
     const hasRecordedRoute = mapTrips.some((trip) => (
       Array.isArray(trip?.route_points) && trip.route_points.length > 0
@@ -848,25 +1175,100 @@ export default function SpeedLimits() {
       setStatus('Snap to route needs at least one recorded trip. The traced line was not changed.');
       return;
     }
-    const snapped = snapSectionPointsToTripRoutes(currentPoints, mapTrips);
+    const snapResult = snapSectionPointsToTripRoutesWithStats(currentPoints, mapTrips);
+    const snapped = snapResult.points;
     if (snapped.length < 2) {
       setStatus('This section needs at least two points before it can snap to recorded routes.');
       return;
     }
-    const changed = snapped.some((point, index) => (
-      point.lat !== currentPoints[index]?.lat || point.lng !== currentPoints[index]?.lng
-    ));
-    if (!changed) {
+    if (!snapResult.changedCount) {
       setStatus('No recorded route samples were within 80 metres, so the traced line was not changed.');
       return;
     }
-    setSelectedSection((current) => ({ ...current, sectionPoints: snapped }));
+    const midpoint = snapped[Math.floor(snapped.length / 2)];
+    const snappedSection = {
+      ...selectedSection,
+      lat: midpoint.lat,
+      lng: midpoint.lng,
+      geohash: geohashEncode(midpoint.lat, midpoint.lng),
+      sectionPoints: snapped,
+      directionBearing: selectedSection.directionBearing,
+    };
+    setSelectedSection(snappedSection);
     if (addMode) setAddPath(snapped);
-    setStatus('Section points snapped to the nearest recorded route samples within 80 metres. Review the line before saving.');
+    const snapSummary = `${snapResult.changedCount} point${snapResult.changedCount === 1 ? '' : 's'} moved, average ${snapResult.averageMoveM} m, max ${snapResult.maxMoveM} m`;
+    if (!selectedSection.saved) {
+      setStatus(`Section snapped to recorded route samples (${snapSummary}). Review the line, then save the road speed.`);
+      return;
+    }
+
+    const selectedKey = correctionKey(selectedSection);
+    const limitKmh = Number(mapDraft.limitKmh || selectedSection.limitKmh);
+    if (!Number.isFinite(limitKmh) || limitKmh <= 0) {
+      setStatus('Snapped the line on the map, but could not save it because the speed limit is missing.');
+      return;
+    }
+    setBusyGeohash(selectedKey);
+    const saved = await knowledge.updateUserCorrection(
+      selectedKey,
+      Math.round(limitKmh),
+      mapDraft.source || selectedSection.source || 'user_entered_estimate',
+      mapDraft.note || selectedSection.note || '',
+      {
+        lat: snappedSection.lat,
+        lng: snappedSection.lng,
+        roadName: mapDraft.roadName || selectedSection.roadName || '',
+        sectionPoints: snapped,
+        directionMode: mapDraft.directionMode || selectedSection.directionMode || 'both',
+        directionBearing: snappedSection.directionBearing,
+        timeRule: timeRuleFromDraft(mapDraft),
+        expiresAt: expiresAtFromDate(mapDraft.expiresAtDate),
+      }
+    ).catch(() => false);
+    if (!saved) {
+      setBusyGeohash(null);
+      setStatus('Snapped the line on the map, but could not save it. Try Update road speed.');
+      return;
+    }
+    const updatedSection = {
+      ...snappedSection,
+      limitKmh: Math.round(limitKmh),
+      source: mapDraft.source || selectedSection.source || 'user_entered_estimate',
+      note: mapDraft.note || selectedSection.note || '',
+      roadName: mapDraft.roadName || selectedSection.roadName || '',
+      directionMode: mapDraft.directionMode || selectedSection.directionMode || 'both',
+      timeRule: timeRuleFromDraft(mapDraft),
+      expiresAt: expiresAtFromDate(mapDraft.expiresAtDate),
+    };
+    setRows((current) => current.map((row) => (
+      correctionKey(row) === selectedKey ? { ...row, ...updatedSection } : row
+    )));
+    setStatus(withUndo(`Saved snapped route geometry (${snapSummary}). Matching trip scores are updating in the background.`));
+    void (async () => {
+      const updatedTrips = await withRecalculation(() => (
+        refreshTripsCrossingLocalSpeedCorrection(updatedSection).catch(() => null)
+      ));
+      setStatus(withUndo(buildRecalculationStatus(
+        updatedTrips
+          ? `Saved snapped route geometry (${snapSummary}) and recalculated ${updatedTrips.length} matching trip${updatedTrips.length === 1 ? '' : 's'}.`
+          : `Saved snapped route geometry (${snapSummary}), but matching trips could not be recalculated right now.`,
+        matchingTripsForCorrection(selectedSection),
+        updatedTrips
+      )));
+      await loadRows();
+    })();
+    setBusyGeohash(null);
   };
 
   const prepareMergeWithNearbySection = () => {
-    if (!selectedSection?.saved || !mergeCandidate?.candidate) return;
+    if (!selectedSection?.saved) {
+      setStatus('Select a saved road section before using Merge nearby.');
+      return;
+    }
+    if (!mergeCandidate?.candidate) {
+      setStatus('Cannot merge this road section yet. No nearby saved section with the same speed was found.');
+      return;
+    }
     const merged = mergeSpeedSections(selectedSection, mergeCandidate.candidate);
     if (!merged) {
       setStatus('These sections could not be merged because their saved geometry is incomplete.');
@@ -884,7 +1286,10 @@ export default function SpeedLimits() {
   };
 
   const saveMapSection = async () => {
-    if (!selectedSection) return;
+    if (!selectedSection) {
+      setStatus('Select or trace a road section before saving.');
+      return;
+    }
     const limitKmh = Number(mapDraft.limitKmh);
     if (!Number.isFinite(limitKmh) || limitKmh <= 0) {
       setStatus('Enter a valid speed limit before saving.');
@@ -970,7 +1375,9 @@ export default function SpeedLimits() {
       setBusyGeohash(null);
       setStatus(withUndo(`Saved ${Math.round(limitKmh)} km/h for this road section. Matching trip scores are updating in the background.`));
       void (async () => {
-        const updatedTrips = await refreshTripsCrossingLocalSpeedCorrection(correction).catch(() => null);
+        const updatedTrips = await withRecalculation(() => (
+          refreshTripsCrossingLocalSpeedCorrection(correction).catch(() => null)
+        ));
         setStatus(withUndo(buildRecalculationStatus(
           updatedTrips
             ? `Saved ${Math.round(limitKmh)} km/h for this road section. Recalculated ${updatedTrips.length} matching trip${updatedTrips.length === 1 ? '' : 's'} locally.`
@@ -987,81 +1394,110 @@ export default function SpeedLimits() {
   };
 
   const removeMapSection = async () => {
-    if (!selectedSection?.saved) return;
+    if (!selectedSection?.saved) {
+      setStatus('Select a saved road section before removing it.');
+      return;
+    }
     if (typeof window !== 'undefined' && !window.confirm('Remove the saved speed from this road section?')) return;
     await removeRow(selectedSection);
     setSelectedSection(null);
   };
 
   const splitMapSection = async () => {
-    if (!selectedSection?.saved) return;
+    if (!selectedSection?.saved) {
+      setStatus('Select a saved road section before splitting it.');
+      return;
+    }
+    const originalSection = selectedSection;
     const parts = buildSplitCorrections({
-      ...selectedSection,
-      limitKmh: Number(mapDraft.limitKmh || selectedSection.limitKmh),
-      source: mapDraft.source || selectedSection.source,
-      note: mapDraft.note || selectedSection.note || '',
-      roadName: mapDraft.roadName || selectedSection.roadName || '',
-      directionMode: mapDraft.directionMode || selectedSection.directionMode || 'both',
+      ...originalSection,
+      limitKmh: Number(mapDraft.limitKmh || originalSection.limitKmh),
+      source: mapDraft.source || originalSection.source,
+      note: mapDraft.note || originalSection.note || '',
+      roadName: mapDraft.roadName || originalSection.roadName || '',
+      directionMode: mapDraft.directionMode || originalSection.directionMode || 'both',
       timeRule: timeRuleFromDraft(mapDraft),
       expiresAt: expiresAtFromDate(mapDraft.expiresAtDate),
     });
     if (parts.length !== 2) {
-      setStatus('This road section needs at least three trace points before it can be split.');
-      return;
-    }
-    const distinct = new Set(parts.map((part) => part.geohash));
-    if (distinct.size !== parts.length) {
-      setStatus('This section is too short to split safely. Add a longer traced section first.');
+      setStatus('This road section needs at least two valid trace points before it can be split.');
       return;
     }
     if (typeof window !== 'undefined' && !window.confirm('Split this saved speed into two editable road sections?')) return;
 
-    const selectedKey = correctionKey(selectedSection);
+    const selectedKey = correctionKey(originalSection);
     setBusyGeohash(selectedKey);
-    const source = mapDraft.source || selectedSection.source || 'user_entered_estimate';
-    const historyGroup = `split-${Date.now()}`;
-    const noteBase = mapDraft.note || selectedSection.note || '';
+    const source = mapDraft.source || originalSection.source || 'user_entered_estimate';
+    const noteBase = mapDraft.note || originalSection.note || '';
     const expiresAt = expiresAtFromDate(mapDraft.expiresAtDate);
-    const savedParts = [];
-    for (const part of parts) {
-      const metadata = {
+    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    if (!beforeKnowledge) {
+      setStatus('Could not load saved road speeds before splitting. Try refresh, then split again.');
+      setBusyGeohash(null);
+      return;
+    }
+
+    const originalId = originalSection.id || originalSection.ruleId || originalSection.sectionKey || null;
+    const matchesOriginal = (correction = {}) => {
+      const correctionId = correction.id || correction.ruleId || correction.sectionKey || null;
+      return originalId
+        ? correctionId === originalId
+        : correction.geohash === originalSection.geohash;
+    };
+    const originalCorrection = (beforeKnowledge.corrections || []).find(matchesOriginal) || originalSection;
+    const now = new Date().toISOString();
+    const splitCorrections = parts.map((part, index) => {
+      const note = noteBase ? `${noteBase} (split ${part.splitPart}/2)` : `Split section ${part.splitPart}/2`;
+      return {
+        ...originalCorrection,
+        ...part,
+        id: `${originalId || selectedKey || 'speed-rule'}-split-${Date.now()}-${index + 1}`,
+        ruleId: undefined,
+        sectionKey: undefined,
+        source,
+        note,
+        expiresAt,
+        appliedAt: now,
+        verifiedAt: source === 'user_confirmed_posted_sign' ? now : originalCorrection.verifiedAt || null,
+        verificationStatus: source === 'user_confirmed_posted_sign' ? 'confirmed_posted_sign' : 'user_estimate',
+        directionMode: part.directionMode || originalCorrection.directionMode || 'both',
+        directionBearing: part.directionBearing,
+        timeRule: part.timeRule,
         roadName: part.roadName || '',
         contextLabel: part.contextLabel,
         directionLabel: directionLabel(part.directionMode),
         sectionPoints: part.sectionPoints,
-        directionMode: part.directionMode,
-        directionBearing: part.directionBearing,
-        timeRule: part.timeRule,
-        historyGroup,
+        splitParentId: originalId || selectedKey || null,
+        splitPart: part.splitPart,
+        auditTrail: [
+          ...(Array.isArray(originalCorrection.auditTrail) ? originalCorrection.auditTrail : []),
+          {
+            action: 'split_from_midpoint',
+            changedAt: now,
+            splitPart: part.splitPart,
+          },
+        ].slice(-25),
       };
-      const note = noteBase ? `${noteBase} (split ${part.splitPart}/2)` : `Split section ${part.splitPart}/2`;
-      const saved = part.geohash === selectedSection.geohash
-        ? await knowledge.updateUserCorrection(selectedKey, part.limitKmh, source, note, {
-          ...metadata,
-          expiresAt,
-        }).catch(() => false)
-        : await knowledge.saveUserCorrection(
-          part.lat,
-          part.lng,
-          part.limitKmh,
-          note,
-          expiresAt,
-          privacyZones,
-          source,
-          metadata
-        ).catch(() => false);
-      if (saved) savedParts.push(part);
-    }
-    if (savedParts.length === parts.length) {
-      if (!parts.some((part) => part.geohash === selectedSection.geohash)) {
-        await knowledge.removeUserCorrection(selectedKey, { historyGroup }).catch(() => false);
-      }
-      const updatedTrips = await Promise.all(parts.map((part) => (
+    });
+    const nextKnowledge = {
+      ...beforeKnowledge,
+      corrections: [
+        ...(beforeKnowledge.corrections || []).filter((correction) => !matchesOriginal(correction)),
+        ...splitCorrections,
+      ],
+    };
+    const replaced = await knowledge.replaceData(nextKnowledge, 'split_correction').catch(() => false);
+    if (replaced) {
+      setRows((current) => [
+        ...current.filter((row) => !matchesOriginal(row)),
+        ...splitCorrections,
+      ]);
+      setSelectedSection(null);
+      const updatedTrips = await withRecalculation(() => Promise.all(splitCorrections.map((part) => (
         refreshTripsCrossingLocalSpeedCorrection(part).catch(() => null)
-      )));
+      ))));
       const recalculated = updatedTrips.flat().filter(Boolean).length;
       setStatus(withUndo(`Road section split into two saved speeds. Recalculated ${recalculated} matching trip${recalculated === 1 ? '' : 's'} locally.`));
-      setSelectedSection(null);
       await loadRows();
     } else {
       setStatus('Could not split this section completely. Review saved speeds before trying again.');
@@ -1081,7 +1517,9 @@ export default function SpeedLimits() {
     }
     const afterKnowledge = await knowledge.exportData().catch(() => null);
     const updatedTrips = beforeKnowledge && afterKnowledge
-      ? await refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+      ? await withRecalculation(() => (
+        refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+      ))
       : null;
     setStatus(updatedTrips
       ? `Change undone. Recalculated ${updatedTrips.length} affected trip${updatedTrips.length === 1 ? '' : 's'}.`
@@ -1091,22 +1529,56 @@ export default function SpeedLimits() {
   };
 
   const exportSpeedKnowledge = async () => {
+    if (typeof window !== 'undefined' && !window.confirm(SPEED_RULE_EXPORT_PRIVACY_WARNING)) return;
     const data = await knowledge.exportData();
+    const filename = `road-sage-speed-rules-${new Date().toISOString().slice(0, 10)}.json`;
     const payload = {
       app: 'Road Sage',
       format: 'road-sage-speed-knowledge',
       version: 1,
       exported_at: new Date().toISOString(),
+      includes: {
+        saved_rules: true,
+        map_line_geometry: true,
+        learned_speed_cells: true,
+        map_tiles: false,
+      },
       speed_knowledge: data,
     };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `road-sage-speed-rules-${new Date().toISOString().slice(0, 10)}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-    setStatus(`Exported ${rows.length} saved road-speed rule${rows.length === 1 ? '' : 's'} as JSON.`);
+    try {
+      const result = await saveSpeedKnowledgeExport(filename, payload);
+      setStatus(result.native
+        ? `Saved ${rows.length} road-speed rule${rows.length === 1 ? '' : 's'} to Downloads as ${result.filename}. Map lines and speed-map data are included.`
+        : `Downloading ${rows.length} road-speed rule${rows.length === 1 ? '' : 's'} as ${result.filename}. Map lines and speed-map data are included.`);
+    } catch (error) {
+      logSystemFailure('speed_knowledge_export_failed', error, {
+        rule_count: rows.length,
+      });
+      setStatus('Could not export saved road speeds right now. Check system logs for the exact failure.');
+    }
+  };
+
+  const refreshSavedRoadSpeeds = async () => {
+    await loadRows();
+    if (mapModelActive) loadMapModel({ force: true });
+    setStatus('Saved road speeds refreshed.');
+  };
+
+  const cancelAddSection = () => {
+    setAddMode(false);
+    setAddPath([]);
+    setSelectedSection(null);
+    setStatus('Add road section cancelled.');
+  };
+
+  const toggleAutoSnapTrace = () => {
+    setAutoSnapTrace((value) => {
+      const next = !value;
+      setStatus(next
+        ? 'Auto-snap enabled. New trace points will snap to nearby recorded trip geometry when possible.'
+        : 'Auto-snap disabled. New trace points will stay where you tap them.');
+      return next;
+    });
   };
 
   const importSpeedKnowledge = async (event) => {
@@ -1126,10 +1598,12 @@ export default function SpeedLimits() {
       const beforeKnowledge = await knowledge.exportData();
       await knowledge.replaceData(data, 'restore_speed_backup');
       const afterKnowledge = await knowledge.exportData();
-      const updatedTrips = await refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null);
+      const updatedTrips = await withRecalculation(() => (
+        refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+      ));
       setStatus(withUndo(updatedTrips
-        ? `Restored ${data.corrections.length} saved road-speed rule${data.corrections.length === 1 ? '' : 's'} and recalculated ${updatedTrips.length} affected trip${updatedTrips.length === 1 ? '' : 's'}.`
-        : `Restored ${data.corrections.length} saved road-speed rule${data.corrections.length === 1 ? '' : 's'}, but affected trips could not be recalculated right now.`));
+        ? `Restored ${data.corrections.length} saved road-speed rule${data.corrections.length === 1 ? '' : 's'}, including map lines, and recalculated ${updatedTrips.length} affected trip${updatedTrips.length === 1 ? '' : 's'}.`
+        : `Restored ${data.corrections.length} saved road-speed rule${data.corrections.length === 1 ? '' : 's'}, including map lines, but affected trips could not be recalculated right now.`));
       await loadRows();
     } catch {
       setStatus('Could not restore that file. Choose a Road Sage speed-rule or full-backup JSON file.');
@@ -1160,7 +1634,10 @@ export default function SpeedLimits() {
 
   const confirmSelectedAsPosted = async () => {
     const selected = rows.filter((row) => selectedRows.has(correctionKey(row)));
-    if (!selected.length) return;
+    if (!selected.length) {
+      setStatus('Select at least one saved road-speed rule before confirming posted signs.');
+      return;
+    }
     const historyGroup = `bulk-confirm-${Date.now()}`;
     setBusyGeohash('bulk');
     const results = await Promise.all(selected.map((row) => knowledge.updateUserCorrection(
@@ -1171,7 +1648,9 @@ export default function SpeedLimits() {
       { historyGroup }
     ).catch(() => false)));
     const updated = selected.filter((_, index) => results[index]);
-    await Promise.all(updated.map((row) => refreshTripsCrossingLocalSpeedCorrection(row).catch(() => null)));
+    await withRecalculation(() => Promise.all(updated.map((row) => (
+      refreshTripsCrossingLocalSpeedCorrection(row).catch(() => null)
+    ))));
     setSelectedRows(new Set());
     setStatus(withUndo(`Confirmed ${updated.length} selected rule${updated.length === 1 ? '' : 's'} as posted signs.`));
     setBusyGeohash(null);
@@ -1180,7 +1659,10 @@ export default function SpeedLimits() {
 
   const deleteSelectedRows = async () => {
     const selected = rows.filter((row) => selectedRows.has(correctionKey(row)));
-    if (!selected.length) return;
+    if (!selected.length) {
+      setStatus('Select at least one saved road-speed rule before deleting.');
+      return;
+    }
     if (!window.confirm(`Delete ${selected.length} selected saved road-speed rule${selected.length === 1 ? '' : 's'}?`)) return;
     const historyGroup = `bulk-delete-${Date.now()}`;
     setBusyGeohash('bulk');
@@ -1188,7 +1670,10 @@ export default function SpeedLimits() {
       knowledge.removeUserCorrection(correctionKey(row), { historyGroup }).catch(() => false)
     )));
     const removed = selected.filter((_, index) => results[index]);
-    await Promise.all(removed.map((row) => refreshTripsCrossingLocalSpeedCorrection(row).catch(() => null)));
+    removeSavedRowsFromView(removed);
+    await withRecalculation(() => Promise.all(removed.map((row) => (
+      refreshTripsCrossingLocalSpeedCorrection(row).catch(() => null)
+    ))));
     setSelectedRows(new Set());
     setStatus(withUndo(`Deleted ${removed.length} selected rule${removed.length === 1 ? '' : 's'}.`));
     setBusyGeohash(null);
@@ -1199,12 +1684,16 @@ export default function SpeedLimits() {
     const beforeKnowledge = await knowledge.exportData();
     await knowledge.prune(180);
     const afterKnowledge = await knowledge.exportData();
-    const updatedTrips = await refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null);
+    const updatedTrips = await withRecalculation(() => (
+      refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+    ));
     setStatus(withUndo(updatedTrips
       ? `Removed expired rules and learned evidence older than 180 days. Recalculated ${updatedTrips.length} affected trip${updatedTrips.length === 1 ? '' : 's'}.`
       : 'Removed expired rules and learned evidence older than 180 days, but affected trips could not be recalculated right now.'));
     await loadRows();
   };
+
+  if (loading && !loadedOnce) return <SavedRoadSpeedsSkeleton />;
 
   return (
     <div className="space-y-5">
@@ -1215,6 +1704,11 @@ export default function SpeedLimits() {
             <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-semibold text-muted-foreground">
               {rows.length} saved
             </span>
+            <InlineRefreshBadge visible={refreshing} label="Refreshing saved speeds" />
+            <InlineRefreshBadge visible={mapModelLoading} label="Loading map model" />
+            <InlineRefreshBadge visible={recalculationBusy} label="Updating trip scores" />
+            <InlineRefreshBadge visible={mapQueryPending} label="Updating map filter" />
+            <InlineRefreshBadge visible={isRowQueryPending} label="Updating saved speed rows" />
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             User-set road speeds used by trip review, map speed colors, speed zones, and scoring.
@@ -1242,14 +1736,17 @@ export default function SpeedLimits() {
             type="button"
             onClick={exportSpeedKnowledge}
             className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-card text-foreground hover:bg-secondary"
-            title="Export speed rules only"
-            aria-label="Export speed rules only"
+            title="Export speed rules and precise road locations"
+            aria-label="Export speed rules and precise road locations"
           >
             <Download className="h-4 w-4" />
           </button>
           <button
             type="button"
-            onClick={() => restoreInputRef.current?.click()}
+            onClick={() => {
+              setStatus('Choose a Road Sage speed-rule JSON file to restore.');
+              restoreInputRef.current?.click();
+            }}
             className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-card text-foreground hover:bg-secondary"
             title="Restore speed rules"
             aria-label="Restore speed rules"
@@ -1258,7 +1755,7 @@ export default function SpeedLimits() {
           </button>
           <button
             type="button"
-            onClick={() => loadRows()}
+            onClick={refreshSavedRoadSpeeds}
             disabled={loading}
             className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary disabled:opacity-60"
           >
@@ -1378,6 +1875,30 @@ export default function SpeedLimits() {
 
       {activeWorkspace === 'review' && (
         <>
+      {!mapModelLoaded && (
+        <section className={`rounded-xl border px-3 py-2 text-sm font-medium ${
+          mapModelState.status === 'error'
+            ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200'
+            : 'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-200'
+        }`}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              {mapModelState.status === 'error'
+                ? 'Map evidence could not load. Saved rules are still available.'
+                : 'Loading trip evidence for conflicts and observed-only sections...'}
+            </span>
+            {mapModelState.status === 'error' && (
+              <button
+                type="button"
+                onClick={() => loadMapModel({ force: true })}
+                className="inline-flex items-center justify-center rounded-lg border border-current/30 px-2.5 py-1 text-xs font-semibold hover:bg-background/50"
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        </section>
+      )}
       <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -1509,11 +2030,7 @@ export default function SpeedLimits() {
               )}
               <button
                 type="button"
-                onClick={addMode ? () => {
-                  setAddMode(false);
-                  setAddPath([]);
-                  setSelectedSection(null);
-                } : startAddingSection}
+                onClick={addMode ? cancelAddSection : startAddingSection}
                 className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold ${
                   addMode ? 'border border-border bg-secondary text-foreground' : 'bg-primary text-primary-foreground'
                 }`}
@@ -1524,7 +2041,7 @@ export default function SpeedLimits() {
               {addMode && (
                 <button
                   type="button"
-                  onClick={() => setAutoSnapTrace((value) => !value)}
+                  onClick={toggleAutoSnapTrace}
                   className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold ${
                     autoSnapTrace
                       ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200'
@@ -1562,12 +2079,29 @@ export default function SpeedLimits() {
           </div>
         </div>
 
-        <SpeedLimitEditorMap
+        {TRIAGE_DISABLE_MAPS ? (
+          <div className="flex h-[28rem] min-h-[22rem] items-center justify-center rounded-2xl border border-border bg-secondary/30 text-sm text-muted-foreground">
+            Map disabled for Phase 0 timing test
+          </div>
+        ) : mapModelState.status === 'error' ? (
+          <div className="flex h-[28rem] min-h-[22rem] flex-col items-center justify-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 text-center text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
+            <div>Map trip data could not load. Saved speed rows are still available.</div>
+            <button
+              type="button"
+              onClick={() => loadMapModel({ force: true })}
+              className="inline-flex items-center justify-center rounded-xl bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700"
+            >
+              Retry map model
+            </button>
+          </div>
+        ) : !mapModelLoaded ? (
+          <MapModelSkeleton label="Loading saved road speed map model" />
+        ) : <SpeedLimitEditorMap
           trips={mapTrips}
           corrections={rows}
           preparedSections={mapSections}
           selectedGeohash={correctionKey(selectedSection) || ''}
-          mapQuery={mapQuery}
+          mapQuery={deferredMapQuery}
           layers={mapLayers}
           addMode={addMode}
           addPath={addPath}
@@ -1577,7 +2111,7 @@ export default function SpeedLimits() {
           onAddPoint={selectNewMapPoint}
           onMoveAddPoint={moveAddPoint}
           onMoveSectionPoint={moveSelectedSectionEndpoint}
-        />
+        />}
 
         {addMode && (
           <div className="grid gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950 shadow-sm dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100 lg:grid-cols-[1.1fr_0.9fr]">
@@ -1894,7 +2428,7 @@ export default function SpeedLimits() {
                   <button
                     type="button"
                     onClick={splitMapSection}
-                    disabled={busyGeohash === correctionKey(selectedSection) || (selectedSection.sectionPoints || []).length < 3}
+                    disabled={busyGeohash === correctionKey(selectedSection) || (selectedSection.sectionPoints || []).length < 2}
                     className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
                   >
                     Split at midpoint
@@ -1962,15 +2496,15 @@ export default function SpeedLimits() {
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <input
                 type="search"
-                value={rowQuery}
-                onChange={(event) => setRowQuery(event.target.value)}
+                value={rowQueryInput}
+                onChange={(event) => updateRowQuery(event.target.value)}
                 placeholder="Search saved speeds..."
                 className="w-full rounded-xl border border-border bg-background py-2 pl-9 pr-3 text-sm outline-none focus:border-primary"
               />
             </label>
             <select
               value={rowSort}
-              onChange={(event) => setRowSort(event.target.value)}
+              onChange={(event) => updateRowSort(event.target.value)}
               className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
               aria-label="Sort saved speeds"
             >
@@ -1987,7 +2521,7 @@ export default function SpeedLimits() {
               <button
                 key={value}
                 type="button"
-                onClick={() => setRowFilter(value)}
+                onClick={() => updateRowFilter(value)}
                 className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
                   active
                     ? 'border-primary bg-primary text-primary-foreground'
@@ -2036,11 +2570,7 @@ export default function SpeedLimits() {
         )}
       </section>
 
-      {loading ? (
-        <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
-          Loading saved speeds...
-        </div>
-      ) : rows.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="rounded-xl border border-border bg-card p-5">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary text-muted-foreground">
@@ -2063,23 +2593,37 @@ export default function SpeedLimits() {
           No saved speeds match the current filters.
         </div>
       ) : (
-        <div className="space-y-3">
-          {visibleRows.map((row) => {
-            const key = correctionKey(row);
-            const draft = drafts[key] || {};
-            const disabled = busyGeohash === key;
-            const identity = correctionSectionIdentity(row, linkedTrip);
-            const conflict = conflictsByGeohash.get(key);
-            const rowEvidence = assessSpeedLimitEvidence(row);
-            const rowRecommendation = buildSpeedLimitRecommendation({ ...row, conflict });
-            const rowImpact = buildCorrectionImpactPreview(mapTrips, {
-              ...row,
-              limitKmh: Number(draft.limitKmh || row.limitKmh),
-              directionMode: draft.directionMode || row.directionMode,
-              timeRule: timeRuleFromDraft(draft),
-            }, draft.limitKmh || row.limitKmh);
+        <div
+          ref={savedRowsListRef}
+          className="max-h-[78vh] overflow-y-auto pr-1 thin-scrollbar"
+          aria-label="Virtualized saved road speeds list"
+        >
+          <div
+            className="relative w-full"
+            style={{ height: `${savedRowsVirtualizer.getTotalSize()}px` }}
+          >
+          {virtualRowItems.map((virtualItem) => {
+            const model = rowCardModels[virtualItem.index];
+            if (!model) return null;
+            const {
+              key,
+              row,
+              draft,
+              disabled,
+              identity,
+              conflict,
+              evidence: rowEvidence,
+              recommendation: rowRecommendation,
+              impact: rowImpact,
+            } = model;
             return (
-              <article key={key} className="rounded-xl border border-border bg-card p-3 shadow-sm">
+              <article
+                key={key}
+                ref={savedRowsVirtualizer.measureElement}
+                data-index={virtualItem.index}
+                className="absolute left-0 top-0 w-full rounded-xl border border-border bg-card p-3 shadow-sm"
+                style={{ transform: `translateY(${virtualItem.start}px)` }}
+              >
                 <div className="grid gap-3 lg:grid-cols-[1fr_16rem_13rem] lg:items-start">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -2331,39 +2875,7 @@ export default function SpeedLimits() {
               </article>
             );
           })}
-          {pageCount > 1 && (
-            <nav
-              className="flex items-center justify-between gap-3 border-t border-border pt-3"
-              aria-label="Saved road speed pages"
-            >
-              <button
-                type="button"
-                onClick={() => setPage((current) => Math.max(1, current - 1))}
-                disabled={page === 1}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-card text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-40"
-                title="Previous page"
-                aria-label="Previous page"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <div className="text-center text-xs text-muted-foreground">
-                <div className="font-semibold text-foreground">Page {page} of {pageCount}</div>
-                <div>
-                  Showing {(page - 1) * SPEEDS_PER_PAGE + 1}-{Math.min(page * SPEEDS_PER_PAGE, filteredRows.length)} of {filteredRows.length}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
-                disabled={page === pageCount}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-card text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-40"
-                title="Next page"
-                aria-label="Next page"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </nav>
-          )}
+          </div>
         </div>
       )}
         </>

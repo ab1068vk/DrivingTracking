@@ -21,8 +21,9 @@ import {
   maskEventsForPrivacy,
   maskRoutePointsForPrivacy,
 } from '@/lib/privacyZones';
-import SectionErrorBoundary from '@/components/SectionErrorBoundary';
+import MapErrorBoundary from '@/components/MapErrorBoundary';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { beginMeasure, measureSync } from '@/lib/performanceTriage';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -532,10 +533,10 @@ const safeMapSetView = (map, center, zoom, options = {}) => safeLeafletCall(() =
   map?.setView?.(center, zoom, { animate: false, ...options })
 ));
 
-const safeMapFitBounds = (map, bounds, options = {}) => {
+const safeMapFitBounds = (map, bounds, options = {}) => measureSync('TripMap.fitBounds', () => {
   if (!bounds || (typeof bounds.isValid === 'function' && !bounds.isValid())) return null;
   return safeLeafletCall(() => map?.fitBounds?.(bounds, { animate: false, ...options }));
-};
+});
 
 const safeMapPanTo = (map, center, zoom = 15) => safeLeafletCall(() => {
   if (!map?._loaded) return map?.setView?.(center, zoom, { animate: false });
@@ -548,14 +549,15 @@ export default function TripMap(props) {
     : `${props.routePoints?.length || 0}:${props.currentLocation?.timestamp || ''}`;
 
   return (
-    <SectionErrorBoundary
+    <MapErrorBoundary
       context="trip_map"
       title="Map unavailable"
-      message="Something went wrong while drawing this route. Reload to try again."
+      message="Something went wrong while drawing this route. Trip details and controls are still available."
       resetKey={resetKey}
+      height={props.height || '350px'}
     >
       <TripMapContent {...props} />
-    </SectionErrorBoundary>
+    </MapErrorBoundary>
   );
 }
 
@@ -599,6 +601,12 @@ function TripMapContent({
       : [{ id: 'selected', route_points: routePoints, selected: true }];
     return routeSets.find((route) => route.selected) || routeSets[0] || {};
   }, [routePoints, routes]);
+  const mapInputKey = useMemo(() => {
+    const routeSets = Array.isArray(routes)
+      ? routes
+      : [{ id: 'selected', route_points: routePoints, selected: true }];
+    return routeFitKey(routeSets);
+  }, [routePoints, routes]);
   const selectedRoutePoints = useMemo(
     () => {
       const points = prepareMapRoutePoints(selectedRoute.route_points || [], {
@@ -623,7 +631,9 @@ function TripMapContent({
 
   useEffect(() => {
     setSelectedSegment(null);
-  }, [selectedRoutePoints]);
+    setMapFailed(false);
+    lastFitRouteKeyRef.current = '';
+  }, [mapInputKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -660,7 +670,7 @@ function TripMapContent({
         }, 0);
       } catch (error) {
         console.error('Trip map failed to initialize', error);
-        if (!cancelled) setMapFailed(true);
+        if (!cancelled) setMapFailed((failed) => failed || true);
         stopLeafletMap(leafletMapRef.current);
         safeLeafletCall(() => layersRef.current?.clearLayers?.());
         safeLeafletCall(() => tileLayerRef.current?.remove?.());
@@ -670,7 +680,7 @@ function TripMapContent({
         tileLayerRef.current = null;
       }
     }).catch(() => {
-      if (!cancelled) setMapFailed(true);
+      if (!cancelled) setMapFailed((failed) => failed || true);
     });
 
     return () => {
@@ -707,13 +717,14 @@ function TripMapContent({
   }, [ready, tileStyle]);
 
   useEffect(() => {
-    if (tileErrorCount >= 4) setMapFailed(true);
+    if (tileErrorCount >= 4) setMapFailed((failed) => failed || true);
   }, [tileErrorCount]);
 
   useEffect(() => {
     const map = leafletMapRef.current;
     const layers = layersRef.current;
-    if (!ready || !map || !layers || !window.L) return;
+    if (mapFailed || !ready || !map || !layers || !window.L) return;
+    const endDraw = beginMeasure('TripMap.layerDraw');
 
     try {
       stopLeafletMap(map);
@@ -722,6 +733,7 @@ function TripMapContent({
     const routeSets = Array.isArray(routes)
       ? routes
       : [{ id: 'selected', route_points: routePoints, color: '#3b82f6', selected: true }];
+    const hasSelectedRoute = routeSets.some((route) => route.selected);
     const selectedRawRoute = routeSets.find((route) => route.selected) || routeSets[0] || {};
     const selectedRawPoints = Array.isArray(selectedRawRoute.route_points) ? selectedRawRoute.route_points : [];
     const localKnowledgeByTime = new Map();
@@ -761,7 +773,7 @@ function TripMapContent({
       .map((route) => {
         const maskedPoints = maskRoutePointsForPrivacy(route.route_points || [], privacySettings);
         const visualPoints = prepareMapRoutePoints(maskedPoints, {
-          maxPoints: route.selected ? 900 : 450,
+          maxPoints: route.selected ? 900 : 260,
           smooth: smoothRoute,
         });
         const routeVisualPoints = injectTimestampGapMarkers(visualPoints)
@@ -770,11 +782,14 @@ function TripMapContent({
         return {
           ...route,
           color: route.color || (route.selected ? '#3b82f6' : '#64748b'),
-          opacity: route.opacity ?? (route.selected ? 0.9 : 0.45),
+          opacity: route.opacity ?? (route.selected ? 0.9 : hasSelectedRoute ? 0.36 : 0.42),
           route_points: routeVisualPoints,
         };
       })
       .filter((route) => route.route_points.length > 1);
+    const overviewRenderer = !hasSelectedRoute && Array.isArray(routes) && typeof window.L.canvas === 'function'
+      ? window.L.canvas({ padding: 0.5 })
+      : null;
     const mapEvents = maskEventsForPrivacy(events || [], privacySettings);
     const isPrivatePoint = (point) => Boolean(isPointInPrivacyZone(point, visiblePrivacyZones));
     const segmentTouchesPrivacy = (segment) => {
@@ -853,6 +868,10 @@ function TripMapContent({
 
     if (validRoutes.length > 0) {
       const bounds = window.L.latLngBounds([]);
+      const endPolylineLoop = beginMeasure('TripMap.polylineCreationLoop', {
+        routeCount: validRoutes.length,
+        routePointCount: validRoutes.reduce((sum, route) => sum + route.route_points.length, 0),
+      });
 
       validRoutes.forEach((route) => {
         const pointSegments = splitRoutePointSegments(route.route_points);
@@ -860,15 +879,26 @@ function TripMapContent({
         const latLngs = route.route_points.map(p => [p.lat, p.lng]);
         latLngs.forEach((latLng) => bounds.extend(latLng));
         if (route.route_points.length < MIN_POLYLINE_ROUTE_POINTS) return;
+        const renderDetailedSegments = route.selected || !Array.isArray(routes);
+        if (!renderDetailedSegments) {
+          window.L.polyline(latLngSegments, {
+            renderer: overviewRenderer || undefined,
+            color: route.color,
+            weight: 3,
+            opacity: route.opacity,
+            smoothFactor: 2,
+            lineCap: 'round',
+            lineJoin: 'round',
+          })
+            .bindPopup(route.label ? `<b>${escapeHtml(route.label)}</b>` : 'Trip route')
+            .addTo(layers);
+          return;
+        }
 
-        const timeline = route.selected || !Array.isArray(routes)
-          ? buildPlaybackTimeline(route.route_points, mapEvents)
-          : null;
+        const timeline = buildPlaybackTimeline(route.route_points, mapEvents);
         const speedSegments = timeline
           ? timeline.segments || []
-          : route.selected || !Array.isArray(routes)
-            ? buildSpeedSegments(route.route_points)
-            : [];
+          : buildSpeedSegments(route.route_points);
 
         if (showCorneringHeatmap && route.selected && route.route_points.length > 2) {
           latLngSegments.forEach((segmentLatLngs) => {
@@ -1010,6 +1040,7 @@ function TripMapContent({
         }
       });
 
+      endPolylineLoop({ outcome: 'success' });
       drawPrivacyZones(bounds);
 
       lastBoundsRef.current = bounds;
@@ -1156,9 +1187,11 @@ function TripMapContent({
     } catch (error) {
       console.error('Trip map drawing failed', error);
       safeLeafletCall(() => layers.clearLayers());
-      setMapFailed(true);
+      setMapFailed((failed) => failed || true);
+    } finally {
+      endDraw({ outcome: 'complete' });
     }
-  }, [ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings]);
+  }, [mapFailed, ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings]);
 
   useEffect(() => {
     const safeCurrentLocation = validLatLngPoint(currentLocation);

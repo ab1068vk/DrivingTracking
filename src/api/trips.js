@@ -4,6 +4,8 @@ import { isNativePlatform } from "@/lib/nativePlatform";
 import { suggestTripTag } from "@/lib/tripInsights";
 import { normalizeTripTags } from "@/lib/tripMetadata";
 import { buildTripSummary } from "@/lib/tripSummary";
+import { measureAsync } from "@/lib/performanceTriage";
+import { keepPreviousData } from '@tanstack/react-query';
 
 export const shouldUseLocalStore = () => isNativePlatform() || !API_BASE_URL;
 
@@ -11,25 +13,29 @@ const repository = () => (shouldUseLocalStore() ? localTripRepository : null);
 
 export const tripService = {
   listSummaries: async ({ sort = "-start_time", limit = 100 } = {}) => {
-    const local = repository();
-    const trips = local
-      ? await local.listSummaries({ sort, limit })
-      : await apiClient.get("/trips", { query: { sort, limit } });
-    return trips.map(buildTripSummary);
+    return measureAsync('tripService.listSummaries', async () => {
+      const local = repository();
+      const trips = local
+        ? await local.listSummaries({ sort, limit })
+        : await apiClient.get("/trips", { query: { sort, limit } });
+      return trips.map(buildTripSummary);
+    }, { sort, limit });
   },
 
   listAllSummaries: async ({ sort = "-start_time" } = {}) => {
-    const local = repository();
-    const trips = local
-      ? await local.listAllSummaries({ sort })
-      : await apiClient.get("/trips", { query: { sort, limit: 10000 } });
-    return trips.map(buildTripSummary);
+    return measureAsync('tripService.listAllSummaries', async () => {
+      const local = repository();
+      const trips = local
+        ? await local.listAllSummaries({ sort })
+        : await apiClient.get("/trips", { query: { sort, limit: 10000 } });
+      return trips.map(buildTripSummary);
+    }, { sort });
   },
 
-  list: ({ sort = "-start_time", limit = 100 } = {}) => {
+  list: ({ sort = "-start_time", limit = 100 } = {}) => measureAsync('tripService.list', () => {
     const local = repository();
     return local ? local.list({ sort, limit }) : apiClient.get("/trips", { query: { sort, limit } });
-  },
+  }, { sort, limit }),
 
   listAll: ({ sort = "-start_time" } = {}) => {
     const local = repository();
@@ -133,12 +139,42 @@ export const tripService = {
 
 export const tripQueryKeys = {
   summaries: ['trip-summaries'],
+  limitedSummaries: (limit = 50) => ['trip-summaries', 'limited', Number(limit) || 50],
   detail: (id) => ['trip', String(id)],
   map: ['map-trips'],
 };
 
+export const TRIP_DETAIL_STALE_TIME = 2 * 60 * 1000;
+export const TRIP_DETAIL_GC_TIME = 5 * 60 * 1000;
+
+export const limitedTripSummaryQueryOptions = (limit = 50) => {
+  const safeLimit = Math.max(1, Number(limit) || 50);
+  return {
+    queryKey: tripQueryKeys.limitedSummaries(safeLimit),
+    queryFn: () => measureAsync(
+      'limitedTripSummaryQueryOptions.queryFn',
+      () => tripService.listSummaries({ sort: '-start_time', limit: safeLimit }),
+      { limit: safeLimit }
+    ),
+    staleTime: 2 * 60 * 1000,
+    placeholderData: keepPreviousData,
+  };
+};
+
 export const tripSummaryQueryOptions = () => ({
   queryKey: tripQueryKeys.summaries,
-  queryFn: () => tripService.listAllSummaries({ sort: '-start_time' }),
+  queryFn: () => measureAsync(
+    'tripSummaryQueryOptions.queryFn',
+    () => tripService.listAllSummaries({ sort: '-start_time' })
+  ),
   staleTime: 5 * 60 * 1000,
+  placeholderData: keepPreviousData,
+});
+
+export const tripDetailQueryOptions = (id) => ({
+  queryKey: tripQueryKeys.detail(id || 'none'),
+  queryFn: () => tripService.getById(id),
+  enabled: Boolean(id),
+  staleTime: TRIP_DETAIL_STALE_TIME,
+  gcTime: TRIP_DETAIL_GC_TIME,
 });

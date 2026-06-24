@@ -7,6 +7,7 @@ import { vehicleService } from '@/api/vehicles';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { calculateAchievementBadges } from '@/lib/tripInsights';
 import { syncAchievementNotifications } from '@/lib/notificationService';
+import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 
 const progressLabel = (badge) => {
   if (badge.earned) return 'Unlocked';
@@ -38,15 +39,15 @@ const nextStepLabel = (badge) => {
 
 export default function Achievements() {
   const settings = useLocalSettings();
-  const { data: allTrips = [], isLoading } = useQuery({
+  const { data: completed = [], isLoading, isFetching } = useQuery({
     ...tripSummaryQueryOptions(),
+    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
   const { data: vehicles = [] } = useQuery({
     queryKey: ['achievement-vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
   });
 
-  const completed = allTrips.filter((trip) => trip.status === 'completed');
   const badges = calculateAchievementBadges(completed, settings, vehicles);
   const earned = badges.filter((badge) => badge.earned);
 
@@ -65,6 +66,7 @@ export default function Achievements() {
           <Trophy className="w-5 h-5 text-primary" />
         </div>
       </motion.div>
+      <InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing achievements" />
 
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-card border border-border rounded-2xl p-4">

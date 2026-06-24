@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
@@ -25,6 +25,7 @@ import { buildDrivingThresholds, SCORING_VERSION } from '@/lib/tripEngine';
 import {
   AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO,
   AUTO_RESCORE_RECENT_WINDOW_DAYS,
+  enforceTripDataRetention,
   enforceRawGpsRetention,
   getRawGpsLifecycleStatus,
   TRIP_EVENT_MIGRATION_KEY,
@@ -93,6 +94,7 @@ import {
   PRIVACY_RADIUS_MIN_M,
   PRIVACY_CORRIDOR_MAX_WAYPOINTS,
   PRIVACY_CORRIDOR_MIN_WAYPOINTS,
+  purgeExistingGpsForHeightenedPrivacy,
   purgeGpsWithinPrivacyZone,
   removePrivacyZone,
   tripIdsAffectedByPrivacyZone,
@@ -136,7 +138,13 @@ import {
 } from '@/lib/biometricGate';
 import { checkIntegrity, integrityStatusFromSettings } from '@/lib/rasp';
 import { searchSettingsSections } from '@/lib/settingsSearch';
+import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import { HEIGHTENED_PRIVACY_MODE_EFFECTS } from '@/lib/privacyMode';
+import PrivacyZonePreviewMap from '@/components/PrivacyZonePreviewMap';
+import {
+  invalidateSelfTestCache,
+  selfTestPrivacyZoneProtection,
+} from '@/lib/controlSelfTests';
 
 // CHANGES (session):
 // - Added province/state picker and Phase 2 estimated speed guidance settings.
@@ -155,14 +163,20 @@ function SettingsSubheading({ children }) {
   return <div className="px-1 pt-3 pb-1 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">{children}</div>;
 }
 
-function SettingsSection({ id, activeId, children }) {
+/**
+ * @param {{ id: string, activeId: string, children: any }} props
+ */
+const SettingsSection = /** @type {any} */ (memo(function SettingsSection(props) {
+  const { id, activeId, children } = /** @type {{ id: string, activeId: string, children: any }} */ (props);
   if (activeId !== id) return null;
   return (
-    <div className="contents">
-      {children}
+    <div className="settings-section">
+      {typeof children === 'function' ? children() : children}
     </div>
   );
-}
+}, (/** @type {any} */ previous, /** @type {any} */ next) => (
+  previous.id === next.id && previous.activeId !== previous.id && next.activeId !== next.id
+)));
 
 function SettingRow({ icon: Icon = null, label, sublabel = '', children = null, onClick = null, danger = false }) {
   return (
@@ -213,15 +227,66 @@ function formatLegalNoticeDate(value) {
   }).format(date);
 }
 
+const runAfterVisiblePaint = (callback) => {
+  const run = () => window.setTimeout(callback, 0);
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(run);
+  } else {
+    setTimeout(callback, 0);
+  }
+};
+
 function Toggle({ value, onChange, disabled = false }) {
+  const [optimisticValue, setOptimisticValue] = useState(Boolean(value));
+  const latestValueRef = useRef(Boolean(value));
+  latestValueRef.current = Boolean(value);
+  useEffect(() => setOptimisticValue(Boolean(value)), [value]);
+
+  const change = (event) => {
+    event.stopPropagation();
+    const next = !optimisticValue;
+    setOptimisticValue(next);
+    runAfterVisiblePaint(() => {
+      Promise.resolve(onChange(next)).finally(() => {
+        window.setTimeout(() => setOptimisticValue(latestValueRef.current), 500);
+      });
+    });
+  };
+
   return (
     <button
+      type="button"
+      role="switch"
+      aria-checked={optimisticValue}
       disabled={disabled}
-      onClick={(e) => { e.stopPropagation(); onChange(!value); }}
-      className={`relative w-12 h-6 rounded-full transition-colors disabled:opacity-50 ${value ? 'bg-primary' : 'bg-secondary border border-border'}`}
+      onClick={change}
+      className={`relative w-12 h-6 rounded-full transition-colors disabled:opacity-50 ${optimisticValue ? 'bg-primary' : 'bg-secondary border border-border'}`}
     >
-      <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${value ? 'left-6' : 'left-0.5'}`} />
+      <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${optimisticValue ? 'left-6' : 'left-0.5'}`} />
     </button>
+  );
+}
+
+function OptimisticCheckbox({ checked, onCheckedChange, ...props }) {
+  const [optimisticChecked, setOptimisticChecked] = useState(checked === true);
+  const latestCheckedRef = useRef(checked === true);
+  latestCheckedRef.current = checked === true;
+  useEffect(() => setOptimisticChecked(checked === true), [checked]);
+
+  return (
+    <Checkbox
+      {...props}
+      checked={optimisticChecked}
+      onCheckedChange={(next) => {
+        const value = next === true;
+        setOptimisticChecked(value);
+        runAfterVisiblePaint(() => {
+          Promise.resolve(onCheckedChange?.(value)).finally(() => {
+            window.setTimeout(() => setOptimisticChecked(latestCheckedRef.current), 500);
+          });
+        });
+      }}
+    />
   );
 }
 
@@ -701,6 +766,9 @@ export default function Settings() {
     durationDays: 'permanent',
   });
   const [privacyCorridorWaypoints, setPrivacyCorridorWaypoints] = useState([]);
+  const [privacyPreview, setPrivacyPreview] = useState(null);
+  const [privacyProtectionTest, setPrivacyProtectionTest] = useState(null);
+  const [privacyProtectionTestBusy, setPrivacyProtectionTestBusy] = useState(false);
   const [suggestedPrivacyLocation, setSuggestedPrivacyLocation] = useState(null);
   const [privacyRadiusDrafts, setPrivacyRadiusDrafts] = useState({});
   const [privacyDraftRadiusError, setPrivacyDraftRadiusError] = useState('');
@@ -711,7 +779,9 @@ export default function Settings() {
   const [privacyDeleteImpact, setPrivacyDeleteImpact] = useState({ loading: false, tripCount: null });
   const [obdPairingStatus, setObdPairingStatus] = useState('');
   const [voiceTestStatus, setVoiceTestStatus] = useState('');
+  const [settingsSearchInput, setSettingsSearchInput] = useState('');
   const [settingsSearch, setSettingsSearch] = useState('');
+  const [isSettingsSearchPending, startSettingsSearchTransition] = useTransition();
   const [activeSettingsSection, setActiveSettingsSection] = useState('overview');
   const [rescoreStatus, setRescoreStatus] = useState('');
   const [rescoreProgress, setRescoreProgress] = useState(null);
@@ -735,6 +805,7 @@ export default function Settings() {
   const [backupImportBusy, setBackupImportBusy] = useState(false);
   const [backupImportPasswordVisible, setBackupImportPasswordVisible] = useState(false);
   const [pendingBackupImportFile, setPendingBackupImportFile] = useState(null);
+  const [tripExportBusy, setTripExportBusy] = useState(false);
   const [portabilityExportBusy, setPortabilityExportBusy] = useState(false);
   const [erasureBusy, setErasureBusy] = useState(false);
   const [osrmEndpointDraft, setOsrmEndpointDraft] = useState(() => localSettings.get().osrm_map_matching_url || '');
@@ -745,18 +816,33 @@ export default function Settings() {
   const [rawGpsLifecycleStatus, setRawGpsLifecycleStatus] = useState(null);
   const [rawGpsLifecycleBusy, setRawGpsLifecycleBusy] = useState(false);
   const importInputRef = useRef(null);
+  const corridorDraftExpiryRef = useRef(null);
   const qc = useQueryClient();
 
   // Load settings from local storage
   const [cfg, setCfg] = useState(() => localSettings.get());
+  const cfgRef = useRef(cfg);
+  const settingsPersistenceQueueRef = useRef(Promise.resolve());
+  cfgRef.current = cfg;
   const [thresholdEditingEnabled, setThresholdEditingEnabled] = useState(false);
-  const [deferredDataEnabled, setDeferredDataEnabled] = useState(false);
+  const updateSettingsSearch = (value) => {
+    setSettingsSearchInput(value);
+    startSettingsSearchTransition(() => {
+      setSettingsSearch(value);
+    });
+  };
+  const clearSettingsSearch = () => {
+    setSettingsSearchInput('');
+    startSettingsSearchTransition(() => {
+      setSettingsSearch('');
+    });
+  };
 
   useEffect(() => {
     const sectionId = new URLSearchParams(location.search || '').get('section');
     if (!sectionId || !SETTINGS_SECTIONS.some((section) => section.id === sectionId)) return;
     setActiveSettingsSection(sectionId);
-    setSettingsSearch('');
+    clearSettingsSearch();
     if (typeof window !== 'undefined') {
       window.requestAnimationFrame(() => {
         document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -765,15 +851,67 @@ export default function Settings() {
   }, [location.search]);
 
   useEffect(() => {
+    if (activeSettingsSection === 'settings-privacy-data') return;
+    setPrivacyCorridorWaypoints([]);
+    setPrivacyPreview(null);
+  }, [activeSettingsSection]);
+
+  useEffect(() => {
+    if (!privacyCorridorWaypoints.length || activeSettingsSection !== 'settings-privacy-data') return undefined;
+    const clearTimer = () => {
+      if (corridorDraftExpiryRef.current) window.clearTimeout(corridorDraftExpiryRef.current);
+      corridorDraftExpiryRef.current = window.setTimeout(() => {
+        setPrivacyCorridorWaypoints([]);
+        setPrivacyPreview((current) => current?.type === 'corridor' ? null : current);
+        toast({
+          title: 'Unsaved corridor cleared',
+          description: 'The sensitive route draft was removed after 5 minutes of inactivity.',
+        });
+      }, 5 * 60 * 1000);
+    };
+    clearTimer();
+    window.addEventListener('pointerdown', clearTimer, { passive: true });
+    window.addEventListener('keydown', clearTimer);
+    return () => {
+      window.removeEventListener('pointerdown', clearTimer);
+      window.removeEventListener('keydown', clearTimer);
+      if (corridorDraftExpiryRef.current) window.clearTimeout(corridorDraftExpiryRef.current);
+      corridorDraftExpiryRef.current = null;
+    };
+  }, [activeSettingsSection, privacyCorridorWaypoints.length]);
+
+  useEffect(() => {
+    if (!privacyPreview) return undefined;
+    let cancelled = false;
+    setScreenCaptureAllowed(false).catch((error) => {
+      if (!cancelled) logSystemFailure('privacy_preview_screen_capture_block', error);
+    });
+    return () => {
+      cancelled = true;
+      setScreenCaptureAllowed(cfgRef.current.allow_screen_capture === true).catch((error) => {
+        logSystemFailure('privacy_preview_screen_capture_restore', error);
+      });
+    };
+  }, [privacyPreview]);
+
+  useEffect(() => {
     const suggestion = location.state?.privacyZoneSuggestion;
     if (!suggestion) return;
     const draft = privacyZoneDraftFromSuggestion(suggestion);
     if (!Number.isFinite(draft.location.lat) || !Number.isFinite(draft.location.lng)) return;
     setPrivacyDraft((current) => ({ ...current, label: draft.label, radius_m: draft.radius_m, type: 'circle' }));
     setSuggestedPrivacyLocation(draft.location);
+    if (location.state?.previewPrivacyZoneSuggestion) {
+      void openPrivacyPreview({
+        type: 'circle',
+        location: draft.location,
+        sourceLabel: 'Suggested private place',
+        clearSuggestionOnSave: true,
+      }, 'Verify to review this suggested private place');
+    }
     setPrivacyDraftRadiusError('');
     setActiveSettingsSection('settings-privacy-data');
-    setSettingsSearch('');
+    clearSettingsSearch();
     navigate('/settings?section=settings-privacy-data', { replace: true, state: null });
     if (typeof window !== 'undefined') {
       window.requestAnimationFrame(() => {
@@ -805,7 +943,7 @@ export default function Settings() {
   } } = useQuery({
     queryKey: ['score-migration-summary'],
     queryFn: () => tripService.getScoreMigrationSummary(),
-    enabled: deferredDataEnabled,
+    enabled: activeSettingsSection === 'settings-detection-thresholds',
     staleTime: SETTINGS_HEAVY_QUERY_STALE_MS,
   });
 
@@ -834,11 +972,14 @@ export default function Settings() {
   };
 
   useEffect(() => {
+    if (!['settings-detection-thresholds', 'settings-privacy-data'].includes(activeSettingsSection)) return;
     scheduleRescoringQueue({ rescoreTrip: rescoreTripForQueue });
-    getRawGpsLifecycleStatus().then(setRawGpsLifecycleStatus).catch((error) => {
-      logSystemFailure('settings_raw_gps_lifecycle_status', error);
-    });
-  }, []);
+    if (activeSettingsSection === 'settings-privacy-data') {
+      getRawGpsLifecycleStatus().then(setRawGpsLifecycleStatus).catch((error) => {
+        logSystemFailure('settings_raw_gps_lifecycle_status', error);
+      });
+    }
+  }, [activeSettingsSection]);
 
   useEffect(() => {
     if (!privacyDeleteZone) {
@@ -871,6 +1012,7 @@ export default function Settings() {
   }, [privacyDeleteZone]);
 
   const updateCfg = (patch) => {
+    const currentCfg = cfgRef.current;
     const validation = validateSettingsPatch(patch);
     if (!validation.valid) {
       toast({
@@ -878,9 +1020,9 @@ export default function Settings() {
         description: validation.errors[0],
         variant: 'destructive',
       });
-      return cfg;
+      return currentCfg;
     }
-    const nextCfg = { ...cfg, ...patch };
+    const nextCfg = { ...currentCfg, ...patch };
     const touchesEcoMultipliers = Object.prototype.hasOwnProperty.call(patch, 'eco_cruise_score_multiplier') ||
       Object.prototype.hasOwnProperty.call(patch, 'eco_idle_penalty_multiplier');
     if (touchesEcoMultipliers && wouldDisableEcoScore(nextCfg)) {
@@ -889,13 +1031,44 @@ export default function Settings() {
         description: 'Eco scoring needs either the cruise multiplier or idle multiplier above 0.',
         variant: 'destructive',
       });
-      return cfg;
+      return currentCfg;
     }
-    const updated = localSettings.update(patch);
-    setCfg(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-    return updated;
+    cfgRef.current = nextCfg;
+    setCfg(nextCfg);
+
+    const persist = () => new Promise((resolve) => {
+      runAfterVisiblePaint(resolve);
+    }).then(() => {
+      const persisted = localSettings.update(patch);
+      setCfg((current) => {
+        const reconciled = { ...current };
+        Object.keys(patch).forEach((key) => {
+          if (current[key] === nextCfg[key]) reconciled[key] = persisted[key];
+        });
+        cfgRef.current = reconciled;
+        return reconciled;
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+      return persisted;
+    }).catch((error) => {
+      setCfg((current) => {
+        const rolledBack = { ...current };
+        Object.keys(patch).forEach((key) => {
+          if (current[key] === nextCfg[key]) rolledBack[key] = currentCfg[key];
+        });
+        cfgRef.current = rolledBack;
+        return rolledBack;
+      });
+      toast({
+        title: 'Setting not saved',
+        description: error?.message || 'The setting could not be persisted.',
+        variant: 'destructive',
+      });
+      return currentCfg;
+    });
+    settingsPersistenceQueueRef.current = settingsPersistenceQueueRef.current.then(persist, persist);
+    return nextCfg;
   };
 
   const updateScreenCaptureAllowed = async (allowed) => {
@@ -917,11 +1090,11 @@ export default function Settings() {
     setAuditVerifying(true);
     try {
       const result = await verifyChain();
-      recordSystemEvent('privacy_audit_log_verified', {
+      recordSystemEvent('audit_chain_verification_completed', {
         status: result.valid ? 'valid' : 'tampered',
         reason: result.reason || '',
       }, {
-        category: 'privacy',
+        category: 'security',
         severity: result.valid ? 'info' : 'warn',
         title: result.valid ? 'Privacy audit log verified' : 'Privacy audit log tamper check failed',
       });
@@ -963,6 +1136,12 @@ export default function Settings() {
       });
     }
     return false;
+  };
+
+  const openPrivacyPreview = async (preview, reason = 'Verify to preview this private area') => {
+    if (!await requireSensitiveAuthentication(reason)) return false;
+    setPrivacyPreview(preview);
+    return true;
   };
 
   const updateAppLockEnabled = async (enabled) => {
@@ -1070,30 +1249,9 @@ export default function Settings() {
   }, [cfg.osrm_map_matching_url]);
 
   useEffect(() => {
-    if (!isAndroid()) return;
+    if (!isAndroid() || activeSettingsSection !== 'settings-privacy-data') return;
     void refreshDeviceIntegrity({ showSuccess: false });
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const enable = () => {
-      if (!cancelled) setDeferredDataEnabled(true);
-    };
-
-    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-      const idleId = window.requestIdleCallback(enable, { timeout: 1200 });
-      return () => {
-        cancelled = true;
-        window.cancelIdleCallback?.(idleId);
-      };
-    }
-
-    const timer = setTimeout(enable, 400);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, []);
+  }, [activeSettingsSection]);
 
   useEffect(() => {
     let active = true;
@@ -1425,6 +1583,65 @@ export default function Settings() {
     ]);
   };
 
+  const runPrivacyZoneProtectionTest = async () => {
+    if (privacyProtectionTestBusy) return;
+    setPrivacyProtectionTestBusy(true);
+    setPrivacyProtectionTest(null);
+    try {
+      invalidateSelfTestCache('privacy_zone_protection');
+      const result = await selfTestPrivacyZoneProtection();
+      setPrivacyProtectionTest(result);
+      recordSystemEvent('privacy_zone_protection_self_test_completed', {
+        status: result.status,
+      }, {
+        category: 'privacy',
+        severity: result.status === 'ok' ? 'info' : 'warn',
+        title: 'Privacy-zone protection self-test completed',
+      });
+    } catch (error) {
+      logSystemFailure('privacy_zone_protection_self_test', error);
+      setPrivacyProtectionTest({
+        status: 'error',
+        evidence: error?.message || 'The privacy-zone self-test could not finish.',
+      });
+    } finally {
+      setPrivacyProtectionTestBusy(false);
+    }
+  };
+
+  const updateHeightenedPrivacyMode = async (enabled) => {
+    if (!enabled) {
+      updateCfg({ heightened_privacy_mode: false });
+      return;
+    }
+
+    const confirmed = typeof window === 'undefined' || window.confirm(
+      'Turn on heightened privacy mode? Existing raw GPS inside every configured privacy zone will be permanently erased. Scores, distance, duration, and summaries will remain.'
+    );
+    if (!confirmed) return;
+
+    updateCfg({ heightened_privacy_mode: true });
+    try {
+      const result = await purgeExistingGpsForHeightenedPrivacy({
+        ...cfgRef.current,
+        heightened_privacy_mode: true,
+      });
+      if (result.pointsPurged > 0 || result.eventsPurged > 0) {
+        toast({
+          title: 'Heightened privacy enabled',
+          description: `Removed ${result.pointsPurged} stored GPS point${result.pointsPurged === 1 ? '' : 's'} and ${result.eventsPurged} event location${result.eventsPurged === 1 ? '' : 's'} from configured privacy zones.`,
+        });
+      }
+    } catch (error) {
+      logSystemFailure('heightened_privacy_existing_gps_purge', error);
+      toast({
+        title: 'Heightened privacy is on',
+        description: 'New activity is protected, but existing GPS cleanup could not be completed. Try enabling the mode again after checking storage access.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const runCompletedTripRescore = async ({ onlyProvenanceMismatch = false, reason = 'manual' } = {}) => {
     setRescoreBusy(true);
     setRescoreResult(null);
@@ -1513,11 +1730,58 @@ export default function Settings() {
   };
 
   const updateRetention = async (days) => {
+    const currentDays = Number(cfg.data_retention_days || 0);
+    if (days === currentDays) return;
+    const periodLabel = days === 0 ? 'forever' : days === 365 ? '1 year' : `${days} days`;
+    if (days > 0 && typeof window !== 'undefined' && !window.confirm(
+      `Keep complete trips for ${periodLabel}? Trips older than ${periodLabel} will be permanently deleted from this device as soon as this setting is saved. Existing backup files are not changed.`
+    )) return;
+
     updateCfg({ data_retention_days: days });
-    await qc.invalidateQueries();
+    await settingsPersistenceQueueRef.current;
+    if (Number(localSettings.get().data_retention_days || 0) !== days) return;
+    recordSystemEvent('trip_retention_setting_changed', {
+      previous_days: currentDays,
+      retention_days: days,
+    }, { category: 'settings', title: 'Trip retention setting changed' });
+    try {
+      const result = await enforceTripDataRetention();
+      await qc.invalidateQueries();
+      toast({
+        title: 'Trip retention updated',
+        description: days === 0
+          ? 'Complete trips will be kept until you delete them.'
+          : `${result.deletedTrips} expired trip${result.deletedTrips === 1 ? '' : 's'} deleted. Future trips older than ${periodLabel} will be removed automatically.`,
+      });
+    } catch (error) {
+      logSystemFailure('trip_data_retention_enforcement', error, { retention_days: days });
+      toast({
+        title: 'Retention saved, cleanup failed',
+        description: 'The new retention period was saved, but expired trips could not be deleted right now.',
+        variant: 'destructive',
+      });
+    }
   };
 
-  const updateRawGpsRetention = (days) => {
+  const updatePrivacyLogRetention = async (hours) => {
+    const previousHours = Number(cfg.privacy_log_retention_hours ?? 24);
+    if (hours === previousHours) return;
+    updateCfg({ privacy_log_retention_hours: hours });
+    await settingsPersistenceQueueRef.current;
+    if (Number(localSettings.get().privacy_log_retention_hours ?? 24) !== hours) return;
+    recordSystemEvent('log_retention_setting_changed', {
+      previous_hours: previousHours,
+      retention_hours: hours,
+    }, { category: 'settings', title: 'Privacy log retention changed' });
+    toast({
+      title: 'Privacy log retention updated',
+      description: hours === 0
+        ? 'Privacy-operation logging is off. Non-privacy System Logs are still kept for 3 days.'
+        : `Privacy-operation records will be kept for ${hours} hour${hours === 1 ? '' : 's'}.`,
+    });
+  };
+
+  const updateRawGpsRetention = async (days) => {
     const currentDays = Number(cfg.raw_gps_retention_days || 0);
     if (days === currentDays) return;
 
@@ -1532,6 +1796,18 @@ export default function Settings() {
     }
 
     updateCfg({ raw_gps_retention_days: days });
+    await settingsPersistenceQueueRef.current;
+    if (Number(localSettings.get().raw_gps_retention_days || 0) !== days) return;
+    recordSystemEvent('raw_gps_retention_setting_changed', {
+      previous_days: currentDays,
+      retention_days: days,
+    }, { category: 'settings', title: 'Raw GPS retention changed' });
+    toast({
+      title: 'Raw GPS retention updated',
+      description: days === 0
+        ? 'Route coordinates will be kept with each trip until the trip is deleted.'
+        : `Route coordinates older than ${days === 365 ? '1 year' : `${days} days`} will be removed during automatic cleanup or when you tap Run now.`,
+    });
   };
 
   const runRawGpsRetentionNow = async () => {
@@ -1548,6 +1824,11 @@ export default function Settings() {
       const result = await enforceRawGpsRetention({ force: true });
       setRawGpsLifecycleStatus(result);
       await qc.invalidateQueries();
+      recordSystemEvent('raw_gps_retention_run_completed', {
+        retention_days: retentionDays,
+        purged_trip_count: result.purgedTrips || 0,
+        purged_point_count: result.purgedPoints || 0,
+      }, { category: 'storage', title: 'Raw GPS retention run completed' });
       toast({
         title: 'Route retention enforced',
         description: result.enabled
@@ -1763,16 +2044,43 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    refreshSettingsFromNative();
+    localSettings.hydrateFromNative().then((latest) => {
+      cfgRef.current = latest;
+      setCfg(latest);
+    });
+  }, []);
+
+  useEffect(() => {
+    const permissionSections = new Set([
+      'settings-tracking',
+      'settings-android-permissions',
+      'settings-feature-permissions',
+      'settings-notifications',
+      'settings-advanced-models',
+      'settings-phone-use',
+    ]);
+    if (permissionSections.has(activeSettingsSection)) refreshPermissions();
+  }, [activeSettingsSection]);
+
+  useEffect(() => {
+    if (activeSettingsSection !== 'settings-detection-thresholds' || calibProfile) return;
     loadCalibrationProfile().then(setCalibProfile);
+  }, [activeSettingsSection, calibProfile]);
+
+  useEffect(() => {
+    if (activeSettingsSection !== 'settings-privacy-data') return;
     refreshCalibrationLabels().catch((error) => {
       logSystemFailure('settings_initial_calibration_labels_load_failed', error);
     });
     getLastParkedLocation().then(setParkedLocation);
-    loadPrivacyZonesFromStorage().then(() => setCfg(localSettings.get())).catch((error) => {
+    loadPrivacyZonesFromStorage().then(() => {
+      const latest = localSettings.get();
+      cfgRef.current = latest;
+      setCfg(latest);
+    }).catch((error) => {
       logSystemFailure('settings_privacy_zones_secure_load', error);
     });
-  }, []);
+  }, [activeSettingsSection]);
 
   const privacyZones = getPrivacyZones(cfg);
   const privacyZoneOverlaps = findOverlappingZones(privacyZones);
@@ -1877,7 +2185,18 @@ export default function Settings() {
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
       void enqueuePrivacyZoneRescore('privacy_zone_added', zoneToSave);
-      if (isCorridor) setPrivacyCorridorWaypoints([]);
+      if (isCorridor) {
+        setPrivacyCorridorWaypoints([]);
+        toast({
+          title: 'Route corridor protected',
+          description: 'Exact corridor geometry was discarded. Hashed protection coverage remains active for storage and outbound-data guards.',
+        });
+      } else {
+        toast({
+          title: 'Privacy circle protected',
+          description: 'The zone is active for route storage and outbound-data guards.',
+        });
+      }
       return true;
     } catch (error) {
       showPrivacyNativeSyncFailure(error);
@@ -1888,7 +2207,10 @@ export default function Settings() {
   const addCurrentPrivacyZone = async () => {
     try {
       const location = await getCurrentLocation();
-      await savePrivacyZone(location, 'Current location');
+      await openPrivacyPreview(
+        { type: 'circle', location, sourceLabel: 'Current location' },
+        'Verify to preview your current location'
+      );
     } catch (error) {
       logSystemFailure('settings_privacy_zone_current_location', error);
       toast({
@@ -1933,6 +2255,10 @@ export default function Settings() {
       return;
     }
     setPrivacyCorridorWaypoints(waypoints);
+    await openPrivacyPreview(
+      { type: 'corridor', waypoints, sourceLabel: 'Recent trip route' },
+      'Verify to preview this saved route corridor'
+    );
   };
 
   const clearPrivacyZoneDeleteState = () => {
@@ -2032,7 +2358,7 @@ export default function Settings() {
     if (!validation.valid) {
       setPrivacyZoneRadiusErrors((errors) => ({ ...errors, [zone.id]: validation.error }));
       toast({
-        title: 'Privacy zone radius needs fixing',
+        title: `${zone.type === 'corridor' ? 'Corridor side buffer' : 'Privacy zone radius'} needs fixing`,
         description: validation.error,
         variant: 'destructive',
       });
@@ -2059,7 +2385,7 @@ export default function Settings() {
       setTimeout(() => setSaved(false), 1500);
       void enqueuePrivacyZoneRescore('privacy_zone_updated', [zone, updatedZone]);
     } catch (error) {
-      showPrivacyNativeSyncFailure(error, 'Privacy zone radius not saved');
+      showPrivacyNativeSyncFailure(error, zone.type === 'corridor' ? 'Corridor side buffer not saved' : 'Privacy zone radius not saved');
     }
   };
 
@@ -2118,11 +2444,9 @@ export default function Settings() {
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refreshAndRestartIfReady();
     };
-    const interval = window.setInterval(refreshAndRestartIfReady, 2000);
     window.addEventListener('focus', refreshAndRestartIfReady);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
-      window.clearInterval(interval);
       window.removeEventListener('focus', refreshAndRestartIfReady);
       document.removeEventListener('visibilitychange', onVisibility);
     };
@@ -2204,16 +2528,34 @@ export default function Settings() {
   };
 
   const handleExportAll = async () => {
-    const trips = await getSettingsTrips();
-    const completed = trips.filter(t => t.status === 'completed');
-    const csv = tripsToCSV(completed);
-    const result = await downloadCSV(csv, `road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
-    toast({
-      title: 'Export saved',
-      description: result?.native
-        ? `${result.filename} was saved to Downloads.`
-        : `${result?.filename || 'Trip CSV'} is downloading.`,
-    });
+    if (tripExportBusy) return;
+    setTripExportBusy(true);
+    try {
+      const trips = await getSettingsTrips();
+      const completed = trips.filter(t => t.status === 'completed');
+      const csv = tripsToCSV(completed);
+      const result = await downloadCSV(csv, `road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
+      recordSystemEvent('all_trips_export_completed', {
+        trip_count: completed.length,
+        native: result?.native === true,
+        output_format: 'csv',
+      }, { category: 'storage', title: 'All trips export completed' });
+      toast({
+        title: 'Trip export saved',
+        description: result?.native
+          ? `${result.filename} with ${completed.length} completed trip${completed.length === 1 ? '' : 's'} was saved to Downloads.`
+          : `${result?.filename || 'Trip CSV'} with ${completed.length} completed trip${completed.length === 1 ? '' : 's'} is downloading.`,
+      });
+    } catch (error) {
+      logSystemFailure('all_trips_export', error);
+      toast({
+        title: 'Trip export failed',
+        description: error?.message || 'Road Sage could not export the trip CSV.',
+        variant: 'destructive',
+      });
+    } finally {
+      setTripExportBusy(false);
+    }
   };
 
   const handleExportEverything = async () => {
@@ -2221,6 +2563,14 @@ export default function Settings() {
     setPortabilityExportBusy(true);
     try {
       const result = await exportDataPortabilityBundle();
+      recordSystemEvent('data_portability_export_completed', {
+        trip_count: result.bundle?.trips?.length || 0,
+        vehicle_count: result.bundle?.vehicles?.length || 0,
+        privacy_zone_count: result.bundle?.privacyZones?.length || 0,
+        score_history_count: result.bundle?.scoreHistory?.length || 0,
+        native: result.native === true,
+        output_format: 'json',
+      }, { category: 'storage', title: 'Data portability export completed' });
       toast({
         title: 'Data export saved',
         description: result.native
@@ -2245,6 +2595,12 @@ export default function Settings() {
       : window.prompt('This erases trips, settings, privacy logs, zones, and local keys from this device. Type ERASE ROAD SAGE to continue.');
     if (confirmation !== 'ERASE ROAD SAGE') return;
     setErasureBusy(true);
+    recordSystemEvent('local_data_erasure_confirmed', {}, {
+      category: 'storage',
+      severity: 'warn',
+      title: 'Local data erasure confirmed',
+      message: 'This entry is removed with the rest of local data if erasure succeeds.',
+    });
     try {
       const result = await eraseAllLocalDataAndDownloadReceipt();
       if (typeof window !== 'undefined') {
@@ -2252,6 +2608,11 @@ export default function Settings() {
         window.location.reload();
       }
     } catch (error) {
+      if (error?.dataErased === true && typeof window !== 'undefined') {
+        window.alert('All local Road Sage data was erased, but the proof-of-erasure receipt could not be saved. Road Sage will reload now.');
+        window.location.reload();
+        return;
+      }
       setErasureBusy(false);
       toast({
         title: 'Erasure failed',
@@ -2437,6 +2798,11 @@ export default function Settings() {
     event.target.value = '';
     if (!file) return;
     if (Number(file.size) > MAX_BACKUP_BYTES) {
+      recordSystemEvent('backup_import_rejected', {
+        reason: 'file_too_large',
+        byte_count: Number(file.size) || 0,
+        max_bytes: MAX_BACKUP_BYTES,
+      }, { category: 'storage', severity: 'warn', title: 'Backup import rejected' });
       toast({
         title: 'Could not import backup',
         description: BACKUP_TOO_LARGE_MESSAGE,
@@ -2498,7 +2864,7 @@ export default function Settings() {
   );
   const showSettingsSection = (sectionId) => {
     setActiveSettingsSection(sectionId);
-    setSettingsSearch('');
+    clearSettingsSearch();
   };
   const scrollSettingSection = (sectionId, targetLabel = '') => {
     showSettingsSection(sectionId);
@@ -2592,11 +2958,11 @@ export default function Settings() {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
-            value={settingsSearch}
-            onChange={(event) => setSettingsSearch(event.target.value)}
+            value={settingsSearchInput}
+            onChange={(event) => updateSettingsSearch(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Escape') {
-                setSettingsSearch('');
+                clearSettingsSearch();
                 return;
               }
               if (event.key === 'Enter' && settingSearchResults[0]) {
@@ -2609,10 +2975,10 @@ export default function Settings() {
             aria-controls={settingsSearchQuery ? 'settings-search-results' : undefined}
             className="w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-10 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
-          {settingsSearch && (
+          {settingsSearchInput && (
             <button
               type="button"
-              onClick={() => setSettingsSearch('')}
+              onClick={clearSettingsSearch}
               aria-label="Clear settings search"
               className="absolute right-2 top-1/2 rounded-lg p-1 text-muted-foreground hover:bg-secondary hover:text-foreground -translate-y-1/2"
             >
@@ -2620,12 +2986,13 @@ export default function Settings() {
             </button>
           )}
         </div>
-        {settingsSearch.trim() && (
+        {settingsSearchQuery && (
           <div id="settings-search-results" className="mt-3" aria-live="polite">
             <div className="mb-2 flex items-center justify-between gap-3 px-1">
               <span className="text-xs font-semibold text-foreground">
                 {settingSearchResults.length} result{settingSearchResults.length === 1 ? '' : 's'}
               </span>
+              <InlineRefreshBadge visible={isSettingsSearchPending} label="Updating search" />
             </div>
             <div className="grid gap-2 md:grid-cols-2">
               {settingSearchResults.length > 0 ? settingSearchResults.map((item) => (
@@ -2744,7 +3111,7 @@ export default function Settings() {
           </div>
         </div>
 
-        <SettingsSection id="settings-tracking" activeId={activeSettingsSection}>
+        <SettingsSection id="settings-tracking" activeId={activeSettingsSection}>{() => (<>
         {/* Tracking */}
         <SectionTitle id="settings-tracking">Tracking</SectionTitle>
         <div className="space-y-1">
@@ -2813,9 +3180,9 @@ export default function Settings() {
           </SettingRow>
         </div>
 
-        </SettingsSection>
+        </>)}</SettingsSection>
 
-        <SettingsSection id="settings-android-permissions" activeId={activeSettingsSection}>
+        <SettingsSection id="settings-android-permissions" activeId={activeSettingsSection}>{() => (<>
         {/* Android Permissions */}
         <SectionTitle id="settings-android-permissions">Android Permissions</SectionTitle>
         <div className="space-y-1">
@@ -2870,9 +3237,9 @@ export default function Settings() {
           </SettingRow>
         </div>
 
-        </SettingsSection>
+        </>)}</SettingsSection>
 
-        <SettingsSection id="settings-feature-permissions" activeId={activeSettingsSection}>
+        <SettingsSection id="settings-feature-permissions" activeId={activeSettingsSection}>{() => (<>
         {/* Feature Permission Check */}
         <SectionTitle id="settings-feature-permissions">Feature Permissions</SectionTitle>
         <div className="space-y-1">
@@ -2943,9 +3310,9 @@ export default function Settings() {
           ))}
         </div>
 
-        </SettingsSection>
+        </>)}</SettingsSection>
 
-        <SettingsSection id="settings-appearance" activeId={activeSettingsSection}>
+        <SettingsSection id="settings-appearance" activeId={activeSettingsSection}>{() => (<>
         {/* Appearance */}
         <SectionTitle id="settings-appearance">Appearance</SectionTitle>
         <div className="space-y-1">
@@ -2992,9 +3359,9 @@ export default function Settings() {
           </div>
         </div>
 
-        </SettingsSection>
+        </>)}</SettingsSection>
 
-        <SettingsSection id="settings-economics" activeId={activeSettingsSection}>
+        <SettingsSection id="settings-economics" activeId={activeSettingsSection}>{() => (<>
         {/* Economics */}
         <SectionTitle id="settings-economics">Economics</SectionTitle>
         <div className="space-y-1">
@@ -3079,9 +3446,9 @@ export default function Settings() {
           </SettingRow>
         </div>
 
-        </SettingsSection>
+        </>)}</SettingsSection>
 
-        <SettingsSection id="settings-notifications" activeId={activeSettingsSection}>
+        <SettingsSection id="settings-notifications" activeId={activeSettingsSection}>{() => (<>
         {/* Notifications */}
         <SectionTitle id="settings-notifications">Notifications</SectionTitle>
         <div className="space-y-3">
@@ -3210,9 +3577,9 @@ export default function Settings() {
           </div>
         </div>
 
-        </SettingsSection>
+        </>)}</SettingsSection>
 
-        <SettingsSection id="settings-driving-goals" activeId={activeSettingsSection}>
+        <SettingsSection id="settings-driving-goals" activeId={activeSettingsSection}>{() => (<>
         {/* Driving Goals */}
         <SectionTitle id="settings-driving-goals">Driving Goals</SectionTitle>
         <p className="text-xs text-muted-foreground px-1 mb-3">
@@ -3254,9 +3621,9 @@ export default function Settings() {
           ))}
         </div>
 
-        </SettingsSection>
+        </>)}</SettingsSection>
 
-        <SettingsSection id="settings-night-window" activeId={activeSettingsSection}>
+        <SettingsSection id="settings-night-window" activeId={activeSettingsSection}>{() => (<>
         {/* Night Driving Window */}
         <SectionTitle id="settings-night-window">Night Driving Window</SectionTitle>
         <p className="text-xs text-muted-foreground px-1 mb-3">
@@ -3345,9 +3712,9 @@ export default function Settings() {
           )}
         </div>
 
-        </SettingsSection>
+        </>)}</SettingsSection>
 
-        <SettingsSection id="settings-detection-thresholds" activeId={activeSettingsSection}>
+        <SettingsSection id="settings-detection-thresholds" activeId={activeSettingsSection}>{() => (<>
         {/* Detection Features */}
         <SectionTitle id="settings-detection-thresholds">Detection Features</SectionTitle>
         <SettingRow
@@ -3719,9 +4086,9 @@ export default function Settings() {
           </div>
         </div>
 
-        </SettingsSection>
+        </>)}</SettingsSection>
 
-        <SettingsSection id="settings-advanced-models" activeId={activeSettingsSection}>
+        <SettingsSection id="settings-advanced-models" activeId={activeSettingsSection}>{() => (<>
         {/* Advanced Models */}
         <SectionTitle id="settings-advanced-models">Advanced Models</SectionTitle>
         <div className="rounded-2xl bg-secondary/40 p-3">
@@ -3843,9 +4210,9 @@ export default function Settings() {
           )}
         </div>
 
-        </SettingsSection>
+        </>)}</SettingsSection>
 
-        <SettingsSection id="settings-phone-use" activeId={activeSettingsSection}>
+        <SettingsSection id="settings-phone-use" activeId={activeSettingsSection}>{() => (<>
         {/* Phone Use Detection */}
         <SectionTitle id="settings-phone-use">Phone Use Detection</SectionTitle>
         <div className="rounded-2xl bg-secondary/40 p-3">
@@ -3989,9 +4356,9 @@ export default function Settings() {
           </div>
         </div>
 
-        </SettingsSection>
+        </>)}</SettingsSection>
 
-        <SettingsSection id="settings-speed-warning" activeId={activeSettingsSection}>
+        <SettingsSection id="settings-speed-warning" activeId={activeSettingsSection}>{() => (<>
         {/* Speed & Road Data */}
         <SectionTitle id="settings-speed-warning">Speed & Road Data</SectionTitle>
         <SettingsSubheading>Live speed check</SettingsSubheading>
@@ -4290,9 +4657,9 @@ export default function Settings() {
           </div>
         </div>
 
-        </SettingsSection>
+        </>)}</SettingsSection>
 
-        <SettingsSection id="settings-privacy-data" activeId={activeSettingsSection}>
+        <SettingsSection id="settings-privacy-data" activeId={activeSettingsSection}>{() => (<>
         {/* Privacy */}
         <SectionTitle id="settings-privacy-data">Privacy & Data</SectionTitle>
         <div>
@@ -4333,7 +4700,7 @@ export default function Settings() {
           >
             <Toggle
               value={cfg.heightened_privacy_mode === true}
-              onChange={(value) => updateCfg({ heightened_privacy_mode: value })}
+              onChange={updateHeightenedPrivacyMode}
             />
           </SettingRow>
           {cfg.heightened_privacy_mode === true && (
@@ -4378,7 +4745,7 @@ export default function Settings() {
               label="Require authentication to open Road Sage"
               sublabel="Uses fingerprint, secure face unlock, or your device screen lock. Locks again after 5 minutes in the background."
             >
-              <Checkbox
+              <OptimisticCheckbox
                 checked={cfg.app_lock_enabled === true}
                 onCheckedChange={(checked) => updateAppLockEnabled(checked === true)}
                 aria-label="Require authentication to open Road Sage"
@@ -4391,7 +4758,7 @@ export default function Settings() {
               label="Allow screenshots and screen sharing"
               sublabel="Off by default. Turning this on can expose trip maps and private location history to other apps."
             >
-              <Checkbox
+              <OptimisticCheckbox
                 checked={cfg.allow_screen_capture === true}
                 onCheckedChange={(checked) => updateScreenCaptureAllowed(checked === true)}
                 aria-label="Allow screenshots and screen sharing"
@@ -4447,7 +4814,7 @@ export default function Settings() {
               label="Block new privacy zones on compromised devices"
               sublabel="On by default. Existing zones keep masking, but new zone storage is refused when root, debug, emulator, or USB debugging signals are detected."
             >
-              <Checkbox
+              <OptimisticCheckbox
                 checked={cfg.privacy_zone_storage_requires_secure_device !== false}
                 onCheckedChange={(checked) => updateCfg({ privacy_zone_storage_requires_secure_device: checked === true })}
                 aria-label="Block new privacy zones on compromised devices"
@@ -4580,37 +4947,40 @@ export default function Settings() {
               </div>
               <span className="rounded-full bg-card px-2 py-1 text-xs font-semibold">{privacyZones.length}</span>
             </div>
-            <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_88px]">
+            <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-[minmax(0,1fr)_150px]">
               <input
                 value={privacyDraft.label}
                 onChange={(event) => setPrivacyDraft((draft) => ({ ...draft, label: event.target.value }))}
                 className="min-w-0 rounded-xl border border-border bg-card px-3 py-2 text-sm"
                 placeholder="Home, work, school"
               />
-              <input
-                type="number"
-                inputMode="numeric"
-                min={PRIVACY_RADIUS_MIN_M}
-                max={PRIVACY_RADIUS_MAX_M}
-                step="10"
-                value={privacyDraft.radius_m}
-                onChange={(event) => {
-                  const { value } = event.target;
-                  setPrivacyDraftRadiusError('');
-                  setPrivacyDraft((draft) => ({
-                    ...draft,
-                    radius_m: value,
-                  }));
-                }}
-                onBlur={commitPrivacyDraftRadius}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.currentTarget.blur();
-                  }
-                }}
-                className={`min-w-0 rounded-xl border bg-card px-3 py-2 text-sm ${privacyDraftRadiusError ? 'border-red-500 focus:outline-red-500' : 'border-border'}`}
-                aria-label="Privacy zone radius in meters"
-              />
+              <label className="text-[11px] font-medium text-muted-foreground">
+                {privacyDraft.type === 'corridor' ? 'Buffer each side (m)' : 'Radius (m)'}
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={PRIVACY_RADIUS_MIN_M}
+                  max={PRIVACY_RADIUS_MAX_M}
+                  step="10"
+                  value={privacyDraft.radius_m}
+                  onChange={(event) => {
+                    const { value } = event.target;
+                    setPrivacyDraftRadiusError('');
+                    setPrivacyDraft((draft) => ({
+                      ...draft,
+                      radius_m: value,
+                    }));
+                  }}
+                  onBlur={commitPrivacyDraftRadius}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.currentTarget.blur();
+                    }
+                  }}
+                  className={`mt-1 w-full min-w-0 rounded-xl border bg-card px-3 py-2 text-sm text-foreground ${privacyDraftRadiusError ? 'border-red-500 focus:outline-red-500' : 'border-border'}`}
+                  aria-label={privacyDraft.type === 'corridor' ? 'Privacy corridor buffer on each side in meters' : 'Privacy zone radius in meters'}
+                />
+              </label>
             </div>
             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
               <label className="text-[11px] font-medium text-muted-foreground">
@@ -4660,7 +5030,7 @@ export default function Settings() {
               </label>
             </div>
             <div className={`mt-1 flex justify-end text-[11px] font-medium ${privacyDraftRadiusError ? 'text-red-500' : 'text-muted-foreground'}`}>
-              Allowed {privacyDraft.type === 'corridor' ? 'width' : 'radius'}: {PRIVACY_RADIUS_MIN_M}-{PRIVACY_RADIUS_MAX_M} m
+              Allowed {privacyDraft.type === 'corridor' ? 'side buffer' : 'radius'}: {PRIVACY_RADIUS_MIN_M}-{PRIVACY_RADIUS_MAX_M} m
             </div>
             {privacyDraftRadiusError && (
               <div className="mt-1 text-right text-[11px] font-medium text-red-500">
@@ -4668,7 +5038,10 @@ export default function Settings() {
               </div>
             )}
             <div className="mt-2 rounded-xl bg-card px-3 py-2 text-xs text-muted-foreground">
-              Default {privacyDraft.type === 'corridor' ? 'corridor width' : 'radius'} is {PRIVACY_RADIUS_DEFAULT_M} m. Values outside {PRIVACY_RADIUS_MIN_M}-{PRIVACY_RADIUS_MAX_M} m are rejected. Zone creation does not send typed labels or addresses to a geocoder; use current, parked, suggested, or locally saved trip points only.
+              {privacyDraft.type === 'corridor'
+                ? `${privacyDraft.radius_m || PRIVACY_RADIUS_DEFAULT_M} m is protected on each side of the route (about ${(Number(privacyDraft.radius_m) || PRIVACY_RADIUS_DEFAULT_M) * 2} m total, plus rounded ends).`
+                : `${privacyDraft.radius_m || PRIVACY_RADIUS_DEFAULT_M} m is measured outward from the selected center point.`}
+              {' '}Values outside {PRIVACY_RADIUS_MIN_M}-{PRIVACY_RADIUS_MAX_M} m are rejected. Zone creation does not send typed labels or addresses to a geocoder.
             </div>
             {privacyDraft.sensitivity === 'high' && (
               <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
@@ -4681,7 +5054,7 @@ export default function Settings() {
                   <div>
                     <div className="font-semibold">Local corridor waypoints</div>
                     <div className="mt-0.5 text-muted-foreground">
-                      {privacyCorridorWaypoints.length}/{PRIVACY_CORRIDOR_MAX_WAYPOINTS} points. Coordinates stay local and are not displayed.
+                      {privacyCorridorWaypoints.length}/{PRIVACY_CORRIDOR_MAX_WAYPOINTS} points. They form one protected route in the order added.
                     </div>
                   </div>
                   {privacyCorridorWaypoints.length > 0 && (
@@ -4694,14 +5067,15 @@ export default function Settings() {
                     </button>
                   )}
                 </div>
-                <div className="mt-2 grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
+                <div className="mt-2 grid grid-cols-1 gap-2 min-[640px]:grid-cols-3">
                   <button
                     type="button"
                     onClick={addCurrentCorridorWaypoint}
                     disabled={privacyCorridorWaypoints.length >= PRIVACY_CORRIDOR_MAX_WAYPOINTS}
-                    className="rounded-lg bg-primary px-2.5 py-2 font-semibold text-primary-foreground disabled:opacity-50"
+                    className="rounded-lg border border-border bg-card px-2.5 py-2 text-left font-semibold disabled:opacity-50"
                   >
-                    Add Current Point
+                    <span className="block">Add my location</span>
+                    <span className="mt-0.5 block font-normal text-muted-foreground">Appends your live GPS position as the next route point.</span>
                   </button>
                   <button
                     type="button"
@@ -4714,20 +5088,69 @@ export default function Settings() {
                       ));
                     }}
                     disabled={!parkedLocation || privacyCorridorWaypoints.length >= PRIVACY_CORRIDOR_MAX_WAYPOINTS}
-                    className="rounded-lg border border-border px-2.5 py-2 font-semibold disabled:opacity-50"
+                    className="rounded-lg border border-border bg-card px-2.5 py-2 text-left font-semibold disabled:opacity-50"
                   >
-                    Add Parked Point
+                    <span className="block">Add parked location</span>
+                    <span className="mt-0.5 block font-normal text-muted-foreground">Appends the last locally saved parking position.</span>
                   </button>
                   <button
                     type="button"
                     onClick={useRecentTripForCorridor}
-                    className="rounded-lg border border-border px-2.5 py-2 font-semibold"
+                    className="rounded-lg border border-border bg-card px-2.5 py-2 text-left font-semibold"
                   >
-                    Use Recent Trip
+                    <span className="block">Use latest saved trip</span>
+                    <span className="mt-0.5 block font-normal text-muted-foreground">Replaces these points with a sampled copy of the newest local route.</span>
                   </button>
                 </div>
+                {privacyCorridorWaypoints.length >= PRIVACY_CORRIDOR_MIN_WAYPOINTS && (
+                  <button
+                    type="button"
+                    onClick={() => void openPrivacyPreview({
+                      type: 'corridor',
+                      waypoints: privacyCorridorWaypoints,
+                      sourceLabel: 'Selected corridor points',
+                    }, 'Verify to preview these selected corridor points')}
+                    className="mt-2 w-full rounded-lg bg-primary px-3 py-2 font-semibold text-primary-foreground"
+                  >
+                    Preview protected corridor
+                  </button>
+                )}
               </div>
             )}
+            <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
+              <div className="font-semibold">What protection actually does</div>
+              <div className="mt-1 opacity-85">
+                GPS points and driving events inside the zone are removed before local route storage and excluded from OSRM, weather, and road-data requests. Existing saved GPS is erased immediately only for High sensitivity; Standard protects new data and lets you choose whether to purge older data when deleting the zone.
+              </div>
+            </div>
+            <div className="mt-2 rounded-xl border border-border bg-background/60 p-3 text-xs">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold">Privacy-zone protection self-test</div>
+                  <div className="mt-1 text-muted-foreground">
+                    Uses synthetic coordinates only. Verifies private GPS is redacted before storage and a synthetic outbound request is blocked with zero bytes sent.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={runPrivacyZoneProtectionTest}
+                  disabled={privacyProtectionTestBusy}
+                  className="rounded-lg border border-border bg-card px-3 py-2 font-semibold disabled:opacity-50"
+                >
+                  {privacyProtectionTestBusy ? 'Testing...' : 'Run privacy self-test'}
+                </button>
+              </div>
+              {privacyProtectionTest && (
+                <div className={`mt-2 rounded-lg px-3 py-2 font-medium ${
+                  privacyProtectionTest.status === 'ok'
+                    ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-100'
+                    : 'bg-red-100 text-red-900 dark:bg-red-950/50 dark:text-red-100'
+                }`}>
+                  {privacyProtectionTest.status === 'ok' ? 'Verified: ' : 'Needs attention: '}
+                  {privacyProtectionTest.evidence}
+                </div>
+              )}
+            </div>
             <div className="mt-2 rounded-xl border border-border bg-background/60 px-3 py-2 text-xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -4794,20 +5217,20 @@ export default function Settings() {
             )}
             <SettingRow
               icon={Eye}
-              label="Show privacy circles on map"
-              sublabel={integrityThreatDetected ? 'Allowed with warning. These offset circles can still hint at private places on a debug or modified device.' : 'Off by default. Zones remain active when their offset display outlines are hidden.'}
+              label="Show circle-zone outlines on trip maps"
+              sublabel={integrityThreatDetected ? 'Allowed with warning. Offset circle outlines can still hint at private places on a debug or modified device. Saved corridors stay hidden.' : 'Off by default. Shows offset circle outlines only; saved corridors stay hidden because their exact route geometry is not retained.'}
             >
-              <Checkbox
+              <OptimisticCheckbox
                 checked={cfg.show_privacy_circles === true}
                 onCheckedChange={(checked) => updateShowPrivacyCircles(checked === true)}
-                aria-label="Show privacy circles on map"
+                aria-label="Show circle privacy zone outlines on trip maps"
               />
             </SettingRow>
             {suggestedPrivacyLocation && (
               <div className="mt-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100">
                 <div className="font-semibold">Frequent-stop suggestion ready</div>
                 <div className="mt-1 opacity-85">
-                  Review the label and {privacyDraft.radius_m} m radius above, then add the suggested zone. Its coordinates remain local and are not displayed here.
+                  Review the label and {privacyDraft.radius_m} m radius above, then preview the suggested zone. Its coordinates remain local.
                 </div>
               </div>
             )}
@@ -4815,12 +5238,16 @@ export default function Settings() {
               {privacyDraft.type === 'corridor' && (
                 <button
                   type="button"
-                  onClick={() => savePrivacyZone(null, 'Private route')}
+                  onClick={() => void openPrivacyPreview({
+                    type: 'corridor',
+                    waypoints: privacyCorridorWaypoints,
+                    sourceLabel: 'Private route',
+                  }, 'Verify to preview this private route corridor')}
                   disabled={privacyZoneStorageBlocked || privacyCorridorWaypoints.length < PRIVACY_CORRIDOR_MIN_WAYPOINTS}
                   className="flex items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
                 >
                   <Route className="h-3.5 w-3.5" />
-                  Add Route Corridor
+                  Preview Route Corridor
                 </button>
               )}
               {privacyDraft.type !== 'corridor' && (
@@ -4828,17 +5255,18 @@ export default function Settings() {
               {suggestedPrivacyLocation && (
                 <button
                   type="button"
-                  onClick={async () => {
-                    if (await savePrivacyZone(suggestedPrivacyLocation, 'Suggested private place')) {
-                      setSuggestedPrivacyLocation(null);
-                    }
-                  }}
+                  onClick={() => void openPrivacyPreview({
+                    type: 'circle',
+                    location: suggestedPrivacyLocation,
+                    sourceLabel: 'Suggested private place',
+                    clearSuggestionOnSave: true,
+                  }, 'Verify to preview this suggested private place')}
                   disabled={privacyZoneStorageBlocked}
                   title={privacyZoneStorageBlocked ? 'Blocked by the secure-device privacy-zone guard. Use the help below to enable adding zones.' : 'Add the suggested privacy zone'}
                   className="flex items-center justify-center gap-1.5 rounded-xl bg-sky-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
                 >
                   <MapPin className="h-3.5 w-3.5" />
-                  Add Suggested
+                  Preview Suggested
                 </button>
               )}
               <button
@@ -4849,17 +5277,20 @@ export default function Settings() {
                 className="flex items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
               >
                 <LocateFixed className="h-3.5 w-3.5" />
-                Add Current
+                Preview Current
               </button>
               <button
                 type="button"
-                onClick={() => savePrivacyZone(parkedLocation, 'Parked location')}
+                onClick={() => void openPrivacyPreview(
+                  { type: 'circle', location: parkedLocation, sourceLabel: 'Parked location' },
+                  'Verify to preview your parked location'
+                )}
                 disabled={!parkedLocation || privacyZoneStorageBlocked}
                 title={privacyZoneStorageBlocked ? 'Blocked by the secure-device privacy-zone guard. Use the help below to enable adding zones.' : !parkedLocation ? 'No parked location is saved yet.' : 'Add a privacy zone at your parked location'}
                 className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold disabled:opacity-50"
               >
                 <Plus className="h-3.5 w-3.5" />
-                Add Parked
+                Preview Parked
               </button>
                 </>
               )}
@@ -4871,7 +5302,7 @@ export default function Settings() {
                   This debug/USB setup can expose private places more easily. To enable adding zones, either fix the warnings and tap Check again, or allow new privacy zones on this device.
                 </div>
                 <label className="mt-2 flex items-start gap-2 rounded-lg bg-card/70 p-2 font-medium">
-                  <Checkbox
+                  <OptimisticCheckbox
                     checked={false}
                     onCheckedChange={(checked) => {
                       if (checked === true) updateCfg({ privacy_zone_storage_requires_secure_device: false });
@@ -4892,7 +5323,7 @@ export default function Settings() {
                     <div className="min-w-0">
                       <div className="truncate font-semibold">{zone.label}</div>
                       <div className="text-muted-foreground">
-                        {zone.type === 'corridor' ? 'Route corridor' : 'Circle'} - {Math.round(zone.radius_m)} m {zone.type === 'corridor' ? 'width' : 'radius'} - {zone.sensitivity === 'high' ? 'high sensitivity' : 'standard'}
+                        {zone.type === 'corridor' ? 'Route corridor' : 'Circle'} - {Math.round(zone.radius_m)} m {zone.type === 'corridor' ? 'buffer each side' : 'radius'} - {zone.sensitivity === 'high' ? 'high sensitivity' : 'standard'}
                         {zone.expiresAt ? ` - expires ${new Date(zone.expiresAt).toLocaleString()}` : ''}
                       </div>
                     </div>
@@ -4921,8 +5352,8 @@ export default function Settings() {
                           }
                         }}
                         className={`h-8 w-20 rounded-lg border bg-background px-2 text-right text-xs font-semibold ${privacyZoneRadiusErrors[zone.id] ? 'border-red-500 focus:outline-red-500' : 'border-border'}`}
-                        aria-label={`Radius in meters for ${zone.label}`}
-                        title={`Allowed radius: ${PRIVACY_RADIUS_MIN_M}-${PRIVACY_RADIUS_MAX_M} m`}
+                        aria-label={`${zone.type === 'corridor' ? 'Buffer on each side' : 'Radius'} in meters for ${zone.label}`}
+                        title={`Allowed ${zone.type === 'corridor' ? 'side buffer' : 'radius'}: ${PRIVACY_RADIUS_MIN_M}-${PRIVACY_RADIUS_MAX_M} m`}
                       />
                       <button
                         type="button"
@@ -4949,7 +5380,9 @@ export default function Settings() {
             sublabel="Download as CSV file"
             onClick={handleExportAll}
           >
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
+            <span className="text-xs font-semibold text-muted-foreground">
+              {tripExportBusy ? 'Preparing...' : 'CSV'}
+            </span>
           </SettingRow>
           <SettingRow
             icon={Download}
@@ -5009,7 +5442,7 @@ export default function Settings() {
           >
             <select
               value={Number(cfg.privacy_log_retention_hours ?? 24)}
-              onChange={(event) => updateCfg({ privacy_log_retention_hours: Number(event.target.value) })}
+              onChange={(event) => updatePrivacyLogRetention(Number(event.target.value))}
               className="bg-card border border-border rounded-lg text-xs px-2 py-1"
             >
               <option value={0}>Off</option>
@@ -5110,7 +5543,7 @@ export default function Settings() {
             </div>
           )}
         </div>
-        </SettingsSection>
+        </>)}</SettingsSection>
       </div>
           )}
         </div>
@@ -5166,6 +5599,67 @@ export default function Settings() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={Boolean(privacyPreview)} onOpenChange={(open) => { if (!open) setPrivacyPreview(null); }}>
+        <DialogContent className="max-w-2xl rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              Preview {privacyPreview?.type === 'corridor' ? 'protected route corridor' : 'privacy circle'}
+            </DialogTitle>
+            <DialogDescription>
+              This authenticated preview uses only local geometry. It does not load street tiles, geocode the label, or send these coordinates away from the app.
+            </DialogDescription>
+          </DialogHeader>
+          {privacyPreview && (
+            <>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                Sensitive location preview. Android screenshots and screen sharing are temporarily blocked while this window is open, even if screenshots are allowed elsewhere.
+              </div>
+              <PrivacyZonePreviewMap
+                type={privacyPreview.type}
+                location={privacyPreview.location}
+                waypoints={privacyPreview.waypoints}
+                distanceM={Number(privacyDraft.radius_m) || PRIVACY_RADIUS_DEFAULT_M}
+              />
+              <div className="rounded-xl bg-secondary/50 px-3 py-2 text-sm">
+                {privacyPreview.type === 'corridor'
+                  ? `${Number(privacyDraft.radius_m) || PRIVACY_RADIUS_DEFAULT_M} m is protected on each side of the blue route, for about ${(Number(privacyDraft.radius_m) || PRIVACY_RADIUS_DEFAULT_M) * 2} m total width.`
+                  : `${Number(privacyDraft.radius_m) || PRIVACY_RADIUS_DEFAULT_M} m is protected in every direction from the center dot.`}
+              </div>
+              <div className="rounded-xl border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+                {privacyPreview.type === 'corridor'
+                  ? `${privacyPreview.waypoints?.length || 0} local route point${privacyPreview.waypoints?.length === 1 ? '' : 's'} are used for this preview.`
+                  : `Approximate center: ${Number(privacyPreview.location?.lat).toFixed(4)}, ${Number(privacyPreview.location?.lng).toFixed(4)}.`}
+              </div>
+            </>
+          )}
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setPrivacyPreview(null)}
+              className="rounded-xl border border-border px-4 py-2 text-sm font-semibold"
+            >
+              Go back
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                const preview = privacyPreview;
+                if (!preview) return;
+                const savedZone = preview.type === 'corridor'
+                  ? await savePrivacyZone(null, preview.sourceLabel || 'Private route')
+                  : await savePrivacyZone(preview.location, preview.sourceLabel || 'Private place');
+                if (!savedZone) return;
+                if (preview.clearSuggestionOnSave) setSuggestedPrivacyLocation(null);
+                setPrivacyPreview(null);
+              }}
+              className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
+            >
+              Save protection
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(privacyDeleteZone)} onOpenChange={(open) => {
         if (privacyDeleteBusy) return;
         if (!open) clearPrivacyZoneDeleteState();
@@ -5195,7 +5689,7 @@ export default function Settings() {
               </div>
             </div>
             <label className="flex items-start gap-3 rounded-xl border border-border bg-secondary/30 p-3 text-sm">
-              <Checkbox
+              <OptimisticCheckbox
                 checked={privacyDeletePurge}
                 onCheckedChange={(checked) => setPrivacyDeletePurge(checked === true)}
                 disabled={privacyDeleteBusy}
@@ -5331,7 +5825,7 @@ export default function Settings() {
               </div>
             )}
             <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
-              <Checkbox
+              <OptimisticCheckbox
                 checked={backupExportPlaintext}
                 onCheckedChange={(checked) => {
                   const plaintext = checked === true;
@@ -5466,7 +5960,7 @@ export default function Settings() {
             </DialogDescription>
           </DialogHeader>
           <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
-            <Checkbox
+            <OptimisticCheckbox
               checked={osrmConsentChecked}
               onCheckedChange={(checked) => setOsrmConsentChecked(checked === true)}
               className="mt-0.5"

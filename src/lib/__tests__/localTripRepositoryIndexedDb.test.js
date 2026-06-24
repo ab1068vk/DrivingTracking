@@ -4,6 +4,7 @@ import {
   DB_NAME,
   DB_NAME_META_KEY,
   DB_VERSION,
+  enforceTripDataRetention,
   enforceRawGpsRetention,
   expireTripRouteData,
   localTripRepository,
@@ -340,6 +341,43 @@ describe('localTripRepository IndexedDB migrations', () => {
     });
     expect(expired.driving_events[0]).toEqual({ type: 'harsh_brake', value: -4 });
     expect(draft.route_points).toHaveLength(1);
+  });
+
+  it('enforces complete-trip retention and reports the deleted count', async () => {
+    const now = Date.parse('2026-06-13T12:00:00.000Z');
+    const values = new Map();
+    vi.stubGlobal('indexedDB', undefined);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    values.set('drivesense_settings', JSON.stringify({
+      settings_defaults_version: 11,
+      data_retention_days: 90,
+      raw_gps_retention_days: 0,
+      privacy_zones: [],
+    }));
+    values.set('drivesense_trips', JSON.stringify([{
+      id: 'expired-trip',
+      status: 'completed',
+      start_time: '2025-12-01T10:00:00.000Z',
+      end_time: '2025-12-01T10:30:00.000Z',
+      route_points: [{ lat: 43.65, lng: -79.38 }],
+    }, {
+      id: 'retained-trip',
+      status: 'completed',
+      start_time: '2026-06-01T10:00:00.000Z',
+      end_time: '2026-06-01T10:30:00.000Z',
+      route_points: [{ lat: 43.65, lng: -79.38 }],
+    }]));
+
+    const result = await enforceTripDataRetention({ now });
+    const trips = await localTripRepository.listAll();
+
+    expect(result).toEqual({ enabled: true, retentionDays: 90, deletedTrips: 1 });
+    expect(trips.map((trip) => trip.id)).toEqual(['retained-trip']);
   });
 
   it('opens an empty IndexedDB and creates the trip store with required indexes', async () => {

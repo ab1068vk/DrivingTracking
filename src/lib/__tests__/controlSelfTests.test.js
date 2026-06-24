@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   decryptSensitiveValue: vi.fn(),
   maskRoutePointsForPrivacy: vi.fn(),
   maskRoutePointsForPrivacyExport: vi.fn(),
+  privacyGatedFetch: vi.fn(),
   zeroCount: 0,
   native: false,
   noisyStat: vi.fn(),
@@ -25,6 +26,9 @@ vi.mock('@/lib/encryptedStore', () => ({ secureDelete: vi.fn() }));
 vi.mock('@/lib/privacyZones', () => ({
   maskRoutePointsForPrivacy: mocks.maskRoutePointsForPrivacy,
   maskRoutePointsForPrivacyExport: mocks.maskRoutePointsForPrivacyExport,
+}));
+vi.mock('@/lib/privacyGatedFetch', () => ({
+  privacyGatedFetch: mocks.privacyGatedFetch,
 }));
 vi.mock('@/lib/SecureGpsBuffer', () => ({
   getSecureGpsBufferZeroCallCount: () => mocks.zeroCount,
@@ -55,6 +59,7 @@ import {
   selfTestExportSigning,
   selfTestStorageEncryption,
   selfTestTimestampFuzzing,
+  selfTestPrivacyZoneProtection,
 } from '@/lib/controlSelfTests';
 
 describe('privacy control self-tests', () => {
@@ -94,5 +99,19 @@ describe('privacy control self-tests', () => {
     mocks.signExport.mockResolvedValue({ payload: { value: 123 }, signature: 'x' });
     mocks.verifyExport.mockResolvedValueOnce({ valid: true }).mockResolvedValueOnce({ valid: true });
     expect(await selfTestExportSigning()).toMatchObject({ status: 'error' });
+  });
+
+  it('verifies privacy-zone storage redaction and zero-byte outbound blocking', async () => {
+    mocks.maskRoutePointsForPrivacy.mockReturnValue([{
+      lat: null,
+      lng: null,
+      speed_kmh: null,
+      masked_for_privacy: true,
+    }]);
+    mocks.privacyGatedFetch.mockResolvedValue({
+      blocked: true,
+      logRecord: { bytesOut: 0 },
+    });
+    expect(await selfTestPrivacyZoneProtection()).toMatchObject({ status: 'ok' });
   });
 });

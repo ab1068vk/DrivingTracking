@@ -1,32 +1,65 @@
 import react from '@vitejs/plugin-react'
 import { configDefaults, defineConfig } from 'vitest/config'
+import { visualizer } from 'rollup-plugin-visualizer'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildIntegrityVitePlugin } from './scripts/build-integrity-utils.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+const normalizeModuleId = (id) => id.replaceAll('\\', '/')
+
+const inNodeModule = (id, packageName) => (
+  id.includes(`/node_modules/${packageName}/`) ||
+  id.includes(`/node_modules/${packageName}/index.`)
+)
+
 export default defineConfig({
-  plugins: [react(), buildIntegrityVitePlugin()],
+  plugins: [
+    react(),
+    buildIntegrityVitePlugin(),
+    visualizer({
+      filename: 'dist/bundle-treemap.html',
+      template: 'treemap',
+      gzipSize: true,
+      brotliSize: true,
+    }),
+    visualizer({
+      filename: 'dist/bundle-stats.json',
+      template: 'raw-data',
+      gzipSize: true,
+      brotliSize: true,
+    }),
+  ],
   test: {
     exclude: [...configDefaults.exclude, 'e2e/**', 'android/**'],
   },
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          'react-vendor': ['@tanstack/react-query', 'react', 'react-dom', 'react-router-dom'],
-          'charts-vendor': ['recharts'],
-          'html2canvas-vendor': ['html2canvas'],
-          'jspdf-vendor': ['jspdf'],
-          'capacitor-vendor': [
-            '@capacitor/app',
-            '@capacitor/core',
-            '@capacitor/filesystem',
-            '@capacitor/geolocation',
-            '@capacitor/local-notifications',
-            '@capacitor/preferences',
-          ],
+        manualChunks(id) {
+          const moduleId = normalizeModuleId(id)
+
+          if (!moduleId.includes('/node_modules/')) return undefined
+
+          if (
+            inNodeModule(moduleId, 'react') ||
+            inNodeModule(moduleId, 'react-dom') ||
+            inNodeModule(moduleId, 'react-router') ||
+            inNodeModule(moduleId, 'react-router-dom') ||
+            inNodeModule(moduleId, '@tanstack/react-query') ||
+            inNodeModule(moduleId, 'clsx') ||
+            inNodeModule(moduleId, 'scheduler')
+          ) {
+            return 'react-vendor'
+          }
+
+          if (inNodeModule(moduleId, 'recharts')) return 'charts-vendor'
+          if (inNodeModule(moduleId, 'html2canvas')) return 'html2canvas-vendor'
+          if (inNodeModule(moduleId, 'jspdf')) return 'jspdf-vendor'
+          if (moduleId.includes('/node_modules/@capacitor/')) return 'capacitor-vendor'
+
+          return undefined
         },
       },
     },

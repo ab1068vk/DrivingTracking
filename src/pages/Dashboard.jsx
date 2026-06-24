@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { tripService, tripSummaryQueryOptions } from '@/api/trips';
+import { limitedTripSummaryQueryOptions, tripService, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -70,6 +70,8 @@ import StatCard from '@/components/StatCard';
 import TripCard from '@/components/TripCard';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LiveCoachOverlay from '@/components/LiveCoachOverlay';
+import InlineLoadError from '@/components/InlineLoadError';
+import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
 import {
   buildScoreTips,
@@ -221,6 +223,24 @@ function createTierAwareSpeedLimitContext(context, settings = {}) {
       Number.isFinite(Number(limitKmh)) &&
       Number(speedKmh) > Number(limitKmh) + margin
     ),
+  };
+}
+
+function annotatePointWithResolvedSpeedLimit(point = {}, resolved = null) {
+  const limitKmh = Number(resolved?.limitKmh ?? resolved?.effectiveLimitKmh);
+  if (!Number.isFinite(limitKmh) || limitKmh <= 0) return point;
+  return {
+    ...point,
+    speed_limit_kmh: limitKmh,
+    speed_limit_source: resolved.limitSource || resolved.source || point.speed_limit_source,
+    speed_limit_tier: resolved.tier || point.speed_limit_tier,
+    speed_limit_confidence: resolved.confidence ?? point.speed_limit_confidence,
+    speed_limit_resolution_reason: resolved.resolutionReason || point.speed_limit_resolution_reason,
+    speed_limit_fallback_reason: resolved.fallbackReason || point.speed_limit_fallback_reason,
+    speed_limit_local_rule_id: resolved.localSpeedRule?.correctionId || point.speed_limit_local_rule_id,
+    speed_limit_local_match_type: resolved.localSpeedRule?.matchType || point.speed_limit_local_match_type,
+    speed_limit_local_match_distance_m: resolved.localSpeedRule?.matchDistanceM ?? point.speed_limit_local_match_distance_m,
+    speed_limit_local_match_reason: resolved.localSpeedRule?.matchReason || point.speed_limit_local_match_reason,
   };
 }
 
@@ -495,8 +515,23 @@ export default function Dashboard() {
   }, [activeTrip, tracking]);
 
   // Load recent trips
-  const { data: recentTrips = [], refetch } = useQuery({
+  const {
+    data: completedTrips = [],
+    refetch,
+    isSuccess: recentTripsLoaded,
+  } = useQuery({
+    ...limitedTripSummaryQueryOptions(50),
+    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
+  });
+  const {
+    data: fullHistoryCompletedTrips = [],
+    isFetching: fullHistoryFetching,
+    isError: fullHistoryError,
+    refetch: refetchFullHistory,
+  } = useQuery({
     ...tripSummaryQueryOptions(),
+    enabled: recentTripsLoaded,
+    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
 
   const { data: vehicles = [] } = useQuery({
@@ -504,10 +539,10 @@ export default function Dashboard() {
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 50 }),
   });
 
-  const completedTrips = useMemo(() => recentTrips.filter(t => t.status === 'completed'), [recentTrips]);
-  const driverCompletedTrips = useMemo(
-    () => completedTrips.filter(isDriverMetricEligible),
-    [completedTrips]
+  const analyticsCompletedTrips = fullHistoryCompletedTrips.length > 0 ? fullHistoryCompletedTrips : completedTrips;
+  const analyticsDriverCompletedTrips = useMemo(
+    () => analyticsCompletedTrips.filter(isDriverMetricEligible),
+    [analyticsCompletedTrips]
   );
   useEffect(() => {
     const onSpeedKnowledgeChanged = () => setSpeedKnowledgeRevision((value) => value + 1);
@@ -602,13 +637,13 @@ export default function Dashboard() {
     });
   }, []);
   const habitProfile = useMemo(
-    () => (completedTrips.length >= 5 ? buildHabitProfile(completedTrips) : null),
-    [completedTrips.length, completedTrips[completedTrips.length - 1]?.id]
+    () => (analyticsCompletedTrips.length >= 5 ? buildHabitProfile(analyticsCompletedTrips) : null),
+    [analyticsCompletedTrips]
   );
   const dailyFatigue = useMemo(() => {
-    const todayTrips = getTodayTrips(completedTrips);
+    const todayTrips = getTodayTrips(analyticsCompletedTrips);
     return computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes);
-  }, [completedTrips, habitProfile?.fatigueOnsetMinutes, settings]);
+  }, [analyticsCompletedTrips, habitProfile?.fatigueOnsetMinutes, settings]);
 
   useEffect(() => {
     getLastParkedLocation().then(setParkedLocation).catch((error) => {
@@ -1082,7 +1117,6 @@ export default function Dashboard() {
             }
           }
         }
-        const routePointsWithLatest = [...(tripBeforePoint?.route_points || []), storedPoint];
         const routePointsForLiveContext = [
           ...(tripBeforePoint?.route_points || []).filter((routePoint) => (
             Number.isFinite(Number(routePoint?.lat)) && Number.isFinite(Number(routePoint?.lng))
@@ -1108,6 +1142,16 @@ export default function Dashboard() {
           { inferredZones: inferredSpeedZonesRef.current, localKnowledge, settings: latestSettings }
         );
         const resolved = createTierAwareSpeedLimitContext(speedLimitContext, latestSettings);
+        const annotatedStoredPoint = pointInPrivacyZone
+          ? storedPoint
+          : annotatePointWithResolvedSpeedLimit(storedPoint, resolved);
+        const annotatedLivePoint = pointInPrivacyZone
+          ? point
+          : annotatePointWithResolvedSpeedLimit(point, resolved);
+        const routePointsWithLatest = [...(tripBeforePoint?.route_points || []), annotatedStoredPoint];
+        setCurrentLocation((current) => (
+          current?.timestamp === point.timestamp ? annotatedLivePoint : current
+        ));
         if (!isCandidateTrip && hasLiveSpeedEvidence(tripBeforePoint, routePointsForLiveContext, point)) {
           checkAndSpeakSpeedAlert(speed, resolved, latestSettings, () => {
             const badge = speedLimitBadgeForResolved(resolved);
@@ -2616,7 +2660,7 @@ export default function Dashboard() {
   }, [tracking, handleStartTrip, refreshTrackingStatusContext]);
 
   // Stats
-  const totalTrips = completedTrips.length;
+  const totalTrips = analyticsCompletedTrips.length;
   const {
     avgScore,
     avgScoreEvidence,
@@ -2634,9 +2678,9 @@ export default function Dashboard() {
     weeklyGoals,
   } = useMemo(() => {
     const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
-    const weekTrips = driverCompletedTrips.filter(t => new Date(t.start_time) >= weekAgo);
+    const weekTrips = analyticsDriverCompletedTrips.filter(t => new Date(t.start_time) >= weekAgo);
     const weekDistance = weekTrips.reduce((s, t) => s + (t.distance_km || 0), 0);
-    const scoredTrips = driverCompletedTrips.slice(0, 10)
+    const scoredTrips = analyticsDriverCompletedTrips.slice(0, 10)
       .map((trip) => ({ trip, component: getTripComponentScore(trip, 'overall') }))
       .filter(({ component }) => component.value != null);
     const totalScoredKm = scoredTrips.reduce((sum, { trip }) => sum + (Number(trip.distance_km) || 0), 0);
@@ -2650,7 +2694,7 @@ export default function Dashboard() {
         : scoredTrips.some(({ component }) => component.evidence === 'developing')
           ? 'developing'
           : 'high';
-    const baseline = computePersonalBaseline(driverCompletedTrips);
+    const baseline = computePersonalBaseline(analyticsDriverCompletedTrips);
     const baselineRangeLabel = baseline.baseline_includes_older_scores
       ? baseline.baseline_label
       : baseline.baseline_confidence_interval_label;
@@ -2668,17 +2712,17 @@ export default function Dashboard() {
       baseline,
       baselineRangeLabel,
       baselineText,
-      brakingImprovement: calculateRecentBrakingImprovement(driverCompletedTrips),
+      brakingImprovement: calculateRecentBrakingImprovement(analyticsDriverCompletedTrips),
       fatigueRisk: calculateFatigueRisk(weekTrips, settings),
-      noHarshBrakeStreak: calculateNoHarshBrakeStreak(driverCompletedTrips),
+      noHarshBrakeStreak: calculateNoHarshBrakeStreak(analyticsDriverCompletedTrips),
       parkingReminder: formatParkingReminder(parkedLocation),
-      peakStress: calculatePeakHourStress(driverCompletedTrips),
-      scoreTrend: driverCompletedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: getTripComponentScore(t, 'overall').value })),
-      tips: buildScoreTips(driverCompletedTrips),
+      peakStress: calculatePeakHourStress(analyticsDriverCompletedTrips),
+      scoreTrend: analyticsDriverCompletedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: getTripComponentScore(t, 'overall').value })),
+      tips: buildScoreTips(analyticsDriverCompletedTrips),
       weekDistance,
-      weeklyGoals: calculateWeeklyDrivingGoals(driverCompletedTrips, settings),
+      weeklyGoals: calculateWeeklyDrivingGoals(analyticsDriverCompletedTrips, settings),
     };
-  }, [driverCompletedTrips, parkedLocation, settings]);
+  }, [analyticsCompletedTrips.length, analyticsDriverCompletedTrips, parkedLocation, settings]);
   const latestTrip = completedTrips[0];
   const activeSpeedLimitReview = speedLimitReviewSummary || speedLimitConflictReview;
   const activeSpeedLimitReviewFingerprint = activeSpeedLimitReview?.fingerprint || '';
@@ -2960,6 +3004,14 @@ export default function Dashboard() {
         <p className="text-muted-foreground text-sm mt-1">
           {new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
         </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <InlineRefreshBadge visible={fullHistoryFetching && recentTripsLoaded} label="Loading history analytics" />
+          <InlineLoadError
+            visible={fullHistoryError}
+            message="History analytics could not refresh."
+            onRetry={refetchFullHistory}
+          />
+        </div>
       </motion.div>
 
       {/* Location Error */}

@@ -8,6 +8,8 @@ import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.time.Instant;
+
 final class PrivacyZoneChecker {
     static final String PRIVACY_ZONES_KEY = "privacy_zones_v1";
     private static final String TAG = "PrivacyZone";
@@ -17,6 +19,42 @@ final class PrivacyZoneChecker {
     private static final String PRIVACY_ZONES_CONTEXT = "native:privacy_zones_v1";
     private static final double GUARD_METERS = 50.0d;
     private static final double DEFAULT_PRIVACY_CELL_SIZE_M = 100.0d;
+    private static final String[] KINEMATIC_FIELDS = new String[] {
+        "speed",
+        "speed_kmh",
+        "speedKmh",
+        "speed_mps",
+        "speedMps",
+        "speed_accuracy",
+        "speedAccuracy",
+        "obd_speed_kmh",
+        "heading",
+        "heading_accuracy",
+        "headingAccuracy",
+        "bearing",
+        "bearing_accuracy",
+        "bearingAccuracy",
+        "course",
+        "altitude",
+        "altitude_m",
+        "altitude_accuracy",
+        "altitudeAccuracy",
+        "vertical_speed",
+        "verticalSpeed",
+        "vertical_accuracy",
+        "verticalAccuracy",
+        "accuracy",
+        "horizontal_accuracy",
+        "horizontalAccuracy",
+        "accel_ms2",
+        "acceleration_ms2",
+        "acceleration_x",
+        "acceleration_y",
+        "acceleration_z",
+        "accelerationX",
+        "accelerationY",
+        "accelerationZ"
+    };
 
     private PrivacyZoneChecker() {}
 
@@ -56,6 +94,7 @@ final class PrivacyZoneChecker {
         for (int i = 0; i < zones.length(); i++) {
             JSONObject zone = zones.optJSONObject(i);
             if (zone == null) continue;
+            if (isExpired(zone, System.currentTimeMillis())) continue;
 
             double zoneLat = firstFinite(zone, "lat", "latitude");
             double zoneLng = firstFinite(zone, "lng", "longitude");
@@ -106,6 +145,7 @@ final class PrivacyZoneChecker {
                 redacted.remove("matched_lng");
                 redacted.put("lat", JSONObject.NULL);
                 redacted.put("lng", JSONObject.NULL);
+                nullKinematicFields(redacted);
                 redacted.put("masked_for_privacy", true);
                 redacted.put("privacy_gap", true);
                 redacted.put("privacy_live_redacted", true);
@@ -118,7 +158,7 @@ final class PrivacyZoneChecker {
                     placeholder.put("lat", JSONObject.NULL);
                     placeholder.put("lng", JSONObject.NULL);
                     placeholder.put("timestamp", point.optString("timestamp", ""));
-                    placeholder.put("speed_kmh", point.optDouble("speed_kmh", 0d));
+                    nullKinematicFields(placeholder);
                     placeholder.put("masked_for_privacy", true);
                     placeholder.put("privacy_gap", true);
                     placeholder.put("privacy_live_redacted", true);
@@ -287,5 +327,26 @@ final class PrivacyZoneChecker {
             Double.isFinite(lng) &&
             Math.abs(lat) <= 90d &&
             Math.abs(lng) <= 180d;
+    }
+
+    private static void nullKinematicFields(JSONObject point) {
+        if (point == null) return;
+        for (String field : KINEMATIC_FIELDS) {
+            if (!point.has(field)) continue;
+            try {
+                point.put(field, JSONObject.NULL);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private static boolean isExpired(JSONObject zone, long nowMs) {
+        String expiresAt = zone != null ? zone.optString("expiresAt", "").trim() : "";
+        if (expiresAt.isEmpty()) return false;
+        try {
+            return Instant.parse(expiresAt).toEpochMilli() <= nowMs;
+        } catch (Exception error) {
+            Log.w(TAG, "Privacy zone expiry parse failed; keeping zone active", error);
+            return false;
+        }
     }
 }
