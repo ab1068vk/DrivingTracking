@@ -6,8 +6,8 @@ const settingsSource = fs.readFileSync(
   path.resolve(process.cwd(), 'src/pages/Settings.jsx'),
   'utf8'
 );
-const previewMapSource = fs.readFileSync(
-  path.resolve(process.cwd(), 'src/components/PrivacyZonePreviewMap.jsx'),
+const protectionCheckSource = fs.readFileSync(
+  path.resolve(process.cwd(), 'src/components/PrivacyZoneProtectionCheck.jsx'),
   'utf8'
 );
 
@@ -22,22 +22,30 @@ describe('privacy zone editor network privacy', () => {
 
   it('documents the high-sensitivity OSRM override in the editor', () => {
     expect(settingsSource).toContain(
-      "High-sensitivity zones never share route data with OSRM, even if you&apos;ve consented elsewhere."
+      'High sensitivity also blocks OSRM route sharing whenever a route touches the zone.'
     );
+    expect(settingsSource).toContain('Existing raw GPS inside this zone is erased when the zone is saved.');
   });
 
-  it('previews privacy geometry without loading third-party map tiles', () => {
-    expect(settingsSource).toContain('Preview Route Corridor');
+  it('checks privacy protection locally without map tiles or a remote geocoder', () => {
+    expect(settingsSource).toContain('Check protected corridor');
+    expect(settingsSource).toContain('Add at least {PRIVACY_CORRIDOR_MIN_WAYPOINTS} route points to check corridor protection');
     expect(settingsSource).toContain('Buffer each side (m)');
-    expect(previewMapSource).toContain('no street tiles or geocoder');
-    expect(previewMapSource).not.toMatch(/tileLayer|openstreetmap|mapbox|google/i);
+    expect(settingsSource).toContain('This authenticated check uses local geometry only.');
+    expect(protectionCheckSource).toContain('Local geometry diagram');
+    expect(protectionCheckSource).toContain('No street map');
+    expect(protectionCheckSource).toContain('Protected privacy circle diagram');
+    expect(protectionCheckSource).toContain('protected on each side');
+    expect(protectionCheckSource).toContain('It does not load street-map tiles, run a geocoder, or send coordinates away from the app.');
+    expect(protectionCheckSource).not.toMatch(/tile\.openstreetmap|leaflet|REMOTE_TILES|nominatim|mapbox|google/i);
+    expect(protectionCheckSource).not.toMatch(/geocod(?:e|ing)\s*\(/i);
   });
 
-  it('treats unsaved geometry as ephemeral and blocks Android capture during preview', () => {
+  it('treats unsaved geometry as ephemeral and blocks Android capture during the protection check', () => {
     expect(settingsSource).toContain('Unsaved corridor cleared');
     expect(settingsSource).toContain('5 minutes of inactivity');
-    expect(settingsSource).toContain('openPrivacyPreview');
-    expect(settingsSource).toContain('Verify to preview this private area');
+    expect(settingsSource).toContain('openPrivacyProtectionCheck');
+    expect(settingsSource).toContain('Verify to review this private area');
     expect(settingsSource).toContain('Verify to review this suggested private place');
     expect(settingsSource).toContain('setScreenCaptureAllowed(false)');
     expect(settingsSource).toContain('even if screenshots are allowed elsewhere');

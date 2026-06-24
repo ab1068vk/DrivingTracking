@@ -43,7 +43,11 @@ let lastNativeSettingsSync = '';
 let memorySettings = null;
 let activeTripMemory = null;
 let activeTripWriteQueue = Promise.resolve();
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 13;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 14;
+const SYSTEM_THEME_QUERY = '(prefers-color-scheme: dark)';
+let activeThemeMode = 'system';
+let systemThemeQueryList = null;
+let systemThemeQueryListener = null;
 
 const settingsStorage = () => {
   try {
@@ -203,7 +207,7 @@ export const DEFAULT_SETTINGS = {
   auto_tracking_enabled: false,
   activity_permission_granted: false,
   data_retention_days: 365,
-  raw_gps_retention_days: 90,
+  raw_gps_retention_days: 30,
   threshold_harsh_brake_ms2: scoringValue('HARSH_BRAKE_MS2'),
   threshold_rapid_accel_ms2: scoringValue('RAPID_ACCEL_MS2'),
   threshold_stop_start_decel_ms2: scoringValue('STOP_START_DECEL_MS2'),
@@ -248,7 +252,7 @@ export const DEFAULT_SETTINGS = {
   threshold_overtake_accel_ms2: scoringValue('OVERTAKE_ACCEL_THRESHOLD_MS2'),
   advanced_safety_detection_enabled: true,
   speed_warning_enabled: true,
-  speed_limit_lookup_enabled: true,
+  speed_limit_lookup_enabled: false,
   speed_estimates_enabled: true,
   speak_posted_speed_warnings: true,
   speak_estimated_speed_checks: true,
@@ -256,10 +260,10 @@ export const DEFAULT_SETTINGS = {
   inferred_voice_margin_kmh: 20,
   country_code: '',
   configurable_country_defaults: 'global',
-  weather_context_enabled: true,
+  weather_context_enabled: false,
   external_context_auto_fetch_enabled: false,
   external_context_auto_fetch_consented_at: '',
-  heightened_privacy_mode: false,
+  heightened_privacy_mode: true,
   request_obfuscation_enabled: true,
   decoy_traffic_mode: 'off',
   min_speed_rapid_accel_kmh: scoringValue('MIN_SPEED_RAPID_ACCEL_KMH'),
@@ -413,6 +417,20 @@ export function migrateDefaultSettings(parsed = {}) {
     parsed.speed_warning_enabled !== false
   ) {
     merged.speak_estimated_speed_checks = true;
+  }
+
+  if (version < 14) {
+    merged.heightened_privacy_mode = true;
+    merged.weather_context_enabled = false;
+    merged.speed_limit_lookup_enabled = false;
+    merged.map_matching_enabled = false;
+    merged.osrm_data_sharing_consented = false;
+    merged.osrm_data_sharing_consented_at = '';
+    merged.osrm_consent_invalidated_reason = 'maximum_privacy_default';
+    merged.osrm_consent_invalidated_at = new Date().toISOString();
+    if (Number(merged.raw_gps_retention_days) > 30 || parsed.raw_gps_retention_days == null) {
+      merged.raw_gps_retention_days = 30;
+    }
   }
 
   const osrmZoneGuardChanged = merged.osrm_block_near_any_zone !== true;
@@ -866,22 +884,56 @@ export function clearSettingsMemoryForErasure() {
   lastNativeSettingsSync = '';
 }
 
-export function applyThemeMode(mode = localSettings.get().dark_mode || 'system') {
+const normalizeThemeMode = (mode) => (['light', 'dark', 'system'].includes(mode) ? mode : 'system');
+
+const getSystemThemeQueryList = () => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return null;
+  if (!systemThemeQueryList) systemThemeQueryList = window.matchMedia(SYSTEM_THEME_QUERY);
+  return systemThemeQueryList;
+};
+
+const renderThemeMode = (mode) => {
   if (typeof document === 'undefined') return;
+  const normalized = normalizeThemeMode(mode);
+  const shouldUseDark = normalized === 'dark' ||
+    (normalized === 'system' && getSystemThemeQueryList()?.matches === true);
+  document.documentElement.classList.toggle('dark', shouldUseDark);
+  document.documentElement.dataset.themeMode = normalized;
+  document.documentElement.dataset.resolvedTheme = shouldUseDark ? 'dark' : 'light';
+  document.documentElement.style.colorScheme = shouldUseDark ? 'dark' : 'light';
+};
 
-  if (mode === 'dark') {
-    document.documentElement.classList.add('dark');
+const detachSystemThemeListener = () => {
+  if (!systemThemeQueryList || !systemThemeQueryListener) return;
+  if (typeof systemThemeQueryList.removeEventListener === 'function') {
+    systemThemeQueryList.removeEventListener('change', systemThemeQueryListener);
+  } else if (typeof systemThemeQueryList.removeListener === 'function') {
+    systemThemeQueryList.removeListener(systemThemeQueryListener);
+  }
+  systemThemeQueryListener = null;
+};
+
+const syncSystemThemeListener = () => {
+  if (activeThemeMode !== 'system') {
+    detachSystemThemeListener();
     return;
   }
-
-  if (mode === 'light') {
-    document.documentElement.classList.remove('dark');
-    return;
+  const queryList = getSystemThemeQueryList();
+  if (!queryList || systemThemeQueryListener) return;
+  systemThemeQueryListener = () => {
+    if (activeThemeMode === 'system') renderThemeMode('system');
+  };
+  if (typeof queryList.addEventListener === 'function') {
+    queryList.addEventListener('change', systemThemeQueryListener);
+  } else if (typeof queryList.addListener === 'function') {
+    queryList.addListener(systemThemeQueryListener);
   }
+};
 
-  const prefersDark = typeof window !== 'undefined' &&
-    window.matchMedia?.('(prefers-color-scheme: dark)').matches;
-  document.documentElement.classList.toggle('dark', !!prefersDark);
+export function applyThemeMode(mode = localSettings.get().dark_mode || 'system') {
+  activeThemeMode = normalizeThemeMode(mode);
+  syncSystemThemeListener();
+  renderThemeMode(activeThemeMode);
 }
 
 // ─── Active Trip Store (crash recovery) ───────────────────────────────────────

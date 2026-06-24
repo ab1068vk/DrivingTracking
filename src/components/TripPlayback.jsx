@@ -8,6 +8,7 @@ import { buildSpeedSegmentPopupHtml, titleCase } from '@/lib/mapPopupHtml';
 import { clamp } from '@/lib/mathUtils';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { getLastParkedLocation, localSettings } from '@/lib/trackingStore';
+import { HEIGHTENED_PRIVACY_MODE_KEY } from '@/lib/privacyMode';
 import {
   getPrivacyZoneDisplayCircle,
   getPrivacyZones,
@@ -16,6 +17,7 @@ import {
 } from '@/lib/privacyZones';
 import MapErrorBoundary from '@/components/MapErrorBoundary';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import usePrivacyZonesRevision from '@/hooks/usePrivacyZonesRevision';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -104,16 +106,10 @@ function loadLeaflet() {
   if (typeof window !== 'undefined' && !window.L) window.L = L;
   if (leafletLoaded || window.L) { leafletLoaded = true; return Promise.resolve(); }
   if (loadPromise) return loadPromise;
-  loadPromise = new Promise((resolve, reject) => {
-    const css = document.createElement('link');
-    css.rel = 'stylesheet';
-    css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-    document.head.appendChild(css);
-    const script = document.createElement('script');
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.onload = () => { leafletLoaded = true; resolve(); };
-    script.onerror = () => reject(new Error('Leaflet could not be loaded'));
-    document.head.appendChild(script);
+  loadPromise = new Promise((resolve) => {
+    window.L = window.L || L;
+    leafletLoaded = true;
+    resolve();
   });
   return loadPromise;
 }
@@ -375,12 +371,14 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
   const [mapFailed, setMapFailed] = useState(false);
 
   const privacySettings = useLocalSettings();
+  const heightenedPrivacy = privacySettings?.[HEIGHTENED_PRIVACY_MODE_KEY] === true;
+  const privacyZonesRevision = usePrivacyZonesRevision();
   settingsRef.current = privacySettings;
   const privacyZonesKey = JSON.stringify(privacySettings.privacy_zones || []);
   const playbackPrivacySettings = useMemo(() => ({
     privacy_zones: privacySettings.privacy_zones,
     show_privacy_circles: privacySettings.show_privacy_circles,
-  }), [privacySettings.show_privacy_circles, privacyZonesKey]);
+  }), [privacySettings.show_privacy_circles, privacyZonesKey, privacyZonesRevision]);
   const points = useMemo(() => prepareMapRoutePoints(
     maskRoutePointsForPrivacy(trip?.route_points || [], playbackPrivacySettings),
     { maxPoints: 900 }
@@ -491,7 +489,9 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
         leafletMapRef.current = map;
         const initialCenter = resolveInitialMapCenter(points, secondaryPoints, privacySettings);
         safeMapSetView(map, [initialCenter.lat, initialCenter.lng], DEFAULT_MAP_ZOOM);
-        window.L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+        if (!heightenedPrivacy) {
+          window.L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+        }
         map.whenReady(() => {
           if (!cancelled) scheduleMapInvalidate(map);
         });
@@ -712,7 +712,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
       markerHeadingRef.current = null;
       secondaryMarkerHeadingRef.current = null;
     };
-  }, [colorMode, events, playbackPrivacySettings, points, secondaryPoints, secondarySegments, speedSegments, trip?.id, secondaryTrip?.id, visiblePrivacyZones]);
+  }, [colorMode, events, heightenedPrivacy, playbackPrivacySettings, points, secondaryPoints, secondarySegments, speedSegments, trip?.id, secondaryTrip?.id, visiblePrivacyZones]);
 
   useEffect(() => {
     const map = leafletMapRef.current;
@@ -916,8 +916,14 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
           </div>
         </div>
 
+        {heightenedPrivacy && (
+          <div className="pointer-events-none absolute bottom-3 right-3 z-10 max-w-[min(20rem,calc(100%-1.5rem))] rounded-xl border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs font-semibold text-amber-950 shadow dark:border-amber-900/60 dark:bg-amber-950/90 dark:text-amber-100">
+            Heightened privacy is hiding street-map tiles. Playback markers and route lines stay local.
+          </div>
+        )}
+
         {currentEvent && (
-          <div className="absolute bottom-3 left-3 right-3 z-10 bg-black/80 text-white rounded-xl px-3 py-2 text-xs font-medium flex items-center gap-2"
+          <div className={`absolute left-3 right-3 z-10 bg-black/80 text-white rounded-xl px-3 py-2 text-xs font-medium flex items-center gap-2 ${heightenedPrivacy ? 'bottom-20 sm:bottom-3 sm:right-[22rem]' : 'bottom-3'}`}
             style={{ borderLeft: `3px solid ${EVENT_COLORS[currentEvent.type] || '#6b7280'}` }}>
             <span className="grid h-5 w-5 place-items-center rounded-full bg-white/15" style={{ color: EVENT_COLORS[currentEvent.type] }}>
               {EVENT_LABELS[currentEvent.type] || '!'}

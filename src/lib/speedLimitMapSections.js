@@ -5,6 +5,8 @@ import { measureSync } from '@/lib/performanceTriage';
 
 const pointRoadName = (point = {}) => String(point.speed_limit_road_name || '').trim();
 const pointSource = (point = {}) => point.speed_limit_source ?? point.limitSource ?? point.speedLimitSource ?? point.source ?? null;
+const DAY_MS = 86400000;
+const EXPIRING_SOON_MS = DAY_MS * 30;
 const CONFIRMED_LIMIT_SOURCES = new Set([
   'openstreetmap',
   'user_confirmed_posted_sign',
@@ -55,6 +57,39 @@ const distanceMeters = (a, b) => {
   return 6371000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
 };
 
+const pointToSegmentDistanceMeters = (point, start, end) => {
+  const latitude = Number(point?.lat);
+  const longitude = Number(point?.lng);
+  const startLat = Number(start?.lat);
+  const startLng = Number(start?.lng);
+  const endLat = Number(end?.lat);
+  const endLng = Number(end?.lng);
+  if (![latitude, longitude, startLat, startLng, endLat, endLng].every(Number.isFinite)) return Infinity;
+
+  const meanLat = (latitude + startLat + endLat) / 3 * Math.PI / 180;
+  const metersPerLatDegree = 111320;
+  const metersPerLngDegree = Math.max(1, metersPerLatDegree * Math.cos(meanLat));
+  const px = (longitude - startLng) * metersPerLngDegree;
+  const py = (latitude - startLat) * metersPerLatDegree;
+  const vx = (endLng - startLng) * metersPerLngDegree;
+  const vy = (endLat - startLat) * metersPerLatDegree;
+  const lengthSquared = vx * vx + vy * vy;
+  if (lengthSquared <= 0) return Math.hypot(px, py);
+  const projection = Math.max(0, Math.min(1, (px * vx + py * vy) / lengthSquared));
+  return Math.hypot(px - projection * vx, py - projection * vy);
+};
+
+const pointToPolylineDistanceMeters = (point, points = []) => {
+  const geometry = cleanGeometry(points);
+  if (geometry.length === 0) return Infinity;
+  if (geometry.length === 1) return distanceMeters(point, geometry[0]);
+  let best = Infinity;
+  for (let index = 1; index < geometry.length; index++) {
+    best = Math.min(best, pointToSegmentDistanceMeters(point, geometry[index - 1], geometry[index]));
+  }
+  return best;
+};
+
 const interpolatePoint = (start, end, ratio) => ({
   lat: Number(start.lat) + (Number(end.lat) - Number(start.lat)) * ratio,
   lng: Number(start.lng) + (Number(end.lng) - Number(start.lng)) * ratio,
@@ -95,15 +130,115 @@ const splitGeometryAtMidpoint = (points = []) => {
 
 const normalizedRoadName = (value) => String(value || '').trim().toLowerCase();
 
+const tripLabel = (trip = {}, index = 0) => (
+  trip.name || trip.title || trip.label || trip.id || `trip-${index + 1}`
+);
+
+const routeGeometries = (trips = []) => (trips || [])
+  .map((trip, tripIndex) => ({
+    trip,
+    tripId: trip?.id || null,
+    label: tripLabel(trip, tripIndex),
+    points: (Array.isArray(trip?.route_points) ? trip.route_points : [])
+      .filter(isPublicPoint)
+      .map((point, routeIndex) => ({
+        lat: Number(point.lat),
+        lng: Number(point.lng),
+        routeIndex,
+      }))
+      .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng)),
+  }))
+  .filter((route) => route.points.length > 0);
+
+const nearestRoutePoint = (point, route) => {
+  let nearest = null;
+  let nearestDistanceM = Infinity;
+  for (const routePoint of route.points) {
+    const candidateDistanceM = distanceMeters(point, routePoint);
+    if (candidateDistanceM < nearestDistanceM) {
+      nearest = routePoint;
+      nearestDistanceM = candidateDistanceM;
+    }
+  }
+  return nearest ? {
+    point: { lat: nearest.lat, lng: nearest.lng },
+    index: nearest.routeIndex,
+    distanceM: nearestDistanceM,
+  } : null;
+};
+
+const bestContinuousRouteMatch = (points = [], routes = [], maxDistanceM = 80) => {
+  const anchors = cleanGeometry(points);
+  if (!anchors.length || !routes.length) return null;
+  return routes
+    .map((route) => {
+      const nearest = anchors.map((point) => nearestRoutePoint(point, route));
+      if (nearest.some((item) => !item || item.distanceM > maxDistanceM)) return null;
+      const indices = nearest.map((item) => item.index);
+      const increasing = indices.every((index, itemIndex) => itemIndex === 0 || index >= indices[itemIndex - 1]);
+      const decreasing = indices.every((index, itemIndex) => itemIndex === 0 || index <= indices[itemIndex - 1]);
+      const ordered = increasing || decreasing;
+      const distances = nearest.map((item) => item.distanceM);
+      const maxDistance = Math.max(...distances);
+      const averageDistance = distances.reduce((sum, value) => sum + value, 0) / distances.length;
+      const span = Math.abs(indices.at(-1) - indices[0]);
+      return {
+        route,
+        nearest,
+        ordered,
+        reversed: decreasing && !increasing,
+        averageDistance,
+        maxDistance,
+        span,
+        score: averageDistance + maxDistance * 2 + (ordered ? 0 : 500) + span * 0.2,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.score - b.score)[0] || null;
+};
+
+const routeSegmentFromMatch = (match, maxPoints = 24) => {
+  if (!match?.route || !match.nearest?.length || !match.ordered) return [];
+  const firstIndex = match.nearest[0].index;
+  const lastIndex = match.nearest.at(-1).index;
+  if (firstIndex === lastIndex) return [];
+  const start = Math.min(firstIndex, lastIndex);
+  const end = Math.max(firstIndex, lastIndex);
+  const segment = match.route.points
+    .filter((point) => point.routeIndex >= start && point.routeIndex <= end)
+    .map((point) => ({ lat: point.lat, lng: point.lng }));
+  const ordered = firstIndex > lastIndex ? [...segment].reverse() : segment;
+  return limitGeometryPoints(ordered, maxPoints);
+};
+
+const routePointStats = (points = [], snapped = []) => points.reduce((stats, point, index) => {
+  const snappedPoint = snapped[index];
+  if (!snappedPoint) return stats;
+  const moveM = distanceMeters(point, snappedPoint);
+  if (Number.isFinite(moveM)) {
+    stats.totalMoveM += moveM;
+    stats.maxMoveM = Math.max(stats.maxMoveM, moveM);
+  }
+  if (!samePoint(point, snappedPoint)) stats.changedCount += 1;
+  return stats;
+}, {
+  changedCount: 0,
+  totalMoveM: 0,
+  maxMoveM: 0,
+});
+
 export function snapSectionPointsToTripRoutes(sectionPoints = [], trips = [], maxDistanceM = 80) {
   return snapSectionPointsToTripRoutesWithStats(sectionPoints, trips, maxDistanceM).points;
 }
 
-export function snapSectionPointsToTripRoutesWithStats(sectionPoints = [], trips = [], maxDistanceM = 80) {
-  const routePoints = (trips || [])
-    .flatMap((trip) => Array.isArray(trip?.route_points) ? trip.route_points : [])
-    .filter(isPublicPoint)
-    .map((point) => ({ lat: Number(point.lat), lng: Number(point.lng) }));
+export function snapSectionPointsToTripRoutesWithStats(
+  sectionPoints = [],
+  trips = [],
+  maxDistanceM = 80,
+  options = {}
+) {
+  const routes = routeGeometries(trips);
+  const routePoints = routes.flatMap((route) => route.points);
   const originalPoints = cleanGeometry(sectionPoints);
   if (!routePoints.length) {
     return {
@@ -113,6 +248,34 @@ export function snapSectionPointsToTripRoutesWithStats(sectionPoints = [], trips
       maxMoveM: 0,
       averageMoveM: 0,
       routePointCount: 0,
+      matchType: 'none',
+    };
+  }
+
+  const continuousMatch = bestContinuousRouteMatch(originalPoints, routes, maxDistanceM);
+  if (continuousMatch) {
+    const anchorPoints = continuousMatch.nearest
+      .map((item) => item.point)
+      .filter((point, index, points) => index === 0 || !samePoint(point, points[index - 1]));
+    const expandedSegment = options.expandToRouteSegment === true
+      ? routeSegmentFromMatch(continuousMatch, Number(options.maxPoints) || 24)
+      : [];
+    const points = expandedSegment.length >= 2 ? expandedSegment : anchorPoints;
+    const moveStats = routePointStats(originalPoints, continuousMatch.nearest.map((item) => item.point));
+    return {
+      points,
+      changedCount: moveStats.changedCount,
+      snappedCount: continuousMatch.nearest.length,
+      maxMoveM: Math.round(moveStats.maxMoveM),
+      averageMoveM: continuousMatch.nearest.length
+        ? Math.round(moveStats.totalMoveM / continuousMatch.nearest.length)
+        : 0,
+      routePointCount: routePoints.length,
+      matchType: expandedSegment.length >= 2 ? 'route_segment' : 'route_anchors',
+      tripId: continuousMatch.route.tripId,
+      tripLabel: continuousMatch.route.label,
+      routeSpanPointCount: Math.max(1, continuousMatch.span + 1),
+      expandedPointCount: points.length,
     };
   }
 
@@ -145,7 +308,116 @@ export function snapSectionPointsToTripRoutesWithStats(sectionPoints = [], trips
     maxMoveM: Math.round(maxMoveM),
     averageMoveM: snappedCount ? Math.round(totalMoveM / snappedCount) : 0,
     routePointCount: routePoints.length,
+    matchType: snappedCount > 0 ? 'nearest_points' : 'none',
   };
+}
+
+const speedSectionKey = (section = {}) => String(
+  section.sectionKey ||
+  section.id ||
+  section.ruleId ||
+  section.geohash ||
+  `${section.lat},${section.lng}`
+);
+
+const ruleDirectionOverlaps = (first = {}, second = {}) => {
+  const firstMode = first.directionMode || 'both';
+  const secondMode = second.directionMode || 'both';
+  return firstMode === 'both' || secondMode === 'both' || firstMode === secondMode;
+};
+
+const dayOverlap = (firstDays = [], secondDays = []) => {
+  if (!firstDays.length || !secondDays.length) return true;
+  return firstDays.some((day) => secondDays.includes(day));
+};
+
+const timeIntervals = (rule = {}) => {
+  const start = Number(rule.startMinutes);
+  const end = Number(rule.endMinutes);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start === end) return [[0, 1439]];
+  const normalizedStart = Math.max(0, Math.min(1439, Math.round(start)));
+  const normalizedEnd = Math.max(0, Math.min(1439, Math.round(end)));
+  return normalizedStart < normalizedEnd
+    ? [[normalizedStart, normalizedEnd]]
+    : [[normalizedStart, 1439], [0, normalizedEnd]];
+};
+
+const intervalOverlap = (first = [], second = []) => (
+  first[0] <= second[1] && second[0] <= first[1]
+);
+
+const ruleTimeOverlaps = (first = {}, second = {}) => {
+  const firstRule = first.timeRule;
+  const secondRule = second.timeRule;
+  if (firstRule?.enabled !== true || secondRule?.enabled !== true) return true;
+  if (!dayOverlap(firstRule.days || [], secondRule.days || [])) return false;
+  return timeIntervals(firstRule).some((firstInterval) => (
+    timeIntervals(secondRule).some((secondInterval) => intervalOverlap(firstInterval, secondInterval))
+  ));
+};
+
+const ruleScopesOverlap = (first = {}, second = {}) => (
+  ruleDirectionOverlaps(first, second) && ruleTimeOverlaps(first, second)
+);
+
+export function findOverlappingSpeedSections(section = {}, sections = [], {
+  excludeKey = '',
+  maxDistanceM = 35,
+  minMatchedPoints = 2,
+} = {}) {
+  const targetPoints = cleanGeometry(section.sectionPoints?.length ? section.sectionPoints : [section]);
+  if (targetPoints.length < 2) return [];
+  const targetKey = excludeKey || speedSectionKey(section);
+  const rawTargetLimit = Number(section.limitKmh ?? section.effectiveLimitKmh);
+  const targetLimit = Number.isFinite(rawTargetLimit) && rawTargetLimit > 0
+    ? Math.round(rawTargetLimit)
+    : null;
+
+  return (sections || [])
+    .filter((candidate) => candidate?.saved)
+    .filter((candidate) => speedSectionKey(candidate) !== targetKey)
+    .map((candidate) => {
+      const candidatePoints = cleanGeometry(candidate.sectionPoints?.length ? candidate.sectionPoints : [candidate]);
+      if (candidatePoints.length < 2) return null;
+      const targetMatched = targetPoints.filter((point) => (
+        pointToPolylineDistanceMeters(point, candidatePoints) <= maxDistanceM
+      )).length;
+      const candidateMatched = candidatePoints.filter((point) => (
+        pointToPolylineDistanceMeters(point, targetPoints) <= maxDistanceM
+      )).length;
+      if (targetMatched < minMatchedPoints || candidateMatched < minMatchedPoints) return null;
+      const distances = [
+        ...targetPoints.map((point) => pointToPolylineDistanceMeters(point, candidatePoints)),
+        ...candidatePoints.map((point) => pointToPolylineDistanceMeters(point, targetPoints)),
+      ].filter(Number.isFinite);
+      const rawCandidateLimit = Number(candidate.limitKmh ?? candidate.effectiveLimitKmh);
+      const candidateLimit = Number.isFinite(rawCandidateLimit) && rawCandidateLimit > 0
+        ? Math.round(rawCandidateLimit)
+        : null;
+      const limitDeltaKmh = targetLimit && candidateLimit ? Math.abs(targetLimit - candidateLimit) : 0;
+      const scopeOverlap = ruleScopesOverlap(section, candidate);
+      return {
+        section: candidate,
+        sectionKey: speedSectionKey(candidate),
+        roadName: candidate.roadName || '',
+        limitKmh: candidateLimit || null,
+        distanceM: distances.length ? Math.round(Math.min(...distances)) : null,
+        matchedPointCount: Math.min(targetMatched, candidateMatched),
+        overlapRatio: Math.round((Math.min(
+          targetMatched / targetPoints.length,
+          candidateMatched / candidatePoints.length
+        ) || 0) * 100),
+        limitDeltaKmh,
+        scopeOverlap,
+        severity: targetLimit && candidateLimit && limitDeltaKmh > 0 && scopeOverlap ? 'block' : 'warn',
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (
+      (a.severity === 'block' ? -1 : 1) - (b.severity === 'block' ? -1 : 1) ||
+      (b.limitDeltaKmh || 0) - (a.limitDeltaKmh || 0) ||
+      (a.distanceM ?? Infinity) - (b.distanceM ?? Infinity)
+    ));
 }
 
 export function findMergeableSpeedSection(section = {}, sections = [], maxDistanceM = 150) {
@@ -338,6 +610,18 @@ export const SPEED_MAP_LAYER_DEFAULTS = {
   saved: true,
   observed: true,
   unset: true,
+  posted: true,
+  estimates: true,
+  lowConfidence: true,
+  stale: true,
+  expiring: true,
+  missingGeometry: true,
+};
+
+export const SPEED_MAP_LAYER_FOCUSED_DEFAULTS = {
+  ...SPEED_MAP_LAYER_DEFAULTS,
+  observed: false,
+  unset: false,
 };
 
 function hasSpeedLimit(section = {}) {
@@ -350,6 +634,44 @@ function sectionLayer(section = {}) {
   if (section.saved) return 'saved';
   if (hasSpeedLimit(section)) return 'observed';
   return 'unset';
+}
+
+const finiteDateMs = (value) => {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+
+export function speedMapSectionFlags(section = {}, nowMs = Date.now()) {
+  const source = section.source || section.observedSources?.[0] || 'unknown';
+  const savedEvidence = section.savedEvidence || (section.saved ? assessSpeedLimitEvidence(section, nowMs) : null);
+  const observedEvidence = section.observedEvidence || assessSpeedLimitEvidence({
+    source,
+    sampleCount: section.sampleCount,
+  }, nowMs);
+  const evidence = savedEvidence || observedEvidence;
+  const expiresAt = finiteDateMs(section.expiresAt);
+  const hasLimit = hasSpeedLimit(section);
+  const confirmedSource = CONFIRMED_LIMIT_SOURCES.has(source);
+  const expired = section.saved && expiresAt != null && expiresAt <= nowMs;
+  const expiring = section.saved &&
+    expiresAt != null &&
+    expiresAt > nowMs &&
+    expiresAt - nowMs <= EXPIRING_SOON_MS;
+  const sectionPointCount = cleanGeometry(section.sectionPoints || []).length;
+
+  return {
+    layer: sectionLayer(section),
+    hasLimit,
+    posted: section.saved && source === 'user_confirmed_posted_sign',
+    confirmed: hasLimit && confirmedSource,
+    estimate: hasLimit && !confirmedSource,
+    lowConfidence: hasLimit && ['low', 'unavailable'].includes(evidence.level),
+    stale: hasLimit && evidence.stale === true,
+    expired,
+    expiring,
+    missingGeometry: section.saved && sectionPointCount < 2,
+  };
 }
 
 function normalizedSearchText(section = {}) {
@@ -367,11 +689,18 @@ function normalizedSearchText(section = {}) {
 
 export function summarizeSpeedMapSections(sections = []) {
   return (sections || []).reduce((summary, section) => {
-    const layer = sectionLayer(section);
+    const flags = speedMapSectionFlags(section);
+    const layer = flags.layer;
     summary.total += 1;
     summary[layer] += 1;
     if (section.saved) summary.savedRules += 1;
     if (!section.saved && hasSpeedLimit(section)) summary.observedOnly += 1;
+    if (flags.posted) summary.posted += 1;
+    if (flags.estimate) summary.estimates += 1;
+    if (flags.lowConfidence) summary.lowConfidence += 1;
+    if (flags.stale) summary.stale += 1;
+    if (flags.expiring || flags.expired) summary.expiring += 1;
+    if (flags.missingGeometry) summary.missingGeometry += 1;
     return summary;
   }, {
     total: 0,
@@ -381,6 +710,12 @@ export function summarizeSpeedMapSections(sections = []) {
     unset: 0,
     savedRules: 0,
     observedOnly: 0,
+    posted: 0,
+    estimates: 0,
+    lowConfidence: 0,
+    stale: 0,
+    expiring: 0,
+    missingGeometry: 0,
   });
 }
 
@@ -391,7 +726,17 @@ export function filterSpeedMapSections(sections = [], {
   const normalizedQuery = String(query || '').trim().toLowerCase();
   const layerState = { ...SPEED_MAP_LAYER_DEFAULTS, ...(layers || {}) };
   return (sections || [])
-    .filter((section) => layerState[sectionLayer(section)] !== false)
+    .filter((section) => {
+      const flags = speedMapSectionFlags(section);
+      if (layerState[flags.layer] === false) return false;
+      if (flags.posted && layerState.posted === false) return false;
+      if (flags.estimate && layerState.estimates === false) return false;
+      if (flags.lowConfidence && layerState.lowConfidence === false) return false;
+      if (flags.stale && layerState.stale === false) return false;
+      if ((flags.expiring || flags.expired) && layerState.expiring === false) return false;
+      if (flags.missingGeometry && layerState.missingGeometry === false) return false;
+      return true;
+    })
     .filter((section) => !normalizedQuery || normalizedSearchText(section).includes(normalizedQuery));
 }
 

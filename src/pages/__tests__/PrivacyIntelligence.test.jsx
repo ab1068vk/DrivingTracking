@@ -1,6 +1,6 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/components/ui/dialog', () => ({
   Dialog: ({ children }) => <div>{children}</div>,
@@ -214,6 +214,15 @@ const fixture = {
 const render = (component, props) => renderToStaticMarkup(createElement(component, props));
 
 describe('Privacy Intelligence tabs', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('renders all five tabs with mixed-status fixture data', () => {
     const outputs = [
       render(OverviewTab, { data: fixture, onOpenTab: noop, onOpenSettings: noop }),
@@ -238,7 +247,7 @@ describe('Privacy Intelligence tabs', () => {
     expect(outputs[3]).toContain('Review the suggested 140 m circle before saving');
     expect(outputs[3]).toContain('2 raw points were just outside this zone');
     expect(outputs[3]).toContain('Route corridor');
-    expect(outputs[3]).toContain('hours remaining');
+    expect(outputs[3]).toContain('2 days remaining');
     expect(outputs[3]).toContain('>High<');
     expect(outputs[4]).toContain('Hash-chain consistent, hardware signature unavailable');
   });

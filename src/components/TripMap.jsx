@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Crosshair, Layers, Maximize2, Smartphone } from 'lucide-react';
@@ -14,6 +14,7 @@ import {
 } from '@/lib/mapPopupHtml';
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
+import { HEIGHTENED_PRIVACY_MODE_KEY } from '@/lib/privacyMode';
 import {
   getPrivacyZoneDisplayCircle,
   getPrivacyZones,
@@ -22,7 +23,8 @@ import {
   maskRoutePointsForPrivacy,
 } from '@/lib/privacyZones';
 import MapErrorBoundary from '@/components/MapErrorBoundary';
-import useLocalSettings from '@/hooks/useLocalSettings';
+import { useLocalSettingSelector } from '@/hooks/useLocalSettings';
+import usePrivacyZonesRevision from '@/hooks/usePrivacyZonesRevision';
 import { beginMeasure, measureSync } from '@/lib/performanceTriage';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -84,6 +86,20 @@ const RISK_COLORS = {
   medium: '#eab308',
   low: '#3b82f6',
 };
+
+const selectTripMapSettings = (settings = {}) => ({
+  privacy_zones: settings.privacy_zones,
+  [HEIGHTENED_PRIVACY_MODE_KEY]: settings[HEIGHTENED_PRIVACY_MODE_KEY],
+  show_privacy_circles: settings.show_privacy_circles,
+});
+
+const sameTripMapSettings = (previous, next) => (
+  previous?.[HEIGHTENED_PRIVACY_MODE_KEY] === next?.[HEIGHTENED_PRIVACY_MODE_KEY] &&
+  previous?.show_privacy_circles === next?.show_privacy_circles &&
+  JSON.stringify(previous?.privacy_zones || []) === JSON.stringify(next?.privacy_zones || [])
+);
+
+const useTripMapSettings = () => useLocalSettingSelector(selectTripMapSettings, sameTripMapSettings);
 
 const isUserSpeedLimitSource = (source) => (
   source === 'user_confirmed_posted_sign' || source === 'user_entered_estimate'
@@ -484,32 +500,41 @@ const eventPopupHtml = (event) => {
 
 let leafletLoaded = false;
 let loadPromise = null;
+let leafletDomGuardsInstalled = false;
+
+function installLeafletDomGuards(leaflet) {
+  if (leafletDomGuardsInstalled || !leaflet?.DomUtil) return;
+  const { DomUtil } = leaflet;
+  const originalAddClass = DomUtil.addClass;
+  const originalRemoveClass = DomUtil.removeClass;
+  const originalHasClass = DomUtil.hasClass;
+
+  DomUtil.addClass = (element, name) => {
+    if (!element?.classList) return undefined;
+    return originalAddClass(element, name);
+  };
+  DomUtil.removeClass = (element, name) => {
+    if (!element?.classList) return undefined;
+    return originalRemoveClass(element, name);
+  };
+  DomUtil.hasClass = (element, name) => {
+    if (!element?.classList) return false;
+    return originalHasClass(element, name);
+  };
+  leafletDomGuardsInstalled = true;
+}
 
 function loadLeaflet() {
   if (typeof window !== 'undefined' && !window.L) window.L = L;
+  if (typeof window !== 'undefined') installLeafletDomGuards(window.L || L);
   if (leafletLoaded) return Promise.resolve();
   if (loadPromise) return loadPromise;
 
-  loadPromise = new Promise((resolve, reject) => {
-    if (window.L) {
-      leafletLoaded = true;
-      resolve();
-      return;
-    }
-
-    const css = document.createElement('link');
-    css.rel = 'stylesheet';
-    css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-    document.head.appendChild(css);
-
-    const script = document.createElement('script');
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.onload = () => {
-      leafletLoaded = true;
-      resolve();
-    };
-    script.onerror = () => reject(new Error('Leaflet could not be loaded'));
-    document.head.appendChild(script);
+  loadPromise = new Promise((resolve) => {
+    window.L = window.L || L;
+    installLeafletDomGuards(window.L);
+    leafletLoaded = true;
+    resolve();
   });
 
   return loadPromise;
@@ -546,7 +571,7 @@ const safeMapPanTo = (map, center, zoom = 15) => safeLeafletCall(() => {
 export default function TripMap(props) {
   const resetKey = Array.isArray(props.routes)
     ? props.routes.map((route) => `${route.id || route.label || 'route'}:${route.selected ? '1' : '0'}:${route.route_points?.length || 0}`).join('|')
-    : `${props.routePoints?.length || 0}:${props.currentLocation?.timestamp || ''}`;
+    : routeFitKey([{ id: 'selected', route_points: props.routePoints || [], selected: true }]);
 
   return (
     <MapErrorBoundary
@@ -587,13 +612,28 @@ function TripMapContent({
   const tileLayerRef = useRef(null);
   const lastBoundsRef = useRef(null);
   const lastFitRouteKeyRef = useRef('');
+  const tileErrorCountRef = useRef(0);
+  const tileFailureReportedRef = useRef(false);
   const [ready, setReady] = useState(false);
   const [mapFailed, setMapFailed] = useState(false);
   const [tileStyle, setTileStyle] = useState('standard');
-  const [tileErrorCount, setTileErrorCount] = useState(0);
   const [showInsights, setShowInsights] = useState(true);
   const [selectedSegment, setSelectedSegment] = useState(null);
-  const settings = useLocalSettings();
+  const settings = useTripMapSettings();
+  const heightenedPrivacy = settings?.[HEIGHTENED_PRIVACY_MODE_KEY] === true;
+  const privacyZonesRevision = usePrivacyZonesRevision();
+
+  const resetTileFailureTracking = useCallback(() => {
+    tileErrorCountRef.current = 0;
+    tileFailureReportedRef.current = false;
+  }, []);
+
+  const handleTileError = useCallback(() => {
+    tileErrorCountRef.current += 1;
+    if (tileFailureReportedRef.current || tileErrorCountRef.current < 4) return;
+    tileFailureReportedRef.current = true;
+    setMapFailed(true);
+  }, []);
 
   const selectedRoute = useMemo(() => {
     const routeSets = Array.isArray(routes)
@@ -631,11 +671,13 @@ function TripMapContent({
 
   useEffect(() => {
     setSelectedSegment(null);
-    setMapFailed(false);
+    resetTileFailureTracking();
     lastFitRouteKeyRef.current = '';
-  }, [mapInputKey]);
+  }, [mapInputKey, resetTileFailureTracking]);
 
   useEffect(() => {
+    if (mapFailed) return undefined;
+
     let cancelled = false;
     let invalidateTimer = null;
 
@@ -654,13 +696,7 @@ function TripMapContent({
         leafletMapRef.current = map;
         safeMapSetView(map, TORONTO_CENTER, 12);
 
-        const tileConfig = TILE_STYLES.standard;
-        tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
-          attribution: tileConfig.attribution,
-          maxZoom: tileConfig.maxZoom,
-        })
-          .on('tileerror', () => setTileErrorCount((count) => count + 1))
-          .addTo(map);
+        resetTileFailureTracking();
 
         layersRef.current = window.L.layerGroup().addTo(map);
         setReady(true);
@@ -673,6 +709,7 @@ function TripMapContent({
         if (!cancelled) setMapFailed((failed) => failed || true);
         stopLeafletMap(leafletMapRef.current);
         safeLeafletCall(() => layersRef.current?.clearLayers?.());
+        safeLeafletCall(() => tileLayerRef.current?.off?.('tileerror', handleTileError));
         safeLeafletCall(() => tileLayerRef.current?.remove?.());
         safeLeafletCall(() => leafletMapRef.current?.remove?.());
         leafletMapRef.current = null;
@@ -689,6 +726,7 @@ function TripMapContent({
       if (leafletMapRef.current) {
         stopLeafletMap(leafletMapRef.current);
         safeLeafletCall(() => layersRef.current?.clearLayers?.());
+        safeLeafletCall(() => tileLayerRef.current?.off?.('tileerror', handleTileError));
         safeLeafletCall(() => tileLayerRef.current?.remove?.());
         safeLeafletCall(() => leafletMapRef.current.remove());
         leafletMapRef.current = null;
@@ -698,27 +736,31 @@ function TripMapContent({
         lastFitRouteKeyRef.current = '';
       }
     };
-  }, []);
+  }, [handleTileError, mapFailed, resetTileFailureTracking]);
+
+  useEffect(() => {
+    if (mapFailed) setReady(false);
+  }, [mapFailed]);
 
   useEffect(() => {
     const map = leafletMapRef.current;
-    if (!ready || !map || !window.L || !tileLayerRef.current) return;
+    if (mapFailed || !ready || !map || !window.L) return;
+
+    resetTileFailureTracking();
+    stopLeafletMap(map);
+    safeLeafletCall(() => tileLayerRef.current?.off?.('tileerror', handleTileError));
+    safeLeafletCall(() => tileLayerRef.current && map.removeLayer(tileLayerRef.current));
+    tileLayerRef.current = null;
+    if (heightenedPrivacy) return;
 
     const tileConfig = TILE_STYLES[tileStyle] || TILE_STYLES.standard;
-    setTileErrorCount(0);
-    stopLeafletMap(map);
-    safeLeafletCall(() => map.removeLayer(tileLayerRef.current));
     tileLayerRef.current = window.L.tileLayer(tileConfig.url, {
       attribution: tileConfig.attribution,
       maxZoom: tileConfig.maxZoom,
     })
-      .on('tileerror', () => setTileErrorCount((count) => count + 1))
+      .on('tileerror', handleTileError)
       .addTo(map);
-  }, [ready, tileStyle]);
-
-  useEffect(() => {
-    if (tileErrorCount >= 4) setMapFailed((failed) => failed || true);
-  }, [tileErrorCount]);
+  }, [handleTileError, heightenedPrivacy, mapFailed, ready, resetTileFailureTracking, tileStyle]);
 
   useEffect(() => {
     const map = leafletMapRef.current;
@@ -787,9 +829,9 @@ function TripMapContent({
         };
       })
       .filter((route) => route.route_points.length > 1);
-    const overviewRenderer = !hasSelectedRoute && Array.isArray(routes) && typeof window.L.canvas === 'function'
-      ? window.L.canvas({ padding: 0.5 })
-      : null;
+    // Use Leaflet's default SVG renderer here. A short-lived canvas renderer can
+    // keep a queued redraw after its layer group is cleared, which floods logs
+    // with `_ctx.save` / `_ctx.clearRect` errors on the overview map.
     const mapEvents = maskEventsForPrivacy(events || [], privacySettings);
     const isPrivatePoint = (point) => Boolean(isPointInPrivacyZone(point, visiblePrivacyZones));
     const segmentTouchesPrivacy = (segment) => {
@@ -882,7 +924,6 @@ function TripMapContent({
         const renderDetailedSegments = route.selected || !Array.isArray(routes);
         if (!renderDetailedSegments) {
           window.L.polyline(latLngSegments, {
-            renderer: overviewRenderer || undefined,
             color: route.color,
             weight: 3,
             opacity: route.opacity,
@@ -1191,7 +1232,7 @@ function TripMapContent({
     } finally {
       endDraw({ outcome: 'complete' });
     }
-  }, [mapFailed, ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings]);
+  }, [mapFailed, ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings, privacyZonesRevision]);
 
   useEffect(() => {
     const safeCurrentLocation = validLatLngPoint(currentLocation);
@@ -1261,9 +1302,10 @@ function TripMapContent({
         <button
           type="button"
           onClick={() => setTileStyle((style) => (style === 'standard' ? 'detail' : 'standard'))}
-          title={`Map style: ${TILE_STYLES[tileStyle].label}`}
+          disabled={heightenedPrivacy}
+          title={heightenedPrivacy ? 'Map tiles disabled by heightened privacy' : `Map style: ${TILE_STYLES[tileStyle].label}`}
           aria-label="Toggle map style"
-          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card shadow transition-colors hover:bg-secondary"
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card shadow transition-colors hover:bg-secondary disabled:opacity-45"
         >
           <Layers className="h-4 w-4 text-muted-foreground" />
         </button>
@@ -1330,8 +1372,13 @@ function TripMapContent({
         >
           <div className="mb-2 flex items-center justify-between gap-3">
             <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Route diagnostics</div>
-            <div className="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">{TILE_STYLES[tileStyle].label}</div>
+            <div className="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">{heightenedPrivacy ? 'Local overlays' : TILE_STYLES[tileStyle].label}</div>
           </div>
+          {heightenedPrivacy && (
+            <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+              Heightened privacy is hiding street-map tiles. Route overlays stay local on this device.
+            </div>
+          )}
           <div className="grid grid-cols-4 gap-2 text-center">
             <div>
               <div className="font-grotesk text-lg font-bold">{formatDistance(telemetry.distanceKm)}</div>
@@ -1375,6 +1422,11 @@ function TripMapContent({
           Route diagnostics
         </button>
       )}
+      {heightenedPrivacy && (!hasRoute || !showInsights) && (
+        <div className="pointer-events-none absolute bottom-3 right-3 z-10 max-w-[min(20rem,calc(100%-1.5rem))] rounded-xl border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs font-semibold text-amber-950 shadow dark:border-amber-900/60 dark:bg-amber-950/90 dark:text-amber-100">
+          Heightened privacy: street-map tiles are hidden; only local overlays are shown.
+        </div>
+      )}
     </div>
   );
 }
@@ -1386,7 +1438,8 @@ function OfflineRoutePreview({
   height = '350px',
   className = '',
 }) {
-  const settings = useLocalSettings();
+  const settings = useTripMapSettings();
+  usePrivacyZonesRevision();
   const showPrivacyCircles = settings.show_privacy_circles === true;
   const routeSets = Array.isArray(routes)
     ? routes

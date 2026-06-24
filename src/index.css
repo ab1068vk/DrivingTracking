@@ -6,6 +6,7 @@
 
 @layer base {
   :root {
+    color-scheme: light;
     --background: 220 20% 97%;
     --foreground: 220 25% 10%;
     --card: 0 0% 100%;
@@ -44,6 +45,7 @@
   }
 
   .dark {
+    color-scheme: dark;
     --background: 222 28% 8%;
     --foreground: 220 15% 92%;
     --card: 222 25% 12%;
@@ -140,8 +142,32 @@
   }
 
   .settings-section {
-    content-visibility: auto;
-    contain-intrinsic-size: 0 200px;
+    min-width: 0;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .settings-section {
+      content-visibility: auto;
+      contain-intrinsic-size: 0 200px;
+    }
+  }
+
+  @media (hover: none) and (pointer: coarse) {
+    body,
+    #root {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    input,
+    textarea,
+    [contenteditable="true"],
+    .select-text {
+      -webkit-touch-callout: default;
+      -webkit-user-select: text;
+      user-select: text;
+    }
   }
 
   .gradient-primary {

@@ -25,6 +25,59 @@ const tripCrossesCorrection = (trip = {}, correction = null) => (
   ))
 );
 
+const correctionPointSignature = (points = []) => {
+  const clean = (Array.isArray(points) ? points : [])
+    .map((point) => ({
+      lat: Number(point?.lat),
+      lng: Number(point?.lng),
+    }))
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+  if (!clean.length) return '';
+  const first = clean[0];
+  const last = clean.at(-1);
+  return [
+    clean.length,
+    first.lat.toFixed(5),
+    first.lng.toFixed(5),
+    last.lat.toFixed(5),
+    last.lng.toFixed(5),
+  ].join(':');
+};
+
+const correctionTimeSignature = (rule = null) => {
+  if (rule?.enabled !== true) return 'always';
+  return [
+    (rule.days || []).join(','),
+    rule.startMinutes ?? rule.startTime ?? '',
+    rule.endMinutes ?? rule.endTime ?? '',
+  ].join(':');
+};
+
+const correctionIdentityKey = (correction = {}) => {
+  const stableId = correction?.id || correction?.ruleId || correction?.sectionKey || correction?.correctionId;
+  if (stableId) return `id:${stableId}`;
+  return [
+    'legacy',
+    correction?.geohash || 'unknown',
+    correction?.directionMode || 'both',
+    Number.isFinite(Number(correction?.directionBearing)) ? Math.round(Number(correction.directionBearing)) : '',
+    correctionTimeSignature(correction?.timeRule),
+    correctionPointSignature(correction?.sectionPoints),
+  ].join('|');
+};
+
+const correctionsByIdentity = (corrections = []) => Object.fromEntries(
+  (Array.isArray(corrections) ? corrections : [])
+    .filter(Boolean)
+    .map((correction, index) => [correctionIdentityKey(correction, index), correction])
+);
+
+const uniqueCorrections = (corrections = []) => [
+  ...new Map((Array.isArray(corrections) ? corrections : [])
+    .filter(Boolean)
+    .map((correction, index) => [correctionIdentityKey(correction, index), correction])).values(),
+];
+
 export async function refreshTripForLocalSpeedKnowledge(tripOrId, settings = localSettings.get(), extraPatch = {}) {
   const trip = typeof tripOrId === 'object'
     ? tripOrId
@@ -68,18 +121,23 @@ export async function refreshTripsCrossingLocalSpeedCell(geohash, settings = loc
   return results;
 }
 
-export async function refreshTripsCrossingLocalSpeedCorrection(correction, settings = localSettings.get()) {
-  if (!correction) return [];
+export async function refreshTripsForLocalSpeedCorrections(corrections = [], settings = localSettings.get()) {
+  const changedCorrections = uniqueCorrections(corrections);
+  if (!changedCorrections.length) return [];
   const trips = await tripService.listAll({ sort: '-start_time' });
   const affectedTrips = trips.filter((trip) => (
     trip?.status === 'completed' &&
-    tripCrossesCorrection(trip, correction)
+    changedCorrections.some((correction) => tripCrossesCorrection(trip, correction))
   ));
   const results = [];
   for (const trip of affectedTrips) {
     results.push(await refreshTripForLocalSpeedKnowledge(trip, settings));
   }
   return results;
+}
+
+export async function refreshTripsCrossingLocalSpeedCorrection(correction, settings = localSettings.get()) {
+  return refreshTripsForLocalSpeedCorrections(correction ? [correction] : [], settings);
 }
 
 const changedKeys = (before = {}, after = {}) => {
@@ -89,19 +147,13 @@ const changedKeys = (before = {}, after = {}) => {
   ));
 };
 
-const correctionsByGeohash = (corrections = []) => Object.fromEntries(
-  (Array.isArray(corrections) ? corrections : [])
-    .filter((correction) => correction?.geohash)
-    .map((correction) => [correction.geohash, correction])
-);
-
 export async function refreshTripsForLocalSpeedKnowledgeChanges(
   beforeKnowledge = {},
   afterKnowledge = {},
   settings = localSettings.get()
 ) {
-  const beforeCorrections = correctionsByGeohash(beforeKnowledge?.corrections);
-  const afterCorrections = correctionsByGeohash(afterKnowledge?.corrections);
+  const beforeCorrections = correctionsByIdentity(beforeKnowledge?.corrections);
+  const afterCorrections = correctionsByIdentity(afterKnowledge?.corrections);
   const correctionKeys = changedKeys(beforeCorrections, afterCorrections);
   const changedCorrections = correctionKeys.flatMap((geohash) => (
     [beforeCorrections[geohash], afterCorrections[geohash]].filter(Boolean)

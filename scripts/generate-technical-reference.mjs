@@ -7,6 +7,7 @@ const traverse = traverseModule.default || traverseModule;
 const ROOT = process.cwd();
 const DOCS_DIR = path.join(ROOT, 'docs');
 const TECHNICAL_REFERENCE_RELATIVE = 'docs/TECHNICAL_REFERENCE.md';
+const PROJECT_README_RELATIVE = 'docs/PROJECT_README.md';
 const now = new Date().toISOString();
 
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', '.gradle-home', '.codex-smoke', '.idea', 'test-results', 'playwright-report']);
@@ -17,7 +18,12 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 const CODE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.java']);
 const APP_CODE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs']);
-const EXCLUDE_GENERATED_DOCS = new Set(['TECHNICAL_REFERENCE.md', TECHNICAL_REFERENCE_RELATIVE]);
+const EXCLUDE_GENERATED_DOCS = new Set([
+  'TECHNICAL_REFERENCE.md',
+  TECHNICAL_REFERENCE_RELATIVE,
+  'PROJECT_README.md',
+  PROJECT_README_RELATIVE,
+]);
 
 function rel(file) {
   return path.relative(ROOT, file).replaceAll(path.sep, '/');
@@ -1033,6 +1039,8 @@ function buildReadme() {
   return [
     '# Road Sage',
     '',
+    `Updated: ${now}`,
+    '',
     'Road Sage is a local-first driving tracker built with React, Vite, Capacitor, and Android native services. It records trips, maps routes, detects driving events, scores driving behavior, generates reports, and keeps trip history on the device unless an optional backend is configured.',
     '',
     '## Current App Surface',
@@ -1131,7 +1139,7 @@ function buildReadme() {
     '',
     '## Documentation',
     '',
-    'The production technical reference is [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md). It is generated from the repository by `scripts/generate-technical-reference.mjs` and includes:',
+    'The production technical reference is [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md). It is generated from the repository by `scripts/generate-technical-reference.mjs` and includes:',
     '',
     '- source/module inventory, import/export map, and function/method catalogue',
     '- actual calculation snippets for scoring, trip physics, playback, route risk, predictions, reports, imports/exports, and Android native tracking',
@@ -1139,11 +1147,11 @@ function buildReadme() {
     '- named constants, hard-coded values, and literal rationale for scoring and integration review',
     '- routes, optional REST/external calls, storage surfaces, security analysis, performance notes, test coverage, dependencies, and deployment notes',
     '',
-    'Other project documentation lives in [docs/](docs/):',
+    'Other project documentation lives in this `docs/` folder:',
     '',
-    '- [Privacy Intelligence](docs/PRIVACY_INTELLIGENCE.md) covers the privacy dashboard, score model, protection checks, transmission logging, audit chain, storage/encryption behavior, test gaps, and release-readiness limits.',
-    '- [Speed and fallback behavior](docs/speed-and-fallbacks.md) covers speed capture, limit inference, OpenStreetMap enrichment, and live voice alerts.',
-    '- [Recovery plan](docs/RECOVERY_PLAN.md), [upgrade verification](docs/UPGRADE_VERIFICATION.md), and [version code 2 verification](docs/VERSION_CODE_2_VERIFICATION.md) record Android in-place upgrade safety work.',
+    '- [Privacy Intelligence](PRIVACY_INTELLIGENCE.md) covers the privacy dashboard, score model, protection checks, transmission logging, audit chain, storage/encryption behavior, test gaps, and release-readiness limits.',
+    '- [Speed and fallback behavior](speed-and-fallbacks.md) covers speed capture, limit inference, OpenStreetMap enrichment, and live voice alerts.',
+    '- [Recovery plan](RECOVERY_PLAN.md), [upgrade verification](UPGRADE_VERIFICATION.md), and [version code 2 verification](VERSION_CODE_2_VERIFICATION.md) record Android in-place upgrade safety work.',
     '',
     'Regenerate it after meaningful code or README changes:',
     '',
@@ -1254,8 +1262,8 @@ function buildReadme() {
 
 fs.mkdirSync(DOCS_DIR, { recursive: true });
 fs.writeFileSync(path.join(ROOT, TECHNICAL_REFERENCE_RELATIVE), buildDoc(), 'utf8');
-fs.writeFileSync(path.join(ROOT, 'README.md'), buildReadme(), 'utf8');
+fs.writeFileSync(path.join(ROOT, PROJECT_README_RELATIVE), buildReadme(), 'utf8');
 
-console.log(`Wrote ${TECHNICAL_REFERENCE_RELATIVE} and README.md`);
+console.log(`Wrote ${TECHNICAL_REFERENCE_RELATIVE} and ${PROJECT_README_RELATIVE}`);
 console.log(`Production calculations indexed: ${productionCalculations.length}`);
 console.log(`Hard-coded literals indexed: ${literals.length}`);

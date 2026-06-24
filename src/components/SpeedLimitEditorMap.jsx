@@ -12,6 +12,8 @@ import {
 import { beginMeasure, measureSync } from '@/lib/performanceTriage';
 import { Maximize2 } from 'lucide-react';
 import MapErrorBoundary from '@/components/MapErrorBoundary';
+import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
+import useLocalSettings from '@/hooks/useLocalSettings';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -100,7 +102,14 @@ const sectionPositions = (section = {}) => (
 );
 
 const middlePosition = (positions = []) => (
-  positions[Math.floor(positions.length / 2)] || positions[0] || null
+  positions.length === 0
+    ? null
+    : positions.length % 2 === 1
+      ? positions[Math.floor(positions.length / 2)]
+      : [
+        (positions[(positions.length / 2) - 1][0] + positions[positions.length / 2][0]) / 2,
+        (positions[(positions.length / 2) - 1][1] + positions[positions.length / 2][1]) / 2,
+      ]
 );
 
 const sectionCenter = (section = {}) => (
@@ -166,9 +175,11 @@ const sectionDisplay = (section = {}, selected = false, showPermanentLabel = fal
     hasDisplayLimit,
     source: section.source,
   });
+  const splitPart = Number(section.splitPart);
+  const splitLabel = Number.isInteger(splitPart) && splitPart > 0 ? ` ${splitPart}/2` : '';
   const labelText = conflict
-    ? `! ${formatLimitLabel(displayLimitKmh)}`
-    : formatLimitLabel(displayLimitKmh);
+    ? `! ${formatLimitLabel(displayLimitKmh)}${splitLabel}`
+    : `${formatLimitLabel(displayLimitKmh)}${splitLabel}`;
   const shouldShowPermanentLabel = showPermanentLabel || selected || conflict;
 
   return {
@@ -277,6 +288,8 @@ function SpeedLimitEditorMapContent({
   onMoveAddPoint = null,
   onMoveSectionPoint = null,
 }) {
+  const settings = useLocalSettings();
+  const remoteTilesAllowed = !isHeightenedPrivacyMode(settings);
   const online = useOnlineStatus();
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -322,6 +335,14 @@ function SpeedLimitEditorMapContent({
     ['observed', 'Observed', stats.observed],
     ['unset', 'Unset', stats.unset],
   ];
+  const intelligenceLayerItems = [
+    ['posted', 'Posted', stats.posted],
+    ['estimates', 'Estimates', stats.estimates],
+    ['lowConfidence', 'Low conf.', stats.lowConfidence],
+    ['stale', 'Stale', stats.stale],
+    ['expiring', 'Expiring', stats.expiring],
+    ['missingGeometry', 'Needs line', stats.missingGeometry],
+  ];
   const permanentLabelKeys = useMemo(() => {
     if (!sections.length) return new Set();
     const prioritized = [...sections].sort((a, b) => {
@@ -332,7 +353,15 @@ function SpeedLimitEditorMapContent({
       );
       return score(b) - score(a);
     });
-    return new Set(prioritized.slice(0, permanentLabelLimit).map(sectionKey));
+    const keys = new Set();
+    prioritized
+      .filter((section) => section.saved || section.conflict)
+      .forEach((section) => keys.add(sectionKey(section)));
+    for (const section of prioritized) {
+      if (keys.size >= permanentLabelLimit) break;
+      keys.add(sectionKey(section));
+    }
+    return keys;
   }, [permanentLabelLimit, sections]);
 
   useEffect(() => {
@@ -400,13 +429,13 @@ function SpeedLimitEditorMapContent({
         tileLayerRef.current = null;
       }
     });
-    if (!online) return;
+    if (!online || !remoteTilesAllowed) return;
 
     tileLayerRef.current = L.tileLayer(TILE_URL, {
       attribution: TILE_ATTRIBUTION,
       maxZoom: 19,
     }).addTo(map);
-  }, [mapReady, online]);
+  }, [mapReady, online, remoteTilesAllowed]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -472,10 +501,10 @@ function SpeedLimitEditorMapContent({
     safeLeafletCall(() => selectedLayers.clearLayers());
     const selectedSection = (
       selectedSectionOverride &&
-      (selectedSectionOverride.sectionKey || selectedSectionOverride.geohash) === selectedGeohash
+      sectionKey(selectedSectionOverride) === selectedGeohash
         ? selectedSectionOverride
         : sections.find((section) => (
-      (section.sectionKey || section.geohash) === selectedGeohash
+      sectionKey(section) === selectedGeohash
         ))
     );
     if (!selectedSection) return;
@@ -551,10 +580,10 @@ function SpeedLimitEditorMapContent({
     if (lastSelectedFitKeyRef.current === selectedGeohash) return;
     const selectedSection = (
       selectedSectionOverride &&
-      (selectedSectionOverride.sectionKey || selectedSectionOverride.geohash) === selectedGeohash
+      sectionKey(selectedSectionOverride) === selectedGeohash
         ? selectedSectionOverride
         : sections.find((section) => (
-          (section.sectionKey || section.geohash) === selectedGeohash
+          sectionKey(section) === selectedGeohash
         ))
     );
     const points = selectedSection ? sectionPositions(selectedSection) : [];
@@ -602,28 +631,56 @@ function SpeedLimitEditorMapContent({
               <Maximize2 className="h-3.5 w-3.5 text-primary" />
               Fit visible
             </button>
-            <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-              {layerItems.map(([key, label, count]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => toggleLayer(key)}
-                  className={`rounded-lg border px-2 py-1.5 text-[11px] font-semibold ${
-                    layerState[key]
-                      ? 'border-primary/50 bg-primary/10 text-foreground'
-                      : 'border-border bg-secondary/80 text-muted-foreground'
-                  }`}
-                  aria-pressed={layerState[key]}
-                >
-                  {label} {count}
-                </button>
-              ))}
+            <div className="mt-2 space-y-2">
+              <div>
+                <div className="px-1 text-[10px] font-semibold uppercase text-muted-foreground">Road state</div>
+                <div className="mt-1 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                  {layerItems.map(([key, label, count]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => toggleLayer(key)}
+                      className={`rounded-lg border px-2 py-1.5 text-[11px] font-semibold ${
+                        layerState[key]
+                          ? 'border-primary/50 bg-primary/10 text-foreground'
+                          : 'border-border bg-secondary/80 text-muted-foreground'
+                      }`}
+                      aria-pressed={layerState[key]}
+                    >
+                      {label} {count}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="px-1 text-[10px] font-semibold uppercase text-muted-foreground">Intelligence</div>
+                <div className="mt-1 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+                  {intelligenceLayerItems.map(([key, label, count]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => toggleLayer(key)}
+                      disabled={count === 0}
+                      className={`rounded-lg border px-2 py-1.5 text-[11px] font-semibold ${
+                        layerState[key]
+                          ? 'border-primary/50 bg-primary/10 text-foreground'
+                          : 'border-border bg-secondary/80 text-muted-foreground'
+                      } disabled:cursor-not-allowed disabled:opacity-45`}
+                      aria-pressed={layerState[key]}
+                    >
+                      {label} {count}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         )}
-        {!online && (
+        {(!online || !remoteTilesAllowed) && (
           <div className="pointer-events-none absolute bottom-20 left-4 z-[500] max-w-[14rem] rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950 shadow-lg dark:border-amber-800 dark:bg-amber-950/90 dark:text-amber-100">
-            Offline: saved roads, trip geometry, editing, and speed labels remain available. Background map tiles require internet.
+            {remoteTilesAllowed
+              ? 'Offline: saved roads, trip geometry, editing, and speed labels remain available. Background map tiles require internet.'
+              : 'Heightened privacy: saved roads, trip geometry, editing, and speed labels stay local without background map tiles.'}
           </div>
         )}
         {rawSections.length > 0 && sections.length === 0 && !addMode && (

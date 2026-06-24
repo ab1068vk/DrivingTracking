@@ -1,6 +1,6 @@
 # Road Sage UI and Loading Performance Guide
 
-Last reviewed: 2026-06-22
+Last reviewed: 2026-06-24
 
 This document explains why the Road Sage UI can feel laggy across the whole app, with extra focus on the Saved road speeds page because it is one of the heaviest screens. It is written as an implementation guide and incident playbook: it shows the current code paths, likely bottlenecks, emergency triage steps, and the specific UI and data-loading patterns that should be used when improving the app.
 
@@ -33,6 +33,14 @@ The most important product rule:
 ## Current Incident Update
 
 User report on 2026-06-22: the whole app feels very laggy, not just the Saved road speeds page. Treat this as an app-wide performance incident until proven otherwise.
+
+Current source status on 2026-06-24:
+
+- Route logging and app maintenance work are deferred with `requestIdleCallback` fallbacks in `src/App.jsx` and related page code.
+- Trip History and Saved road speeds use `@tanstack/react-virtual` for long visible lists.
+- Saved road speeds now loads saved rules first, then schedules the full-trip map model separately; the expensive path still calls `tripService.list({ sort: '-start_time', limit: 500 })` when map geometry is needed.
+- `SpeedLimitEditorMap` and `buildSpeedMapSections()` are instrumented with performance marks, and map failures are isolated behind a section error boundary.
+- The Phase 0 measurements remain a historical device baseline, not proof that the current build is fully fixed; retest on the same device/data set is still required.
 
 Important clarification: adding or editing `docs/UI_LOADING_PERFORMANCE.md` does not by itself slow the production app unless the document is imported, rendered, indexed, or processed by a running app screen or build task. A markdown file sitting in `docs/` is not part of the React runtime bundle by default. The more likely issue is that the same underlying heavy code paths described here are now being noticed across normal navigation.
 
@@ -284,7 +292,7 @@ Current documentation files:
 ```text
 docs/UI_LOADING_PERFORMANCE.md
 docs/README.md
-README.md
+docs/PROJECT_README.md
 ```
 
 Primary code areas to inspect before editing:

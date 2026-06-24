@@ -41,8 +41,8 @@ describe('data rights exports and erasure manifest', () => {
         route_points: [{ lat: 43.1, lng: -79.1 }],
       }],
       vehicles: [{ id: 'vehicle-1', name: 'Car' }],
-      settings: { units: 'metric', privacy_zones: [] },
-      privacyZones: [{ id: 'zone-1', label: 'Home', lat: 43, lng: -79, radius_m: 150 }],
+      settings: { units: 'metric', privacy_zones: [], last_map_center: { lat: 43, lng: -79 } },
+      privacyZones: [{ id: 'zone-1', label: 'Home', lat: 43, lng: -79, radius_m: 150, privacy_cell_hashes: ['pzc_secret'] }],
       scoreHistory: [{ timestamp: 1, overall: 88, layerScores: { device: 80 } }],
     });
     const serialized = JSON.stringify(bundle);
@@ -57,6 +57,11 @@ describe('data rights exports and erasure manifest', () => {
       privacyZones: [{ id: 'zone-1' }],
       scoreHistory: [{ overall: 88 }],
     });
+    expect(parsed.settings.last_map_center).toBeUndefined();
+    expect(parsed.privacyZones[0]).not.toHaveProperty('lat');
+    expect(parsed.privacyZones[0]).not.toHaveProperty('lng');
+    expect(parsed.privacyZones[0]).not.toHaveProperty('privacy_cell_hashes');
+    expect(serialized).not.toContain('pzc_secret');
     expect(validatePortabilityExport(parsed)).toMatchObject({ valid: true });
   });
 });

@@ -2,6 +2,8 @@
 
 Status: passed physical-device verification on June 5, 2026.
 
+Current status as of 2026-06-24: this remains the latest recorded physical-device version-code verification in the repo. The current Android Gradle config still declares `versionCode = 2`, `versionName = "1.0"`, and package identity `com.drivesense.app`.
+
 This change only increments Android `versionCode` from 1 to 2. It does not change:
 
 - package identity `com.drivesense.app`

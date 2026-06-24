@@ -67,9 +67,11 @@ export const PRIVACY_ZONES_SECURE_KEY = 'drivesense_privacy_zones_config_v1';
 export const NATIVE_PRIVACY_ZONES_KEY = 'privacy_zones_v1';
 export const NATIVE_PRIVACY_ZONES_CONTEXT = 'native:privacy_zones_v1';
 export const NATIVE_PRIVACY_SYNC_FAILED_EVENT = 'drivesense:privacy-native-sync-failed';
+export const PRIVACY_ZONES_CHANGED_EVENT = 'drivesense:privacy-zones-changed';
 export const NATIVE_PRIVACY_SYNC_STATUS_OK = 'ok';
 export const NATIVE_PRIVACY_SYNC_STATUS_FAILED = 'failed';
 let privacyZonesMemory = null;
+let privacyZonesRevision = 0;
 let zoneStatsWriteQueue = Promise.resolve();
 
 const appendPrivacyAuditEvent = (event) => {
@@ -79,6 +81,21 @@ const appendPrivacyAuditEvent = (event) => {
     });
   });
 };
+
+const notifyPrivacyZonesChanged = (reason = 'changed', zones = privacyZonesMemory) => {
+  privacyZonesRevision += 1;
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return privacyZonesRevision;
+  window.dispatchEvent(new CustomEvent(PRIVACY_ZONES_CHANGED_EVENT, {
+    detail: {
+      reason,
+      revision: privacyZonesRevision,
+      zone_count: Array.isArray(zones) ? zones.length : 0,
+    },
+  }));
+  return privacyZonesRevision;
+};
+
+export const getPrivacyZonesRevision = () => privacyZonesRevision;
 
 const startOfDay = () => {
   const date = new Date();
@@ -588,7 +605,10 @@ export async function getHydratedPrivacyZones(settings = localSettings.get()) {
   if (!Array.isArray(settings?.privacy_zones) || settings.privacy_zones.length === 0) return [];
 
   const secureZones = normalizePrivacyZones(await getEncryptedJson(PRIVACY_ZONES_SECURE_KEY, []));
-  if (secureZones.length) privacyZonesMemory = secureZones;
+  if (secureZones.length) {
+    privacyZonesMemory = secureZones;
+    notifyPrivacyZonesChanged('hydrated', secureZones);
+  }
   return secureZones;
 }
 
@@ -597,6 +617,7 @@ async function persistPrivacyZones(zones = []) {
   privacyZonesMemory = normalized;
   await setEncryptedJson(PRIVACY_ZONES_SECURE_KEY, cellOnlyPrivacyZones(normalized));
   await syncZonesToNative(normalized);
+  notifyPrivacyZonesChanged('persisted', normalized);
   return normalized;
 }
 
@@ -619,6 +640,7 @@ export async function loadPrivacyZonesFromStorage(settings = localSettings.get()
     await persistPrivacyZones(zones);
   } else {
     privacyZonesMemory = [];
+    notifyPrivacyZonesChanged('loaded_empty', []);
   }
 
   if (legacyPlaintextZones.length || JSON.stringify(settings?.privacy_zones || []) !== JSON.stringify(redactedPrivacyZones(zones))) {
@@ -1898,6 +1920,7 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
     JSON.stringify(previous.privacy_cell_hashes || []) !== JSON.stringify(normalized.privacy_cell_hashes || []);
   const next = zones.filter((item) => item.id !== normalized.id).concat(normalized);
   const consentInvalidated = zoneChanged && settings.osrm_data_sharing_consented === true;
+  const shouldPurgeExistingGps = zoneChanged && zone?.purge_existing_gps !== false;
   if (zoneChanged) void clearMapMatchingCache();
   await persistPrivacyZones(next);
   const updated = localSettings.update({
@@ -1910,6 +1933,9 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
       osrm_consent_invalidated_zone_label: normalized.label,
     } : {}),
   });
+  const purgeResult = shouldPurgeExistingGps
+    ? await purgeZoneFromTripRepository(normalized)
+    : null;
   recordSystemEvent('privacy_zone_saved', {
     zone_id: normalized.id,
     label: normalized.label,
@@ -1917,6 +1943,10 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
     zone_type: normalized.type,
     sensitivity: normalized.sensitivity,
     zone_count: next.length,
+    purged_existing_gps: purgeResult != null,
+    purged_trip_count: purgeResult?.tripsAffected || 0,
+    purged_point_count: purgeResult?.pointsPurged || 0,
+    purged_event_count: purgeResult?.eventsPurged || 0,
   }, { category: 'privacy', title: 'Privacy zone saved' });
   appendPrivacyAuditEvent({
     op: previous ? 'ZONE_UPDATED' : 'ZONE_SAVED',
@@ -1924,6 +1954,9 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
     zoneLabel: normalized.label,
     details: {
       zone_count: next.length,
+      purged_existing_gps: purgeResult != null,
+      purged_point_count: purgeResult?.pointsPurged || 0,
+      purged_event_count: purgeResult?.eventsPurged || 0,
     },
   });
   if (consentInvalidated) {
@@ -1945,9 +1978,6 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
         detail: { reason: 'new_privacy_zone', zoneLabel: normalized.label },
       }));
     }
-  }
-  if (normalized.sensitivity === 'high') {
-    await purgeZoneFromTripRepository(normalized);
   }
   return updated;
 }

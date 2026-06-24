@@ -9,13 +9,15 @@ import RoadSectionPreview from '@/components/RoadSectionPreview';
 import SpeedLimitEditorMap from '@/components/SpeedLimitEditorMap';
 import { TRIAGE_DISABLE_MAPS } from '@/lib/performanceTriage';
 import {
-  SPEED_MAP_LAYER_DEFAULTS,
+  SPEED_MAP_LAYER_FOCUSED_DEFAULTS,
   buildSpeedMapSections,
   buildSplitCorrections,
+  findOverlappingSpeedSections,
   findMergeableSpeedSection,
   mergeSpeedSections,
   snapSectionPointsToTripRoutes,
   snapSectionPointsToTripRoutesWithStats,
+  speedMapSectionFlags,
   speedLimitColor,
   summarizeSpeedMapSections,
 } from '@/lib/speedLimitMapSections';
@@ -59,6 +61,17 @@ const formatSpeedLimit = (value) => {
 const formatSourceList = (sources = []) => {
   const labels = [...new Set((sources || []).filter(Boolean).map(sourceLabel))];
   return labels.length ? labels.join(', ') : 'Unknown source';
+};
+
+const speedSectionAttentionLabel = (section = {}) => {
+  const flags = speedMapSectionFlags(section);
+  if (flags.expired) return 'Expired temporary rule';
+  if (flags.expiring) return 'Temporary rule expiring soon';
+  if (flags.stale) return 'Stale speed evidence';
+  if (flags.lowConfidence) return 'Low-confidence speed evidence';
+  if (flags.missingGeometry) return 'Needs traced road line';
+  if (flags.estimate) return 'Estimate ready for confirmation';
+  return 'Review saved rule';
 };
 
 const scheduleIdleWork = (callback) => {
@@ -418,7 +431,7 @@ export default function SpeedLimits() {
   const [addPath, setAddPath] = useState([]);
   const [mapQuery, setMapQuery] = useState('');
   const deferredMapQuery = useDeferredValue(mapQuery);
-  const [mapLayers, setMapLayers] = useState(SPEED_MAP_LAYER_DEFAULTS);
+  const [mapLayers, setMapLayers] = useState(SPEED_MAP_LAYER_FOCUSED_DEFAULTS);
   const [activeWorkspace, setActiveWorkspace] = useState(initialWorkspace);
   const [autoSnapTrace, setAutoSnapTrace] = useState(true);
   const [rowQueryInput, setRowQueryInput] = useState('');
@@ -520,6 +533,24 @@ export default function SpeedLimits() {
         detail: `Saved ${section.conflict.savedLimitKmh} km/h, observed ${section.conflict.observedLimitKmh} km/h`,
         section,
       }));
+    const reviewableSaved = mapSections
+      .filter((section) => {
+        if (!section.saved || section.conflict) return false;
+        const flags = speedMapSectionFlags(section);
+        return flags.expired ||
+          flags.expiring ||
+          flags.stale ||
+          flags.lowConfidence ||
+          flags.missingGeometry;
+      })
+      .slice(0, 4)
+      .map((section) => ({
+        key: `review-${correctionKey(section)}`,
+        kind: 'review',
+        title: section.roadName || `Road area ${section.geohash}`,
+        detail: `${speedSectionAttentionLabel(section)}; saved ${formatSpeedLimit(section.limitKmh)} from ${sourceLabel(section.source)}`,
+        section,
+      }));
     const unset = mapSections
       .filter((section) => !section.saved && !Number(section.effectiveLimitKmh))
       .slice(0, 4)
@@ -531,7 +562,14 @@ export default function SpeedLimits() {
         section,
       }));
     const observed = mapSections
-      .filter((section) => !section.saved && Number(section.effectiveLimitKmh) > 0)
+      .filter((section) => (
+        !section.saved &&
+        Number(section.effectiveLimitKmh) > 0 &&
+        (
+          Number(section.sampleCount) >= 3 ||
+          Number(section.confirmedObservedLimits?.length) >= 2
+        )
+      ))
       .slice(0, 4)
       .map((section) => ({
         key: `observed-${section.geohash}`,
@@ -540,7 +578,7 @@ export default function SpeedLimits() {
         detail: `Observed ${Math.round(Number(section.effectiveLimitKmh))} km/h from ${formatSourceList(section.observedSources)}`,
         section,
       }));
-    return [...conflicts, ...unset, ...observed].slice(0, 8);
+    return [...conflicts, ...reviewableSaved, ...unset, ...observed].slice(0, 10);
   }, [mapSections]);
   const selectedSectionPointCount = selectedSection?.sectionPoints?.length || 0;
   const traceLengthM = useMemo(() => sectionLengthMeters(addPath), [addPath]);
@@ -553,9 +591,6 @@ export default function SpeedLimits() {
     }
     return { level: 'good', text: `Ready to save. The trace is about ${Math.round(traceLengthM)} m long.` };
   }, [addMode, addPath.length, mapTrips, traceLengthM]);
-  const canSaveSelectedMapSection = Boolean(selectedSection) && (
-    selectedSection.saved || selectedSectionPointCount >= 2
-  );
   const selectedCorrectionDraft = useMemo(() => selectedSection ? ({
     ...selectedSection,
     limitKmh: Number(mapDraft.limitKmh),
@@ -580,6 +615,20 @@ export default function SpeedLimits() {
       })
       : null
   ), [selectedCorrectionDraft, selectedSection?.observedLimitKmh]);
+  const selectedOverlapChecks = useMemo(() => (
+    selectedCorrectionDraft
+      ? findOverlappingSpeedSections(selectedCorrectionDraft, mapSections, {
+        excludeKey: correctionKey(selectedSection),
+      })
+      : []
+  ), [mapSections, selectedCorrectionDraft, selectedSection]);
+  const blockingOverlapChecks = useMemo(
+    () => selectedOverlapChecks.filter((item) => item.severity === 'block'),
+    [selectedOverlapChecks]
+  );
+  const canSaveSelectedMapSection = Boolean(selectedSection) && (
+    selectedSection.saved || selectedSectionPointCount >= 2
+  ) && blockingOverlapChecks.length === 0;
   const mergeCandidate = useMemo(() => (
     selectedSection?.saved
       ? findMergeableSpeedSection(selectedSection, mapSections)
@@ -588,6 +637,13 @@ export default function SpeedLimits() {
   const editorWarnings = useMemo(() => {
     if (!selectedSection) return [];
     const warnings = [];
+    if (blockingOverlapChecks.length > 0) {
+      const overlap = blockingOverlapChecks[0];
+      warnings.push(`Blocked: this section overlaps ${overlap.roadName || 'another saved section'} saved at ${overlap.limitKmh} km/h. Split, merge, or edit the existing rule first.`);
+    } else if (selectedOverlapChecks.length > 0) {
+      const overlap = selectedOverlapChecks[0];
+      warnings.push(`This geometry overlaps ${overlap.roadName || 'another saved section'} (${overlap.limitKmh || 'unknown'} km/h). Save only if the direction or time rule makes it distinct.`);
+    }
     if ((selectedSection.sectionPoints || []).length < 2) warnings.push('Trace at least two points to define a road section.');
     if (addMode && traceLengthM > 0 && traceLengthM < 25) warnings.push('Trace a longer section before saving; very short rules are easy to match to the wrong road.');
     if (!String(mapDraft.roadName || selectedSection.roadName || '').trim()) warnings.push('Add a road name to make future review and merging more reliable.');
@@ -595,8 +651,21 @@ export default function SpeedLimits() {
       warnings.push('Add a short confirmation note for the audit history.');
     }
     if (selectedImpactPreview?.affectedTripCount === 0) warnings.push('No stored completed trips currently cross this rule.');
+    if (selectedImpactPreview && selectedImpactPreview.affectedTripCount > 0 && selectedImpactPreview.matchedPointCount < 2) {
+      warnings.push('Only one stored route sample matches this rule. Snap to route or trace a longer section before relying on it.');
+    }
     return warnings;
-  }, [addMode, mapDraft.note, mapDraft.roadName, mapDraft.source, selectedImpactPreview?.affectedTripCount, selectedSection, traceLengthM]);
+  }, [
+    addMode,
+    blockingOverlapChecks,
+    mapDraft.note,
+    mapDraft.roadName,
+    mapDraft.source,
+    selectedImpactPreview,
+    selectedOverlapChecks,
+    selectedSection,
+    traceLengthM,
+  ]);
   const matchingTripsForCorrection = useCallback((correction) => (
     mapTrips.filter((trip) => trip?.status === 'completed' && tripCrossesCorrection(trip, correction))
   ), [mapTrips]);
@@ -735,9 +804,16 @@ export default function SpeedLimits() {
         })
         .finally(() => {
           if (mapTripsLoadRef.current === loadId) mapModelCancelRef.current = null;
-        });
+      });
     });
   }, []);
+
+  const refreshRowsAndMap = useCallback(async ({ silent = false, forceMap = true } = {}) => {
+    await loadRows({ silent });
+    if (forceMap && (mapModelActive || mapModelStateRef.current.status !== 'idle')) {
+      loadMapModel({ force: true });
+    }
+  }, [loadMapModel, loadRows, mapModelActive]);
 
   useEffect(() => {
     loadRows();
@@ -796,7 +872,7 @@ export default function SpeedLimits() {
     const onKnowledgeChanged = () => {
       window.clearTimeout(knowledgeReloadTimerRef.current);
       knowledgeReloadTimerRef.current = window.setTimeout(() => {
-        loadRows({ silent: true });
+        void refreshRowsAndMap({ silent: true });
       }, 200);
     };
     window.addEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, onKnowledgeChanged);
@@ -804,7 +880,7 @@ export default function SpeedLimits() {
       window.clearTimeout(knowledgeReloadTimerRef.current);
       window.removeEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, onKnowledgeChanged);
     };
-  }, [loadRows]);
+  }, [refreshRowsAndMap]);
 
   const updateDraft = (geohash, patch) => {
     setDrafts((current) => ({
@@ -871,7 +947,7 @@ export default function SpeedLimits() {
           beforeTrips,
           updatedTrips
         )));
-        await loadRows({ silent: true });
+        await refreshRowsAndMap({ silent: true });
       })();
     } else {
       setStatus('Could not update that saved speed.');
@@ -897,7 +973,7 @@ export default function SpeedLimits() {
         beforeTrips,
         updatedTrips
       )));
-      await loadRows();
+      await refreshRowsAndMap();
     } else {
       setStatus('Could not remove that saved speed.');
     }
@@ -1008,7 +1084,7 @@ export default function SpeedLimits() {
 
     if (keepSaved) {
       setStatus(withUndo(`Conflict resolved: kept the saved ${Math.round(nextLimitKmh)} km/h rule for this road section.`));
-      await loadRows({ silent: true });
+      await refreshRowsAndMap({ silent: true });
       return;
     }
 
@@ -1024,7 +1100,7 @@ export default function SpeedLimits() {
         beforeTrips,
         updatedTrips
       )));
-      await loadRows({ silent: true });
+      await refreshRowsAndMap({ silent: true });
     })();
   };
 
@@ -1132,9 +1208,17 @@ export default function SpeedLimits() {
       saved: true,
       observed: true,
       unset: true,
+      posted: true,
+      estimates: true,
+      lowConfidence: true,
+      stale: true,
+      expiring: true,
+      missingGeometry: true,
     }));
     setStatus(item.kind === 'conflict'
       ? 'Conflict selected. Choose Use observed or Keep saved to clear it.'
+      : item.kind === 'review'
+        ? `${speedSectionAttentionLabel(item.section)} selected. Review the saved speed, source, timing, and traced road line before updating.`
       : 'Road section selected. Enter a posted sign or local estimate, then save.');
   };
 
@@ -1175,13 +1259,22 @@ export default function SpeedLimits() {
       setStatus('Snap to route needs at least one recorded trip. The traced line was not changed.');
       return;
     }
-    const snapResult = snapSectionPointsToTripRoutesWithStats(currentPoints, mapTrips);
+    const snapResult = snapSectionPointsToTripRoutesWithStats(currentPoints, mapTrips, 80, {
+      expandToRouteSegment: true,
+      maxPoints: 24,
+    });
     const snapped = snapResult.points;
     if (snapped.length < 2) {
       setStatus('This section needs at least two points before it can snap to recorded routes.');
       return;
     }
-    if (!snapResult.changedCount) {
+    const geometryChanged = snapResult.changedCount > 0 ||
+      snapped.length !== currentPoints.length ||
+      snapped.some((point, index) => (
+        Number(point.lat) !== Number(currentPoints[index]?.lat) ||
+        Number(point.lng) !== Number(currentPoints[index]?.lng)
+      ));
+    if (!geometryChanged) {
       setStatus('No recorded route samples were within 80 metres, so the traced line was not changed.');
       return;
     }
@@ -1196,7 +1289,9 @@ export default function SpeedLimits() {
     };
     setSelectedSection(snappedSection);
     if (addMode) setAddPath(snapped);
-    const snapSummary = `${snapResult.changedCount} point${snapResult.changedCount === 1 ? '' : 's'} moved, average ${snapResult.averageMoveM} m, max ${snapResult.maxMoveM} m`;
+    const snapSummary = snapResult.matchType === 'route_segment'
+      ? `matched ${snapped.length} ordered route point${snapped.length === 1 ? '' : 's'} from ${snapResult.tripLabel || 'a recorded trip'}, average ${snapResult.averageMoveM} m, max ${snapResult.maxMoveM} m`
+      : `${snapResult.changedCount} point${snapResult.changedCount === 1 ? '' : 's'} moved, average ${snapResult.averageMoveM} m, max ${snapResult.maxMoveM} m`;
     if (!selectedSection.saved) {
       setStatus(`Section snapped to recorded route samples (${snapSummary}). Review the line, then save the road speed.`);
       return;
@@ -1255,7 +1350,7 @@ export default function SpeedLimits() {
         matchingTripsForCorrection(selectedSection),
         updatedTrips
       )));
-      await loadRows();
+      await refreshRowsAndMap();
     })();
     setBusyGeohash(null);
   };
@@ -1297,6 +1392,11 @@ export default function SpeedLimits() {
     }
     if (!selectedSection.saved && selectedSection.sectionPoints?.length < 2) {
       setStatus('Tap at least two points along the road so Road Sage can save a real road section.');
+      return;
+    }
+    if (blockingOverlapChecks.length > 0) {
+      const overlap = blockingOverlapChecks[0];
+      setStatus(`Cannot save this road speed because it overlaps ${overlap.roadName || 'another saved section'} at ${overlap.limitKmh} km/h. Edit, split, merge, or add a distinct direction/time rule first.`);
       return;
     }
     const selectedKey = correctionKey(selectedSection);
@@ -1385,7 +1485,7 @@ export default function SpeedLimits() {
           beforeTrips,
           updatedTrips
         )));
-        await loadRows({ silent: true });
+        await refreshRowsAndMap({ silent: true });
       })();
     } else {
       setStatus('Could not save this road section. Private-zone sections cannot be saved.');
@@ -1492,16 +1592,19 @@ export default function SpeedLimits() {
         ...current.filter((row) => !matchesOriginal(row)),
         ...splitCorrections,
       ]);
-      setSelectedSection(null);
+      setSelectedSection(splitCorrections[0]);
+      setAddMode(false);
+      setAddPath([]);
+      setMapLayers((current) => ({ ...current, saved: true }));
       const updatedTrips = await withRecalculation(() => Promise.all(splitCorrections.map((part) => (
         refreshTripsCrossingLocalSpeedCorrection(part).catch(() => null)
       ))));
       const recalculated = updatedTrips.flat().filter(Boolean).length;
-      setStatus(withUndo(`Road section split into two saved speeds. Recalculated ${recalculated} matching trip${recalculated === 1 ? '' : 's'} locally.`));
-      await loadRows();
+      setStatus(withUndo(`Road section split into two saved speeds. First half is selected on the map. Recalculated ${recalculated} matching trip${recalculated === 1 ? '' : 's'} locally.`));
+      await refreshRowsAndMap();
     } else {
       setStatus('Could not split this section completely. Review saved speeds before trying again.');
-      await loadRows();
+      await refreshRowsAndMap();
     }
     setBusyGeohash(null);
   };
@@ -1525,7 +1628,7 @@ export default function SpeedLimits() {
       ? `Change undone. Recalculated ${updatedTrips.length} affected trip${updatedTrips.length === 1 ? '' : 's'}.`
       : 'Change undone, but affected trips could not be recalculated right now.');
     setBusyGeohash(null);
-    await loadRows();
+    await refreshRowsAndMap();
   };
 
   const exportSpeedKnowledge = async () => {
@@ -1559,8 +1662,7 @@ export default function SpeedLimits() {
   };
 
   const refreshSavedRoadSpeeds = async () => {
-    await loadRows();
-    if (mapModelActive) loadMapModel({ force: true });
+    await refreshRowsAndMap();
     setStatus('Saved road speeds refreshed.');
   };
 
@@ -1604,7 +1706,7 @@ export default function SpeedLimits() {
       setStatus(withUndo(updatedTrips
         ? `Restored ${data.corrections.length} saved road-speed rule${data.corrections.length === 1 ? '' : 's'}, including map lines, and recalculated ${updatedTrips.length} affected trip${updatedTrips.length === 1 ? '' : 's'}.`
         : `Restored ${data.corrections.length} saved road-speed rule${data.corrections.length === 1 ? '' : 's'}, including map lines, but affected trips could not be recalculated right now.`));
-      await loadRows();
+      await refreshRowsAndMap();
     } catch {
       setStatus('Could not restore that file. Choose a Road Sage speed-rule or full-backup JSON file.');
     }
@@ -1654,7 +1756,7 @@ export default function SpeedLimits() {
     setSelectedRows(new Set());
     setStatus(withUndo(`Confirmed ${updated.length} selected rule${updated.length === 1 ? '' : 's'} as posted signs.`));
     setBusyGeohash(null);
-    await loadRows();
+    await refreshRowsAndMap();
   };
 
   const deleteSelectedRows = async () => {
@@ -1677,7 +1779,7 @@ export default function SpeedLimits() {
     setSelectedRows(new Set());
     setStatus(withUndo(`Deleted ${removed.length} selected rule${removed.length === 1 ? '' : 's'}.`));
     setBusyGeohash(null);
-    await loadRows();
+    await refreshRowsAndMap();
   };
 
   const cleanExpiredSpeedKnowledge = async () => {
@@ -1690,7 +1792,7 @@ export default function SpeedLimits() {
     setStatus(withUndo(updatedTrips
       ? `Removed expired rules and learned evidence older than 180 days. Recalculated ${updatedTrips.length} affected trip${updatedTrips.length === 1 ? '' : 's'}.`
       : 'Removed expired rules and learned evidence older than 180 days, but affected trips could not be recalculated right now.'));
-    await loadRows();
+    await refreshRowsAndMap();
   };
 
   if (loading && !loadedOnce) return <SavedRoadSpeedsSkeleton />;
@@ -1810,7 +1912,7 @@ export default function SpeedLimits() {
         </div>
       )}
 
-      <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
         <div className="rounded-xl border border-border bg-card px-3 py-2">
           <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-muted-foreground">
             <ShieldCheck className="h-3.5 w-3.5" />
@@ -1838,6 +1940,34 @@ export default function SpeedLimits() {
             Map sections
           </div>
           <div className="mt-1 text-2xl font-bold">{mapStats.total}</div>
+        </div>
+        <div className="rounded-xl border border-border bg-card px-3 py-2">
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-muted-foreground">
+            <CheckSquare2 className="h-3.5 w-3.5" />
+            Posted
+          </div>
+          <div className="mt-1 text-2xl font-bold text-emerald-600">{mapStats.posted}</div>
+        </div>
+        <div className="rounded-xl border border-border bg-card px-3 py-2">
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-muted-foreground">
+            <Gauge className="h-3.5 w-3.5" />
+            Estimates
+          </div>
+          <div className="mt-1 text-2xl font-bold text-sky-600">{mapStats.estimates}</div>
+        </div>
+        <div className="rounded-xl border border-border bg-card px-3 py-2">
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-muted-foreground">
+            <Info className="h-3.5 w-3.5" />
+            Low conf.
+          </div>
+          <div className="mt-1 text-2xl font-bold text-amber-600">{mapStats.lowConfidence}</div>
+        </div>
+        <div className="rounded-xl border border-border bg-card px-3 py-2">
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase text-muted-foreground">
+            <MapPin className="h-3.5 w-3.5" />
+            Needs line
+          </div>
+          <div className="mt-1 text-2xl font-bold">{mapStats.missingGeometry}</div>
         </div>
       </section>
 
@@ -1951,9 +2081,11 @@ export default function SpeedLimits() {
                       ? 'bg-red-600 text-white'
                       : item.kind === 'observed'
                         ? 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-200'
+                        : item.kind === 'review'
+                          ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-100'
                         : 'bg-secondary text-muted-foreground'
                   }`}>
-                    {item.kind === 'conflict' ? 'Resolve' : item.kind === 'observed' ? 'Save' : 'Set'}
+                    {item.kind === 'conflict' ? 'Resolve' : item.kind === 'observed' ? 'Save' : item.kind === 'review' ? 'Review' : 'Set'}
                   </span>
                 </div>
               </button>
@@ -2143,7 +2275,7 @@ export default function SpeedLimits() {
         <details className="rounded-xl border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
           <summary className="cursor-pointer font-semibold text-foreground">What the map actions do</summary>
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
-            <p><strong>Snap to route</strong> moves each traced point to the nearest recorded trip sample within 80 metres. It never contacts a routing service.</p>
+            <p><strong>Snap to route</strong> matches the trace to one ordered recorded route segment within 80 metres. It never contacts a routing service.</p>
             <p><strong>Split at midpoint</strong> replaces one saved rule with two independently editable road sections.</p>
             <p><strong>Merge nearby</strong> joins two nearby saved sections only when their speeds match.</p>
             <p><strong>Continue tracing</strong> means the road is still being drawn. It disappears immediately after a successful save.</p>
@@ -2216,7 +2348,7 @@ export default function SpeedLimits() {
                       type="button"
                       onClick={snapSelectedSectionToTrips}
                       disabled={selectedSectionPointCount < 2}
-                      title="Move traced points to nearby recorded trip samples within 80 metres. No online routing service is used."
+                      title="Match the trace to one ordered recorded route segment within 80 metres. No online routing service is used."
                       className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-semibold disabled:opacity-50"
                     >
                       <Magnet className="h-3.5 w-3.5" />
@@ -2419,7 +2551,7 @@ export default function SpeedLimits() {
                     type="button"
                     onClick={snapSelectedSectionToTrips}
                     disabled={busyGeohash === correctionKey(selectedSection) || (selectedSection.sectionPoints || []).length < 2}
-                    title="Move this saved geometry to nearby recorded trip samples within 80 metres. No online routing service is used."
+                    title="Match this saved geometry to one ordered recorded route segment within 80 metres. No online routing service is used."
                     className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
                   >
                     <Magnet className="h-3.5 w-3.5" />
@@ -2881,34 +3013,40 @@ export default function SpeedLimits() {
         </>
       )}
 
-      <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">
-        <div className="flex items-start gap-3">
-          <Info className="mt-0.5 h-5 w-5 flex-shrink-0" />
-          <div className="min-w-0">
-            <h2 className="font-semibold">How saved road speeds are used</h2>
-            <div className="mt-2 grid gap-2 text-xs leading-relaxed">
-              <p>
-                Speeds you add, edit, split, expire, or delete here are saved locally on this device. When a saved rule matches the road, direction, date, and time, Road Sage uses it first for trip scoring, map colors, speed checks, and voice alerts.
-              </p>
-              <p>
-                If no matching saved rule is available, Road Sage falls back to learned local data, OpenStreetMap/Get Road Data results, then lower-confidence road-type, regional, or GPS estimates.
-              </p>
-              <p>
-                Saving and reviewing road speeds here can reduce how often you need OpenStreetMap lookups for the same roads. Your saved speed, road name, notes, split sections, direction rules, and time rules are not uploaded to OpenStreetMap.
-              </p>
-              <p>
-                Get Road Data sends only privacy-filtered public-road bounding boxes to an OpenStreetMap Overpass service, which may receive normal network metadata such as your IP address. Privacy zones reduce what enabled road-data features can send, but they are not an absolute protection against device compromise, modified app builds, screenshots, exported files, network metadata, or user-approved external endpoints.
-              </p>
-              <p>
-                This map uses OpenStreetMap tiles while online. Saved roads, trip geometry, editing, and speed labels remain available offline, but standard OpenStreetMap tiles are not downloaded for offline use. Tile providers can see the map tile area viewed and normal network metadata.
-              </p>
-              <p>
-                Settings warning margins change when Road Sage warns you; they do not change the saved speed itself.
-              </p>
-            </div>
-          </div>
+      <details className="group rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-950 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+          <span className="flex min-w-0 items-center gap-2 font-semibold">
+            <Info className="h-4 w-4 flex-shrink-0" />
+            <span>How saved road speeds are used</span>
+          </span>
+          <span className="shrink-0 rounded-lg border border-blue-200 bg-white/70 px-2 py-1 text-xs font-semibold text-blue-900 group-open:hidden dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-100">
+            Details
+          </span>
+          <span className="hidden shrink-0 rounded-lg border border-blue-200 bg-white/70 px-2 py-1 text-xs font-semibold text-blue-900 group-open:inline dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-100">
+            Hide
+          </span>
+        </summary>
+        <div className="mt-3 grid gap-2 border-t border-blue-200 pt-3 text-xs leading-relaxed dark:border-blue-900/60 md:grid-cols-2">
+          <p>
+            Speeds you add, edit, split, expire, or delete here are saved locally on this device. When a saved rule matches the road, direction, date, and time, Road Sage uses it first for trip scoring, map colors, speed checks, and voice alerts.
+          </p>
+          <p>
+            If no matching saved rule is available, Road Sage falls back to learned local data, OpenStreetMap/Get Road Data results, then lower-confidence road-type, regional, or GPS estimates.
+          </p>
+          <p>
+            Saving and reviewing road speeds here can reduce how often you need OpenStreetMap lookups for the same roads. Your saved speed, road name, notes, split sections, direction rules, and time rules are not uploaded to OpenStreetMap.
+          </p>
+          <p>
+            Get Road Data sends only privacy-filtered public-road bounding boxes to an OpenStreetMap Overpass service, which may receive normal network metadata such as your IP address. Privacy zones reduce what enabled road-data features can send, but they are not an absolute protection against device compromise, modified app builds, screenshots, exported files, network metadata, or user-approved external endpoints.
+          </p>
+          <p>
+            This map uses OpenStreetMap tiles while online. Saved roads, trip geometry, editing, and speed labels remain available offline, but standard OpenStreetMap tiles are not downloaded for offline use. Tile providers can see the map tile area viewed and normal network metadata.
+          </p>
+          <p>
+            Settings warning margins change when Road Sage warns you; they do not change the saved speed itself.
+          </p>
         </div>
-      </section>
+      </details>
     </div>
   );
 }

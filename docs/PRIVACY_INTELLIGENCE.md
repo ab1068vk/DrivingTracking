@@ -1,5 +1,14 @@
 # Privacy Intelligence Implementation Reference
 
+Last reviewed: 2026-06-24
+
+Current source status:
+
+- `/privacy-intelligence` is lazily routed from `src/App.jsx` and implemented by `src/pages/PrivacyIntelligence.jsx`.
+- The page loads current local posture through `src/lib/privacyIntelligence.js`, `src/lib/controlSelfTests.js`, `src/lib/dataRights.js`, `src/lib/transmissionLog.js`, `src/lib/hashChainLog.js`, and privacy-zone modules.
+- Current behavior includes local control self-tests, audit checkpoint export/verify, transmission-log clearing, privacy-zone suggestion dismissal, heightened/private-mode state, and data-rights/build-identity readouts.
+- This remains an app-recorded privacy dashboard, not packet inspection or an independent external security audit.
+
 ## Plain-English Verdict
 
 Privacy Intelligence is a local privacy posture and activity dashboard. It is useful, concrete, and grounded in real app records, but it is not an external audit and it cannot establish that no sensitive data ever left the device.
@@ -1892,7 +1901,7 @@ Sensitivity behavior:
 - `standard`: existing masking and OSRM exclusion behavior.
 - `high`: purges matching saved raw GPS when saved and blocks the entire OSRM request when any route segment touches the zone, regardless of general OSRM consent.
 
-The editor intentionally has no address-search or remote-geocoder path. It accepts current location, parked location, local frequent-stop suggestions, or locally stored trip geometry. The zone editor also has no map-tile preview, so creating a zone does not silently reveal the viewed private region to a tile provider. Other app maps that use OpenStreetMap tiles retain their existing provider disclosure.
+The editor intentionally has no address-search or remote-geocoder path. It accepts current location, parked location, local frequent-stop suggestions, or locally stored trip geometry. The authenticated preview uses OpenStreetMap street tiles with an in-dialog provider disclosure, so the tile provider can receive the viewed tile area and normal network metadata while labels and typed addresses remain local.
 
 ## Privacy Report Export
 

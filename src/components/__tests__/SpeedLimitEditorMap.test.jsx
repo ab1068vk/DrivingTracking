@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SPEED_MAP_LAYER_FOCUSED_DEFAULTS,
   buildSpeedMapSections,
   buildSplitCorrections,
   findMergeableSpeedSection,
   filterSpeedMapSections,
   mergeSpeedSections,
   snapSectionPointsToTripRoutes,
+  speedMapSectionFlags,
   speedLimitColor,
   summarizeSpeedMapSections,
 } from '@/lib/speedLimitMapSections';
@@ -279,11 +281,85 @@ describe('SpeedLimitEditorMap helpers', () => {
       observed: 1,
       unset: 1,
       savedRules: 1,
+      posted: 1,
+      estimates: 1,
+      lowConfidence: 1,
+      missingGeometry: 1,
     });
     expect(filterSpeedMapSections(sections, {
       layers: { conflicts: false, saved: false, observed: true, unset: false },
     }).map((section) => section.roadName)).toEqual(['Queen Street']);
+    expect(filterSpeedMapSections(sections, {
+      layers: { estimates: false },
+    }).map((section) => section.roadName)).toEqual(['King Street', 'Dundas Street']);
+    expect(filterSpeedMapSections(sections, {
+      layers: { lowConfidence: false },
+    }).map((section) => section.roadName)).toEqual(['King Street', 'Dundas Street']);
+    expect(filterSpeedMapSections(sections, {
+      layers: { missingGeometry: false },
+    }).map((section) => section.roadName)).toEqual(['Dundas Street', 'Queen Street']);
     expect(filterSpeedMapSections(sections, { query: 'dundas' })).toHaveLength(1);
+  });
+
+  it('flags expiring and stale saved map sections for advanced review layers', () => {
+    const now = new Date('2026-06-24T12:00:00.000Z').getTime();
+    const section = {
+      saved: true,
+      limitKmh: 40,
+      source: 'user_entered_estimate',
+      appliedAt: '2025-01-01T00:00:00.000Z',
+      expiresAt: '2026-07-01T00:00:00.000Z',
+      sectionPoints: [
+        { lat: 43.65, lng: -79.38 },
+        { lat: 43.651, lng: -79.381 },
+      ],
+    };
+
+    expect(speedMapSectionFlags(section, now)).toMatchObject({
+      estimate: true,
+      lowConfidence: true,
+      stale: true,
+      expiring: true,
+      missingGeometry: false,
+    });
+  });
+
+  it('uses a focused layer preset that hides observed and unset map noise', () => {
+    const savedPoint = {
+      lat: 43.6501,
+      lng: -79.3801,
+      speed_limit_road_name: 'King Street',
+      speed_limit_kmh: 50,
+      speed_limit_source: 'openstreetmap',
+    };
+    const observedPoint = {
+      lat: 43.6601,
+      lng: -79.3901,
+      speed_limit_road_name: 'Queen Street',
+      speed_limit_kmh: 40,
+      speed_limit_source: 'openstreetmap',
+    };
+    const unsetPoint = {
+      lat: 43.6701,
+      lng: -79.4001,
+      speed_limit_road_name: 'Dundas Street',
+    };
+    const sections = buildSpeedMapSections([{
+      id: 'trip-focused-layers',
+      status: 'completed',
+      route_points: [savedPoint, observedPoint, unsetPoint],
+    }], [{
+      id: 'saved-king',
+      geohash: geohashEncode(savedPoint.lat, savedPoint.lng),
+      lat: savedPoint.lat,
+      lng: savedPoint.lng,
+      limitKmh: 50,
+      source: 'user_confirmed_posted_sign',
+    }]);
+
+    expect(filterSpeedMapSections(sections, {
+      layers: SPEED_MAP_LAYER_FOCUSED_DEFAULTS,
+    }).map((section) => section.roadName)).toEqual(['King Street']);
   });
 
   it('splits traced saved sections into two child corrections', () => {

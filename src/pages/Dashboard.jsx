@@ -110,11 +110,15 @@ import {
   DASHBOARD_SPEED_LIMIT_REVIEW_DISMISSAL_KEY,
   buildDashboardSpeedLimitReviewFingerprint,
   buildTripSpeedLimitReviewCells,
+  isDashboardSpeedLimitReviewDismissed,
+  normalizeDashboardSpeedLimitReviewFingerprint,
   speedLimitReviewNeededForTrip,
 } from '@/lib/speedLimitReview';
 import {
   DASHBOARD_SCORE_REVIEW_DISMISSAL_KEY,
   buildDashboardScoreReviewFingerprint,
+  isDashboardScoreReviewDismissed,
+  normalizeDashboardScoreReviewFingerprint,
 } from '@/lib/dashboardScoreReview';
 import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
 import {
@@ -596,13 +600,15 @@ export default function Dashboard() {
   );
   const showScoreReviewWarning = scoreReviewDismissalLoaded
     && scoreReviewFingerprint
-    && dismissedScoreReviewFingerprint !== scoreReviewFingerprint;
+    && !isDashboardScoreReviewDismissed(dismissedScoreReviewFingerprint, scoreReviewFingerprint);
 
   useEffect(() => {
     let cancelled = false;
     getJson(DASHBOARD_SCORE_REVIEW_DISMISSAL_KEY, '').then((fingerprint) => {
       if (cancelled) return;
-      setDismissedScoreReviewFingerprint(typeof fingerprint === 'string' ? fingerprint : '');
+      setDismissedScoreReviewFingerprint(
+        typeof fingerprint === 'string' ? normalizeDashboardScoreReviewFingerprint(fingerprint) : ''
+      );
       setScoreReviewDismissalLoaded(true);
     });
     return () => {
@@ -611,8 +617,9 @@ export default function Dashboard() {
   }, []);
 
   const dismissScoreReviewWarning = useCallback(() => {
-    setDismissedScoreReviewFingerprint(scoreReviewFingerprint);
-    setJson(DASHBOARD_SCORE_REVIEW_DISMISSAL_KEY, scoreReviewFingerprint).catch((error) => {
+    const fingerprint = normalizeDashboardScoreReviewFingerprint(scoreReviewFingerprint);
+    setDismissedScoreReviewFingerprint(fingerprint);
+    setJson(DASHBOARD_SCORE_REVIEW_DISMISSAL_KEY, fingerprint).catch((error) => {
       logError('dashboard_score_review_dismissal_save', error);
     });
   }, [scoreReviewFingerprint]);
@@ -621,7 +628,9 @@ export default function Dashboard() {
     let cancelled = false;
     getJson(DASHBOARD_SPEED_LIMIT_REVIEW_DISMISSAL_KEY, '').then((fingerprint) => {
       if (cancelled) return;
-      setDismissedSpeedLimitReviewFingerprint(typeof fingerprint === 'string' ? fingerprint : '');
+      setDismissedSpeedLimitReviewFingerprint(
+        typeof fingerprint === 'string' ? normalizeDashboardSpeedLimitReviewFingerprint(fingerprint) : ''
+      );
       setSpeedLimitReviewDismissalLoaded(true);
     });
     return () => {
@@ -631,8 +640,9 @@ export default function Dashboard() {
 
   const dismissSpeedLimitReviewWarning = useCallback((fingerprint) => {
     if (!fingerprint) return;
-    setDismissedSpeedLimitReviewFingerprint(fingerprint);
-    setJson(DASHBOARD_SPEED_LIMIT_REVIEW_DISMISSAL_KEY, fingerprint).catch((error) => {
+    const normalizedFingerprint = normalizeDashboardSpeedLimitReviewFingerprint(fingerprint);
+    setDismissedSpeedLimitReviewFingerprint(normalizedFingerprint);
+    setJson(DASHBOARD_SPEED_LIMIT_REVIEW_DISMISSAL_KEY, normalizedFingerprint).catch((error) => {
       logError('dashboard_speed_limit_review_dismissal_save', error);
     });
   }, []);
@@ -2729,7 +2739,10 @@ export default function Dashboard() {
   const showSpeedLimitReviewWarning = speedLimitReviewDismissalLoaded
     && activeSpeedLimitReview
     && activeSpeedLimitReviewFingerprint
-    && dismissedSpeedLimitReviewFingerprint !== activeSpeedLimitReviewFingerprint;
+    && !isDashboardSpeedLimitReviewDismissed(
+      dismissedSpeedLimitReviewFingerprint,
+      activeSpeedLimitReviewFingerprint
+    );
   const activeFatigueAlert = tracking && elapsed > 90 * 60 && (() => {
     const points = activeTrip?.route_points || [];
     if (points.length < 12) return false;

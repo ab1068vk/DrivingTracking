@@ -2,6 +2,8 @@
 
 Date: June 5, 2026
 
+Current status as of 2026-06-24: this is a historical physical-device verification record for the recovery build. The current Android project still uses package `com.drivesense.app`, version name `1.0`, and version code `2`; no newer physical-device upgrade verification result is recorded in this repository.
+
 Branch tested: `codex/recovery-safe-base`
 
 Installed package: `com.drivesense.app`

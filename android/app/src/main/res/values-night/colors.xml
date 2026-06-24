@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="roadsage_primary">#60A5FA</color>
+    <color name="roadsage_primary_dark">#0F1117</color>
+    <color name="roadsage_accent">#2DD4BF</color>
+    <color name="roadsage_native_surface">#111827</color>
+    <color name="roadsage_native_text_primary">#F8FAFC</color>
+    <color name="roadsage_native_text_secondary">#CBD5E1</color>
+</resources>

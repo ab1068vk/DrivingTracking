@@ -49,6 +49,16 @@ describe('TripCard score provenance display', () => {
     expect(html).toContain('aria-label="Add Untitled trip to favorites"');
   });
 
+  it('shows a direct parked speed-limit review action when a trip is flagged', () => {
+    const html = renderToStaticMarkup(<TripCard trip={{
+      ...trip('calibrated'),
+      speed_limit_review_required: true,
+    }} />);
+
+    expect(html).toContain('Review speed');
+    expect(html).toContain('aria-label="Review speed limits for Untitled trip"');
+  });
+
   it('labels trips with differential privacy aggregate noise', () => {
     const html = renderToStaticMarkup(<TripCard trip={{ ...trip('calibrated'), _dpApplied: true }} />);
 

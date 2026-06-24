@@ -26,6 +26,7 @@ import { runRoadContextRefresh } from '@/lib/roadContextQueue';
 import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 import { MAX_VISIBLE_DANGER_ZONES } from '@/lib/appConstants';
 import { pinnedFetch } from '@/lib/pinnedFetch';
+import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { TRIAGE_DISABLE_MAPS } from '@/lib/performanceTriage';
 import InlineLoadError from '@/components/InlineLoadError';
@@ -403,7 +404,7 @@ export default function MapScreen() {
     }
 
     let next = stored;
-    if (!stored.address) {
+    if (!stored.address && !isHeightenedPrivacyMode(settings)) {
       try {
         const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(stored.lat)}&lon=${encodeURIComponent(stored.lng)}`;
         const response = await pinnedFetch(url, { headers: { Accept: 'application/json' } });

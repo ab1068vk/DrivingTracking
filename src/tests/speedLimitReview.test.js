@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildDashboardSpeedLimitReviewFingerprint,
   buildTripSpeedLimitReviewCells,
+  isDashboardSpeedLimitReviewDismissed,
+  normalizeDashboardSpeedLimitReviewFingerprint,
   speedLimitReviewNeededForTrip,
 } from '@/lib/speedLimitReview';
 
@@ -133,7 +135,7 @@ describe('speed-limit parked review', () => {
     }));
   });
 
-  it('changes the dashboard dismissal fingerprint when speed-review work changes', () => {
+  it('keeps a dismissed trip review hidden when review-cell detail changes after reload', () => {
     const dismissed = buildDashboardSpeedLimitReviewFingerprint({
       reviewTrip: {
         id: 'trip-1',
@@ -148,6 +150,31 @@ describe('speed-limit parked review', () => {
         speed_limit_review_required: true,
       },
       reviewCellCount: 2,
+    })).toBe(dismissed);
+    expect(isDashboardSpeedLimitReviewDismissed(dismissed, buildDashboardSpeedLimitReviewFingerprint({
+      reviewTrip: {
+        id: 'trip-1',
+        speed_limit_review_required: true,
+      },
+      reviewCellCount: 2,
+    }))).toBe(true);
+  });
+
+  it('changes the dashboard dismissal fingerprint when new speed-review work appears', () => {
+    const dismissed = buildDashboardSpeedLimitReviewFingerprint({
+      reviewTrip: {
+        id: 'trip-1',
+        speed_limit_review_required: true,
+      },
+      reviewCellCount: 1,
+    });
+
+    expect(buildDashboardSpeedLimitReviewFingerprint({
+      reviewTrip: {
+        id: 'trip-2',
+        speed_limit_review_required: true,
+      },
+      reviewCellCount: 1,
     })).not.toBe(dismissed);
     expect(buildDashboardSpeedLimitReviewFingerprint({
       conflictedCells: [{
@@ -178,5 +205,31 @@ describe('speed-limit parked review', () => {
       },
       reviewCellCount: 1,
     })).toBe(dismissed);
+  });
+
+  it('normalizes legacy parked-review fingerprints and treats dismissed supersets as covered', () => {
+    const currentTripReview = buildDashboardSpeedLimitReviewFingerprint({
+      reviewTrip: {
+        id: 'trip-1',
+        speed_limit_review_required: true,
+      },
+      reviewCellCount: 1,
+    });
+    const legacyTripReview = 'trip:trip-1:required:7';
+    const currentConflict = buildDashboardSpeedLimitReviewFingerprint({
+      conflictedCells: [{
+        geohash: 'dpz83x',
+        limitKmh: 50,
+        conflictDetails: { existingLimitKmh: 50, newLimitKmh: 60 },
+      }],
+    });
+    const legacyConflict = 'cell:dpz83x:2026-06-20T11:00:00.000Z:50:50:60';
+    const legacySuperset = `${legacyTripReview}|${legacyConflict}`;
+
+    expect(normalizeDashboardSpeedLimitReviewFingerprint(legacyTripReview)).toBe(currentTripReview);
+    expect(normalizeDashboardSpeedLimitReviewFingerprint(legacyConflict)).toBe(currentConflict);
+    expect(isDashboardSpeedLimitReviewDismissed(legacySuperset, currentTripReview)).toBe(true);
+    expect(isDashboardSpeedLimitReviewDismissed(legacySuperset, currentConflict)).toBe(true);
+    expect(isDashboardSpeedLimitReviewDismissed(legacyTripReview, `${currentTripReview}|${currentConflict}`)).toBe(false);
   });
 });

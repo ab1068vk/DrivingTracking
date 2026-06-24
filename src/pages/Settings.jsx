@@ -140,7 +140,7 @@ import { checkIntegrity, integrityStatusFromSettings } from '@/lib/rasp';
 import { searchSettingsSections } from '@/lib/settingsSearch';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import { HEIGHTENED_PRIVACY_MODE_EFFECTS } from '@/lib/privacyMode';
-import PrivacyZonePreviewMap from '@/components/PrivacyZonePreviewMap';
+import PrivacyZoneProtectionCheck from '@/components/PrivacyZoneProtectionCheck';
 import {
   invalidateSelfTestCache,
   selfTestPrivacyZoneProtection,
@@ -762,11 +762,11 @@ export default function Settings() {
     label: 'Private place',
     radius_m: String(PRIVACY_RADIUS_DEFAULT_M),
     type: 'circle',
-    sensitivity: 'standard',
+    sensitivity: 'high',
     durationDays: 'permanent',
   });
   const [privacyCorridorWaypoints, setPrivacyCorridorWaypoints] = useState([]);
-  const [privacyPreview, setPrivacyPreview] = useState(null);
+  const [privacyProtectionCheck, setPrivacyProtectionCheck] = useState(null);
   const [privacyProtectionTest, setPrivacyProtectionTest] = useState(null);
   const [privacyProtectionTestBusy, setPrivacyProtectionTestBusy] = useState(false);
   const [suggestedPrivacyLocation, setSuggestedPrivacyLocation] = useState(null);
@@ -853,7 +853,7 @@ export default function Settings() {
   useEffect(() => {
     if (activeSettingsSection === 'settings-privacy-data') return;
     setPrivacyCorridorWaypoints([]);
-    setPrivacyPreview(null);
+    setPrivacyProtectionCheck(null);
   }, [activeSettingsSection]);
 
   useEffect(() => {
@@ -862,7 +862,7 @@ export default function Settings() {
       if (corridorDraftExpiryRef.current) window.clearTimeout(corridorDraftExpiryRef.current);
       corridorDraftExpiryRef.current = window.setTimeout(() => {
         setPrivacyCorridorWaypoints([]);
-        setPrivacyPreview((current) => current?.type === 'corridor' ? null : current);
+        setPrivacyProtectionCheck((current) => current?.type === 'corridor' ? null : current);
         toast({
           title: 'Unsaved corridor cleared',
           description: 'The sensitive route draft was removed after 5 minutes of inactivity.',
@@ -881,18 +881,18 @@ export default function Settings() {
   }, [activeSettingsSection, privacyCorridorWaypoints.length]);
 
   useEffect(() => {
-    if (!privacyPreview) return undefined;
+    if (!privacyProtectionCheck) return undefined;
     let cancelled = false;
     setScreenCaptureAllowed(false).catch((error) => {
-      if (!cancelled) logSystemFailure('privacy_preview_screen_capture_block', error);
+      if (!cancelled) logSystemFailure('privacy_protection_check_screen_capture_block', error);
     });
     return () => {
       cancelled = true;
       setScreenCaptureAllowed(cfgRef.current.allow_screen_capture === true).catch((error) => {
-        logSystemFailure('privacy_preview_screen_capture_restore', error);
+        logSystemFailure('privacy_protection_check_screen_capture_restore', error);
       });
     };
-  }, [privacyPreview]);
+  }, [privacyProtectionCheck]);
 
   useEffect(() => {
     const suggestion = location.state?.privacyZoneSuggestion;
@@ -902,10 +902,11 @@ export default function Settings() {
     setPrivacyDraft((current) => ({ ...current, label: draft.label, radius_m: draft.radius_m, type: 'circle' }));
     setSuggestedPrivacyLocation(draft.location);
     if (location.state?.previewPrivacyZoneSuggestion) {
-      void openPrivacyPreview({
+      void openPrivacyProtectionCheck({
         type: 'circle',
         location: draft.location,
         sourceLabel: 'Suggested private place',
+        radius_m: draft.radius_m,
         clearSuggestionOnSave: true,
       }, 'Verify to review this suggested private place');
     }
@@ -1138,9 +1139,25 @@ export default function Settings() {
     return false;
   };
 
-  const openPrivacyPreview = async (preview, reason = 'Verify to preview this private area') => {
+  const openPrivacyProtectionCheck = async (check, reason = 'Verify to review this private area') => {
+    const validation = validatePrivacyRadius(check?.radius_m ?? privacyDraft.radius_m);
+    if (!validation.valid) {
+      setPrivacyDraftRadiusError(validation.error);
+      toast({
+        title: 'Privacy zone radius needs fixing',
+        description: validation.error,
+        variant: 'destructive',
+      });
+      return false;
+    }
     if (!await requireSensitiveAuthentication(reason)) return false;
-    setPrivacyPreview(preview);
+    setPrivacyDraftRadiusError('');
+    setPrivacyProtectionCheck({
+      ...check,
+      radius_m: String(validation.radius),
+      sensitivity: privacyDraft.sensitivity === 'high' ? 'high' : 'standard',
+      durationDays: privacyDraft.durationDays,
+    });
     return true;
   };
 
@@ -2111,7 +2128,7 @@ export default function Settings() {
     return true;
   };
 
-  const savePrivacyZone = async (location, sourceLabel) => {
+  const savePrivacyZone = async (location, sourceLabel, radiusValue = privacyDraft.radius_m) => {
     if (integrity?.secure === false && cfg.privacy_zone_storage_requires_secure_device !== false) {
       toast({
         title: 'Privacy zone not saved',
@@ -2122,7 +2139,7 @@ export default function Settings() {
       return false;
     }
 
-    const validation = validatePrivacyRadius(privacyDraft.radius_m);
+    const validation = validatePrivacyRadius(radiusValue);
     if (!validation.valid) {
       setPrivacyDraftRadiusError(validation.error);
       toast({
@@ -2177,6 +2194,7 @@ export default function Settings() {
       }),
       sensitivity: privacyDraft.sensitivity === 'high' ? 'high' : 'standard',
       ...(expiresAt ? { expiresAt } : {}),
+      purge_existing_gps: true,
     };
     try {
       const updated = await upsertPrivacyZone(zoneToSave, cfg);
@@ -2207,9 +2225,9 @@ export default function Settings() {
   const addCurrentPrivacyZone = async () => {
     try {
       const location = await getCurrentLocation();
-      await openPrivacyPreview(
+      await openPrivacyProtectionCheck(
         { type: 'circle', location, sourceLabel: 'Current location' },
-        'Verify to preview your current location'
+        'Verify to review protection for your current location'
       );
     } catch (error) {
       logSystemFailure('settings_privacy_zone_current_location', error);
@@ -2255,9 +2273,9 @@ export default function Settings() {
       return;
     }
     setPrivacyCorridorWaypoints(waypoints);
-    await openPrivacyPreview(
+    await openPrivacyProtectionCheck(
       { type: 'corridor', waypoints, sourceLabel: 'Recent trip route' },
-      'Verify to preview this saved route corridor'
+      'Verify to review this saved route corridor'
     );
   };
 
@@ -5043,11 +5061,9 @@ export default function Settings() {
                 : `${privacyDraft.radius_m || PRIVACY_RADIUS_DEFAULT_M} m is measured outward from the selected center point.`}
               {' '}Values outside {PRIVACY_RADIUS_MIN_M}-{PRIVACY_RADIUS_MAX_M} m are rejected. Zone creation does not send typed labels or addresses to a geocoder.
             </div>
-            {privacyDraft.sensitivity === 'high' && (
-              <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
-                High-sensitivity zones never share route data with OSRM, even if you&apos;ve consented elsewhere. Existing raw GPS inside the zone is erased when the zone is saved.
-              </div>
-            )}
+            <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
+              Existing raw GPS inside this zone is erased when the zone is saved. High sensitivity also blocks OSRM route sharing whenever a route touches the zone.
+            </div>
             {privacyDraft.type === 'corridor' && (
               <div className="mt-2 rounded-xl border border-border bg-background/60 p-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -5102,17 +5118,22 @@ export default function Settings() {
                     <span className="mt-0.5 block font-normal text-muted-foreground">Replaces these points with a sampled copy of the newest local route.</span>
                   </button>
                 </div>
+                {privacyCorridorWaypoints.length < PRIVACY_CORRIDOR_MIN_WAYPOINTS && (
+                  <div className="mt-2 rounded-lg border border-dashed border-border bg-card px-3 py-2 font-medium text-muted-foreground">
+                    Add at least {PRIVACY_CORRIDOR_MIN_WAYPOINTS} route points to check corridor protection. Use Add my location twice from two places, add your parked location, or use the latest saved trip.
+                  </div>
+                )}
                 {privacyCorridorWaypoints.length >= PRIVACY_CORRIDOR_MIN_WAYPOINTS && (
                   <button
                     type="button"
-                    onClick={() => void openPrivacyPreview({
+                    onClick={() => void openPrivacyProtectionCheck({
                       type: 'corridor',
                       waypoints: privacyCorridorWaypoints,
                       sourceLabel: 'Selected corridor points',
-                    }, 'Verify to preview these selected corridor points')}
+                    }, 'Verify to review these selected corridor points')}
                     className="mt-2 w-full rounded-lg bg-primary px-3 py-2 font-semibold text-primary-foreground"
                   >
-                    Preview protected corridor
+                    Check protected corridor
                   </button>
                 )}
               </div>
@@ -5120,7 +5141,7 @@ export default function Settings() {
             <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
               <div className="font-semibold">What protection actually does</div>
               <div className="mt-1 opacity-85">
-                GPS points and driving events inside the zone are removed before local route storage and excluded from OSRM, weather, and road-data requests. Existing saved GPS is erased immediately only for High sensitivity; Standard protects new data and lets you choose whether to purge older data when deleting the zone.
+                GPS points and driving events inside the zone are removed before local route storage and excluded from OSRM, weather, and road-data requests. Existing saved GPS inside a saved or changed zone is erased immediately; Option 2 is still available when deleting a zone to purge again before removal.
               </div>
             </div>
             <div className="mt-2 rounded-xl border border-border bg-background/60 p-3 text-xs">
@@ -5230,43 +5251,27 @@ export default function Settings() {
               <div className="mt-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100">
                 <div className="font-semibold">Frequent-stop suggestion ready</div>
                 <div className="mt-1 opacity-85">
-                  Review the label and {privacyDraft.radius_m} m radius above, then preview the suggested zone. Its coordinates remain local.
+                  Review the label and {privacyDraft.radius_m} m radius above, then run the protection check. Its coordinates remain local.
                 </div>
               </div>
             )}
-            <div className={`mt-2 grid gap-2 ${privacyDraft.type === 'corridor' ? 'grid-cols-1' : suggestedPrivacyLocation ? 'grid-cols-1 min-[420px]:grid-cols-3' : 'grid-cols-2'}`}>
-              {privacyDraft.type === 'corridor' && (
-                <button
-                  type="button"
-                  onClick={() => void openPrivacyPreview({
-                    type: 'corridor',
-                    waypoints: privacyCorridorWaypoints,
-                    sourceLabel: 'Private route',
-                  }, 'Verify to preview this private route corridor')}
-                  disabled={privacyZoneStorageBlocked || privacyCorridorWaypoints.length < PRIVACY_CORRIDOR_MIN_WAYPOINTS}
-                  className="flex items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
-                >
-                  <Route className="h-3.5 w-3.5" />
-                  Preview Route Corridor
-                </button>
-              )}
-              {privacyDraft.type !== 'corridor' && (
-                <>
+            {privacyDraft.type !== 'corridor' && (
+              <div className={`mt-2 grid gap-2 ${suggestedPrivacyLocation ? 'grid-cols-1 min-[420px]:grid-cols-3' : 'grid-cols-2'}`}>
               {suggestedPrivacyLocation && (
                 <button
                   type="button"
-                  onClick={() => void openPrivacyPreview({
+                  onClick={() => void openPrivacyProtectionCheck({
                     type: 'circle',
                     location: suggestedPrivacyLocation,
                     sourceLabel: 'Suggested private place',
                     clearSuggestionOnSave: true,
-                  }, 'Verify to preview this suggested private place')}
+                  }, 'Verify to review this suggested private place')}
                   disabled={privacyZoneStorageBlocked}
                   title={privacyZoneStorageBlocked ? 'Blocked by the secure-device privacy-zone guard. Use the help below to enable adding zones.' : 'Add the suggested privacy zone'}
                   className="flex items-center justify-center gap-1.5 rounded-xl bg-sky-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
                 >
                   <MapPin className="h-3.5 w-3.5" />
-                  Preview Suggested
+                  Check Suggested
                 </button>
               )}
               <button
@@ -5277,24 +5282,23 @@ export default function Settings() {
                 className="flex items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
               >
                 <LocateFixed className="h-3.5 w-3.5" />
-                Preview Current
+                Check Current
               </button>
               <button
                 type="button"
-                onClick={() => void openPrivacyPreview(
+                onClick={() => void openPrivacyProtectionCheck(
                   { type: 'circle', location: parkedLocation, sourceLabel: 'Parked location' },
-                  'Verify to preview your parked location'
+                  'Verify to review protection for your parked location'
                 )}
                 disabled={!parkedLocation || privacyZoneStorageBlocked}
                 title={privacyZoneStorageBlocked ? 'Blocked by the secure-device privacy-zone guard. Use the help below to enable adding zones.' : !parkedLocation ? 'No parked location is saved yet.' : 'Add a privacy zone at your parked location'}
                 className="flex items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-semibold disabled:opacity-50"
               >
                 <Plus className="h-3.5 w-3.5" />
-                Preview Parked
+                Check Parked
               </button>
-                </>
-              )}
-            </div>
+              </div>
+            )}
             {privacyZoneStorageBlocked && (
               <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
                 <div className="font-semibold">Add Current is disabled by the secure-device guard.</div>
@@ -5599,43 +5603,37 @@ export default function Settings() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(privacyPreview)} onOpenChange={(open) => { if (!open) setPrivacyPreview(null); }}>
-        <DialogContent className="max-w-2xl rounded-2xl">
-          <DialogHeader>
+      <Dialog open={Boolean(privacyProtectionCheck)} onOpenChange={(open) => { if (!open) setPrivacyProtectionCheck(null); }}>
+        <DialogContent className="grid max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-2xl grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden rounded-2xl p-4 sm:max-h-[88dvh] sm:w-full sm:p-6">
+          <DialogHeader className="pr-8">
             <DialogTitle>
-              Preview {privacyPreview?.type === 'corridor' ? 'protected route corridor' : 'privacy circle'}
+              Protection check: {privacyProtectionCheck?.type === 'corridor' ? 'route corridor' : 'privacy circle'}
             </DialogTitle>
             <DialogDescription>
-              This authenticated preview uses only local geometry. It does not load street tiles, geocode the label, or send these coordinates away from the app.
+              This authenticated check uses local geometry only. It verifies the circle radius or corridor side buffer, storage purge, outbound blocking, export masking, sensitivity, and duration before saving.
             </DialogDescription>
           </DialogHeader>
-          {privacyPreview && (
-            <>
+          <div className="min-h-0 overflow-y-auto pr-1">
+            {privacyProtectionCheck && (
+              <div className="space-y-3">
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
-                Sensitive location preview. Android screenshots and screen sharing are temporarily blocked while this window is open, even if screenshots are allowed elsewhere.
+                Sensitive location check. Android screenshots and screen sharing are temporarily blocked while this window is open, even if screenshots are allowed elsewhere.
               </div>
-              <PrivacyZonePreviewMap
-                type={privacyPreview.type}
-                location={privacyPreview.location}
-                waypoints={privacyPreview.waypoints}
-                distanceM={Number(privacyDraft.radius_m) || PRIVACY_RADIUS_DEFAULT_M}
+              <PrivacyZoneProtectionCheck
+                type={privacyProtectionCheck.type}
+                location={privacyProtectionCheck.location}
+                waypoints={privacyProtectionCheck.waypoints}
+                distanceM={Number(privacyProtectionCheck.radius_m) || PRIVACY_RADIUS_DEFAULT_M}
+                sensitivity={privacyProtectionCheck.sensitivity}
+                durationDays={privacyProtectionCheck.durationDays}
               />
-              <div className="rounded-xl bg-secondary/50 px-3 py-2 text-sm">
-                {privacyPreview.type === 'corridor'
-                  ? `${Number(privacyDraft.radius_m) || PRIVACY_RADIUS_DEFAULT_M} m is protected on each side of the blue route, for about ${(Number(privacyDraft.radius_m) || PRIVACY_RADIUS_DEFAULT_M) * 2} m total width.`
-                  : `${Number(privacyDraft.radius_m) || PRIVACY_RADIUS_DEFAULT_M} m is protected in every direction from the center dot.`}
               </div>
-              <div className="rounded-xl border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
-                {privacyPreview.type === 'corridor'
-                  ? `${privacyPreview.waypoints?.length || 0} local route point${privacyPreview.waypoints?.length === 1 ? '' : 's'} are used for this preview.`
-                  : `Approximate center: ${Number(privacyPreview.location?.lat).toFixed(4)}, ${Number(privacyPreview.location?.lng).toFixed(4)}.`}
-              </div>
-            </>
-          )}
-          <DialogFooter>
+            )}
+          </div>
+          <DialogFooter className="border-t border-border pt-3">
             <button
               type="button"
-              onClick={() => setPrivacyPreview(null)}
+              onClick={() => setPrivacyProtectionCheck(null)}
               className="rounded-xl border border-border px-4 py-2 text-sm font-semibold"
             >
               Go back
@@ -5643,14 +5641,14 @@ export default function Settings() {
             <button
               type="button"
               onClick={async () => {
-                const preview = privacyPreview;
-                if (!preview) return;
-                const savedZone = preview.type === 'corridor'
-                  ? await savePrivacyZone(null, preview.sourceLabel || 'Private route')
-                  : await savePrivacyZone(preview.location, preview.sourceLabel || 'Private place');
+                const check = privacyProtectionCheck;
+                if (!check) return;
+                const savedZone = check.type === 'corridor'
+                  ? await savePrivacyZone(null, check.sourceLabel || 'Private route', check.radius_m)
+                  : await savePrivacyZone(check.location, check.sourceLabel || 'Private place', check.radius_m);
                 if (!savedZone) return;
-                if (preview.clearSuggestionOnSave) setSuggestedPrivacyLocation(null);
-                setPrivacyPreview(null);
+                if (check.clearSuggestionOnSave) setSuggestedPrivacyLocation(null);
+                setPrivacyProtectionCheck(null);
               }}
               className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
             >

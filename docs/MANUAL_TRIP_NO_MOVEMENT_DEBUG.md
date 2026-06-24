@@ -2,9 +2,18 @@
 
 Created: 2026-06-15
 
+Last reviewed: 2026-06-24
+
+Current source status:
+
+- `src/lib/tripEngine.js` now exposes `reviewManualTripSave()` with three save-approval paths: normal minimum distance, coordinate-displacement fallback for sparse GPS, and sparse-GPS vehicle-speed evidence.
+- The review still rejects trips that are too short, have no usable coordinate evidence, or only show impossible/noisy movement.
+- Manual tracking still uses the web/Capacitor foreground watcher unless background tracking is enabled or the mode is `background_auto`.
+- This document remains the incident/debug record. A real-device manual-drive run is still needed to confirm the current fallback prevents the reported data-loss case.
+
 ## Summary
 
-Manual trip start is still failing for at least one real-world Android drive. The user tapped **Start Trip**, did not close the app, drove, then tapped **End Trip**. The app discarded the trip with this message:
+Manual trip start was reported failing for at least one real-world Android drive. The user tapped **Start Trip**, did not close the app, drove, then tapped **End Trip**. The app discarded the trip with this message:
 
 ```text
 Trip was not saved because Road Sage did not detect real movement. Start again when you begin driving.

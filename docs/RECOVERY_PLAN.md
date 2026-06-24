@@ -1,6 +1,14 @@
 # Road Sage Safe Recovery Plan
 
+Last reviewed: 2026-06-24
+
 Baseline: commit `75ddc9c` from May 30, 2026.
+
+Current source status:
+
+- Android package identity is still `com.drivesense.app`; `android/app/build.gradle` currently uses `versionCode = 2` and `versionName = "1.0"`.
+- `npm run recovery:guard` is wired into `prebuild` and `pretest`, so normal build/test commands check the recovery contract before running.
+- The recovery guardrails still apply. Recent privacy, backup, scoring, performance, and speed-rule changes do not remove the need for in-place upgrade testing before release.
 
 ## Non-negotiable compatibility contract
 

@@ -1,5 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import MapErrorBoundary from '@/components/MapErrorBoundary';
 import SectionErrorBoundary, { DefaultSectionErrorFallback } from '@/components/SectionErrorBoundary';
 import { logError } from '@/lib/errorReporting';
 
@@ -25,6 +26,15 @@ const findElement = (node, type) => {
     }
   }
   return findElement(children, type);
+};
+
+const installSynchronousSetState = (component) => {
+  component.setState = (update) => {
+    const patch = typeof update === 'function'
+      ? update(component.state, component.props)
+      : update;
+    component.state = { ...component.state, ...patch };
+  };
 };
 
 describe('SectionErrorBoundary', () => {
@@ -67,5 +77,29 @@ describe('SectionErrorBoundary', () => {
       component_stack: 'TripMapContent',
       section: 'trip_map',
     }));
+  });
+
+  it('keeps failed maps in fallback until an explicit retry', () => {
+    const boundary = new MapErrorBoundary({
+      children: <section>Map</section>,
+      context: 'trip_map',
+      resetKey: 'route-a',
+    });
+    installSynchronousSetState(boundary);
+
+    const firstError = new Error('leaflet failed');
+    boundary.state = { ...boundary.state, ...MapErrorBoundary.getDerivedStateFromError(firstError) };
+    boundary.componentDidCatch(firstError, { componentStack: 'TripMapContent' });
+    boundary.props = { ...boundary.props, resetKey: 'route-b' };
+
+    expect(boundary.state.error).toBe(firstError);
+    expect(boundary.state.retryNonce).toBe(0);
+    expect(logError).toHaveBeenCalledWith('trip_map', firstError, expect.objectContaining({
+      reset_key: 'route-a',
+    }));
+
+    boundary.retry();
+    expect(boundary.state.error).toBeNull();
+    expect(boundary.state.retryNonce).toBe(1);
   });
 });

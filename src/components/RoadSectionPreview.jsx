@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 import { ChevronDown, ChevronUp, Clock3, Compass, Map, Route } from 'lucide-react';
 import { isPublicPoint } from '@/lib/roadSectionIdentity';
+import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
+import useLocalSettings from '@/hooks/useLocalSettings';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
@@ -11,6 +13,8 @@ const validPoint = (point = {}) => (
 );
 
 function SectionMap({ routePoints = [], sectionPoints = [], fallbackPoint = null }) {
+  const settings = useLocalSettings();
+  const remoteTilesAllowed = !isHeightenedPrivacyMode(settings);
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const layersRef = useRef([]);
@@ -41,7 +45,9 @@ function SectionMap({ routePoints = [], sectionPoints = [], fallbackPoint = null
         dragging: true,
         scrollWheelZoom: false,
       });
-      leaflet.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+      if (remoteTilesAllowed) {
+        leaflet.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
+      }
       mapRef.current = map;
       setReady(true);
     });
@@ -51,7 +57,7 @@ function SectionMap({ routePoints = [], sectionPoints = [], fallbackPoint = null
       mapRef.current = null;
       leafletRef.current = null;
     };
-  }, []);
+  }, [remoteTilesAllowed]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -100,7 +106,16 @@ function SectionMap({ routePoints = [], sectionPoints = [], fallbackPoint = null
     setTimeout(() => map.invalidateSize(), 0);
   }, [fallback?.[0], fallback?.[1], fullRoute, ready, section]);
 
-  return <div ref={containerRef} className="h-56 w-full bg-secondary sm:h-64" />;
+  return (
+    <div className="relative">
+      <div ref={containerRef} className="h-56 w-full bg-secondary sm:h-64" />
+      {!remoteTilesAllowed && (
+        <div className="pointer-events-none absolute bottom-3 left-3 right-3 z-[500] rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs font-semibold text-amber-950 shadow dark:border-amber-900/60 dark:bg-amber-950/90 dark:text-amber-100">
+          Heightened privacy hides street-map tiles. The saved road section is drawn from local trip geometry.
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function RoadSectionPreview({

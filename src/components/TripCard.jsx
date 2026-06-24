@@ -1,4 +1,4 @@
-import { Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Star, StickyNote, Moon, Smartphone } from 'lucide-react';
+import { AlertTriangle, Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Star, StickyNote, Moon, Smartphone } from 'lucide-react';
 import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed, getTripComponentScore } from '@/lib/tripEngine';
 import {
   buildScoreExplanation,
@@ -30,6 +30,7 @@ export default function TripCard({
   const unavailableScore = overallScore.value == null;
   const privateTrip = trip.privacy_mode === 'summary_only';
   const routeDataExpired = Boolean(trip.route_data_expired_at);
+  const speedLimitReviewRequired = trip.speed_limit_review_required === true && Boolean(trip.id) && !privateTrip;
   const scoreUnavailableMessage = privateTrip
     ? 'Score unavailable because this private trip saved no route data'
     : SCORE_UNAVAILABLE_MESSAGE;
@@ -139,6 +140,22 @@ export default function TripCard({
               <ShieldAlert className="h-3.5 w-3.5" />
               Route expired - summary kept
             </div>
+          )}
+
+          {speedLimitReviewRequired && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                navigate(`/trips/${trip.id}?review=speed-limit-conflicts`);
+              }}
+              className="pointer-events-auto relative z-10 mt-2 inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100"
+              title="Open the parked speed-limit review for this trip"
+              aria-label={`Review speed limits for ${title}`}
+            >
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Review speed
+            </button>
           )}
 
           {displayTags.length > 0 && (

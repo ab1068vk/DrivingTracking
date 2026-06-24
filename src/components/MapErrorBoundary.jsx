@@ -42,17 +42,15 @@ export default class MapErrorBoundary extends Component {
     logError(this.props.context || 'leaflet_map_error', error, {
       component_stack: info?.componentStack || '',
       section: this.props.context || 'map',
+      reset_key: this.props.resetKey || null,
     });
   }
 
-  componentDidUpdate(previousProps) {
-    if (this.state.error && previousProps.resetKey !== this.props.resetKey) {
-      this.setState({ error: null, retryNonce: this.state.retryNonce + 1 });
-    }
-  }
-
   retry = () => {
-    this.setState((state) => ({ error: null, retryNonce: state.retryNonce + 1 }));
+    this.setState((state) => ({
+      error: null,
+      retryNonce: state.retryNonce + 1,
+    }));
     this.props.onRetry?.();
   };
 

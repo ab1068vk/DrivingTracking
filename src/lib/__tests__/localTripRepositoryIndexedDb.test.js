@@ -336,7 +336,7 @@ describe('localTripRepository IndexedDB migrations', () => {
       distance_km: 18.2,
       duration_seconds: 1800,
       route_points: [],
-      route_data_retention_days: 90,
+      route_data_retention_days: 30,
       needs_rescore: false,
     });
     expect(expired.driving_events[0]).toEqual({ type: 'harsh_brake', value: -4 });

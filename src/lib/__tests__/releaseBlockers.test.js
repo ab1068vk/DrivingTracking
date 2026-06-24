@@ -877,6 +877,30 @@ describe('release blocker regressions', () => {
     expect(tripDetailSource).toContain('onResolved={handleSpeedLimitReviewResolved}');
   });
 
+  it('saves the exact reviewed privacy-zone radius from the protection check', () => {
+    const settingsSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
+
+    expect(settingsSource).toContain('validatePrivacyRadius(check?.radius_m ?? privacyDraft.radius_m)');
+    expect(settingsSource).toContain('radius_m: String(validation.radius)');
+    expect(settingsSource).toContain('savePrivacyZone(null, check.sourceLabel || \'Private route\', check.radius_m)');
+    expect(settingsSource).toContain('savePrivacyZone(check.location, check.sourceLabel || \'Private place\', check.radius_m)');
+    expect(settingsSource).toContain('distanceM={Number(privacyProtectionCheck.radius_m) || PRIVACY_RADIUS_DEFAULT_M}');
+    expect(settingsSource).not.toContain('distanceM={Number(privacyDraft.radius_m) || PRIVACY_RADIUS_DEFAULT_M}');
+  });
+
+  it('keeps the privacy-zone protection check scrollable on small screens', () => {
+    const settingsSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
+    const protectionCheckSource = readFileSync(new URL('../../components/PrivacyZoneProtectionCheck.jsx', import.meta.url), 'utf8');
+
+    expect(settingsSource).toContain('max-h-[calc(100dvh-1rem)]');
+    expect(settingsSource).toContain('grid-rows-[auto_minmax(0,1fr)_auto]');
+    expect(settingsSource).toContain('min-h-0 overflow-y-auto');
+    expect(settingsSource).toContain('DialogFooter className="border-t border-border pt-3"');
+    expect(protectionCheckSource).toContain('h-44');
+    expect(protectionCheckSource).toContain('sm:h-52');
+    expect(protectionCheckSource).not.toContain('className="h-72');
+  });
+
   it('shows trip speed-limit source mix instead of a vague estimate note only', () => {
     const tripDetailSource = readFileSync(new URL('../../pages/TripDetail.jsx', import.meta.url), 'utf8');
 
@@ -983,6 +1007,20 @@ describe('release blocker regressions', () => {
     expect(tripMapSource).toContain('if (leafletMapRef.current === map) safeLeafletCall(() => map.invalidateSize({ animate: false }))');
   });
 
+  it('keeps Trip Map tile and overview renderer failures from cascading', () => {
+    const tripMapSource = readFileSync(new URL('../../components/TripMap.jsx', import.meta.url), 'utf8');
+
+    expect(tripMapSource).toContain('tileErrorCountRef');
+    expect(tripMapSource).toContain('tileFailureReportedRef');
+    expect(tripMapSource).toContain("tileLayerRef.current?.off?.('tileerror', handleTileError)");
+    expect(tripMapSource).toContain('if (mapFailed) return undefined;');
+    expect(tripMapSource).toContain("Use Leaflet's default SVG renderer here.");
+    expect(tripMapSource).not.toContain('setTileErrorCount');
+    expect(tripMapSource).not.toContain('setMapFailed(false)');
+    expect(tripMapSource).not.toContain('window.L.canvas');
+    expect(tripMapSource).not.toContain('renderer: overviewRenderer');
+  });
+
   it('waits for Speed Limit Editor Map readiness before adding Leaflet overlays', () => {
     const speedLimitEditorMapSource = readFileSync(new URL('../../components/SpeedLimitEditorMap.jsx', import.meta.url), 'utf8');
     const mapStart = speedLimitEditorMapSource.indexOf('const map = L.map(containerRef.current');
@@ -994,6 +1032,6 @@ describe('release blocker regressions', () => {
     expect(sectionLayerStart).toBeGreaterThan(setViewStart);
     expect(speedLimitEditorMapSource).toContain('const [mapReady, setMapReady] = useState(false);');
     expect(speedLimitEditorMapSource).toContain('if (!mapReady || !map) return');
-    expect(speedLimitEditorMapSource).toContain('[mapReady, online]');
+    expect(speedLimitEditorMapSource).toContain('[mapReady, online, remoteTilesAllowed]');
   });
 });

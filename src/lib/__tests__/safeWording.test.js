@@ -14,7 +14,7 @@ const checkedFiles = [
   'src/lib/exportIntegrity.js',
   'src/lib/pdfExport.js',
   'src/lib/ubiReport.js',
-  'README.md',
+  'docs/PROJECT_README.md',
   'docs/README.md',
   'docs/PRIVACY_INTELLIGENCE.md',
 ];

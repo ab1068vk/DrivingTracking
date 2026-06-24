@@ -18,7 +18,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
         registerPlugin(DriveSenseActivityRecognitionPlugin.class);
         registerPlugin(ScreenSecurityPlugin.class);
         registerPlugin(BiometricAuthPlugin.class);

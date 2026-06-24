@@ -1,10 +1,17 @@
 # Road Sage Speed, Speed-Limit Fallback, and Voice Alert Documentation
 
-Last reviewed: 2026-06-20
+Last reviewed: 2026-06-24
 
 This document explains the current Road Sage speed pipeline: how speed is recorded, cleaned, scored, compared against speed limits, enriched by OpenStreetMap, and spoken through live voice alerts.
 
 It is intentionally a current-state document. It describes what the app does today, including the fallback behavior when `Get Road Data` is not used.
+
+Current source status:
+
+- Saved road-speed rules live in IndexedDB through `src/lib/speedKnowledgeRepository.js`, with local-storage/Capacitor fallback migration still supported.
+- The Speed Limits page uses virtualized saved-rule rows and schedules the expensive map-model trip load through idle work; the map model still reads up to 500 full trips when the map workspace needs route geometry.
+- `src/lib/speedLimitMapSections.js` owns saved-road section building, splitting, merging, health metadata, and map-preparation helpers; `src/components/SpeedLimitEditorMap.jsx` is now the rendering surface for the prepared sections.
+- Speed-only export/restore, undo/redo history, review queues, direction/time rules, verified coverage, and conflict triage are current behavior.
 
 ## Quick Answer
 

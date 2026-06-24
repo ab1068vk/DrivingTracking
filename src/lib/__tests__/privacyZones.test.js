@@ -9,6 +9,7 @@ import {
   deriveZoneStatsFromTrips,
   findOverlappingZones,
   getBoundaryTimestampFuzz,
+  getPrivacyZonesRevision,
   getPrivacyZoneDisplayCircle,
   getPrivacyZones,
   getZoneEffectiveness,
@@ -26,6 +27,7 @@ import {
   mergePrivacyZones,
   NATIVE_PRIVACY_ZONES_KEY,
   NATIVE_PRIVACY_SYNC_STATUS_FAILED,
+  PRIVACY_ZONES_CHANGED_EVENT,
   PRIVACY_RADIUS_DEFAULT_M,
   PRIVACY_RADIUS_MAX_M,
   PRIVACY_RADIUS_MIN_M,
@@ -902,7 +904,7 @@ describe('privacyZones', () => {
     expect(updated.osrm_data_sharing_consented_at).toBe('');
     expect(updated.osrm_consent_invalidated_reason).toBe('privacy_zone_changed');
     expect(updated.osrm_consent_invalidated_zone_label).toBe('Home');
-    expect(updated.map_matching_enabled).toBe(true);
+    expect(updated.map_matching_enabled).toBe(false);
     expect(storedSettings.privacy_zones[0]).toMatchObject({
       id: 'home',
       label: 'Home',
@@ -1212,5 +1214,61 @@ describe('privacyZones', () => {
     expect(storedZones[0].display_lat).toBeUndefined();
     expect(storedZones[0].display_lng).toBeUndefined();
     expect(storedZones[0].display_radius_m).toBeUndefined();
+  });
+
+  it('notifies maps when encrypted privacy zones hydrate without exposing exact settings coordinates', async () => {
+    const events = [];
+    const values = new Map([[
+      'drivesense_settings',
+      JSON.stringify({
+        settings_defaults_version: 9,
+        privacy_zones: [{
+          id: 'home',
+          label: 'Home',
+          radius_m: 100,
+          exclude_from_osrm: true,
+          masked_for_privacy: true,
+        }],
+      }),
+    ]]);
+    class TestCustomEvent {
+      constructor(type, init = {}) {
+        this.type = type;
+        this.detail = init.detail;
+      }
+    }
+    vi.stubGlobal('CustomEvent', TestCustomEvent);
+    vi.stubGlobal('window', {
+      dispatchEvent: vi.fn((event) => {
+        events.push(event);
+        return true;
+      }),
+    });
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+    await setEncryptedJson(PRIVACY_ZONES_SECURE_KEY, [{
+      id: 'home',
+      label: 'Home',
+      radius_m: 100,
+      exclude_from_osrm: true,
+      privacy_cell_schema: 'global_grid_v1',
+      privacy_cell_size_m: 50,
+      privacy_cell_hashes: createPrivacyCellHashes(zone),
+      masked_for_privacy: true,
+    }]);
+
+    const beforeRevision = getPrivacyZonesRevision();
+    await loadPrivacyZonesFromStorage(JSON.parse(values.get('drivesense_settings')));
+    const storedSettings = JSON.parse(values.get('drivesense_settings'));
+
+    expect(getPrivacyZonesRevision()).toBeGreaterThan(beforeRevision);
+    expect(events.some((event) => event.type === PRIVACY_ZONES_CHANGED_EVENT)).toBe(true);
+    expect(storedSettings.privacy_zones[0].lat).toBeUndefined();
+    expect(storedSettings.privacy_zones[0].lng).toBeUndefined();
+    expect(JSON.stringify(storedSettings)).not.toContain('43.65');
+    expect(JSON.stringify(storedSettings)).not.toContain('-79.38');
   });
 });

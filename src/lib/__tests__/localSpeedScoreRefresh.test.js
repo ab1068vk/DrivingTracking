@@ -29,6 +29,7 @@ vi.mock('@/lib/trackingStore', () => ({
 import { geohashEncode } from '@/lib/localSpeedKnowledge';
 import {
   refreshTripsCrossingLocalSpeedCell,
+  refreshTripsForLocalSpeedCorrections,
   refreshTripsForLocalSpeedKnowledgeChanges,
 } from '@/lib/localSpeedScoreRefresh';
 
@@ -96,5 +97,99 @@ describe('local speed score refresh', () => {
       score_overall: 88,
       needs_rescore: false,
     });
+  });
+
+  it('detects a removed traced rule even when another rule shares its geohash', async () => {
+    const sharedGeohash = 'same-cell';
+    const removedRule = {
+      id: 'removed-eastbound',
+      geohash: sharedGeohash,
+      lat: 43.6532,
+      lng: -79.3832,
+      limitKmh: 50,
+      directionMode: 'both',
+      sectionPoints: [
+        { lat: 43.6532, lng: -79.3832 },
+        { lat: 43.6533, lng: -79.3831 },
+      ],
+    };
+    const retainedRule = {
+      id: 'retained-westbound',
+      geohash: sharedGeohash,
+      lat: 43.6572,
+      lng: -79.3872,
+      limitKmh: 60,
+      directionMode: 'both',
+      sectionPoints: [
+        { lat: 43.6572, lng: -79.3872 },
+        { lat: 43.6573, lng: -79.3871 },
+      ],
+    };
+    state.trips = [
+      {
+        id: 'crosses-removed-rule',
+        status: 'completed',
+        route_points: [{ lat: 43.65321, lng: -79.38319 }],
+      },
+      {
+        id: 'elsewhere',
+        status: 'completed',
+        route_points: [{ lat: 43.66, lng: -79.39 }],
+      },
+    ];
+
+    const updated = await refreshTripsForLocalSpeedKnowledgeChanges(
+      { cells: {}, corrections: [removedRule, retainedRule] },
+      { cells: {}, corrections: [retainedRule] },
+      {}
+    );
+
+    expect(updated).toHaveLength(1);
+    expect(state.update).toHaveBeenCalledTimes(1);
+    expect(state.update).toHaveBeenCalledWith('crosses-removed-rule', {
+      score_overall: 88,
+      needs_rescore: false,
+    });
+  });
+
+  it('recalculates a trip once when multiple changed corrections match it', async () => {
+    const routePoint = { lat: 43.6532, lng: -79.3832 };
+    state.trips = [
+      {
+        id: 'matching-once',
+        status: 'completed',
+        route_points: [routePoint],
+      },
+    ];
+    const corrections = [
+      {
+        id: 'first-rule',
+        geohash: 'cell-1',
+        ...routePoint,
+        limitKmh: 50,
+        directionMode: 'both',
+        sectionPoints: [
+          { lat: 43.6531, lng: -79.3833 },
+          { lat: 43.6533, lng: -79.3831 },
+        ],
+      },
+      {
+        id: 'second-rule',
+        geohash: 'cell-2',
+        ...routePoint,
+        limitKmh: 60,
+        directionMode: 'both',
+        sectionPoints: [
+          { lat: 43.6530, lng: -79.3834 },
+          { lat: 43.6534, lng: -79.3830 },
+        ],
+      },
+    ];
+
+    const updated = await refreshTripsForLocalSpeedCorrections(corrections, {});
+
+    expect(updated).toHaveLength(1);
+    expect(state.buildPatch).toHaveBeenCalledTimes(1);
+    expect(state.update).toHaveBeenCalledTimes(1);
   });
 });

@@ -27,7 +27,11 @@ import {
   PRIVACY_SCORE_HISTORY_KEY,
   getPrivacyScoreHistory,
 } from '@/lib/privacyIntelligence';
-import { getHydratedPrivacyZones } from '@/lib/privacyZones';
+import {
+  createPrivacyExportSalt,
+  getHydratedPrivacyZones,
+  maskTripForPrivacyExport,
+} from '@/lib/privacyZones';
 import { PRIVACY_ZONE_SUGGESTION_DISMISSALS_KEY } from '@/lib/privacyZoneSuggestions';
 import { RESCORING_QUEUE_KEY } from '@/lib/rescoringQueue';
 import { ROAD_CONTEXT_QUEUE_STORAGE_KEY } from '@/lib/roadContextQueue';
@@ -168,6 +172,24 @@ export function validatePortabilityExport(bundle = {}) {
   };
 }
 
+const privacyZonePortabilityPlaceholders = (zones = []) => (
+  (Array.isArray(zones) ? zones : []).map((zone) => ({
+    id: zone?.id || null,
+    label: zone?.label || 'Private place',
+    type: zone?.type === 'corridor' ? 'corridor' : 'circle',
+    sensitivity: zone?.sensitivity === 'high' ? 'high' : 'standard',
+    ...(zone?.expiresAt ? { expiresAt: zone.expiresAt } : {}),
+    masked_for_privacy: true,
+  }))
+);
+
+const privacySafeSettingsForPortability = (settings = {}, zones = []) => {
+  const safe = { ...(settings || {}) };
+  delete safe.last_map_center;
+  safe.privacy_zones = privacyZonePortabilityPlaceholders(zones);
+  return safe;
+};
+
 export async function buildDataPortabilityExport({
   trips = null,
   vehicles = null,
@@ -176,23 +198,32 @@ export async function buildDataPortabilityExport({
   scoreHistory = null,
 } = {}) {
   const resolvedSettings = settings || localSettings.get();
+  const resolvedPrivacyZones = Array.isArray(privacyZones)
+    ? privacyZones
+    : await getHydratedPrivacyZones(resolvedSettings).catch(() => []);
+  const sourceTrips = Array.isArray(trips)
+    ? trips
+    : await tripService.listAll({ sort: '-start_time' });
+  const privacyExportSalt = createPrivacyExportSalt();
+  const privacySettings = {
+    ...resolvedSettings,
+    privacy_zones: resolvedPrivacyZones,
+  };
   const bundle = {
     format: DATA_PORTABILITY_FORMAT,
     version: DATA_PORTABILITY_VERSION,
     schema: {
-      trips: 'Array of the user-owned stored trip records, including route points/events as retained locally.',
+      trips: 'Array of the user-owned stored trip records after privacy-zone export masking.',
       vehicles: 'Array of locally stored vehicle records.',
-      settings: 'Road Sage local settings at export time.',
-      privacyZones: 'Configured privacy zones hydrated from secure local storage.',
+      settings: 'Road Sage local settings at export time, with coordinate-bearing privacy fields removed.',
+      privacyZones: 'Configured privacy-zone placeholders with exact geometry and cell hashes removed.',
       scoreHistory: 'Privacy Intelligence score-history entries.',
     },
     generatedAt: new Date().toISOString(),
-    trips: Array.isArray(trips) ? trips : await tripService.listAll({ sort: '-start_time' }),
+    trips: sourceTrips.map((trip) => maskTripForPrivacyExport(trip, privacySettings, privacyExportSalt)),
     vehicles: Array.isArray(vehicles) ? vehicles : await vehicleService.list({ sort: '-created_date', limit: 1000 }),
-    settings: resolvedSettings,
-    privacyZones: Array.isArray(privacyZones)
-      ? privacyZones
-      : await getHydratedPrivacyZones(resolvedSettings).catch(() => []),
+    settings: privacySafeSettingsForPortability(resolvedSettings, resolvedPrivacyZones),
+    privacyZones: privacyZonePortabilityPlaceholders(resolvedPrivacyZones),
     scoreHistory: Array.isArray(scoreHistory) ? scoreHistory : await getPrivacyScoreHistory(),
   };
   const validation = validatePortabilityExport(bundle);

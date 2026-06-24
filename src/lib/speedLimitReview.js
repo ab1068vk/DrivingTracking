@@ -61,34 +61,76 @@ function conflictFingerprint(cell = {}) {
   return [
     'cell',
     cell.geohash || 'unknown-cell',
-    cell.lastUpdatedAt || details.detectedAt || '',
     Math.round(Number(cell.limitKmh) || 0),
     Math.round(Number(details.existingLimitKmh) || 0),
     Math.round(Number(details.newLimitKmh) || 0),
   ].join(':');
 }
 
-function tripReviewFingerprint(trip = null, reviewCellCount = 0) {
+function tripReviewFingerprint(trip = null) {
   if (!trip) return null;
   return [
     'trip',
     trip.id || 'unknown-trip',
     trip.speed_limit_review_required === true ? 'required' : 'derived',
-    Math.max(1, Number(reviewCellCount) || 0),
   ].join(':');
 }
 
 export function buildDashboardSpeedLimitReviewFingerprint({
   conflictedCells = [],
   reviewTrip = null,
-  reviewCellCount = 0,
 } = {}) {
   const affectedItems = [
     ...(Array.isArray(conflictedCells) ? conflictedCells.map(conflictFingerprint) : []),
-    tripReviewFingerprint(reviewTrip, reviewCellCount),
+    tripReviewFingerprint(reviewTrip),
   ].filter(Boolean).sort();
 
   return affectedItems.length ? affectedItems.join('|') : '';
+}
+
+const normalizeSpeedLimitReviewItem = (item) => {
+  const raw = String(item || '').trim();
+  if (!raw) return '';
+
+  const parts = raw.split(':');
+  if (parts[0] === 'cell') {
+    const geohash = parts[1] || 'unknown-cell';
+    const [limitKmh, existingLimitKmh, newLimitKmh] = parts.slice(-3);
+    return [
+      'cell',
+      geohash,
+      Math.round(Number(limitKmh) || 0),
+      Math.round(Number(existingLimitKmh) || 0),
+      Math.round(Number(newLimitKmh) || 0),
+    ].join(':');
+  }
+
+  if (parts[0] === 'trip') {
+    const last = parts[parts.length - 1];
+    const status = /^\d+$/.test(last) ? parts[parts.length - 2] : last;
+    const reviewStatus = status === 'required' ? 'required' : 'derived';
+    return ['trip', parts[1] || 'unknown-trip', reviewStatus].join(':');
+  }
+
+  return '';
+};
+
+export function normalizeDashboardSpeedLimitReviewFingerprint(fingerprint = '') {
+  return String(fingerprint || '')
+    .split('|')
+    .map(normalizeSpeedLimitReviewItem)
+    .filter(Boolean)
+    .sort()
+    .join('|');
+}
+
+export function isDashboardSpeedLimitReviewDismissed(dismissedFingerprint = '', currentFingerprint = '') {
+  const currentItems = normalizeDashboardSpeedLimitReviewFingerprint(currentFingerprint).split('|').filter(Boolean);
+  if (!currentItems.length) return false;
+  const dismissedItems = new Set(
+    normalizeDashboardSpeedLimitReviewFingerprint(dismissedFingerprint).split('|').filter(Boolean)
+  );
+  return currentItems.every((item) => dismissedItems.has(item));
 }
 
 export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {}) {

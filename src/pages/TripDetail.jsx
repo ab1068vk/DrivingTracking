@@ -51,7 +51,11 @@ import {
   isRoadDataLookupConfigured,
 } from '@/lib/openSourceTripContext';
 import { runRoadContextRefresh } from '@/lib/roadContextQueue';
-import { refreshTripForLocalSpeedKnowledge } from '@/lib/localSpeedScoreRefresh';
+import {
+  refreshTripForLocalSpeedKnowledge,
+  refreshTripsCrossingLocalSpeedCell,
+  refreshTripsForLocalSpeedCorrections,
+} from '@/lib/localSpeedScoreRefresh';
 import {
   SPEED_LIMIT_DEFAULT_COUNTRY_LABELS,
   speedLimitDefaultCountryKey,
@@ -468,6 +472,7 @@ export default function TripDetail() {
   const speedLimitReviewMutation = useMutation({
     mutationFn: async (/** @type {any} */ result) => {
       const latestTrip = await tripService.getById(id);
+      const refreshSettings = localSettings.get();
       const reviewPatch = result.tripReviewComplete && latestTrip?.speed_limit_review_required !== false
         ? {
           speed_limit_review_required: false,
@@ -475,8 +480,31 @@ export default function TripDetail() {
           speed_limit_review_reason: null,
         }
         : {};
-      const updatedTrip = await refreshTripForLocalSpeedKnowledge(latestTrip, localSettings.get(), reviewPatch);
-      return { updatedTrip, beforeTrip: latestTrip };
+      const corrections = Array.isArray(result?.corrections)
+        ? result.corrections.filter(Boolean)
+        : [];
+      const geohashes = [...new Set([
+        result?.geohash,
+        ...(Array.isArray(result?.geohashes) ? result.geohashes : []),
+      ].filter(Boolean).map(String))];
+      let affectedTrips = [];
+      if (corrections.length) {
+        affectedTrips = await refreshTripsForLocalSpeedCorrections(corrections, refreshSettings);
+      } else if (geohashes.length) {
+        const batches = await Promise.all(geohashes.map((geohash) => (
+          refreshTripsCrossingLocalSpeedCell(geohash, refreshSettings)
+        )));
+        const byId = new Map(batches.flat().filter(Boolean).map((item) => [String(item.id), item]));
+        affectedTrips = [...byId.values()];
+      }
+      let updatedTrip = affectedTrips.find((item) => String(item?.id) === String(id)) || null;
+      if (Object.keys(reviewPatch).length > 0 || !updatedTrip) {
+        updatedTrip = await refreshTripForLocalSpeedKnowledge(updatedTrip || latestTrip, refreshSettings, reviewPatch);
+        const nextAffectedById = new Map(affectedTrips.filter(Boolean).map((item) => [String(item.id), item]));
+        nextAffectedById.set(String(updatedTrip.id), updatedTrip);
+        affectedTrips = [...nextAffectedById.values()];
+      }
+      return { updatedTrip, beforeTrip: latestTrip, affectedTrips };
     },
     onSuccess: (result) => {
       const updatedTrip = result?.updatedTrip;
@@ -484,7 +512,8 @@ export default function TripDetail() {
       qc.invalidateQueries({ queryKey: ['trip', id] });
       invalidateTripLists();
       qc.invalidateQueries({ queryKey: ['map-trips'] });
-      setFeedbackStatus(`Saved road speed. Matching trip was rescored locally. ${tripScoreDeltaSummary(result?.beforeTrip, updatedTrip)}`);
+      const affectedCount = Array.isArray(result?.affectedTrips) ? result.affectedTrips.length : 0;
+      setFeedbackStatus(`Saved road speed. Re-scored ${Math.max(1, affectedCount)} matching trip${Math.max(1, affectedCount) === 1 ? '' : 's'} locally. ${tripScoreDeltaSummary(result?.beforeTrip, updatedTrip)}`);
       setTimeout(() => setFeedbackStatus(''), 6000);
     },
     onError: () => {
@@ -493,10 +522,16 @@ export default function TripDetail() {
     },
   });
   const handleSpeedLimitReviewResolved = useCallback((result = {}) => {
-    if (result.geohash || result.source) {
+    const hasSavedRoadChange = Boolean(
+      result.geohash ||
+      result.source ||
+      (Array.isArray(result.geohashes) && result.geohashes.length > 0) ||
+      (Array.isArray(result.corrections) && result.corrections.length > 0)
+    );
+    if (hasSavedRoadChange) {
       setSpeedLimitKnowledgeRevision((value) => value + 1);
     }
-    if (!trip?.id || (!result.geohash && !result.source && !result.tripReviewComplete)) return;
+    if (!trip?.id || (!hasSavedRoadChange && !result.tripReviewComplete)) return;
     speedLimitReviewMutation.mutate(result);
   }, [speedLimitReviewMutation, trip?.id]);
   const feedbackRescoreMutation = useMutation({

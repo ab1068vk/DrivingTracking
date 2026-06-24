@@ -1,9 +1,12 @@
 # Road Sage Documentation
 
-This folder is the home for project documentation beyond the root `README.md`.
+Last updated: 2026-06-24
+
+This folder is the home for all project Markdown documentation.
 
 ## Current Docs
 
+- [Project README](PROJECT_README.md): broad app overview, local setup, Android setup, privacy defaults, architecture notes, and current feature surface.
 - [Technical reference](TECHNICAL_REFERENCE.md): generated repository reference covering source inventory, calculations, constants, storage, routes, security analysis, tests, dependencies, and deployment notes.
 - [UI and loading performance guide](UI_LOADING_PERFORMANCE.md): app-wide lag incident playbook, Saved road speeds analysis, UI loading rules, measurement plan, AI handoff prompt, and implementation snippets.
 - [Speed and fallback behavior](speed-and-fallbacks.md): current speed capture, speed-limit fallback, OpenStreetMap enrichment, and voice-alert behavior.
@@ -21,4 +24,6 @@ Run this after meaningful source or README changes:
 node scripts/generate-technical-reference.mjs
 ```
 
-The generator writes `docs/TECHNICAL_REFERENCE.md` and refreshes the root `README.md`.
+The generator writes `docs/TECHNICAL_REFERENCE.md` and refreshes `docs/PROJECT_README.md`.
+
+All Markdown files are intentionally kept in `docs/`. If the generator or a new workflow creates a root-level Markdown file, move it back here and update this index.

@@ -9,7 +9,7 @@ import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { activeTripStore, applyThemeMode, localSettings } from '@/lib/trackingStore';
+import { activeTripStore, applyThemeMode, localSettings, SETTINGS_CHANGED_EVENT } from '@/lib/trackingStore';
 import { loadPrivacyZonesFromStorage, sweepExpiredPrivacyZones } from '@/lib/privacyZones';
 import { isAndroid } from '@/lib/nativePlatform';
 import { startNativeAutoTracking } from '@/lib/activityRecognition';
@@ -178,9 +178,12 @@ const AuthenticatedApp = () => {
         .catch((error) => logSystemFailure('screen_capture_policy_apply', error));
       checkIntegrity()
         .catch((error) => logSystemFailure('device_integrity_check', error));
-      loadPrivacyZonesFromStorage(settings)
-        .then(() => sweepExpiredZonesOnForeground())
-        .catch((error) => logSystemFailure('privacy_zones_load', error));
+      try {
+        await loadPrivacyZonesFromStorage(settings);
+        await sweepExpiredZonesOnForeground();
+      } catch (error) {
+        logSystemFailure('privacy_zones_load', error);
+      }
       activeTripStore.hydrate()
         .catch((error) => logSystemFailure('active_trip_hydrate', error));
       syncNativeCompletedTripsToLocalStore()
@@ -223,6 +226,15 @@ const AuthenticatedApp = () => {
     });
   }, []);
 
+  useEffect(() => {
+    const onSettingsChanged = (event) => {
+      applyThemeMode(event.detail?.settings?.dark_mode);
+    };
+    applyThemeMode(localSettings.get().dark_mode);
+    window.addEventListener(SETTINGS_CHANGED_EVENT, onSettingsChanged);
+    return () => window.removeEventListener(SETTINGS_CHANGED_EVENT, onSettingsChanged);
+  }, []);
+
   const unlockApp = async () => {
     if (unlockInProgressRef.current) return;
     unlockInProgressRef.current = true;
@@ -255,6 +267,7 @@ const AuthenticatedApp = () => {
 
     CapacitorApp.addListener('appStateChange', ({ isActive }) => {
       if (isActive) {
+        applyThemeMode(localSettings.get().dark_mode);
         measureAsync('app.resume.privacyZoneSweep', () => sweepExpiredZonesOnForeground(), { source: 'appStateChange' })
           .catch((error) => logSystemFailure('app_resume_privacy_zone_expiry', error));
         measureAsync('app.resume.nativeTripSync', () => syncNativeCompletedTripsToLocalStore(), { source: 'appStateChange' })
@@ -288,6 +301,7 @@ const AuthenticatedApp = () => {
   useEffect(() => {
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
+        applyThemeMode(localSettings.get().dark_mode);
         measureAsync('app.resume.privacyZoneSweep', () => sweepExpiredZonesOnForeground(), { source: 'visibilitychange' })
           .catch((error) => logSystemFailure('visibility_privacy_zone_expiry', error));
         measureAsync('app.resume.keyRotation', () => checkAndRotateEncryptionKey(), { source: 'visibilitychange' })
