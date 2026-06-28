@@ -398,6 +398,7 @@ export function OverviewTab({ data, onOpenTab, onOpenSettings }) {
   const transmissions = data?.transmissions || {};
   const recommendations = data?.recommendations || [];
   const actionPlan = data?.actionPlan || {};
+  const evidenceSnapshot = data?.evidenceSnapshot || {};
   const protectionFindings = data?.protectionSummary?.findings || [];
   const postureRegressionFindings = data?.protectionSummary?.postureRegressionFindings || [];
   const compoundRiskFindings = score.compoundRiskFindings || [];
@@ -476,6 +477,7 @@ export function OverviewTab({ data, onOpenTab, onOpenSettings }) {
             <div className="text-xs font-bold uppercase tracking-wide opacity-70">What to do next</div>
             <h2 className="mt-1 break-words text-lg font-semibold">{actionPlan.headline || 'Privacy review unavailable'}</h2>
             <p className="mt-1 break-words text-sm opacity-85">{actionPlan.claim || 'This dashboard reports local evidence only.'}</p>
+            {actionPlan.nextStep && <p className="mt-2 break-words text-sm font-semibold opacity-95">Next: {actionPlan.nextStep}</p>}
           </div>
           {actionPlan.primaryAction?.targetTab && actionPlan.primaryAction.targetTab !== 'overview' && (
             <button
@@ -503,6 +505,31 @@ export function OverviewTab({ data, onOpenTab, onOpenSettings }) {
           </div>
         )}
       </section>
+      {(evidenceSnapshot.items || []).length > 0 && (
+        <section className="min-w-0 rounded-2xl border border-border bg-card p-4 shadow-sm">
+          <div className="flex min-w-0 flex-col gap-1">
+            <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Evidence that matters</div>
+            <h2 className="break-words text-lg font-semibold">{evidenceSnapshot.primaryTakeaway || 'Review the current privacy evidence.'}</h2>
+          </div>
+          <div className="mt-4 grid min-w-0 gap-3 lg:grid-cols-3">
+            {evidenceSnapshot.items.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => item.targetTab && onOpenTab(item.targetTab)}
+                className={`min-w-0 rounded-xl border p-3 text-left shadow-sm transition-colors hover:bg-secondary/40 ${actionToneClass[item.tone] || actionToneClass.unknown}`}
+              >
+                <div className="flex min-w-0 items-center gap-2 text-xs font-bold uppercase tracking-wide opacity-70">
+                  {item.tone === 'error' ? <AlertTriangle className="h-4 w-4 shrink-0" /> : item.tone === 'ok' ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <Info className="h-4 w-4 shrink-0" />}
+                  <span className="min-w-0 break-words">{item.label}</span>
+                </div>
+                <div className="mt-2 break-words text-sm font-semibold">{item.headline}</div>
+                <div className="mt-1 break-words text-xs opacity-80">{item.detail}</div>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       <div className="grid min-w-0 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
         <section className={`min-w-0 rounded-3xl border p-5 shadow-sm ${statusClass[score.tone] || statusClass.warn}`}>
           <div className="flex items-center justify-between gap-3">
@@ -879,7 +906,7 @@ export function ZonesTab({ data, onAcceptSuggestion, onDismissSuggestion }) {
         onDismissSuggestion={onDismissSuggestion}
       />
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-        <div className="flex items-start gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="font-semibold">How these counts work</div><p className="mt-1 text-xs text-muted-foreground">Zone counts come from saved trip records, not from refreshing this page. The score input self-test uses a synthetic zone and only proves the scoring pipeline is masking private inputs; it is not a count of your real drives.</p></div></div>
+        <div className="flex items-start gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="font-semibold">How these counts work</div><p className="mt-1 text-xs text-muted-foreground">Zone counts come from saved trip records, not from refreshing this page. The score input self-test uses a synthetic zone and only checks that the scoring pipeline is masking private inputs; it is not a count of your real drives.</p></div></div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard icon={MapPin} label="Configured zones" value={summary.zoneCount || 0} detail={`${summary.activeZoneCount || 0} have protected trip activity`} />

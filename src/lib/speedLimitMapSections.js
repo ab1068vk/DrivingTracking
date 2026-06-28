@@ -7,6 +7,9 @@ const pointRoadName = (point = {}) => String(point.speed_limit_road_name || '').
 const pointSource = (point = {}) => point.speed_limit_source ?? point.limitSource ?? point.speedLimitSource ?? point.source ?? null;
 const DAY_MS = 86400000;
 const EXPIRING_SOON_MS = DAY_MS * 30;
+const ROUTE_SECTION_MAX_DISTANCE_M = 900;
+const ROUTE_SECTION_MIN_DISTANCE_M = 70;
+const ROUTE_SECTION_GAP_DISTANCE_M = 250;
 const CONFIRMED_LIMIT_SOURCES = new Set([
   'openstreetmap',
   'user_confirmed_posted_sign',
@@ -56,6 +59,10 @@ const distanceMeters = (a, b) => {
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
   return 6371000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
 };
+
+const sectionLengthMeters = (points = []) => cleanGeometry(points).reduce((sum, point, index, geometry) => (
+  index === 0 ? 0 : sum + distanceMeters(geometry[index - 1], point)
+), 0);
 
 const pointToSegmentDistanceMeters = (point, start, end) => {
   const latitude = Number(point?.lat);
@@ -129,6 +136,64 @@ const splitGeometryAtMidpoint = (points = []) => {
 };
 
 const normalizedRoadName = (value) => String(value || '').trim().toLowerCase();
+
+const routePointSignature = (point = {}) => ({
+  roadName: normalizedRoadName(pointRoadName(point)),
+  limit: pointLimit(point),
+});
+
+const chunkSignature = (points = []) => {
+  const signatures = points.map(routePointSignature);
+  return {
+    roadName: mode(signatures.map((signature) => signature.roadName)),
+    limit: numberMode(signatures.map((signature) => signature.limit)),
+  };
+};
+
+const routePointBreaksChunk = (chunk = [], next = {}) => {
+  const previousSignature = chunkSignature(chunk);
+  const nextSignature = routePointSignature(next);
+  if (
+    previousSignature.roadName &&
+    nextSignature.roadName &&
+    previousSignature.roadName !== nextSignature.roadName
+  ) return true;
+  if (
+    previousSignature.limit != null &&
+    nextSignature.limit != null &&
+    previousSignature.limit !== nextSignature.limit
+  ) return true;
+  return false;
+};
+
+const routePointsCompatible = (previous = {}, next = {}) => {
+  const previousSignature = routePointSignature(previous);
+  const nextSignature = routePointSignature(next);
+  if (
+    previousSignature.roadName &&
+    nextSignature.roadName &&
+    previousSignature.roadName !== nextSignature.roadName
+  ) return false;
+  if (
+    previousSignature.limit != null &&
+    nextSignature.limit != null &&
+    previousSignature.limit !== nextSignature.limit
+  ) return false;
+  return true;
+};
+
+const routeChunksCompatible = (first = [], second = []) => {
+  const firstPoint = first.at(-1);
+  const secondPoint = second[0];
+  return firstPoint && secondPoint && routePointsCompatible(firstPoint, secondPoint);
+};
+
+const segmentCandidateKey = (trip = {}, tripIndex = 0, segmentIndex = 0, center = {}) => [
+  'route-section',
+  trip?.id || trip?.trip_id || trip?.start_time || tripIndex,
+  segmentIndex,
+  geohashEncode(center.lat, center.lng),
+].join('-');
 
 const tripLabel = (trip = {}, index = 0) => (
   trip.name || trip.title || trip.label || trip.id || `trip-${index + 1}`
@@ -480,10 +545,11 @@ export function mergeSpeedSections(first = {}, second = {}) {
   };
 }
 
-const sectionCandidate = (geohash, points, tripId) => {
+const sectionCandidate = (sectionKey, points, tripId, metadata = {}) => {
   const geometry = limitGeometryPoints(points);
   if (!geometry.length) return null;
   const center = geometry[Math.floor(geometry.length / 2)];
+  const geohash = geohashEncode(center.lat, center.lng);
   const observedLimits = points.map(pointLimit).filter((value) => value != null);
   const confirmedObservedLimits = points
     .filter((point) => CONFIRMED_LIMIT_SOURCES.has(pointSource(point)))
@@ -492,6 +558,7 @@ const sectionCandidate = (geohash, points, tripId) => {
   const observedSources = [...new Set(points.map(pointSource).filter(Boolean))].sort();
   return {
     geohash,
+    sectionKey,
     lat: center.lat,
     lng: center.lng,
     sectionPoints: geometry,
@@ -503,38 +570,71 @@ const sectionCandidate = (geohash, points, tripId) => {
     observedSources,
     tripId,
     tripIds: tripId ? [tripId] : [],
+    ...metadata,
     sampleCount: geometry.length,
   };
 };
 
-const mergeCandidates = (existing, candidate) => {
-  if (!existing) return candidate;
-  const observedLimits = [...(existing.observedLimits || []), ...(candidate.observedLimits || [])];
-  const confirmedObservedLimits = [
-    ...(existing.confirmedObservedLimits || []),
-    ...(candidate.confirmedObservedLimits || []),
-  ];
-  const useCandidateGeometry = candidate.sectionPoints.length > existing.sectionPoints.length;
-  return {
-    ...existing,
-    ...(useCandidateGeometry ? {
-      lat: candidate.lat,
-      lng: candidate.lng,
-      sectionPoints: candidate.sectionPoints,
-      tripId: candidate.tripId,
-    } : {}),
-    roadName: existing.roadName || candidate.roadName,
-    observedLimits,
-    observedLimitKmh: numberMode(observedLimits),
-    confirmedObservedLimits,
-    confirmedObservedLimitKmh: numberMode(confirmedObservedLimits),
-    observedSources: [...new Set([
-      ...(existing.observedSources || []),
-      ...(candidate.observedSources || []),
-    ])].sort(),
-    tripIds: [...new Set([...(existing.tripIds || []), ...(candidate.tripIds || [])])],
-    sampleCount: (Number(existing.sampleCount) || 0) + (Number(candidate.sampleCount) || 0),
+const buildTripRouteSectionCandidates = (trip = {}, tripIndex = 0) => {
+  const rawPoints = Array.isArray(trip?.route_points) ? trip.route_points : [];
+  const chunks = [];
+  let currentPoints = [];
+  let currentDistanceM = 0;
+
+  const pushCurrent = () => {
+    if (!currentPoints.length) return;
+    chunks.push(currentPoints);
+    currentPoints = [];
+    currentDistanceM = 0;
   };
+
+  for (const point of rawPoints) {
+    if (!isPublicPoint(point)) {
+      pushCurrent();
+      continue;
+    }
+
+    const previous = currentPoints.at(-1);
+    const nextDistanceM = previous ? distanceMeters(previous, point) : 0;
+    const shouldSplit = previous && (
+      nextDistanceM > ROUTE_SECTION_GAP_DISTANCE_M ||
+      routePointBreaksChunk(currentPoints, point) ||
+      (
+        currentDistanceM >= ROUTE_SECTION_MIN_DISTANCE_M &&
+        currentDistanceM + nextDistanceM > ROUTE_SECTION_MAX_DISTANCE_M
+      )
+    );
+
+    if (shouldSplit) pushCurrent();
+    if (currentPoints.length) currentDistanceM += nextDistanceM;
+    currentPoints.push(point);
+  }
+  pushCurrent();
+
+  const mergedChunks = [];
+  for (const chunk of chunks) {
+    const chunkDistanceM = sectionLengthMeters(chunk);
+    const previous = mergedChunks.at(-1);
+    if (
+      previous &&
+      chunkDistanceM < ROUTE_SECTION_MIN_DISTANCE_M &&
+      routeChunksCompatible(previous, chunk)
+    ) {
+      previous.push(...chunk);
+    } else {
+      mergedChunks.push([...chunk]);
+    }
+  }
+
+  return mergedChunks
+    .filter((chunk) => chunk.length > 0)
+    .map((chunk, index) => {
+      const center = cleanGeometry(chunk)[Math.floor(chunk.length / 2)] || chunk[0];
+      return sectionCandidate(segmentCandidateKey(trip, tripIndex, index, center), chunk, trip?.id, {
+        tripSegmentIndex: index,
+      });
+    })
+    .filter(Boolean);
 };
 
 function conflictFor(correction, candidate) {
@@ -566,6 +666,77 @@ function conflictFor(correction, candidate) {
     tripId: candidate?.tripId || null,
   };
 }
+
+const candidateOverlapWithCorrection = (candidate = {}, correction = {}, maxDistanceM = 45) => {
+  const candidatePoints = cleanGeometry(candidate.sectionPoints || []);
+  const correctionPoints = cleanGeometry(correction.sectionPoints || []);
+  if (!candidatePoints.length) return 0;
+  if (correctionPoints.length < 2) {
+    if (candidate.geohash && candidate.geohash === correction.geohash) return 1;
+    const correctionPoint = cleanGeometry([correction])[0];
+    if (!correctionPoint) return 0;
+    const matchedPoints = candidatePoints.filter((point) => distanceMeters(point, correctionPoint) <= maxDistanceM).length;
+    return matchedPoints / candidatePoints.length;
+  }
+  if (candidatePoints.length < 2) {
+    return pointToPolylineDistanceMeters(candidatePoints[0], correctionPoints) <= maxDistanceM ? 1 : 0;
+  }
+  const matchedPoints = candidatePoints.filter((point) => (
+    pointToPolylineDistanceMeters(point, correctionPoints) <= maxDistanceM
+  )).length;
+  return matchedPoints / candidatePoints.length;
+};
+
+const candidateDistanceToCorrection = (candidate = {}, correction = {}) => {
+  const candidatePoints = cleanGeometry(candidate.sectionPoints || []);
+  const correctionPoints = cleanGeometry(correction.sectionPoints || []);
+  if (!candidatePoints.length) return Infinity;
+  const correctionGeometry = correctionPoints.length >= 2
+    ? correctionPoints
+    : cleanGeometry([correction]);
+  if (!correctionGeometry.length) return Infinity;
+  const distances = candidatePoints.map((point) => (
+    correctionGeometry.length >= 2
+      ? pointToPolylineDistanceMeters(point, correctionGeometry)
+      : distanceMeters(point, correctionGeometry[0])
+  ));
+  return Math.min(...distances.filter(Number.isFinite));
+};
+
+const findCandidateForCorrection = (correction = {}, candidates = []) => (
+  candidates
+    .map((candidate) => ({
+      candidate,
+      overlap: candidateOverlapWithCorrection(candidate, correction),
+      distanceM: candidateDistanceToCorrection(candidate, correction),
+    }))
+    .filter((item) => item.candidate.geohash === correction.geohash || item.overlap > 0)
+    .sort((a, b) => (
+      b.overlap - a.overlap ||
+      a.distanceM - b.distanceM ||
+      String(a.candidate.sectionKey).localeCompare(String(b.candidate.sectionKey))
+    ))[0]?.candidate || null
+);
+
+const correctionCoversCandidate = (candidate = {}, corrections = []) => {
+  const candidatePoints = cleanGeometry(candidate.sectionPoints || []);
+  if (candidatePoints.length < 2) return true;
+  const savedCorrections = corrections || [];
+  if (savedCorrections.some((correction) => candidate.geohash && candidate.geohash === correction.geohash)) {
+    return true;
+  }
+  const coveredPoints = candidatePoints.filter((point) => (
+    savedCorrections.some((correction) => {
+      const correctionPoints = cleanGeometry(correction.sectionPoints || []);
+      if (correctionPoints.length >= 2) {
+        return pointToPolylineDistanceMeters(point, correctionPoints) <= 45;
+      }
+      const correctionPoint = cleanGeometry([correction])[0];
+      return correctionPoint ? distanceMeters(point, correctionPoint) <= 45 : false;
+    })
+  )).length;
+  return coveredPoints / candidatePoints.length >= 0.2;
+};
 
 /** @returns {any[]} */
 export function buildSplitCorrections(section = {}, splitIndex = null) {
@@ -722,6 +893,52 @@ export function summarizeSpeedMapSections(sections = []) {
   });
 }
 
+export function buildSpeedZoneReviewItems(sections = [], {
+  minDistinctLimits = 2,
+  minSectionPoints = 2,
+} = {}) {
+  const grouped = new Map();
+  for (const section of sections || []) {
+    const limit = Number(section?.effectiveLimitKmh ?? section?.observedLimitKmh);
+    const tripId = section?.tripId;
+    const sectionPoints = cleanGeometry(section?.sectionPoints || []);
+    if (
+      section?.saved ||
+      !tripId ||
+      !Number.isFinite(limit) ||
+      limit <= 0 ||
+      sectionPoints.length < minSectionPoints
+    ) continue;
+    const current = grouped.get(tripId) || [];
+    current.push({
+      section,
+      limitKmh: Math.round(limit),
+      segmentIndex: Number.isFinite(Number(section.tripSegmentIndex))
+        ? Number(section.tripSegmentIndex)
+        : current.length,
+    });
+    grouped.set(tripId, current);
+  }
+
+  return [...grouped.entries()].flatMap(([tripId, items]) => {
+    const limits = [...new Set(items.map((item) => item.limitKmh))];
+    if (limits.length < minDistinctLimits) return [];
+    const totalZones = items.length;
+    return items
+      .sort((a, b) => a.segmentIndex - b.segmentIndex)
+      .map((item, index) => ({
+        key: `speed-zone-${tripId}-${item.segmentIndex}-${item.limitKmh}`,
+        kind: 'speedZone',
+        tripId,
+        zoneIndex: index + 1,
+        zoneCount: totalZones,
+        distinctLimitCount: limits.length,
+        limitKmh: item.limitKmh,
+        section: item.section,
+      }));
+  });
+}
+
 export function filterSpeedMapSections(sections = [], {
   query = '',
   layers = SPEED_MAP_LAYER_DEFAULTS,
@@ -730,11 +947,8 @@ export function filterSpeedMapSections(sections = [], {
   const layerState = { ...SPEED_MAP_LAYER_DEFAULTS, ...(layers || {}) };
   const activeRoadLayers = ROAD_STATE_LAYER_KEYS.filter((key) => layerState[key] !== false);
   const activeIntelligenceLayers = INTELLIGENCE_LAYER_KEYS.filter((key) => layerState[key] !== false);
+  const disabledIntelligenceLayers = INTELLIGENCE_LAYER_KEYS.filter((key) => layerState[key] === false);
   const allFiltersOff = activeRoadLayers.length === 0 && activeIntelligenceLayers.length === 0;
-  const shouldMatchIntelligence = activeIntelligenceLayers.length > 0 && (
-    activeRoadLayers.length === 0 ||
-    activeIntelligenceLayers.length < INTELLIGENCE_LAYER_KEYS.length
-  );
   const matchesIntelligenceLayer = (flags, key) => {
     if (key === 'posted') return flags.posted;
     if (key === 'estimates') return flags.estimate;
@@ -751,9 +965,11 @@ export function filterSpeedMapSections(sections = [], {
       const flags = speedMapSectionFlags(section);
       if (activeRoadLayers.length > 0 && !activeRoadLayers.includes(flags.layer)) return false;
       if (
-        shouldMatchIntelligence &&
+        activeRoadLayers.length === 0 &&
+        activeIntelligenceLayers.length > 0 &&
         !activeIntelligenceLayers.some((key) => matchesIntelligenceLayer(flags, key))
       ) return false;
+      if (disabledIntelligenceLayers.some((key) => matchesIntelligenceLayer(flags, key))) return false;
       return true;
     })
     .filter((section) => !normalizedQuery || normalizedSearchText(section).includes(normalizedQuery));
@@ -768,55 +984,30 @@ export function buildSpeedMapSections(trips = [], corrections = []) {
 }
 
 function buildSpeedMapSectionsInternal(trips = [], corrections = []) {
-  const candidates = new Map();
+  const candidateList = [];
 
-  for (const trip of trips || []) {
+  for (const [tripIndex, trip] of (trips || []).entries()) {
     if (trip?.status && trip.status !== 'completed') continue;
-    const points = Array.isArray(trip?.route_points) ? trip.route_points : [];
-    let currentHash = '';
-    let currentPoints = [];
-
-    const flush = () => {
-      if (!currentHash || !currentPoints.length) return;
-      const candidate = sectionCandidate(currentHash, currentPoints, trip?.id);
-      if (candidate) candidates.set(currentHash, mergeCandidates(candidates.get(currentHash), candidate));
-    };
-
-    for (const point of points) {
-      if (!isPublicPoint(point)) {
-        flush();
-        currentHash = '';
-        currentPoints = [];
-        continue;
-      }
-      const geohash = geohashEncode(point.lat, point.lng);
-      if (geohash !== currentHash) {
-        flush();
-        currentHash = geohash;
-        currentPoints = [point];
-      } else {
-        currentPoints.push(point);
-      }
-    }
-    flush();
+    candidateList.push(...buildTripRouteSectionCandidates(trip, tripIndex));
   }
 
-  const correctionsByHash = new Map();
-  for (const correction of corrections || []) {
-    const items = correctionsByHash.get(correction.geohash) || [];
-    items.push(correction);
-    correctionsByHash.set(correction.geohash, items);
-  }
-  const hashes = new Set([...candidates.keys(), ...correctionsByHash.keys()]);
-  const entries = [...hashes].flatMap((geohash) => {
-    const savedCorrections = correctionsByHash.get(geohash) || [];
-    return savedCorrections.length
-      ? savedCorrections.map((correction) => ({ geohash, correction }))
-      : [{ geohash, correction: null }];
-  });
+  const entries = [
+    ...(corrections || []).map((correction) => ({
+      geohash: correction.geohash,
+      correction,
+      candidate: findCandidateForCorrection(correction, candidateList),
+    })),
+    ...candidateList
+      .filter((candidate) => !correctionCoversCandidate(candidate, corrections))
+      .filter((candidate) => cleanGeometry(candidate.sectionPoints || []).length >= 2)
+      .map((candidate) => ({
+        geohash: candidate.geohash,
+        correction: null,
+        candidate,
+      })),
+  ];
 
-  return entries.map(({ geohash, correction }) => {
-    const candidate = candidates.get(geohash);
+  return entries.map(({ geohash, correction, candidate }) => {
     const savedGeometry = cleanGeometry(correction?.sectionPoints);
     const center = geohashCenter(geohash);
     const sectionPoints = savedGeometry.length >= 2
@@ -840,7 +1031,7 @@ function buildSpeedMapSectionsInternal(trips = [], corrections = []) {
       ...candidate,
       ...correction,
       geohash,
-      sectionKey: correction?.id || correction?.ruleId || geohash,
+      sectionKey: correction?.id || correction?.ruleId || candidate?.sectionKey || geohash,
       lat: Number(correction?.lat ?? candidate?.lat ?? center.lat),
       lng: Number(correction?.lng ?? candidate?.lng ?? center.lng),
       sectionPoints,

@@ -1,7 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { AlertTriangle, ArrowLeft, CheckSquare2, Download, Gauge, GitMerge, HeartPulse, Info, Layers, Magnet, Map as MapIcon, MapPin, Pencil, Plus, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Trash2, Undo2, Upload, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Ban, CheckSquare2, Download, Gauge, GitMerge, HeartPulse, Info, Layers, Magnet, Map as MapIcon, MapPin, Pencil, Plus, RefreshCw, Scissors, Search, ShieldCheck, SlidersHorizontal, Trash2, Undo2, Upload, X } from 'lucide-react';
 import { geohashEncode, LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 import { refreshTripsCrossingLocalSpeedCorrection, refreshTripsForLocalSpeedKnowledgeChanges, tripCrossesCorrection } from '@/lib/localSpeedScoreRefresh';
 import { correctionSectionIdentity } from '@/lib/roadSectionIdentity';
@@ -12,10 +12,10 @@ import {
   SPEED_MAP_LAYER_FOCUSED_DEFAULTS,
   buildSpeedMapSections,
   buildSplitCorrections,
+  buildSpeedZoneReviewItems,
   findOverlappingSpeedSections,
   findMergeableSpeedSection,
   mergeSpeedSections,
-  snapSectionPointsToTripRoutes,
   snapSectionPointsToTripRoutesWithStats,
   speedMapSectionFlags,
   speedLimitColor,
@@ -37,6 +37,12 @@ import {
 } from '@/lib/speedLimitIntelligence';
 import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import { inspectSpeedKnowledgeHealth } from '@/lib/speedKnowledgeHealth';
+import {
+  isSpeedSectionExcluded,
+  readExcludedSpeedSectionKeys,
+  speedSectionExclusionKeys,
+  writeExcludedSpeedSectionKeys,
+} from '@/lib/speedSectionExclusions';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { logSystemFailure } from '@/lib/systemLog';
@@ -46,6 +52,7 @@ import { toast } from '@/components/ui/use-toast';
 
 const sourceLabel = (source) => speedLimitSourceLabel(source, { short: true });
 const correctionKey = (correction = {}) => correction?.id || correction?.ruleId || correction?.sectionKey || correction?.geohash;
+const IGNORED_UNSET_SPEED_SECTIONS_STORAGE_KEY = 'roadsage_ignored_unset_speed_sections_v1';
 const SPEED_RULE_EXPORT_PRIVACY_WARNING = [
   'This export contains precise road locations, map-line coordinates, and your saved speed rules.',
   'Store it securely and share it only with people you trust.',
@@ -61,6 +68,23 @@ const formatSpeedLimit = (value) => {
 const formatSourceList = (sources = []) => {
   const labels = [...new Set((sources || []).filter(Boolean).map(sourceLabel))];
   return labels.length ? labels.join(', ') : 'Unknown source';
+};
+
+const isUnsetMapSection = (section = {}) => (
+  !section.saved &&
+  !Number(section.effectiveLimitKmh ?? section.observedLimitKmh ?? section.limitKmh)
+);
+
+const ignoredUnsetSectionKey = (section = {}) => String(correctionKey(section) || '').trim();
+
+const readIgnoredUnsetSectionKeys = () => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(IGNORED_UNSET_SPEED_SECTIONS_STORAGE_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter(Boolean).map(String) : [];
+  } catch {
+    return [];
+  }
 };
 
 const speedSectionAttentionLabel = (section = {}) => {
@@ -222,6 +246,13 @@ const sectionLengthMeters = (points = []) => points.reduce((sum, point, index) =
   index === 0 ? 0 : sum + distanceMeters(points[index - 1], point)
 ), 0);
 
+const sectionMidpoint = (points = []) => {
+  const clean = (Array.isArray(points) ? points : [])
+    .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng) }))
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+  return clean[Math.floor(clean.length / 2)] || null;
+};
+
 const rowSearchText = (row = {}, conflict = null) => [
   row.geohash,
   row.roadName,
@@ -269,6 +300,7 @@ const undoActionText = (action = '') => ({
   update_correction: 'change',
   remove_correction: 'delete',
   resolve_conflict: 'conflict decision',
+  repair_saved_speed_data: 'repair',
   restore_speed_backup: 'restore',
   restore_backup: 'restore',
   prune: 'cleanup',
@@ -331,6 +363,21 @@ const speedStatusToast = (value) => {
     return { title: 'Saved road speed ready', description: message };
   }
   return null;
+};
+
+const mapSectionReasonText = (section = {}, addMode = false) => {
+  if (section.saved) {
+    const source = sourceLabel(section.source);
+    return `Saved local rule from ${source}; this rule is used before trip-derived map evidence.`;
+  }
+  if (addMode) return 'New traced road section; it will become a saved local rule after saving.';
+  const points = Number(section.sampleCount || section.sectionPoints?.length || 0);
+  const sampleText = points > 0 ? `${points} route sample${points === 1 ? '' : 's'}` : 'recorded route evidence';
+  const observedLimit = Number(section.effectiveLimitKmh ?? section.observedLimitKmh);
+  if (Number.isFinite(observedLimit) && observedLimit > 0) {
+    return `Observed-only trip section from ${sampleText}; save it to turn it into a local posted sign or estimate.`;
+  }
+  return `Unset trip section from ${sampleText}; no saved rule covers this part of the recorded route yet.`;
 };
 
 const downloadBrowserJson = (filename, payload) => {
@@ -445,6 +492,8 @@ export default function SpeedLimits() {
   const [mapLayers, setMapLayers] = useState(SPEED_MAP_LAYER_FOCUSED_DEFAULTS);
   const [activeWorkspace, setActiveWorkspace] = useState(initialWorkspace);
   const [autoSnapTrace, setAutoSnapTrace] = useState(true);
+  const [ignoredUnsetSectionKeys, setIgnoredUnsetSectionKeys] = useState(readIgnoredUnsetSectionKeys);
+  const [excludedSpeedSectionKeys, setExcludedSpeedSectionKeys] = useState(readExcludedSpeedSectionKeys);
   const [rowQueryInput, setRowQueryInput] = useState('');
   const [rowQuery, setRowQuery] = useState('');
   const [isRowQueryPending, startRowQueryTransition] = useTransition();
@@ -476,7 +525,23 @@ export default function SpeedLimits() {
   const mapModelLoading = mapModelState.status === 'loading';
   const mapModelLoaded = mapModelState.status === 'loaded';
   const mapQueryPending = mapQuery !== deferredMapQuery;
-  const mapSections = useMemo(() => buildSpeedMapSections(mapTrips, rows), [mapTrips, rows]);
+  const ignoredUnsetSectionKeySet = useMemo(() => new Set(ignoredUnsetSectionKeys), [ignoredUnsetSectionKeys]);
+  const excludedSpeedSectionKeySet = useMemo(() => new Set(excludedSpeedSectionKeys), [excludedSpeedSectionKeys]);
+  const rawMapSections = useMemo(() => buildSpeedMapSections(mapTrips, rows), [mapTrips, rows]);
+  const mapSections = useMemo(() => rawMapSections.filter((section) => (
+    !isSpeedSectionExcluded(section, excludedSpeedSectionKeySet) &&
+    (
+      !isUnsetMapSection(section) ||
+      !ignoredUnsetSectionKeySet.has(ignoredUnsetSectionKey(section))
+    )
+  )), [excludedSpeedSectionKeySet, ignoredUnsetSectionKeySet, rawMapSections]);
+  const hiddenUnsetSectionCount = useMemo(() => rawMapSections.filter((section) => (
+    isUnsetMapSection(section) &&
+    ignoredUnsetSectionKeySet.has(ignoredUnsetSectionKey(section))
+  )).length, [ignoredUnsetSectionKeySet, rawMapSections]);
+  const excludedSpeedSectionCount = useMemo(() => rawMapSections.filter((section) => (
+    isSpeedSectionExcluded(section, excludedSpeedSectionKeySet)
+  )).length, [excludedSpeedSectionKeySet, rawMapSections]);
   const mapStats = useMemo(() => summarizeSpeedMapSections(mapSections), [mapSections]);
   const conflictsByGeohash = useMemo(() => new Map(
     mapSections
@@ -499,6 +564,26 @@ export default function SpeedLimits() {
   };
   const updateRowFilter = (value) => startRowQueryTransition(() => setRowFilter(value));
   const updateRowSort = (value) => startRowQueryTransition(() => setRowSort(value));
+  const revealSavedSpeedMapLayer = useCallback((source = 'user_entered_estimate') => {
+    const posted = source === 'user_confirmed_posted_sign';
+    setMapLayers((current) => ({
+      ...current,
+      conflicts: true,
+      saved: true,
+      observed: false,
+      unset: false,
+      posted: posted ? true : current.posted,
+      estimates: posted ? current.estimates : true,
+    }));
+  }, []);
+  const revealSavedRowsFilter = useCallback((source = 'user_entered_estimate') => {
+    const posted = source === 'user_confirmed_posted_sign';
+    setRowFilter((current) => {
+      if (current === 'estimates' && posted) return 'posted';
+      if (current === 'posted' && !posted) return 'estimates';
+      return current;
+    });
+  }, []);
   const rowCardModels = useMemo(() => (
     filteredRows.map((row) => {
       const key = correctionKey(row);
@@ -534,6 +619,15 @@ export default function SpeedLimits() {
     [filteredRows, virtualRowItems]
   );
   const firstConflictSection = useMemo(() => mapSections.find((section) => section.conflict), [mapSections]);
+  const speedZoneReviewItems = useMemo(() => (
+    buildSpeedZoneReviewItems(mapSections)
+      .slice(0, 6)
+      .map((item) => ({
+        ...item,
+        title: item.section.roadName || `Trip speed zone ${item.zoneIndex}`,
+        detail: `Zone ${item.zoneIndex} of ${item.zoneCount}: observed ${item.limitKmh} km/h from ${formatSourceList(item.section.observedSources)}. Save or adjust this segment separately.`,
+      }))
+  ), [mapSections]);
   const attentionItems = useMemo(() => {
     const conflicts = mapSections
       .filter((section) => section.conflict)
@@ -566,7 +660,7 @@ export default function SpeedLimits() {
       .filter((section) => !section.saved && !Number(section.effectiveLimitKmh))
       .slice(0, 4)
       .map((section) => ({
-        key: `unset-${section.geohash}`,
+        key: `unset-${correctionKey(section)}`,
         kind: 'unset',
         title: section.roadName || `Road area ${section.geohash}`,
         detail: `${section.sampleCount || section.sectionPoints?.length || 1} trip sample${(section.sampleCount || section.sectionPoints?.length || 1) === 1 ? '' : 's'} without a saved speed`,
@@ -583,25 +677,30 @@ export default function SpeedLimits() {
       ))
       .slice(0, 4)
       .map((section) => ({
-        key: `observed-${section.geohash}`,
+        key: `observed-${correctionKey(section)}`,
         kind: 'observed',
         title: section.roadName || `Road area ${section.geohash}`,
         detail: `Observed ${Math.round(Number(section.effectiveLimitKmh))} km/h from ${formatSourceList(section.observedSources)}`,
         section,
       }));
-    return [...conflicts, ...reviewableSaved, ...unset, ...observed].slice(0, 10);
-  }, [mapSections]);
+    return [...conflicts, ...speedZoneReviewItems, ...reviewableSaved, ...unset, ...observed].slice(0, 12);
+  }, [mapSections, speedZoneReviewItems]);
   const selectedSectionPointCount = selectedSection?.sectionPoints?.length || 0;
   const traceLengthM = useMemo(() => sectionLengthMeters(addPath), [addPath]);
   const traceQuality = useMemo(() => {
     if (!addMode) return null;
-    if (addPath.length < 2) return { level: 'warn', text: 'Tap at least two points along the road.' };
+    if (addPath.length < 2) return { level: 'warn', text: autoSnapTrace ? 'Tap the start and end of the road segment.' : 'Tap at least two points along the road.' };
     if (traceLengthM < 25) return { level: 'warn', text: 'Trace a longer section so the saved rule matches real driving.' };
     if (!mapTrips.some((trip) => Array.isArray(trip?.route_points) && trip.route_points.length > 0)) {
       return { level: 'info', text: 'No recorded trip route is available for snapping; review the line carefully.' };
     }
-    return { level: 'good', text: `Ready to save. The trace is about ${Math.round(traceLengthM)} m long.` };
-  }, [addMode, addPath.length, mapTrips, traceLengthM]);
+    return {
+      level: 'good',
+      text: autoSnapTrace && addPath.length > 2
+        ? `Route assist built a ${Math.round(traceLengthM)} m trace from recorded geometry.`
+        : `Ready to save. The trace is about ${Math.round(traceLengthM)} m long.`,
+    };
+  }, [addMode, addPath.length, autoSnapTrace, mapTrips, traceLengthM]);
   const selectedCorrectionDraft = useMemo(() => selectedSection ? ({
     ...selectedSection,
     limitKmh: Number(mapDraft.limitKmh),
@@ -636,6 +735,11 @@ export default function SpeedLimits() {
   const blockingOverlapChecks = useMemo(
     () => selectedOverlapChecks.filter((item) => item.severity === 'block'),
     [selectedOverlapChecks]
+  );
+  const selectedBlockingOverlap = blockingOverlapChecks[0] || null;
+  const selectedSectionReason = useMemo(
+    () => selectedSection ? mapSectionReasonText(selectedSection, addMode) : '',
+    [addMode, selectedSection]
   );
   const canSaveSelectedMapSection = Boolean(selectedSection) && (
     selectedSection.saved || selectedSectionPointCount >= 2
@@ -830,6 +934,26 @@ export default function SpeedLimits() {
     loadRows();
   }, [loadRows]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(
+        IGNORED_UNSET_SPEED_SECTIONS_STORAGE_KEY,
+        JSON.stringify([...new Set(ignoredUnsetSectionKeys)].slice(-500))
+      );
+    } catch {
+      // Ignore storage failures; dismissing unset map hints is a convenience only.
+    }
+  }, [ignoredUnsetSectionKeys]);
+
+  useEffect(() => {
+    try {
+      writeExcludedSpeedSectionKeys(excludedSpeedSectionKeys);
+    } catch {
+      // Ignore storage failures; private/parking cleanup remains an in-session filter.
+    }
+  }, [excludedSpeedSectionKeys]);
+
   useEffect(() => () => {
     mapModelCancelRef.current?.();
   }, []);
@@ -856,6 +980,24 @@ export default function SpeedLimits() {
     ));
     if (!stillSaved) setSelectedSection(null);
   }, [rows, selectedSection]);
+
+  useEffect(() => {
+    if (!selectedSection || !isUnsetMapSection(selectedSection)) return;
+    if (ignoredUnsetSectionKeySet.has(ignoredUnsetSectionKey(selectedSection))) {
+      setSelectedSection(null);
+      setAddPath([]);
+      setAddMode(false);
+    }
+  }, [ignoredUnsetSectionKeySet, selectedSection]);
+
+  useEffect(() => {
+    if (!selectedSection) return;
+    if (isSpeedSectionExcluded(selectedSection, excludedSpeedSectionKeySet)) {
+      setSelectedSection(null);
+      setAddPath([]);
+      setAddMode(false);
+    }
+  }, [excludedSpeedSectionKeySet, selectedSection]);
 
   useEffect(() => {
     savedRowsVirtualizer.scrollToIndex(0, { align: 'start' });
@@ -926,7 +1068,13 @@ export default function SpeedLimits() {
       timeRule: timeRuleFromDraft(draft),
       expiresAt: expiresAtFromDate(draft.expiresAtDate),
     };
-    const beforeTrips = matchingTripsForCorrection(updatedCorrection);
+    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    const beforeTrips = [
+      ...new Map([
+        ...matchingTripsForCorrection(row),
+        ...matchingTripsForCorrection(updatedCorrection),
+      ].map((trip) => [String(trip.id), trip])).values(),
+    ];
     const saved = await knowledge.updateUserCorrection(
       key,
       Math.round(limitKmh),
@@ -945,11 +1093,16 @@ export default function SpeedLimits() {
           ? { ...item, ...updatedCorrection, appliedAt: new Date().toISOString() }
           : item
       )));
+      revealSavedRowsFilter(updatedCorrection.source);
+      revealSavedSpeedMapLayer(updatedCorrection.source);
       setBusyGeohash(null);
       setStatus(withUndo('Saved road speed updated. Matching trip scores are updating in the background.'));
       void (async () => {
+        const afterKnowledge = await knowledge.exportData().catch(() => null);
         const updatedTrips = await withRecalculation(() => (
-          refreshTripsCrossingLocalSpeedCorrection(updatedCorrection).catch(() => null)
+          beforeKnowledge && afterKnowledge
+            ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+            : refreshTripsCrossingLocalSpeedCorrection(updatedCorrection).catch(() => null)
         ));
         setStatus(withUndo(buildRecalculationStatus(
           updatedTrips
@@ -970,12 +1123,16 @@ export default function SpeedLimits() {
     if (typeof window !== 'undefined' && !window.confirm('Delete this saved road speed?')) return;
     const key = correctionKey(row);
     setBusyGeohash(key);
+    const beforeKnowledge = await knowledge.exportData().catch(() => null);
     const beforeTrips = matchingTripsForCorrection(row);
     const removed = await knowledge.removeUserCorrection(key).catch(() => false);
     if (removed) {
       removeSavedRowsFromView([row]);
+      const afterKnowledge = await knowledge.exportData().catch(() => null);
       const updatedTrips = await withRecalculation(() => (
-        refreshTripsCrossingLocalSpeedCorrection(row).catch(() => null)
+        beforeKnowledge && afterKnowledge
+          ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+          : refreshTripsCrossingLocalSpeedCorrection(row).catch(() => null)
       ));
       setStatus(withUndo(buildRecalculationStatus(
         updatedTrips
@@ -1013,7 +1170,13 @@ export default function SpeedLimits() {
       expiresAt: expiresAtFromDate(draft.expiresAtDate) ?? row.expiresAt ?? null,
       sectionPoints: row.sectionPoints || [],
     };
-    const beforeTrips = matchingTripsForCorrection(nextCorrection);
+    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    const beforeTrips = [
+      ...new Map([
+        ...matchingTripsForCorrection(row),
+        ...matchingTripsForCorrection(nextCorrection),
+      ].map((trip) => [String(trip.id), trip])).values(),
+    ];
     const key = correctionKey(row);
     setBusyGeohash(key);
     const saved = await knowledge.updateUserCorrection(
@@ -1060,6 +1223,8 @@ export default function SpeedLimits() {
         }
         : item
     )));
+    revealSavedRowsFilter(nextCorrection.source);
+    revealSavedSpeedMapLayer(nextCorrection.source);
     setDrafts((current) => ({
       ...current,
       [key]: {
@@ -1094,15 +1259,33 @@ export default function SpeedLimits() {
     setBusyGeohash(null);
 
     if (keepSaved) {
-      setStatus(withUndo(`Conflict resolved: kept the saved ${Math.round(nextLimitKmh)} km/h rule for this road section.`));
-      await refreshRowsAndMap({ silent: true });
+      setStatus(withUndo(`Conflict resolved: kept the saved ${Math.round(nextLimitKmh)} km/h rule for this road section. Matching trip scores are updating in the background.`));
+      void (async () => {
+        const afterKnowledge = await knowledge.exportData().catch(() => null);
+        const updatedTrips = beforeKnowledge && afterKnowledge
+          ? await withRecalculation(() => (
+            refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+          ))
+          : [];
+        setStatus(withUndo(buildRecalculationStatus(
+          updatedTrips
+            ? `Conflict resolved: kept the saved ${Math.round(nextLimitKmh)} km/h rule and recalculated ${updatedTrips.length} matching trip${updatedTrips.length === 1 ? '' : 's'} locally.`
+            : `Conflict resolved: kept the saved ${Math.round(nextLimitKmh)} km/h rule, but matching trips could not be recalculated right now.`,
+          beforeTrips,
+          updatedTrips
+        )));
+        await refreshRowsAndMap({ silent: true });
+      })();
       return;
     }
 
     setStatus(withUndo(`Conflict resolved: updated this road section to ${Math.round(nextLimitKmh)} km/h. Matching trip scores are updating in the background.`));
     void (async () => {
+      const afterKnowledge = await knowledge.exportData().catch(() => null);
       const updatedTrips = await withRecalculation(() => (
-        refreshTripsCrossingLocalSpeedCorrection(nextCorrection).catch(() => null)
+        beforeKnowledge && afterKnowledge
+          ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+          : refreshTripsCrossingLocalSpeedCorrection(nextCorrection).catch(() => null)
       ));
       setStatus(withUndo(buildRecalculationStatus(
         updatedTrips
@@ -1136,6 +1319,106 @@ export default function SpeedLimits() {
     setAddPath([]);
   };
 
+  const ignoreUnsetMapSection = () => {
+    if (!selectedSection || !isUnsetMapSection(selectedSection)) {
+      setStatus('Select an unset road section before hiding it.');
+      return;
+    }
+    const key = ignoredUnsetSectionKey(selectedSection);
+    if (!key) {
+      setStatus('Could not hide this unset section because it has no stable map key.');
+      return;
+    }
+    setIgnoredUnsetSectionKeys((current) => (
+      current.includes(key) ? current : [...current, key]
+    ));
+    setSelectedSection(null);
+    setAddPath([]);
+    setAddMode(false);
+    setStatus('Hidden this unset road section from the map and review list on this device.');
+  };
+
+  const restoreIgnoredUnsetMapSections = () => {
+    setIgnoredUnsetSectionKeys([]);
+    setStatus('Restored hidden unset road sections.');
+  };
+
+  const addExcludedSpeedSection = (section) => {
+    const keys = speedSectionExclusionKeys(section);
+    if (!keys.length) return false;
+    setExcludedSpeedSectionKeys((current) => [...new Set([...current, ...keys])]);
+    return true;
+  };
+
+  const restoreExcludedSpeedSections = () => {
+    setExcludedSpeedSectionKeys([]);
+    setStatus('Restored parking/private road-section cleanup exclusions.');
+  };
+
+  const markSelectedSectionPrivate = async () => {
+    if (!selectedSection) {
+      setStatus('Select a parking, driveway, or private-road section before marking it ignored.');
+      return;
+    }
+    const keys = speedSectionExclusionKeys(selectedSection);
+    if (!keys.length) {
+      setStatus('Could not mark this section ignored because it has no stable geometry key.');
+      return;
+    }
+    const confirmed = typeof window === 'undefined' || window.confirm(
+      selectedSection.saved
+        ? 'Mark this as parking/private and remove the saved speed for this section?'
+        : 'Mark this section as parking/private so it stops appearing in speed review?'
+    );
+    if (!confirmed) return;
+
+    const selectedKey = correctionKey(selectedSection);
+
+    if (!selectedSection.saved) {
+      addExcludedSpeedSection(selectedSection);
+      setIgnoredUnsetSectionKeys((current) => {
+        const unsetKey = ignoredUnsetSectionKey(selectedSection);
+        return unsetKey && !current.includes(unsetKey) ? [...current, unsetKey] : current;
+      });
+      setSelectedSection(null);
+      setAddPath([]);
+      setAddMode(false);
+      setStatus('Marked this section as parking/private. Road Sage will hide it from saved-speed cleanup prompts on this device.');
+      return;
+    }
+
+    setBusyGeohash(selectedKey);
+    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    const beforeTrips = matchingTripsForCorrection(selectedSection);
+    const removed = await knowledge.removeUserCorrection(selectedKey, { historyGroup: `private-section-${Date.now()}` }).catch(() => false);
+    if (!removed) {
+      setBusyGeohash(null);
+      setStatus('Could not remove the saved speed for this parking/private section.');
+      return;
+    }
+
+    addExcludedSpeedSection(selectedSection);
+    removeSavedRowsFromView([selectedSection]);
+    setSelectedSection(null);
+    setAddPath([]);
+    setAddMode(false);
+    const afterKnowledge = await knowledge.exportData().catch(() => null);
+    const updatedTrips = await withRecalculation(() => (
+      beforeKnowledge && afterKnowledge
+        ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+        : refreshTripsCrossingLocalSpeedCorrection(selectedSection).catch(() => null)
+    ));
+    setBusyGeohash(null);
+    setStatus(withUndo(buildRecalculationStatus(
+      updatedTrips
+        ? `Marked this section as parking/private, removed its saved speed, and recalculated ${updatedTrips.length} matching trip${updatedTrips.length === 1 ? '' : 's'} locally.`
+        : 'Marked this section as parking/private and removed its saved speed, but matching trips could not be recalculated right now.',
+      beforeTrips,
+      updatedTrips
+    )));
+    await refreshRowsAndMap();
+  };
+
   const startAddingSection = () => {
     setSelectedSection(null);
     setAddPath([]);
@@ -1152,17 +1435,26 @@ export default function SpeedLimits() {
       expiresAtDate: '',
     });
     setStatus(autoSnapTrace
-      ? 'Adding road section started. Tap points along the road; each tap will snap to nearby recorded trip geometry when possible.'
+      ? 'Adding road section started. Tap the start and end of the road segment; Auto snap will fill the recorded route shape when possible.'
       : 'Adding road section started. Tap points around bends, then enter the speed and save.');
   };
 
   const selectNewMapPoint = (point) => {
     setAddPath((current) => {
       const rawNext = [...current, point].slice(-24);
-      const snappedNext = autoSnapTrace
-        ? snapSectionPointsToTripRoutes(rawNext, mapTrips)
-        : rawNext;
-      const next = snappedNext.length ? snappedNext : rawNext;
+      let next = rawNext;
+      if (autoSnapTrace) {
+        const snapResult = snapSectionPointsToTripRoutesWithStats(rawNext, mapTrips, 80, {
+          expandToRouteSegment: rawNext.length >= 2,
+          maxPoints: 24,
+        });
+        if (snapResult.points.length) next = snapResult.points;
+        if (snapResult.matchType === 'route_segment' && next.length > rawNext.length) {
+          setStatus(`Auto snap traced ${next.length} route point${next.length === 1 ? '' : 's'} from ${snapResult.tripLabel || 'a recorded trip'}. Enter the speed and save.`);
+        } else if (snapResult.snappedCount > 0 && rawNext.length >= 2) {
+          setStatus(`Auto snap matched ${snapResult.snappedCount} point${snapResult.snappedCount === 1 ? '' : 's'} to recorded trip geometry. Add another point or save the speed.`);
+        }
+      }
       const midpoint = next[Math.floor(next.length / 2)];
       setSelectedSection({
         ...midpoint,
@@ -1194,19 +1486,86 @@ export default function SpeedLimits() {
   };
 
   const moveSelectedSectionEndpoint = (index, point) => {
-    setSelectedSection((current) => {
-      if (!current) return current;
-      const points = [...(current.sectionPoints || [])];
-      if (!points[index]) return current;
-      points[index] = point;
-      const midpoint = points[Math.floor(points.length / 2)] || point;
-      return {
-        ...current,
-        lat: midpoint.lat,
-        lng: midpoint.lng,
-        sectionPoints: points,
-      };
-    });
+    const current = selectedSection;
+    if (!current) return;
+    const points = [...(current.sectionPoints || [])];
+    if (!points[index]) return;
+
+    const selectedKey = correctionKey(current);
+    const originalPoint = points[index];
+    const nextPoint = { lat: Number(point.lat), lng: Number(point.lng) };
+    if (!Number.isFinite(nextPoint.lat) || !Number.isFinite(nextPoint.lng)) return;
+
+    points[index] = nextPoint;
+    const midpoint = points[Math.floor(points.length / 2)] || nextPoint;
+    const linkedGeometryEdits = [];
+
+    if (
+      current.saved &&
+      current.splitParentId &&
+      (index === 0 || index === points.length - 1)
+    ) {
+      rows.forEach((row) => {
+        const rowKey = correctionKey(row);
+        if (
+          rowKey === selectedKey ||
+          row.splitParentId !== current.splitParentId ||
+          !Array.isArray(row.sectionPoints) ||
+          row.sectionPoints.length < 2
+        ) return;
+
+        const siblingPoints = row.sectionPoints.map((item) => ({ lat: Number(item.lat), lng: Number(item.lng) }));
+        const siblingIndex = [0, siblingPoints.length - 1].find((pointIndex) => (
+          distanceMeters(siblingPoints[pointIndex], originalPoint) <= 8
+        ));
+        if (!Number.isInteger(siblingIndex)) return;
+
+        siblingPoints[siblingIndex] = nextPoint;
+        const siblingMidpoint = siblingPoints[Math.floor(siblingPoints.length / 2)] || nextPoint;
+        linkedGeometryEdits.push({
+          selector: rowKey,
+          lat: siblingMidpoint.lat,
+          lng: siblingMidpoint.lng,
+          geohash: geohashEncode(siblingMidpoint.lat, siblingMidpoint.lng),
+          limitKmh: row.limitKmh,
+          source: row.source,
+          note: row.note || '',
+          roadName: row.roadName || '',
+          directionMode: row.directionMode || 'both',
+          directionBearing: row.directionBearing,
+          timeRule: row.timeRule,
+          expiresAt: row.expiresAt || null,
+          sectionPoints: siblingPoints,
+        });
+      });
+    }
+
+    const nextSection = {
+      ...current,
+      lat: midpoint.lat,
+      lng: midpoint.lng,
+      geohash: geohashEncode(midpoint.lat, midpoint.lng),
+      sectionPoints: points,
+    };
+    if (linkedGeometryEdits.length) nextSection.linkedGeometryEdits = linkedGeometryEdits;
+    else delete nextSection.linkedGeometryEdits;
+
+    setSelectedSection(nextSection);
+    if (linkedGeometryEdits.length) {
+      setRows((currentRows) => currentRows.map((row) => {
+        const linked = linkedGeometryEdits.find((edit) => edit.selector === correctionKey(row));
+        return linked
+          ? {
+            ...row,
+            lat: linked.lat,
+            lng: linked.lng,
+            geohash: linked.geohash,
+            sectionPoints: linked.sectionPoints,
+          }
+          : row;
+      }));
+      setStatus('Moved the shared split point. Update road speed to save both adjusted halves.');
+    }
   };
 
   const focusAttentionItem = (item) => {
@@ -1228,6 +1587,8 @@ export default function SpeedLimits() {
     }));
     setStatus(item.kind === 'conflict'
       ? 'Conflict selected. Choose Use observed or Keep saved to clear it.'
+      : item.kind === 'speedZone'
+        ? `Trip speed zone ${item.zoneIndex} of ${item.zoneCount} selected. Save, adjust, or confirm this ${Math.round(Number(item.limitKmh))} km/h segment independently.`
       : item.kind === 'review'
         ? `${speedSectionAttentionLabel(item.section)} selected. Review the saved speed, source, timing, and traced road line before updating.`
       : 'Road section selected. Enter a posted sign or local estimate, then save.');
@@ -1315,6 +1676,7 @@ export default function SpeedLimits() {
       return;
     }
     setBusyGeohash(selectedKey);
+    const beforeKnowledge = await knowledge.exportData().catch(() => null);
     const saved = await knowledge.updateUserCorrection(
       selectedKey,
       Math.round(limitKmh),
@@ -1351,8 +1713,11 @@ export default function SpeedLimits() {
     )));
     setStatus(withUndo(`Saved snapped route geometry (${snapSummary}). Matching trip scores are updating in the background.`));
     void (async () => {
+      const afterKnowledge = await knowledge.exportData().catch(() => null);
       const updatedTrips = await withRecalculation(() => (
-        refreshTripsCrossingLocalSpeedCorrection(updatedSection).catch(() => null)
+        beforeKnowledge && afterKnowledge
+          ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+          : refreshTripsCrossingLocalSpeedCorrection(updatedSection).catch(() => null)
       ));
       setStatus(withUndo(buildRecalculationStatus(
         updatedTrips
@@ -1412,9 +1777,15 @@ export default function SpeedLimits() {
     }
     const selectedKey = correctionKey(selectedSection);
     setBusyGeohash(selectedKey);
+    const linkedGeometryEdits = Array.isArray(selectedSection.linkedGeometryEdits)
+      ? selectedSection.linkedGeometryEdits
+      : [];
     const historyGroup = selectedSection.pendingMerge
       ? `merge-${Date.now()}`
+      : linkedGeometryEdits.length
+        ? `linked-geometry-${Date.now()}`
       : null;
+    const beforeKnowledge = await knowledge.exportData().catch(() => null);
     const saved = selectedSection.saved
       ? await knowledge.updateUserCorrection(
         selectedKey,
@@ -1422,6 +1793,8 @@ export default function SpeedLimits() {
         mapDraft.source,
         mapDraft.note,
         {
+          lat: selectedSection.lat,
+          lng: selectedSection.lng,
           roadName: mapDraft.roadName || selectedSection.roadName || '',
           sectionPoints: selectedSection.sectionPoints || [],
           directionMode: mapDraft.directionMode || 'both',
@@ -1452,6 +1825,26 @@ export default function SpeedLimits() {
       ).catch(() => false);
 
     if (saved) {
+      const savedCorrection = saved && typeof saved === 'object' ? saved : null;
+      if (linkedGeometryEdits.length) {
+        await Promise.all(linkedGeometryEdits.map((edit) => knowledge.updateUserCorrection(
+          edit.selector,
+          Number(edit.limitKmh),
+          edit.source || 'user_entered_estimate',
+          edit.note || '',
+          {
+            lat: edit.lat,
+            lng: edit.lng,
+            roadName: edit.roadName || '',
+            sectionPoints: edit.sectionPoints,
+            directionMode: edit.directionMode || 'both',
+            directionBearing: edit.directionBearing,
+            timeRule: edit.timeRule,
+            expiresAt: edit.expiresAt,
+            historyGroup,
+          }
+        ).catch(() => false)));
+      }
       if (selectedSection.pendingMerge && Array.isArray(selectedSection.mergedSelectors)) {
         await Promise.all(selectedSection.mergedSelectors
           .filter((selector) => selector && selector !== selectedKey)
@@ -1459,40 +1852,46 @@ export default function SpeedLimits() {
       }
       const correction = {
         ...selectedSection,
+        ...(savedCorrection || {}),
         limitKmh: Math.round(limitKmh),
+        source: mapDraft.source,
+        note: mapDraft.note,
         roadName: mapDraft.roadName || selectedSection.roadName || '',
         sectionPoints: selectedSection.sectionPoints || [],
         directionMode: mapDraft.directionMode || 'both',
         timeRule: timeRuleFromDraft(mapDraft),
         expiresAt: expiresAtFromDate(mapDraft.expiresAtDate),
       };
+      const linkedGeometryLabel = linkedGeometryEdits.length ? ' and updated the linked split half' : '';
       const beforeTrips = matchingTripsForCorrection(correction);
+      const nextRow = {
+        ...correction,
+        saved: true,
+        appliedAt: correction.appliedAt || new Date().toISOString(),
+      };
       setRows((current) => {
-        const nextRow = {
-          ...correction,
-          geohash: selectedSection.geohash,
-          source: mapDraft.source,
-          note: mapDraft.note,
-          saved: true,
-          appliedAt: new Date().toISOString(),
-        };
         const existingIndex = current.findIndex((item) => correctionKey(item) === selectedKey);
         if (existingIndex < 0) return [nextRow, ...current];
         return current.map((item, index) => index === existingIndex ? { ...item, ...nextRow } : item);
       });
-      setSelectedSection(null);
+      revealSavedSpeedMapLayer(mapDraft.source);
+      setSelectedSection(nextRow);
       setAddMode(false);
       setAddPath([]);
       setBusyGeohash(null);
-      setStatus(withUndo(`Saved ${Math.round(limitKmh)} km/h for this road section. Matching trip scores are updating in the background.`));
+      loadMapModel({ force: true });
+      setStatus(withUndo(`Saved ${Math.round(limitKmh)} km/h for this road section${linkedGeometryLabel}. Matching trip scores are updating in the background.`));
       void (async () => {
+        const afterKnowledge = await knowledge.exportData().catch(() => null);
         const updatedTrips = await withRecalculation(() => (
-          refreshTripsCrossingLocalSpeedCorrection(correction).catch(() => null)
+          beforeKnowledge && afterKnowledge
+            ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+            : refreshTripsCrossingLocalSpeedCorrection(correction).catch(() => null)
         ));
         setStatus(withUndo(buildRecalculationStatus(
           updatedTrips
-            ? `Saved ${Math.round(limitKmh)} km/h for this road section. Recalculated ${updatedTrips.length} matching trip${updatedTrips.length === 1 ? '' : 's'} locally.`
-            : `Saved ${Math.round(limitKmh)} km/h for this road section, but matching trips could not be recalculated right now.`,
+            ? `Saved ${Math.round(limitKmh)} km/h for this road section${linkedGeometryLabel}. Recalculated ${updatedTrips.length} matching trip${updatedTrips.length === 1 ? '' : 's'} locally.`
+            : `Saved ${Math.round(limitKmh)} km/h for this road section${linkedGeometryLabel}, but matching trips could not be recalculated right now.`,
           beforeTrips,
           updatedTrips
         )));
@@ -1502,6 +1901,94 @@ export default function SpeedLimits() {
       setStatus('Could not save this road section. Private-zone sections cannot be saved.');
       setBusyGeohash(null);
     }
+  };
+
+  const trimSavedMapSection = async (side) => {
+    if (!selectedSection?.saved) {
+      setStatus('Select a saved road section before trimming it.');
+      return;
+    }
+    const points = (selectedSection.sectionPoints || [])
+      .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng) }))
+      .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+    if (points.length < 3) {
+      setStatus('This section only has start and end points. Drag S or E, then Update road speed to trim it.');
+      return;
+    }
+    const nextPoints = side === 'start' ? points.slice(1) : points.slice(0, -1);
+    const midpoint = sectionMidpoint(nextPoints);
+    const limitKmh = Number(mapDraft.limitKmh || selectedSection.limitKmh);
+    if (!midpoint || !Number.isFinite(limitKmh) || limitKmh <= 0) {
+      setStatus('Could not trim this section because its geometry or speed limit is incomplete.');
+      return;
+    }
+
+    const selectedKey = correctionKey(selectedSection);
+    setBusyGeohash(selectedKey);
+    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    const updatedSection = {
+      ...selectedSection,
+      lat: midpoint.lat,
+      lng: midpoint.lng,
+      geohash: geohashEncode(midpoint.lat, midpoint.lng),
+      limitKmh: Math.round(limitKmh),
+      source: mapDraft.source || selectedSection.source || 'user_entered_estimate',
+      note: mapDraft.note || selectedSection.note || '',
+      roadName: mapDraft.roadName || selectedSection.roadName || '',
+      directionMode: mapDraft.directionMode || selectedSection.directionMode || 'both',
+      timeRule: timeRuleFromDraft(mapDraft),
+      expiresAt: expiresAtFromDate(mapDraft.expiresAtDate),
+      sectionPoints: nextPoints,
+    };
+    const saved = await knowledge.updateUserCorrection(
+      selectedKey,
+      updatedSection.limitKmh,
+      updatedSection.source,
+      updatedSection.note,
+      {
+        lat: updatedSection.lat,
+        lng: updatedSection.lng,
+        roadName: updatedSection.roadName,
+        sectionPoints: nextPoints,
+        directionMode: updatedSection.directionMode,
+        directionBearing: selectedSection.directionBearing,
+        timeRule: updatedSection.timeRule,
+        expiresAt: updatedSection.expiresAt,
+        historyGroup: `trim-section-${Date.now()}`,
+      }
+    ).catch(() => false);
+    if (!saved) {
+      setBusyGeohash(null);
+      setStatus('Could not trim this saved road section.');
+      return;
+    }
+
+    setRows((current) => current.map((row) => (
+      correctionKey(row) === selectedKey ? { ...row, ...updatedSection, appliedAt: new Date().toISOString() } : row
+    )));
+    setSelectedSection(updatedSection);
+    revealSavedSpeedMapLayer(updatedSection.source);
+    const beforeTrips = [
+      ...new Map([
+        ...matchingTripsForCorrection(selectedSection),
+        ...matchingTripsForCorrection(updatedSection),
+      ].map((trip) => [String(trip.id), trip])).values(),
+    ];
+    const afterKnowledge = await knowledge.exportData().catch(() => null);
+    const updatedTrips = await withRecalculation(() => (
+      beforeKnowledge && afterKnowledge
+        ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+        : refreshTripsCrossingLocalSpeedCorrection(updatedSection).catch(() => null)
+    ));
+    setBusyGeohash(null);
+    setStatus(withUndo(buildRecalculationStatus(
+      updatedTrips
+        ? `Trimmed the ${side} of this saved road section and recalculated ${updatedTrips.length} matching trip${updatedTrips.length === 1 ? '' : 's'} locally.`
+        : `Trimmed the ${side} of this saved road section, but matching trips could not be recalculated right now.`,
+      beforeTrips,
+      updatedTrips
+    )));
+    await refreshRowsAndMap({ silent: true });
   };
 
   const removeMapSection = async () => {
@@ -1606,12 +2093,12 @@ export default function SpeedLimits() {
       setSelectedSection(splitCorrections[0]);
       setAddMode(false);
       setAddPath([]);
-      setMapLayers((current) => ({ ...current, saved: true }));
-      const updatedTrips = await withRecalculation(() => Promise.all(splitCorrections.map((part) => (
-        refreshTripsCrossingLocalSpeedCorrection(part).catch(() => null)
-      ))));
-      const recalculated = updatedTrips.flat().filter(Boolean).length;
-      setStatus(withUndo(`Road section split into two saved speeds. First half is selected on the map. Recalculated ${recalculated} matching trip${recalculated === 1 ? '' : 's'} locally.`));
+      revealSavedSpeedMapLayer(source);
+      const updatedTrips = await withRecalculation(() => (
+        refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, nextKnowledge).catch(() => null)
+      ));
+      const recalculated = Array.isArray(updatedTrips) ? updatedTrips.length : 0;
+      setStatus(withUndo(`Road section split into two saved speeds. First half is selected; drag S, E, or any numbered bend handle to refine it. Recalculated ${recalculated} matching trip${recalculated === 1 ? '' : 's'} locally.`));
       await refreshRowsAndMap();
     } else {
       setStatus('Could not split this section completely. Review saved speeds before trying again.');
@@ -1675,6 +2162,33 @@ export default function SpeedLimits() {
   const refreshSavedRoadSpeeds = async () => {
     await refreshRowsAndMap();
     setStatus('Saved road speeds refreshed.');
+  };
+
+  const repairSavedRoadSpeeds = async () => {
+    setBusyGeohash('repair');
+    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    const result = await knowledge.repairSavedSpeedData().catch(() => null);
+    if (!result) {
+      setStatus('Could not repair saved road speeds right now. Try refresh, then repair again.');
+      setBusyGeohash(null);
+      return;
+    }
+    const afterKnowledge = await knowledge.exportData().catch(() => null);
+    const updatedTrips = result.changed && beforeKnowledge && afterKnowledge
+      ? await withRecalculation(() => (
+        refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+      ))
+      : null;
+    setBusyGeohash(null);
+    await refreshRowsAndMap({ silent: true });
+    if (!result.changed) {
+      setStatus('Repair checked saved road speeds. No expired or duplicate saved rules needed cleanup.');
+      return;
+    }
+    const removed = Number(result.removedExpired || 0) + Number(result.removedDuplicates || 0);
+    setStatus(withUndo(updatedTrips
+      ? `Repair removed ${removed} stale or duplicate saved rule${removed === 1 ? '' : 's'} and recalculated ${updatedTrips.length} matching trip${updatedTrips.length === 1 ? '' : 's'} locally.`
+      : `Repair removed ${removed} stale or duplicate saved rule${removed === 1 ? '' : 's'}. Matching trips could not be recalculated right now.`));
   };
 
   const cancelAddSection = () => {
@@ -1753,6 +2267,7 @@ export default function SpeedLimits() {
     }
     const historyGroup = `bulk-confirm-${Date.now()}`;
     setBusyGeohash('bulk');
+    const beforeKnowledge = await knowledge.exportData().catch(() => null);
     const results = await Promise.all(selected.map((row) => knowledge.updateUserCorrection(
       correctionKey(row),
       row.limitKmh,
@@ -1761,11 +2276,20 @@ export default function SpeedLimits() {
       { historyGroup }
     ).catch(() => false)));
     const updated = selected.filter((_, index) => results[index]);
-    await withRecalculation(() => Promise.all(updated.map((row) => (
-      refreshTripsCrossingLocalSpeedCorrection(row).catch(() => null)
-    ))));
+    const afterKnowledge = await knowledge.exportData().catch(() => null);
+    await withRecalculation(() => (
+      beforeKnowledge && afterKnowledge
+        ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+        : Promise.all(updated.map((row) => refreshTripsCrossingLocalSpeedCorrection(row).catch(() => null)))
+    ));
     setSelectedRows(new Set());
-    setStatus(withUndo(`Confirmed ${updated.length} selected rule${updated.length === 1 ? '' : 's'} as posted signs.`));
+    if (updated.length > 0) {
+      revealSavedRowsFilter('user_confirmed_posted_sign');
+      revealSavedSpeedMapLayer('user_confirmed_posted_sign');
+    }
+    setStatus(withUndo(updated.length > 0
+      ? `Confirmed ${updated.length} selected rule${updated.length === 1 ? '' : 's'} as posted signs.`
+      : 'Could not confirm the selected rules as posted signs.'));
     setBusyGeohash(null);
     await refreshRowsAndMap();
   };
@@ -1779,14 +2303,18 @@ export default function SpeedLimits() {
     if (!window.confirm(`Delete ${selected.length} selected saved road-speed rule${selected.length === 1 ? '' : 's'}?`)) return;
     const historyGroup = `bulk-delete-${Date.now()}`;
     setBusyGeohash('bulk');
+    const beforeKnowledge = await knowledge.exportData().catch(() => null);
     const results = await Promise.all(selected.map((row) => (
       knowledge.removeUserCorrection(correctionKey(row), { historyGroup }).catch(() => false)
     )));
     const removed = selected.filter((_, index) => results[index]);
     removeSavedRowsFromView(removed);
-    await withRecalculation(() => Promise.all(removed.map((row) => (
-      refreshTripsCrossingLocalSpeedCorrection(row).catch(() => null)
-    ))));
+    const afterKnowledge = await knowledge.exportData().catch(() => null);
+    await withRecalculation(() => (
+      beforeKnowledge && afterKnowledge
+        ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
+        : Promise.all(removed.map((row) => refreshTripsCrossingLocalSpeedCorrection(row).catch(() => null)))
+    ));
     setSelectedRows(new Set());
     setStatus(withUndo(`Deleted ${removed.length} selected rule${removed.length === 1 ? '' : 's'}.`));
     setBusyGeohash(null);
@@ -1874,6 +2402,15 @@ export default function SpeedLimits() {
           >
             <RefreshCw className="h-3.5 w-3.5" />
             Refresh
+          </button>
+          <button
+            type="button"
+            onClick={repairSavedRoadSpeeds}
+            disabled={loading || busyGeohash === 'repair'}
+            className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary disabled:opacity-60"
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Repair
           </button>
         </div>
       </div>
@@ -2004,7 +2541,7 @@ export default function SpeedLimits() {
               </span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Review conflicts first, then save observed-only or unset road speeds from the map.
+              Review conflicts first, then confirm trip speed zones and missing road speeds segment by segment.
             </p>
           </div>
           {firstConflictSection && (
@@ -2045,11 +2582,13 @@ export default function SpeedLimits() {
                       ? 'bg-red-600 text-white'
                       : item.kind === 'observed'
                         ? 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-200'
+                        : item.kind === 'speedZone'
+                          ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-100'
                         : item.kind === 'review'
                           ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-100'
                         : 'bg-secondary text-muted-foreground'
                   }`}>
-                    {item.kind === 'conflict' ? 'Resolve' : item.kind === 'observed' ? 'Save' : item.kind === 'review' ? 'Review' : 'Set'}
+                    {item.kind === 'conflict' ? 'Resolve' : item.kind === 'speedZone' ? 'Zone' : item.kind === 'observed' ? 'Save' : item.kind === 'review' ? 'Review' : 'Set'}
                   </span>
                 </div>
               </button>
@@ -2134,6 +2673,26 @@ export default function SpeedLimits() {
                 {addMode ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
                 {addMode ? 'Cancel adding' : 'Add road speed'}
               </button>
+              {hiddenUnsetSectionCount > 0 && (
+                <button
+                  type="button"
+                  onClick={restoreIgnoredUnsetMapSections}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
+                >
+                  <Undo2 className="h-3.5 w-3.5" />
+                  Restore hidden unset {hiddenUnsetSectionCount}
+                </button>
+              )}
+              {excludedSpeedSectionCount > 0 && (
+                <button
+                  type="button"
+                  onClick={restoreExcludedSpeedSections}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
+                >
+                  <Undo2 className="h-3.5 w-3.5" />
+                  Restore parking/private {excludedSpeedSectionCount}
+                </button>
+              )}
               {addMode && (
                 <button
                   type="button"
@@ -2214,7 +2773,9 @@ export default function SpeedLimits() {
             <div>
               <div className="font-semibold">Add speed trace</div>
               <div className="mt-1 text-xs opacity-85">
-                Tap along the road, drag trace points if needed, then enter the speed below. Auto snap uses only recorded trip geometry.
+                {autoSnapTrace
+                  ? 'Tap the start and end of the segment; Auto snap fills the recorded route shape when possible. Drag trace points if needed, then enter the speed below.'
+                  : 'Tap along the road, drag trace points if needed, then enter the speed below.'}
               </div>
               <div className="mt-2 flex flex-wrap gap-1.5 text-xs font-semibold">
                 <span className="rounded-full bg-background/80 px-2 py-1">{addPath.length} point{addPath.length === 1 ? '' : 's'}</span>
@@ -2241,6 +2802,9 @@ export default function SpeedLimits() {
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
             <p><strong>Snap to route</strong> matches the trace to one ordered recorded route segment within 80 metres. It never contacts a routing service.</p>
             <p><strong>Split at midpoint</strong> replaces one saved rule with two independently editable road sections.</p>
+            <p><strong>Trim start/end</strong> removes one bad tail point from a saved rule and immediately updates affected trip scores.</p>
+            <p><strong>Parking/private</strong> removes a saved rule or hides an unset section when it is a lot, driveway, or private access road.</p>
+            <p><strong>Edit trace points</strong> hides the selected section&apos;s old line while editing. Drag S, E, or numbered bend handles, then update the road speed to save the new geometry.</p>
             <p><strong>Merge nearby</strong> joins two nearby saved sections only when their speeds match.</p>
             <p><strong>Continue tracing</strong> means the road is still being drawn. It disappears immediately after a successful save.</p>
           </div>
@@ -2260,9 +2824,14 @@ export default function SpeedLimits() {
                   {selectedSection.saved
                     ? 'This value follows the highlighted saved road section. Create a separate section where the posted limit changes.'
                     : addMode
-                      ? `${addPath.length} trace point${addPath.length === 1 ? '' : 's'}. Tap along the road and around each bend; at least two points are required.`
+                      ? `${addPath.length} trace point${addPath.length === 1 ? '' : 's'}. ${autoSnapTrace ? 'Tap start and end; add more anchors only if the road match needs help.' : 'Tap along the road and around each bend; at least two points are required.'}`
                     : `${selectedSectionPointCount} recorded point${selectedSectionPointCount === 1 ? '' : 's'} in this trip section. Enter the speed and save it as a road section.`}
                 </p>
+                {selectedSectionReason && (
+                  <div className="mt-2 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs font-medium text-muted-foreground">
+                    {selectedSectionReason}
+                  </div>
+                )}
                 <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-semibold">
                   <span className={`rounded-full px-2 py-0.5 ${speedLimitSourceBadgeClass(mapDraft.source)}`}>
                     {speedLimitSourceLabel(mapDraft.source, { short: true })}
@@ -2408,12 +2977,113 @@ export default function SpeedLimits() {
                     <Trash2 className="h-4 w-4" />
                   </button>
                 )}
+                {!selectedSection.saved && isUnsetMapSection(selectedSection) && (
+                  <button
+                    type="button"
+                    onClick={ignoreUnsetMapSection}
+                    disabled={busyGeohash === correctionKey(selectedSection)}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary disabled:opacity-60"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Hide unset
+                  </button>
+                )}
+              </div>
+            </div>
+            {!selectedSection.saved && isUnsetMapSection(selectedSection) && (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-950/30 dark:text-slate-200">
+                Hide unset removes this small prompt from the saved speed map and review list on this device. It does not delete the trip route.
+              </div>
+            )}
+            <div className="mt-3 rounded-xl border border-border bg-secondary/30 p-3">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <div className="text-xs font-semibold text-foreground">Cleanup tools</div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    Remove parking-lot tails, driveway stubs, or private access sections so they stop polluting saved speeds and review prompts.
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {selectedSection.saved && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => trimSavedMapSection('start')}
+                        disabled={busyGeohash === correctionKey(selectedSection) || (selectedSection.sectionPoints || []).length < 3}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
+                      >
+                        <Scissors className="h-3.5 w-3.5" />
+                        Trim start
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => trimSavedMapSection('end')}
+                        disabled={busyGeohash === correctionKey(selectedSection) || (selectedSection.sectionPoints || []).length < 3}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
+                      >
+                        <Scissors className="h-3.5 w-3.5" />
+                        Trim end
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={markSelectedSectionPrivate}
+                    disabled={busyGeohash === correctionKey(selectedSection)}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-60 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100"
+                  >
+                    <Ban className="h-3.5 w-3.5" />
+                    Parking/private
+                  </button>
+                </div>
               </div>
             </div>
             {editorWarnings.length > 0 && (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
                 {editorWarnings[0]}
                 {editorWarnings.length > 1 && ` +${editorWarnings.length - 1} more check${editorWarnings.length === 2 ? '' : 's'} in Advanced options.`}
+              </div>
+            )}
+            {selectedBlockingOverlap && (
+              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                <div className="font-semibold">This save would duplicate an active saved rule.</div>
+                <div className="mt-1">
+                  Overlaps {selectedBlockingOverlap.roadName || 'another saved road section'} at {selectedBlockingOverlap.limitKmh || 'unknown'} km/h.
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {selectedBlockingOverlap.section && (
+                    <button
+                      type="button"
+                      onClick={() => selectMapSection(selectedBlockingOverlap.section)}
+                      className="rounded-lg border border-red-200 bg-background px-2.5 py-1.5 font-semibold text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-background/80 dark:text-red-300"
+                    >
+                      Edit existing rule
+                    </button>
+                  )}
+                  {selectedSection?.saved && (
+                    <button
+                      type="button"
+                      onClick={splitMapSection}
+                      disabled={(selectedSection.sectionPoints || []).length < 2}
+                      className="rounded-lg border border-red-200 bg-background px-2.5 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50 dark:border-red-900/50 dark:bg-background/80 dark:text-red-300"
+                    >
+                      Split selected section
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMapDraft((current) => ({
+                        ...current,
+                        directionMode: current.directionMode === 'both' ? 'forward' : current.directionMode,
+                      }));
+                      setStatus('Set this rule to a specific direction or time window, then review the overlap warning again before saving.');
+                    }}
+                    className="rounded-lg border border-red-200 bg-background px-2.5 py-1.5 font-semibold text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-background/80 dark:text-red-300"
+                  >
+                    Make direction/time distinct
+                  </button>
+                </div>
               </div>
             )}
             <details className="mt-3 rounded-xl border border-border bg-secondary/30 p-3">

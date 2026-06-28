@@ -120,4 +120,31 @@ describe('trip insight evidence gates', () => {
     });
     expect(sampled.actions.some((action) => action.includes('(3 trips)'))).toBe(true);
   });
+
+  it('builds a structured coach brief with drill, target, and risk patterns', () => {
+    const insights = buildDrivingCoachInsights([
+      trip('2026-05-24T08:00:00.000Z', 78, { harsh_brakes_count: 3, distance_km: 20 }),
+      trip('2026-05-23T08:00:00.000Z', 82, { harsh_brakes_count: 2, distance_km: 20 }),
+      trip('2026-05-22T08:00:00.000Z', 86, { rapid_accel_count: 1, distance_km: 20 }),
+    ]);
+
+    expect(insights.coach_brief).toMatchObject({
+      title: 'Late braking',
+      drill: {
+        title: 'Five-stop anticipation drill',
+      },
+      target: {
+        metric: 'Late braking count',
+      },
+    });
+    expect(insights.coach_brief.evidence).toEqual(expect.arrayContaining([
+      '3 completed trips',
+      '60 km analyzed',
+    ]));
+    expect(insights.risk_patterns[0]).toMatchObject({
+      key: 'harsh_brakes',
+      label: 'Late braking',
+      count: 5,
+    });
+  });
 });

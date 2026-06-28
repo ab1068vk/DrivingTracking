@@ -2,15 +2,24 @@ import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Award, CalendarDays, CheckCircle2, Clock, ExternalLink, Flag, MapPinned, Route, ShieldAlert, Smartphone, Target, TrendingUp } from 'lucide-react';
+import { AlertTriangle, Award, CalendarDays, CheckCircle2, Clock, ExternalLink, Flag, ListChecks, MapPinned, Route, ShieldAlert, Smartphone, Target, TrendingUp } from 'lucide-react';
 import { tripSummaryQueryOptions } from '@/api/trips';
+import { vehicleService } from '@/api/vehicles';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDistance, getScoreColor } from '@/lib/tripEngine';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { isDriverMetricEligible, summarizePhoneUseAcrossTrips } from '@/lib/phoneUseSummary';
 import phoneUseRiskImage from '@/assets/phone-use-risk.jpg';
 import {
+  achievementNextStepLabel,
+  achievementProgressLabel,
+  achievementProgressValue,
+  calculateAchievementBadges,
+  summarizeAchievementBadges,
+} from '@/lib/tripInsights';
+import {
   buildCommuteDetections,
+  buildDriverInsightBrief,
   buildGoalStatus,
   buildRoadTypeBreakdown,
   buildRouteComparisons,
@@ -62,6 +71,10 @@ export default function Insights() {
     ...tripSummaryQueryOptions(),
     select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
+  const { data: vehicles = [] } = useQuery({
+    queryKey: ['insights-achievement-vehicles'],
+    queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
+  });
 
   const driverCompleted = completed.filter(isDriverMetricEligible);
   const routes = buildRouteComparisons(driverCompleted);
@@ -70,6 +83,14 @@ export default function Insights() {
   const weekly = buildWeeklyDriverSummary(driverCompleted, settings);
   const roadTypes = buildRoadTypeBreakdown(driverCompleted);
   const phoneUseSummary = useMemo(() => summarizePhoneUseAcrossTrips(completed), [completed]);
+  const insightBrief = buildDriverInsightBrief(completed, settings, {
+    driverTrips: driverCompleted,
+    phoneUseSummary,
+  });
+  const achievementSummary = useMemo(
+    () => summarizeAchievementBadges(calculateAchievementBadges(completed, settings, vehicles)),
+    [completed, settings, vehicles]
+  );
   const goalStatus = buildGoalStatus(
     driverCompleted.filter((trip) => new Date(trip.start_time).getTime() >= (() => {
       const d = new Date();
@@ -109,6 +130,8 @@ export default function Insights() {
         </div>
       ) : (
         <>
+          <InsightBriefPanel insightBrief={insightBrief} navigate={navigate} units={units} />
+
           <section className="grid gap-3 md:grid-cols-4">
             {[
               { icon: Route, label: 'Repeated routes', value: routes.length },
@@ -122,6 +145,65 @@ export default function Insights() {
                 <div className="text-xs text-muted-foreground">{label}</div>
               </div>
             ))}
+          </section>
+
+          <section className="rounded-3xl border border-border bg-card p-5 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-primary">
+                  <Award className="h-4 w-4" />
+                  Milestones
+                </div>
+                <h2 className="mt-2 font-semibold">
+                  {achievementSummary.next ? `Next up: ${achievementSummary.next.label}` : 'All milestones unlocked'}
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Progress belongs here with your trends, goals, and route patterns.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate('/achievements')}
+                className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-secondary"
+              >
+                View all
+              </button>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_170px]">
+              <div>
+                {achievementSummary.next ? (
+                  <>
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <span className="font-medium">{achievementSummary.next.description}</span>
+                      <span className="font-semibold text-primary">
+                        {achievementProgressLabel(achievementSummary.next)}
+                      </span>
+                    </div>
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-secondary">
+                      <div
+                        className="h-full rounded-full bg-primary"
+                        style={{ width: `${achievementProgressValue(achievementSummary.next)}%` }}
+                      />
+                    </div>
+                    <div className="mt-2 text-[11px] font-semibold text-muted-foreground">
+                      {achievementNextStepLabel(achievementSummary.next)}
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-300">
+                    Every current milestone is complete. New progress targets can live here without crowding Dashboard.
+                  </div>
+                )}
+              </div>
+              <div className="rounded-2xl bg-secondary/50 p-4">
+                <div className="font-grotesk text-2xl font-bold">
+                  {achievementSummary.unlockedCount}/{achievementSummary.totalCount}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  unlocked - {achievementSummary.completionPercent}% complete
+                </div>
+              </div>
+            </div>
           </section>
 
           <section className="rounded-3xl border border-border bg-card p-5 shadow-sm">
@@ -547,6 +629,179 @@ function SummaryLine({ label, value }) {
     <div className="rounded-2xl bg-secondary/50 p-4">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-1 text-lg font-semibold capitalize">{value}</div>
+    </div>
+  );
+}
+
+function InsightBriefPanel({ insightBrief, navigate, units }) {
+  const primaryAction = insightBrief.actions[0] || null;
+  const supportingActions = insightBrief.actions.slice(1);
+
+  return (
+    <section className="overflow-hidden rounded-3xl border border-primary/20 bg-card shadow-sm">
+      <div className="border-b border-border bg-primary/5 p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 max-w-3xl">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-primary">
+              <ListChecks className="h-4 w-4" />
+              Insight Brief
+            </div>
+            <h2 className="mt-2 text-2xl font-grotesk font-bold tracking-normal md:text-3xl">{insightBrief.headline}</h2>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {insightBrief.evidence.map((item) => (
+                <span key={item} className="rounded-full border border-border bg-background/80 px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                  {item}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-right sm:min-w-60">
+            <div className="rounded-2xl border border-border bg-background/80 px-4 py-3">
+              <div className="text-xs text-muted-foreground">Confidence</div>
+              <div className="mt-1 font-semibold capitalize">{insightBrief.confidence}</div>
+            </div>
+            <div className="rounded-2xl border border-border bg-background/80 px-4 py-3">
+              <div className="text-xs text-muted-foreground">Avg score</div>
+              <div className="mt-1 font-grotesk text-2xl font-bold">{formatEstimatedScore(insightBrief.average_score)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-0 lg:grid-cols-[1.2fr_0.8fr]">
+        <div className="space-y-4 p-5">
+          <div className="grid gap-3 md:grid-cols-3">
+            <BriefMetric
+              icon={TrendingUp}
+              label="Recent trend"
+              value={insightBrief.score_trend.label}
+              detail={`${insightBrief.current_period.trip_count} recent vs ${insightBrief.previous_period.trip_count} prior trip${insightBrief.previous_period.trip_count === 1 ? '' : 's'}`}
+              tone={insightBrief.score_trend.direction === 'up' ? 'good' : insightBrief.score_trend.direction === 'down' ? 'warn' : 'neutral'}
+            />
+            <BriefMetric
+              icon={AlertTriangle}
+              label="Event density"
+              value={insightBrief.risk_event_rate.per100km == null ? 'No distance' : `${insightBrief.risk_event_rate.per100km}/100 km`}
+              detail={`${insightBrief.risk_event_rate.total_events} scored risk event${insightBrief.risk_event_rate.total_events === 1 ? '' : 's'}`}
+              tone={insightBrief.risk_event_rate.total_events > 0 ? 'warn' : 'good'}
+            />
+            <BriefMetric
+              icon={Target}
+              label="Top risk"
+              value={insightBrief.top_risk?.label || 'None flagged'}
+              detail={insightBrief.top_risk ? `${insightBrief.top_risk.count} events total` : 'Keep collecting clean trips'}
+              tone={insightBrief.top_risk ? 'warn' : 'good'}
+            />
+          </div>
+
+          {primaryAction && (
+            <button
+              type="button"
+              disabled={!primaryAction.tripId}
+              onClick={() => primaryAction.tripId && navigate(`/trips/${primaryAction.tripId}`)}
+              className="w-full rounded-2xl border border-primary/30 bg-primary/5 p-4 text-left transition hover:border-primary/60 disabled:cursor-default disabled:hover:border-primary/30"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-primary">Next best action</div>
+                  <div className="mt-1 text-lg font-semibold">{primaryAction.title}</div>
+                  <div className="mt-1 text-sm text-muted-foreground">{primaryAction.detail}</div>
+                </div>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-bold capitalize ${priorityTone(primaryAction.priority)}`}>
+                  {primaryAction.priority}
+                </span>
+              </div>
+              <div className="mt-3 inline-flex rounded-full bg-background/80 px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                {primaryAction.metric}
+              </div>
+            </button>
+          )}
+
+          {supportingActions.length > 0 && (
+            <div className="grid gap-2 md:grid-cols-3">
+              {supportingActions.map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  disabled={!action.tripId}
+                  onClick={() => action.tripId && navigate(`/trips/${action.tripId}`)}
+                  className="rounded-2xl border border-border bg-secondary/30 p-3 text-left transition hover:border-primary/40 disabled:cursor-default disabled:hover:border-border"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-semibold">{action.title}</div>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${priorityTone(action.priority)}`}>
+                      {action.priority}
+                    </span>
+                  </div>
+                  <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{action.metric}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-2 border-t border-border bg-secondary/20 p-5 lg:border-l lg:border-t-0">
+          <ContextSnapshot
+            label="Strongest context"
+            value={insightBrief.strongest_context?.label || 'More trips needed'}
+            detail={insightBrief.strongest_context
+              ? `${formatEstimatedScore(insightBrief.strongest_context.avg_score)} avg, ${formatDistance(insightBrief.strongest_context.distance_km, units)}`
+              : 'Drive a few more scored trips to compare road types.'}
+            tone="good"
+          />
+          <ContextSnapshot
+            label="Needs review"
+            value={insightBrief.weakest_context?.label || 'No weak context yet'}
+            detail={insightBrief.weakest_context
+              ? `${formatEstimatedScore(insightBrief.weakest_context.avg_score)} avg, ${insightBrief.weakest_context.risk_events} events`
+              : 'No repeated context is standing out as weaker.'}
+            tone={insightBrief.weakest_context ? 'warn' : 'good'}
+          />
+          <ContextSnapshot
+            label="Route opportunity"
+            value={insightBrief.route_opportunity?.label || 'No route drift'}
+            detail={insightBrief.route_opportunity
+              ? `${insightBrief.route_opportunity.trend} trend, strongest near ${insightBrief.route_opportunity.safest_time}`
+              : 'Repeated routes look stable so far.'}
+            tone={insightBrief.route_opportunity ? 'warn' : 'good'}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const metricTone = (tone = 'neutral') => ({
+  good: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-300',
+  warn: 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-300',
+  neutral: 'border-border bg-secondary/40 text-foreground',
+}[tone] || 'border-border bg-secondary/40 text-foreground');
+
+const priorityTone = (priority = 'low') => ({
+  high: 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300',
+  medium: 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300',
+  low: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
+}[priority] || 'bg-secondary text-muted-foreground');
+
+function BriefMetric({ icon: Icon, label, value, detail, tone = 'neutral' }) {
+  return (
+    <div className={`rounded-2xl border p-4 ${metricTone(tone)}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs font-medium opacity-80">{label}</div>
+        <Icon className="h-4 w-4 opacity-80" />
+      </div>
+      <div className="mt-2 font-grotesk text-2xl font-bold">{value}</div>
+      <div className="mt-1 text-xs opacity-80">{detail}</div>
+    </div>
+  );
+}
+
+function ContextSnapshot({ label, value, detail, tone = 'neutral' }) {
+  return (
+    <div className={`rounded-2xl border p-4 ${metricTone(tone)}`}>
+      <div className="text-xs font-medium opacity-80">{label}</div>
+      <div className="mt-1 font-semibold">{value}</div>
+      <div className="mt-1 text-xs opacity-80">{detail}</div>
     </div>
   );
 }

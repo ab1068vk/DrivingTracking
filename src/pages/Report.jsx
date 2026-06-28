@@ -5,7 +5,8 @@ import { tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
   BarChart3, TrendingUp, AlertTriangle,
-  Download, Car, Clock, Navigation, Fuel, Leaf, Gauge, Award, FileText
+  Download, Car, Clock, Navigation, Fuel, Leaf, Gauge, Award, FileText,
+  Activity, CalendarDays, Route, ShieldCheck, Target
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -48,6 +49,13 @@ const PERIODS = [
   { id: 'all', label: 'All Time', days: Infinity },
 ];
 
+const RISK_EVENT_DEFINITIONS = [
+  { key: 'harsh_brake', label: 'Harsh Braking', summaryKey: 'total_harsh_brakes', color: '#ef4444', bg: 'bg-red-500' },
+  { key: 'rapid_acceleration', label: 'Rapid Acceleration', summaryKey: 'total_rapid_accels', color: '#f59e0b', bg: 'bg-yellow-500' },
+  { key: 'sharp_turn', label: 'Sharp Turns', summaryKey: 'total_sharp_turns', color: '#3b82f6', bg: 'bg-blue-500' },
+  { key: 'speeding', label: 'Speeding', summaryKey: 'total_speeding_events', color: '#f97316', bg: 'bg-orange-500' },
+];
+
 export function buildReportExportSummary(trips = [], period = 'week') {
   const safeTrips = Array.isArray(trips) ? trips : [];
   const validTimes = safeTrips
@@ -67,6 +75,114 @@ export function buildReportExportSummary(trips = [], period = 'week') {
     description: safeTrips.length
       ? `${safeTrips.length} completed trip${safeTrips.length === 1 ? '' : 's'} included`
       : 'Exports unlock after a completed trip matches the selected period.',
+  };
+}
+
+const formatSignedNumber = (value, suffix = '') => {
+  if (value == null || !Number.isFinite(Number(value))) return 'No comparison';
+  const rounded = Math.round(Number(value) * 10) / 10;
+  return `${rounded > 0 ? '+' : ''}${rounded}${suffix}`;
+};
+
+const formatPercent = (value) => `${Math.round(value)}%`;
+
+function getRiskRows(summary = {}) {
+  return RISK_EVENT_DEFINITIONS.map((item) => ({
+    ...item,
+    count: Number(summary[item.summaryKey]) || 0,
+  }));
+}
+
+function buildScoreDistribution(trips = []) {
+  const bands = [
+    { label: '90+', shortLabel: '90+', count: 0, color: 'bg-emerald-500' },
+    { label: '80-89', shortLabel: '80s', count: 0, color: 'bg-sky-500' },
+    { label: '70-79', shortLabel: '70s', count: 0, color: 'bg-amber-500' },
+    { label: '<70', shortLabel: '<70', count: 0, color: 'bg-red-500' },
+  ];
+  trips.forEach((trip) => {
+    const score = getTripComponentScore(trip, 'overall').value;
+    if (!Number.isFinite(Number(score))) return;
+    if (score >= 90) bands[0].count += 1;
+    else if (score >= 80) bands[1].count += 1;
+    else if (score >= 70) bands[2].count += 1;
+    else bands[3].count += 1;
+  });
+  const total = bands.reduce((sum, band) => sum + band.count, 0);
+  return bands.map((band) => ({
+    ...band,
+    percent: total > 0 ? (band.count / total) * 100 : 0,
+  }));
+}
+
+function averageComponentScore(trips = [], component) {
+  const scored = trips
+    .map((trip) => ({
+      score: getTripComponentScore(trip, component).value,
+      distance: Number(trip.distance_km) || 0,
+    }))
+    .filter((item) => Number.isFinite(Number(item.score)));
+  const totalDistance = scored.reduce((sum, item) => sum + item.distance, 0);
+  if (totalDistance > 0) {
+    return Math.round(scored.reduce((sum, item) => sum + Number(item.score) * item.distance, 0) / totalDistance);
+  }
+  return scored.length
+    ? Math.round(scored.reduce((sum, item) => sum + Number(item.score), 0) / scored.length)
+    : null;
+}
+
+function buildReportInsights({ trips, period, periodDays, summary, previousSummary, previousTrips, topRisk, timeOfDayData, dayOfWeekData, peakHourStress }) {
+  const totalEvents = getRiskRows(summary).reduce((sum, item) => sum + item.count, 0);
+  const totalKm = Number(summary.total_distance_km) || 0;
+  const activeDays = new Set(trips.map((trip) => new Date(trip.start_time).toDateString())).size;
+  const possibleDays = period === 'all' ? activeDays : periodDays;
+  const cleanTrips = trips.filter((trip) => (
+    (Number(trip.harsh_brakes_count) || 0) === 0 &&
+    (Number(trip.rapid_accel_count) || 0) === 0 &&
+    (Number(trip.sharp_turns_count) || 0) === 0 &&
+    (Number(trip.speeding_events_count) || 0) === 0
+  )).length;
+  const scoredTrips = trips.filter((trip) => getTripComponentScore(trip, 'overall').value != null).length;
+  const bestWindow = [...timeOfDayData].filter((item) => Number.isFinite(Number(item.avgScore))).sort((a, b) => b.avgScore - a.avgScore)[0];
+  const hardestDay = [...dayOfWeekData].filter((item) => Number.isFinite(Number(item.events))).sort((a, b) => b.events - a.events)[0];
+  const eventRate = totalKm > 0 ? (totalEvents / totalKm) * 100 : null;
+  const previousEventRows = getRiskRows(previousSummary);
+  const previousEventCount = previousEventRows.reduce((sum, item) => sum + item.count, 0);
+  const previousEventRate = previousSummary.total_distance_km > 0 ? (previousEventCount / previousSummary.total_distance_km) * 100 : null;
+  const eventRateDelta = eventRate != null && previousEventRate != null ? eventRate - previousEventRate : null;
+  const scoreDelta = summary.avg_score != null && previousSummary.avg_score != null ? summary.avg_score - previousSummary.avg_score : null;
+  const distanceDelta = previousTrips.length > 0 ? totalKm - previousSummary.total_distance_km : null;
+  const cleanTripPercent = trips.length ? (cleanTrips / trips.length) * 100 : 0;
+  const coveragePercent = possibleDays > 0 ? (activeDays / possibleDays) * 100 : 0;
+  const confidence =
+    totalKm >= 100 && scoredTrips >= 10 ? 'High' :
+      totalKm >= 25 && scoredTrips >= 3 ? 'Medium' :
+        'Early';
+  const nextAction = topRisk?.count > 0
+    ? topRisk.key === 'speeding'
+      ? 'Ease back before long open stretches; speeding is the biggest score drag this period.'
+      : topRisk.key === 'harsh_brake'
+        ? 'Open following distance earlier; harsh braking is the clearest improvement lever.'
+        : topRisk.key === 'rapid_acceleration'
+          ? 'Use gentler launches from lights and merges; acceleration spikes are leading the risk mix.'
+          : 'Smooth turn entry speed; sharp turns are the most common event right now.'
+    : peakHourStress.stress_ratio > 1.25
+      ? 'Peak-hour drives are costlier than off-peak. Leave a few minutes earlier when you can.'
+      : 'Keep the same rhythm. The report did not find a single dominant risk event.';
+
+  return {
+    activeDays,
+    cleanTripPercent,
+    confidence,
+    coveragePercent,
+    distanceDelta,
+    eventRate,
+    eventRateDelta,
+    hardestDay,
+    nextAction,
+    scoreDelta,
+    scoredTrips,
+    bestWindow,
   };
 }
 
@@ -303,19 +419,37 @@ export default function Reports() {
     });
   })();
   const previousSummary = generateReportSummary(previousTrips);
-  const topRisk = Object.entries(riskLabels)
-    .map(([type, label]) => ({
-      type,
-      label,
-      count: trips.reduce((sum, trip) => sum + (trip.driving_events || []).filter((event) => event.type === type).length, 0),
-    }))
+  const riskRows = getRiskRows(summary);
+  const topRisk = riskRows
+    .map(({ key, label, count }) => ({ key, label, count }))
     .sort((a, b) => b.count - a.count)[0];
+  const reportInsights = buildReportInsights({
+    trips,
+    period,
+    periodDays,
+    summary,
+    previousSummary,
+    previousTrips,
+    topRisk,
+    timeOfDayData,
+    dayOfWeekData,
+    peakHourStress,
+  });
+  const scoreDistribution = buildScoreDistribution(trips);
+  const componentScores = [
+    { label: 'Safety', value: averageComponentScore(trips, 'safety'), icon: ShieldCheck },
+    { label: 'Smoothness', value: averageComponentScore(trips, 'smoothness'), icon: Activity },
+    { label: 'Eco', value: averageComponentScore(trips, 'eco'), icon: Leaf },
+  ];
+  const distanceDeltaLabel = reportInsights.distanceDelta == null
+    ? 'Need prior period'
+    : `${reportInsights.distanceDelta > 0 ? '+' : reportInsights.distanceDelta < 0 ? '-' : ''}${formatDistance(Math.abs(reportInsights.distanceDelta), units)} vs prior`;
   const reportTakeaways = [
     summary.total_trips > 0
       ? `${summary.total_trips} trips covered ${formatDistance(summary.total_distance_km, units)} with an average score of ${formatEstimatedScore(summary.avg_score, { empty: 'unavailable' })}.`
       : 'No trips were recorded in this report period.',
     previousTrips.length > 0 && summary.avg_score != null && previousSummary.avg_score != null
-      ? `Compared with the previous period, score ${summary.avg_score >= previousSummary.avg_score ? 'improved' : 'dropped'} by ${Math.abs(summary.avg_score - previousSummary.avg_score)} points.`
+      ? `Compared with the previous period, score ${summary.avg_score >= previousSummary.avg_score ? 'improved' : 'dropped'} by ${Math.abs(reportInsights.scoreDelta)} points.`
       : 'Complete another matching period to unlock period-over-period comparison.',
     topRisk?.count > 0
       ? `Main thing to work on: ${topRisk.label.toLowerCase()} (${topRisk.count} event${topRisk.count === 1 ? '' : 's'}).`
@@ -325,47 +459,47 @@ export default function Reports() {
   return (
     <div className="space-y-6 pb-4">
       {/* Header */}
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-start justify-between">
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-grotesk font-bold">Reports</h1>
-          <p className="text-muted-foreground text-sm mt-1">Driving performance analysis</p>
+          <p className="text-muted-foreground text-sm mt-1">Period trends, risk rates, export-ready driving summaries</p>
         </div>
-        <div className="flex flex-col gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:min-w-[13rem]">
           <button
             onClick={handleExport}
-            className="flex items-center gap-1.5 px-3 py-2 bg-card border border-border rounded-xl text-sm hover:bg-secondary transition-colors"
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-secondary"
           >
             <Download className="w-4 h-4" />
             Export {trips.length} Trips
           </button>
           <button
             onClick={handlePdfExport}
-            className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-xl text-sm hover:opacity-90 transition-opacity"
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground transition-opacity hover:opacity-90"
           >
             <FileText className="w-4 h-4" />
-            Export Monthly Report (PDF)
+            Monthly PDF
           </button>
           <button
             onClick={handleUbiExport}
             disabled={ubiLoading || ubiReport.insufficientData}
             title={ubiReport.insufficientData ? `Complete at least ${ubiReport.minimumDistanceKm ?? 50} km to export a score card.` : 'Export score card as PDF'}
-            className="flex items-center gap-1.5 px-3 py-2 bg-card border border-border rounded-xl text-sm hover:bg-secondary transition-colors disabled:opacity-60"
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-secondary disabled:opacity-60"
           >
             <Award className="w-4 h-4" />
-            {ubiLoading ? 'Generating...' : 'Export Score Card (PDF)'}
+            {ubiLoading ? 'Generating...' : 'Score Card PDF'}
           </button>
         </div>
       </motion.div>
       <InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing reports" />
 
       {/* Period selector */}
-      <div className="flex gap-2">
+      <div className="inline-flex rounded-xl border border-border bg-card p-1">
         {PERIODS.map(p => (
           <button
             key={p.id}
             onClick={() => setPeriod(p.id)}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
-              period === p.id ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-card border border-border text-muted-foreground hover:text-foreground'
+            className={`rounded-lg px-3 py-2 text-sm font-medium transition-all ${
+              period === p.id ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             {p.label}
@@ -373,7 +507,7 @@ export default function Reports() {
         ))}
       </div>
 
-      <section aria-label="Report export package" className="rounded-3xl border border-border bg-card p-4 shadow-sm">
+      <section aria-label="Report export package" className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Export package</div>
@@ -410,25 +544,84 @@ export default function Reports() {
         </div>
       ) : (
         <>
-          <section className="rounded-3xl border border-border bg-card p-5 shadow-sm">
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="font-semibold">What changed</h2>
-                <p className="mt-1 text-xs text-muted-foreground">Plain-English summary for the selected period</p>
-              </div>
-              <TrendingUp className="h-5 w-5 text-primary" />
-            </div>
-            <div className="space-y-2">
-              {reportTakeaways.map((takeaway) => (
-                <div key={takeaway} className="rounded-xl bg-secondary/50 p-3 text-sm text-muted-foreground">
-                  {takeaway}
+          <section className="rounded-3xl border border-border bg-card shadow-sm">
+            <div className="grid gap-0 lg:grid-cols-[1.15fr_0.85fr]">
+              <div className="border-b border-border p-5 lg:border-b-0 lg:border-r">
+                <div className="mb-5 flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Period briefing</div>
+                    <h2 className="mt-1 font-grotesk text-2xl font-bold">{exportSummary.periodLabel}</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">{exportSummary.dateRangeLabel}</p>
+                  </div>
+                  <div className="rounded-xl bg-primary/10 p-2 text-primary">
+                    <TrendingUp className="h-5 w-5" />
+                  </div>
                 </div>
-              ))}
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {[
+                    { icon: TrendingUp, label: 'Avg score', value: formatEstimatedScore(summary.avg_score), sub: previousTrips.length ? `${formatSignedNumber(reportInsights.scoreDelta, ' pts')} vs prior` : 'Need prior period' },
+                    { icon: Navigation, label: 'Distance', value: formatDistance(summary.total_distance_km, units), sub: previousTrips.length ? distanceDeltaLabel : `${summary.total_trips} trips` },
+                    { icon: Activity, label: 'Events / 100 km', value: reportInsights.eventRate == null ? '-' : reportInsights.eventRate.toFixed(1), sub: reportInsights.eventRateDelta == null ? 'Rate unlocks with prior' : `${formatSignedNumber(reportInsights.eventRateDelta, '')} vs prior` },
+                    { icon: ShieldCheck, label: 'Clean trips', value: formatPercent(reportInsights.cleanTripPercent), sub: `${reportInsights.confidence} confidence` },
+                  ].map(({ icon: Icon, label, value, sub }) => (
+                    <div key={label} className="rounded-2xl border border-border bg-secondary/30 p-3">
+                      <Icon className="mb-2 h-4 w-4 text-primary" />
+                      <div className="font-grotesk text-xl font-bold leading-tight">{value}</div>
+                      <div className="mt-1 text-xs font-medium text-muted-foreground">{label}</div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">{sub}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  {componentScores.map(({ label, value, icon: Icon }) => (
+                    <div key={label} className="flex items-center gap-3 rounded-xl bg-secondary/40 p-3">
+                      <Icon className="h-4 w-4 text-muted-foreground" />
+                      <div>
+                        <div className="font-grotesk text-lg font-bold">{formatEstimatedScore(value)}</div>
+                        <div className="text-xs text-muted-foreground">{label}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-5">
+                <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-primary">
+                    <Target className="h-4 w-4" />
+                    Recommended focus
+                  </div>
+                  <p className="mt-2 text-sm text-foreground">{reportInsights.nextAction}</p>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <div className="rounded-xl bg-secondary/40 p-3">
+                    <CalendarDays className="mb-2 h-4 w-4 text-muted-foreground" />
+                    <div className="font-grotesk text-lg font-bold">{reportInsights.activeDays}</div>
+                    <div className="text-xs text-muted-foreground">active days</div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">{formatPercent(reportInsights.coveragePercent)} coverage</div>
+                  </div>
+                  <div className="rounded-xl bg-secondary/40 p-3">
+                    <Route className="mb-2 h-4 w-4 text-muted-foreground" />
+                    <div className="font-grotesk text-lg font-bold">{reportInsights.bestWindow?.label || 'TBD'}</div>
+                    <div className="text-xs text-muted-foreground">best window</div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      {reportInsights.bestWindow ? `${formatEstimatedScore(reportInsights.bestWindow.avgScore)} avg score` : 'Add more trips'}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 space-y-2">
+                  {reportTakeaways.map((takeaway) => (
+                    <div key={takeaway} className="rounded-xl bg-secondary/40 p-3 text-sm text-muted-foreground">
+                      {takeaway}
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </section>
 
           {/* Summary cards */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
               { icon: Car, label: 'Total Trips', value: summary.total_trips, gradient: 'gradient-primary' },
               { icon: Navigation, label: 'Distance', value: formatDistance(summary.total_distance_km, units), gradient: 'gradient-success' },
@@ -447,7 +640,6 @@ export default function Reports() {
                 transition={{ delay: i * 0.06 }}
                 className={`relative overflow-hidden rounded-2xl p-4 text-white shadow-lg ${gradient}`}
               >
-                <div className="absolute -top-4 -right-4 w-16 h-16 bg-white/10 rounded-full" />
                 <Icon className="w-5 h-5 mb-2 opacity-80" />
                 <div className="font-grotesk font-bold text-2xl leading-none">{value}</div>
                 <div className="text-white/70 text-xs mt-1">{label}</div>
@@ -455,6 +647,42 @@ export default function Reports() {
               </motion.div>
             ))}
           </div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.16 }}
+            className="rounded-3xl border border-border bg-card p-5 shadow-sm"
+          >
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="font-semibold">Score Distribution</h2>
+                <p className="mt-1 text-xs text-muted-foreground">How the selected trips are clustered by overall score</p>
+              </div>
+              <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-semibold text-muted-foreground">
+                {reportInsights.scoredTrips}/{summary.total_trips} scored
+              </span>
+            </div>
+            <div className="flex h-3 overflow-hidden rounded-full bg-secondary">
+              {scoreDistribution.map((band) => (
+                <div
+                  key={band.label}
+                  className={band.color}
+                  style={{ width: `${band.percent}%` }}
+                  title={`${band.label}: ${band.count} trips`}
+                />
+              ))}
+            </div>
+            <div className="mt-3 grid grid-cols-4 gap-2">
+              {scoreDistribution.map((band) => (
+                <div key={band.label} className="rounded-xl bg-secondary/40 p-2">
+                  <div className="text-xs font-semibold">{band.shortLabel}</div>
+                  <div className="mt-1 font-grotesk text-lg font-bold">{band.count}</div>
+                  <div className="text-[11px] text-muted-foreground">{formatPercent(band.percent)}</div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
 
           <motion.div
             initial={{ opacity: 0, y: 16 }}
@@ -880,21 +1108,33 @@ export default function Reports() {
             transition={{ delay: 0.3 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
           >
-            <h2 className="font-semibold mb-4">Risk Events</h2>
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="font-semibold">Risk Events</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {reportInsights.eventRate == null
+                    ? 'Event density unlocks once distance is available.'
+                    : `${reportInsights.eventRate.toFixed(1)} events per 100 km in this period.`}
+                </p>
+              </div>
+              {topRisk?.count > 0 && (
+                <span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700 dark:bg-orange-950/30 dark:text-orange-300">
+                  Focus: {topRisk.label}
+                </span>
+              )}
+            </div>
             <div className="space-y-3">
-              {[
-                { key: 'harsh_brake', count: summary.total_harsh_brakes, color: '#ef4444', bg: 'bg-red-500' },
-                { key: 'rapid_acceleration', count: summary.total_rapid_accels, color: '#f59e0b', bg: 'bg-yellow-500' },
-                { key: 'sharp_turn', count: summary.total_sharp_turns, color: '#3b82f6', bg: 'bg-blue-500' },
-                { key: 'speeding', count: summary.total_speeding_events, color: '#f97316', bg: 'bg-orange-500' },
-              ].map(({ key, count, color, bg }) => {
+              {riskRows.map(({ key, label, count, color, bg }) => {
                 const maxCount = Math.max(summary.total_harsh_brakes, summary.total_rapid_accels, summary.total_sharp_turns, summary.total_speeding_events, 1);
                 const pct = (count / maxCount) * 100;
+                const rate = summary.total_distance_km > 0 ? (count / summary.total_distance_km) * 100 : null;
                 return (
                   <div key={key}>
                     <div className="flex justify-between text-xs mb-1">
-                      <span className="text-muted-foreground">{riskLabels[key]}</span>
-                      <span className="font-semibold" style={{ color }}>{count}</span>
+                      <span className="text-muted-foreground">{label}</span>
+                      <span className="font-semibold" style={{ color }}>
+                        {count}{rate != null ? ` (${rate.toFixed(1)}/100 km)` : ''}
+                      </span>
                     </div>
                     <div className="h-2 bg-secondary rounded-full overflow-hidden">
                       <motion.div

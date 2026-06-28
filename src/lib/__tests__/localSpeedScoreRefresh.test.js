@@ -152,6 +152,62 @@ describe('local speed score refresh', () => {
     });
   });
 
+  it('recalculates trips crossed by either side of a moved traced rule', async () => {
+    const beforeRule = {
+      id: 'moved-rule',
+      geohash: 'old-cell',
+      lat: 43.6532,
+      lng: -79.3832,
+      limitKmh: 50,
+      directionMode: 'both',
+      sectionPoints: [
+        { lat: 43.6531, lng: -79.3833 },
+        { lat: 43.6533, lng: -79.3831 },
+      ],
+    };
+    const afterRule = {
+      ...beforeRule,
+      geohash: 'new-cell',
+      lat: 43.6572,
+      lng: -79.3872,
+      limitKmh: 40,
+      sectionPoints: [
+        { lat: 43.6571, lng: -79.3873 },
+        { lat: 43.6573, lng: -79.3871 },
+      ],
+    };
+    state.trips = [
+      {
+        id: 'crosses-old-section',
+        status: 'completed',
+        route_points: [{ lat: 43.6532, lng: -79.3832 }],
+      },
+      {
+        id: 'crosses-new-section',
+        status: 'completed',
+        route_points: [{ lat: 43.6572, lng: -79.3872 }],
+      },
+      {
+        id: 'unaffected',
+        status: 'completed',
+        route_points: [{ lat: 43.66, lng: -79.39 }],
+      },
+    ];
+
+    const updated = await refreshTripsForLocalSpeedKnowledgeChanges(
+      { cells: {}, corrections: [beforeRule] },
+      { cells: {}, corrections: [afterRule] },
+      {}
+    );
+
+    expect(updated).toHaveLength(2);
+    expect(state.update).toHaveBeenCalledTimes(2);
+    expect(state.update.mock.calls.map(([id]) => id).sort()).toEqual([
+      'crosses-new-section',
+      'crosses-old-section',
+    ]);
+  });
+
   it('recalculates a trip once when multiple changed corrections match it', async () => {
     const routePoint = { lat: 43.6532, lng: -79.3832 };
     state.trips = [

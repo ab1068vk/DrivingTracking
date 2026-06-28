@@ -333,8 +333,8 @@ export async function configureNotificationChannels() {
 
     await LocalNotifications.createChannel({
     id: ACHIEVEMENT_CHANNEL_ID,
-    name: 'Achievements',
-    description: 'Achievement unlock notifications.',
+    name: 'Milestones',
+    description: 'Milestone unlock notifications.',
     importance: 3,
     visibility: 1,
   });
@@ -975,14 +975,14 @@ export async function syncAchievementNotifications(achievements = [], { requestP
   const notifications = newAchievements.length === 1
     ? [{
       id: achievementNotificationId(newAchievements[0].id),
-      title: 'Achievement unlocked',
+      title: 'Milestone unlocked',
       body: `${newAchievements[0].label}: ${newAchievements[0].description}`,
       channelId: ACHIEVEMENT_CHANNEL_ID,
       extra: { type: 'achievement', achievementId: newAchievements[0].id },
     }]
     : [{
       id: ACHIEVEMENT_GROUP_ID,
-      title: `${newAchievements.length} achievements unlocked`,
+      title: `${newAchievements.length} milestones unlocked`,
       body: newAchievements.length > 6
         ? `${newAchievements.slice(0, 6).map((achievement) => achievement.label).join(', ')}, and ${newAchievements.length - 6} more`
         : newAchievements.map((achievement) => achievement.label).join(', '),
@@ -996,7 +996,7 @@ export async function syncAchievementNotifications(achievements = [], { requestP
       notification_count: notifications.length,
       notification_ids: notifications.map((item) => item.id),
       types: notifications.map((item) => item.extra?.type || 'achievement'),
-    }, { category: 'notification', source: 'native', title: 'Achievement notifications scheduled' });
+    }, { category: 'notification', source: 'native', title: 'Milestone notifications scheduled' });
   } catch (error) {
     logSystemFailure('achievement_notification_schedule', error, {
       notification_count: notifications.length,

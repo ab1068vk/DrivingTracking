@@ -15,7 +15,7 @@ import { geohashEncode } from '@/lib/localSpeedKnowledge';
 import { tripCrossesCorrection } from '@/lib/localSpeedScoreRefresh';
 
 describe('SpeedLimitEditorMap helpers', () => {
-  it('builds separate saved and unset road sections from trip points', () => {
+  it('does not promote isolated one-point route samples into unset map dots', () => {
     const first = { lat: 43.6501, lng: -79.3801, speed_limit_road_name: 'King Street' };
     const second = { lat: 43.6502, lng: -79.3802, speed_limit_road_name: 'King Street' };
     const third = { lat: 43.662, lng: -79.395, speed_limit_road_name: 'Queen Street' };
@@ -35,7 +35,7 @@ describe('SpeedLimitEditorMap helpers', () => {
     }]);
 
     expect(sections.some((section) => section.geohash === savedHash && section.saved && section.limitKmh === 40)).toBe(true);
-    expect(sections.some((section) => !section.saved)).toBe(true);
+    expect(sections.some((section) => !section.saved && section.sectionPoints?.length < 2)).toBe(false);
   });
 
   it('keeps opposite-direction saved rules separate on the map', () => {
@@ -266,7 +266,13 @@ describe('SpeedLimitEditorMap helpers', () => {
     const sections = buildSpeedMapSections([{
       id: 'trip-layers',
       status: 'completed',
-      route_points: [savedPoint, observedPoint, unsetPoint],
+      route_points: [
+        savedPoint,
+        observedPoint,
+        { ...observedPoint, lat: 43.6602, lng: -79.3902 },
+        unsetPoint,
+        { ...unsetPoint, lat: 43.6702, lng: -79.4002 },
+      ],
     }], [{
       geohash: geohashEncode(savedPoint.lat, savedPoint.lng),
       lat: savedPoint.lat,

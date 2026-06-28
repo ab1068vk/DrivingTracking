@@ -1033,5 +1033,8 @@ describe('release blocker regressions', () => {
     expect(speedLimitEditorMapSource).toContain('const [mapReady, setMapReady] = useState(false);');
     expect(speedLimitEditorMapSource).toContain('if (!mapReady || !map) return');
     expect(speedLimitEditorMapSource).toContain('[mapReady, online, remoteTilesAllowed]');
+    expect(speedLimitEditorMapSource).toContain('isUsableLeafletMap');
+    expect(speedLimitEditorMapSource).toContain("Use Leaflet's default SVG renderer");
+    expect(speedLimitEditorMapSource).not.toContain('preferCanvas: true');
   });
 });

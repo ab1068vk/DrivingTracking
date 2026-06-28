@@ -1323,6 +1323,271 @@ export function calculateDrivingConsistency(trips = []) {
   };
 }
 
+const COACH_EVENT_DETAILS = {
+  harsh_brakes: {
+    label: 'Late braking',
+    focus: 'braking',
+    why: 'Hard braking is the clearest sign that stops are being handled late or with too little following room.',
+    cue: 'Scan farther ahead and lift earlier before the brake pedal does the heavy work.',
+    drillTitle: 'Five-stop anticipation drill',
+    drillSteps: [
+      'Pick five normal stops on the next trip.',
+      'Lift off the accelerator before the lead vehicle starts braking.',
+      'Aim for one smooth brake squeeze instead of a late hard press.',
+    ],
+    target: 'Reduce harsh-brake events on the next three normal trips.',
+  },
+  rapid_accel: {
+    label: 'Hard acceleration',
+    focus: 'acceleration',
+    why: 'Hard launches usually cost smoothness and fuel without saving much useful time.',
+    cue: 'Let speed build in stages after stops and lane changes.',
+    drillTitle: 'Three-second throttle ramp',
+    drillSteps: [
+      'After each stop, count three seconds while adding throttle.',
+      'Reach cruising speed progressively instead of jumping to it.',
+      'Use the same ramp after slow turns and merges when traffic allows.',
+    ],
+    target: 'Keep rapid-acceleration events below your current weekly count.',
+  },
+  sharp_turns: {
+    label: 'Sharp cornering',
+    focus: 'cornering',
+    why: 'Sharp turns often mean speed is being adjusted during the turn instead of before it.',
+    cue: 'Set entry speed before steering, then accelerate only as the wheel unwinds.',
+    drillTitle: 'Brake-before-turn drill',
+    drillSteps: [
+      'Before each turn, finish most braking while the wheel is still straight.',
+      'Hold steady speed through the middle of the turn.',
+      'Accelerate only after the car starts straightening.',
+    ],
+    target: 'Complete the next city trip with fewer sharp-turn events.',
+  },
+  speeding: {
+    label: 'Speed control',
+    focus: 'speed control',
+    why: 'Speed creep can build gradually, especially on familiar roads and highways.',
+    cue: 'Pick a target slightly below the alert threshold before the road opens up.',
+    drillTitle: 'Cruise-target reset',
+    drillSteps: [
+      'Choose a target speed before entering faster roads.',
+      'Check speed after every major road change.',
+      'Use cruise control where it is safe and appropriate.',
+    ],
+    target: 'Lower the percentage of samples above the configured threshold.',
+  },
+  heading_deviations: {
+    label: 'Heading events (Beta)',
+    focus: 'heading events',
+    why: 'Heading events are GPS pattern checks, so they are useful for review but can be affected by curves or signal noise.',
+    cue: 'Treat these as replay review markers rather than confirmed driving mistakes.',
+    drillTitle: 'Replay validation',
+    drillSteps: [
+      'Open trips with heading events.',
+      'Check whether the event happened on curves, ramps, or poor GPS areas.',
+      'Only coach yourself on events that match real steering behavior.',
+    ],
+    target: 'Separate true habits from GPS-only Beta patterns.',
+  },
+  stop_start_patterns: {
+    label: 'Stop-start patterns',
+    focus: 'stop-start patterns',
+    why: 'Repeated stop-start cycles can point to traffic pressure or reactive spacing, especially on highway segments.',
+    cue: 'Smooth the gap with earlier lifts instead of short accelerator-brake cycles.',
+    drillTitle: 'Gap smoothing drill',
+    drillSteps: [
+      'Leave a larger rolling buffer in traffic.',
+      'Lift early when traffic compresses.',
+      'Avoid closing the gap only to brake again.',
+    ],
+    target: 'Cut repeated stop-start patterns across your next highway-heavy trips.',
+  },
+  erratic_speed: {
+    label: 'Erratic speed',
+    focus: 'attention-pattern review',
+    why: 'Erratic low-speed variation can show reactive driving in traffic or attention shifts.',
+    cue: 'Hold a steadier throttle and anticipate the queue ahead.',
+    drillTitle: 'Steady-flow drill',
+    drillSteps: [
+      'Look two vehicles ahead in slow traffic.',
+      'Use small throttle changes.',
+      'Let the car roll instead of pulsing speed.',
+    ],
+    target: 'Make low-speed city segments feel steadier on replay.',
+  },
+  brake_turn_alerts: {
+    label: 'Brake-turn alerts',
+    focus: 'brake-turn alert review',
+    why: 'Brake-turn alerts point to moments where braking, turning, or proximity signals overlap.',
+    cue: 'Create more space before turns and lane changes so inputs do not stack up.',
+    drillTitle: 'One-input-at-a-time drill',
+    drillSteps: [
+      'Finish braking before steering whenever traffic allows.',
+      'Create space before lane changes.',
+      'Review alerts to confirm the context was real.',
+    ],
+    target: 'Reduce overlapping maneuver alerts in the next ten trips.',
+  },
+};
+
+const focusDetailFor = (focusArea, riskRate) => {
+  const fromEvent = riskRate?.worst_event_count > 0 ? COACH_EVENT_DETAILS[riskRate.worst_event] : null;
+  if (fromEvent && fromEvent.focus === focusArea) return fromEvent;
+  if (focusArea === 'phone_distraction') {
+    return {
+      label: 'Phone distraction',
+      why: 'Recent trips show enough phone-use risk to make attention the best coaching target.',
+      cue: 'Set navigation, music, and messages before moving.',
+      drillTitle: 'Cabin setup routine',
+      drillSteps: ['Start Do Not Disturb before driving.', 'Place the phone out of reach or in a mount.', 'Use voice navigation before the trip begins.'],
+      target: 'Record three phone-clear trips in a row.',
+    };
+  }
+  if (focusArea === 'progressive braking') {
+    return {
+      label: 'Progressive braking',
+      why: 'Recent braking evidence suggests pressure is building too quickly near stops.',
+      cue: 'Start with light pressure, then add force smoothly.',
+      drillTitle: 'Pressure-building drill',
+      drillSteps: ['Begin braking earlier than usual.', 'Use light pressure first.', 'Build smoothly only if the stop still needs it.'],
+      target: 'Improve brake-onset smoothness on the next scored braking trips.',
+    };
+  }
+  if (focusArea === 'fatigue breaks') {
+    return {
+      label: 'Break timing',
+      why: 'Long-trip duration is reaching the fatigue threshold you configured.',
+      cue: 'Plan the break before you feel tired.',
+      drillTitle: 'Pre-planned break',
+      drillSteps: ['Choose a break point before starting.', 'Stop before the long-drive threshold.', 'Restart only after a short reset.'],
+      target: 'Keep long drives below the fatigue threshold without a break.',
+    };
+  }
+  if (focusArea === 'speed control') return COACH_EVENT_DETAILS.speeding;
+  return {
+    label: 'Consistency',
+    why: 'No single risk event dominates, so consistency is the best current coaching target.',
+    cue: 'Repeat the calm habits that produce your highest-score trips.',
+    drillTitle: 'Best-trip replay',
+    drillSteps: ['Find one high-score recent trip.', 'Notice the time, route, and first five minutes.', 'Reuse that setup on the next comparable drive.'],
+    target: 'Keep your next three trip scores inside your normal high range.',
+  };
+};
+
+function buildRiskPatternBreakdown(riskRate) {
+  const totalEvents = riskRate?.total_events || 0;
+  return Object.entries(riskRate?.totals || {})
+    .map(([key, count]) => {
+      const detail = COACH_EVENT_DETAILS[key] || { label: key.replace(/_/g, ' ') };
+      return {
+        key,
+        label: detail.label,
+        count,
+        share_percent: totalEvents > 0 ? Math.round((count / totalEvents) * 100) : 0,
+        events_per_100km: riskRate?.events_per_100km == null || totalEvents <= 0
+          ? null
+          : Math.round(((count / totalEvents) * riskRate.events_per_100km) * 10) / 10,
+      };
+    })
+    .filter((item) => item.count > 0)
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+    .slice(0, 4);
+}
+
+function buildCoachBrief({
+  completed,
+  focusArea,
+  riskRate,
+  speed,
+  consistency,
+  fatigue,
+  baseline,
+  peakHourStress,
+  bestWindow,
+  recentPhoneRiskyTrips,
+  abruptBrakeOnsetTrips,
+  emergencyHeavyTrips,
+}) {
+  const detail = focusDetailFor(focusArea, riskRate);
+  const riskPatterns = buildRiskPatternBreakdown(riskRate);
+  const topPattern = riskPatterns[0] || null;
+  const evidenceItems = [
+    `${completed.length} completed trip${completed.length === 1 ? '' : 's'}`,
+    `${riskRate.distance_km} km analyzed`,
+    speed.sample_points > 0 ? `${speed.sample_points} speed samples` : null,
+    topPattern ? `${topPattern.count} ${topPattern.label.toLowerCase()} event${topPattern.count === 1 ? '' : 's'}` : 'No dominant risk event',
+    bestWindow ? `Best window: ${bestWindow.label.toLowerCase()} (${bestWindow.trips} trips)` : null,
+  ].filter(Boolean);
+  const reasonBits = [];
+  if (topPattern) {
+    reasonBits.push(`${topPattern.label} is ${topPattern.share_percent}% of recent risk events`);
+  }
+  if (speed.level === 'needs_attention') {
+    reasonBits.push(`${speed.over_limit_percent}% of speed samples are above the configured threshold`);
+  }
+  if (recentPhoneRiskyTrips >= 3) {
+    reasonBits.push(`${recentPhoneRiskyTrips} of the last 10 trips show medium or high phone-use risk`);
+  }
+  if (abruptBrakeOnsetTrips >= 3 || emergencyHeavyTrips > 0) {
+    reasonBits.push(`${abruptBrakeOnsetTrips + emergencyHeavyTrips} recent trip${abruptBrakeOnsetTrips + emergencyHeavyTrips === 1 ? '' : 's'} need smoother braking pressure`);
+  }
+  if (peakHourStress.stress_ratio > 1.8) {
+    reasonBits.push(`rush-hour event rate is ${peakHourStress.stress_ratio}x your off-peak rate`);
+  }
+  if (baseline.trend === 'declining') {
+    reasonBits.push(`this week is ${Math.abs(baseline.delta)} points below baseline`);
+  } else if (baseline.trend === 'improving') {
+    reasonBits.push(`this week is ${baseline.delta} points above baseline`);
+  }
+  const confidence = riskRate.insufficient_data || completed.length < 3
+    ? 'developing'
+    : completed.length >= 10 && !riskRate.insufficient_data
+      ? 'strong'
+      : 'moderate';
+  const targetMetric = topPattern
+    ? `${topPattern.label} count`
+    : speed.sample_points > 0
+      ? 'Speed samples over threshold'
+      : consistency.consistency_score == null
+        ? 'Scored trips'
+        : 'Consistency score';
+  const currentValue = topPattern
+    ? String(topPattern.count)
+    : speed.sample_points > 0
+      ? `${speed.over_limit_percent}%`
+      : consistency.consistency_score == null
+        ? String(consistency.trip_count)
+        : String(consistency.consistency_score);
+
+  return {
+    title: detail.label,
+    why: reasonBits.length ? reasonBits.join('. ') + '.' : detail.why,
+    cue: detail.cue,
+    drill: {
+      title: detail.drillTitle,
+      steps: detail.drillSteps,
+    },
+    target: {
+      summary: detail.target,
+      metric: targetMetric,
+      current: currentValue,
+      goal: topPattern
+        ? `Below ${topPattern.count} next comparable period`
+        : speed.sample_points > 0
+          ? 'Lower than current percentage'
+          : 'Add clean scored trips',
+    },
+    confidence,
+    evidence: evidenceItems,
+    risk_patterns: riskPatterns,
+    progress_note: fatigue.level !== 'low'
+      ? `Break coaching is active for drives over ${fatigue.threshold_minutes} minutes.`
+      : bestWindow
+        ? `Use ${bestWindow.label.toLowerCase()} trips as your personal comparison set.`
+        : 'Compare the next few trips against this same focus before switching habits.',
+  };
+}
+
 export function buildDrivingCoachInsights(trips = [], settings = {}) {
   const completed = excludePrivacyTouchedDaysFromTrends(trips).filter((trip) => trip.status === 'completed');
   const riskRate = calculateRiskEventRate(completed);
@@ -1443,10 +1708,25 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
   if (bestWindow) {
     actions.push(`Your strongest recorded driving window is ${bestWindow.label.toLowerCase()} (${bestWindow.trips} trips); compare tougher trips against that personal pattern.`);
   }
+  const coachBrief = buildCoachBrief({
+    completed,
+    focusArea,
+    riskRate,
+    speed,
+    consistency,
+    fatigue,
+    baseline,
+    peakHourStress,
+    bestWindow,
+    recentPhoneRiskyTrips,
+    abruptBrakeOnsetTrips,
+    emergencyHeavyTrips,
+  });
 
   return {
     trip_count: completed.length,
     focus_area: focusArea,
+    coach_brief: coachBrief,
     risk_rate: riskRate,
     speed_discipline: speed,
     consistency,
@@ -1458,6 +1738,7 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
     carbon_impact: carbonImpact,
     best_window: bestWindow,
     best_window_min_trips: BEST_WINDOW_MIN_TRIPS,
+    risk_patterns: coachBrief.risk_patterns,
     actions: actions.length ? actions.slice(0, 4) : ['Record more trips to build a personalized driving plan.'],
   };
 }
@@ -1485,7 +1766,16 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
     const pointCount = Number(trip.route_points_raw_count) || points.length;
     return pointCount >= 20 && points.some((point) => Number(point.speed_kmh) > 0);
   }).length;
+  const longTrips = completed.filter((trip) => (trip.duration_seconds || 0) >= 60 * 60).length;
   const cleanLongTrips = cleanTrips.filter((trip) => (trip.duration_seconds || 0) >= 60 * 60).length;
+  const cleanNightTrips = cleanTrips.filter((trip) => trip.night_driving).length;
+  const highScoreTrips = completed.filter((trip) => (trip.score_overall || 0) >= 90).length;
+  const excellentScoreTrips = completed.filter((trip) => (trip.score_overall || 0) >= 95).length;
+  const allRounderTrips = completed.filter((trip) => (
+    (trip.score_safety ?? trip.safety_score ?? 0) >= 85 &&
+    (trip.score_smoothness ?? trip.smoothness_score ?? 0) >= 85 &&
+    (trip.score_eco ?? trip.eco_driving_score ?? 0) >= 85
+  )).length;
   const recentFive = [...completed]
     .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
     .slice(0, 5);
@@ -1536,6 +1826,36 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       unit: 'trips',
     },
     {
+      id: 'twenty_five_trips',
+      label: 'Quarter Century',
+      description: 'Complete 25 tracked trips.',
+      category: 'Consistency',
+      earned: completed.length >= 25,
+      current: Math.min(25, completed.length),
+      target: 25,
+      unit: 'trips',
+    },
+    {
+      id: 'fifty_trips',
+      label: 'Seasoned Driver',
+      description: 'Complete 50 tracked trips.',
+      category: 'Consistency',
+      earned: completed.length >= 50,
+      current: Math.min(50, completed.length),
+      target: 50,
+      unit: 'trips',
+    },
+    {
+      id: 'hundred_trips',
+      label: 'Road Veteran',
+      description: 'Complete 100 tracked trips.',
+      category: 'Consistency',
+      earned: completed.length >= 100,
+      current: Math.min(100, completed.length),
+      target: 100,
+      unit: 'trips',
+    },
+    {
       id: 'perfect_trip',
       label: 'Perfect Trip',
       description: 'Complete a 95+ score trip with no risky events.',
@@ -1574,6 +1894,26 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       unit: 'km',
     },
     {
+      id: 'thousand_km',
+      label: '1,000 km Logged',
+      description: 'Record 1,000 km of completed driving.',
+      category: 'Distance',
+      earned: totalKm >= 1000,
+      current: Math.min(1000, Math.round(totalKm)),
+      target: 1000,
+      unit: 'km',
+    },
+    {
+      id: 'two_thousand_five_hundred_km',
+      label: 'Long Range',
+      description: 'Record 2,500 km of completed driving.',
+      category: 'Distance',
+      earned: totalKm >= 2500,
+      current: Math.min(2500, Math.round(totalKm)),
+      target: 2500,
+      unit: 'km',
+    },
+    {
       id: 'smooth_driver',
       label: 'Smooth Driver',
       description: 'Average 85+ over at least 10 trips.',
@@ -1594,6 +1934,36 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       unit: 'trips',
     },
     {
+      id: 'ninety_plus_ten',
+      label: 'High-Score Habit',
+      description: 'Complete 10 trips with a 90+ overall score.',
+      category: 'Score',
+      earned: highScoreTrips >= 10,
+      current: Math.min(10, highScoreTrips),
+      target: 10,
+      unit: 'trips',
+    },
+    {
+      id: 'ninety_five_plus_five',
+      label: 'Peak Form',
+      description: 'Complete 5 trips with a 95+ overall score.',
+      category: 'Score',
+      earned: excellentScoreTrips >= 5,
+      current: Math.min(5, excellentScoreTrips),
+      target: 5,
+      unit: 'trips',
+    },
+    {
+      id: 'all_rounder',
+      label: 'All-Rounder',
+      description: 'Score 85+ in safety, smoothness, and eco on 5 trips.',
+      category: 'Score',
+      earned: allRounderTrips >= 5,
+      current: Math.min(5, allRounderTrips),
+      target: 5,
+      unit: 'trips',
+    },
+    {
       id: 'gentle_brakes',
       label: 'Gentle Brakes',
       description: 'Complete 10 trips without harsh braking.',
@@ -1604,6 +1974,16 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       unit: 'trips',
     },
     {
+      id: 'gentle_brakes_twenty_five',
+      label: 'Brake Discipline',
+      description: 'Complete 25 trips without harsh braking.',
+      category: 'Safety',
+      earned: noHarshTrips >= 25,
+      current: Math.min(25, noHarshTrips),
+      target: 25,
+      unit: 'trips',
+    },
+    {
       id: 'smooth_starts',
       label: 'Smooth Starts',
       description: 'Complete 10 trips without rapid acceleration.',
@@ -1611,6 +1991,16 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       earned: noRapidTrips >= 10,
       current: Math.min(10, noRapidTrips),
       target: 10,
+      unit: 'trips',
+    },
+    {
+      id: 'speed_sentinel_twenty_five',
+      label: 'Speed Discipline',
+      description: 'Complete 25 trips without speeding events.',
+      category: 'Speed',
+      earned: noSpeedingTrips >= 25,
+      current: Math.min(25, noSpeedingTrips),
+      target: 25,
       unit: 'trips',
     },
     {
@@ -1654,6 +2044,16 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       unit: 'trip',
     },
     {
+      id: 'route_archivist',
+      label: 'Route Archivist',
+      description: 'Record 10 trips with route replay-ready GPS evidence.',
+      category: 'Routes',
+      earned: routeReplayTrips >= 10,
+      current: Math.min(10, routeReplayTrips),
+      target: 10,
+      unit: 'trips',
+    },
+    {
       id: 'long_drive_clean',
       label: 'Clean Long Drive',
       description: 'Complete a 60+ minute trip with no risky events.',
@@ -1664,6 +2064,26 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       unit: 'trip',
     },
     {
+      id: 'long_drive_regular',
+      label: 'Long-Drive Regular',
+      description: 'Complete 5 drives of at least 60 minutes.',
+      category: 'Endurance',
+      earned: longTrips >= 5,
+      current: Math.min(5, longTrips),
+      target: 5,
+      unit: 'trips',
+    },
+    {
+      id: 'clean_long_drive_five',
+      label: 'Calm Endurance',
+      description: 'Complete 5 drives of at least 60 minutes with no risky events.',
+      category: 'Endurance',
+      earned: cleanLongTrips >= 5,
+      current: Math.min(5, cleanLongTrips),
+      target: 5,
+      unit: 'trips',
+    },
+    {
       id: 'night_owl',
       label: 'Night Owl',
       description: 'Complete 5 night drives.',
@@ -1671,6 +2091,16 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       earned: completed.filter((trip) => trip.night_driving).length >= 5,
       current: Math.min(5, nightCount),
       target: 5,
+      unit: 'drives',
+    },
+    {
+      id: 'night_clear',
+      label: 'Clear Night',
+      description: 'Complete 3 night drives with no risky events.',
+      category: 'Conditions',
+      earned: cleanNightTrips >= 3,
+      current: Math.min(3, cleanNightTrips),
+      target: 3,
       unit: 'drives',
     },
     {
@@ -1691,6 +2121,16 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       earned: defensiveStreak,
       current: defensiveStreak ? 10 : Math.min(10, lastTenDefensive.filter((trip) => ['defensive', 'exemplary'].includes(trip.defensive_grade)).length),
       target: 10,
+      unit: 'trips',
+    },
+    {
+      id: 'focus_starter',
+      label: 'Focused Five',
+      description: 'Complete 5 Usage Access-measured trips with no confirmed phone use.',
+      category: 'Focus',
+      earned: distractionFreeTrips >= 5,
+      current: Math.min(5, distractionFreeTrips),
+      target: 5,
       unit: 'trips',
     },
     {
@@ -1753,4 +2193,48 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       unit: 'trips',
     },
   ];
+}
+
+export function achievementProgressValue(badge = {}) {
+  if (badge.earned) return 100;
+  if (badge.target) return Math.min(100, ((badge.current || 0) / badge.target) * 100);
+  if (badge.progress !== undefined) return Math.min(100, badge.progress);
+  return 0;
+}
+
+export function achievementProgressLabel(badge = {}) {
+  if (badge.earned) return 'Unlocked';
+  if (badge.target) {
+    const unit = badge.unit ? ` ${badge.unit}` : '';
+    return `${badge.current || 0}/${badge.target}${unit}`;
+  }
+  if (badge.progress !== undefined) return `${badge.progress}%`;
+  return 'In progress';
+}
+
+export function achievementNextStepLabel(badge = {}) {
+  if (badge.earned) return null;
+  if (badge.target) {
+    const remaining = Math.max(0, (badge.target || 0) - (badge.current || 0));
+    const unit = badge.unit ? ` ${badge.unit}` : '';
+    return remaining > 0 ? `${remaining}${unit} to unlock` : 'Almost unlocked';
+  }
+  if (badge.progress !== undefined) return `${Math.max(0, 100 - Math.round(badge.progress))}% left`;
+  return 'Keep completing tracked trips';
+}
+
+export function summarizeAchievementBadges(badges = []) {
+  const earned = badges.filter((badge) => badge.earned);
+  const locked = badges.filter((badge) => !badge.earned);
+  const next = [...locked].sort((a, b) => (
+    achievementProgressValue(b) - achievementProgressValue(a)
+  ))[0] || null;
+  return {
+    earned,
+    locked,
+    next,
+    unlockedCount: earned.length,
+    totalCount: badges.length,
+    completionPercent: badges.length ? Math.round((earned.length / badges.length) * 100) : 0,
+  };
 }

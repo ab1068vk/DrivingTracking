@@ -426,7 +426,7 @@ const SETTINGS_SECTIONS = [
       { label: 'Safety alerts', keywords: 'driving warning phone heading speeding danger zone' },
       { label: 'Trip started and ended notifications', keywords: 'start finish summary' },
       { label: 'Post-trip smart summary', keywords: 'score change phone use fuel saving' },
-      { label: 'Coaching notifications', keywords: 'achievements streak weekly driving summary tips' },
+      { label: 'Coaching notifications', keywords: 'milestones achievements streak weekly driving summary tips' },
       { label: 'Maintenance reminders', keywords: 'vehicle service' },
       { label: 'No-trip nudge', keywords: 'inactive reminder days' },
     ],
@@ -1041,6 +1041,10 @@ export default function Settings() {
       runAfterVisiblePaint(resolve);
     }).then(() => {
       const persisted = localSettings.update(patch);
+      const failedKeys = Object.keys(patch).filter((key) => !Object.is(persisted[key], patch[key]));
+      if (failedKeys.length) {
+        throw new Error(`${failedKeys.join(', ')} did not persist.`);
+      }
       setCfg((current) => {
         const reconciled = { ...current };
         Object.keys(patch).forEach((key) => {
@@ -3560,7 +3564,7 @@ export default function Settings() {
               <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">Coaching & Milestones</div>
               {[
                 { key: 'notif_coaching_enabled', label: 'Coaching notifications', sub: 'Driving improvement tips and pattern changes' },
-                { key: 'achievement_notifications', label: 'Achievements', sub: 'Notify when an achievement unlocks' },
+                { key: 'achievement_notifications', label: 'Milestones', sub: 'Notify when a milestone unlocks' },
                 { key: 'notif_streak_enabled', label: 'Streak milestones', sub: 'Smooth-driving streak notifications' },
                 { key: 'notif_weekly_pattern_enabled', label: 'Weekly driving summary', sub: 'Monday at 8:30am' },
                 { key: 'weekly_report_notification', label: 'Classic weekly report', sub: 'Legacy Tuesday report' },

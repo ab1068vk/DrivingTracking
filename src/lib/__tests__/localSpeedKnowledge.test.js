@@ -57,10 +57,17 @@ describe('LocalSpeedKnowledge events', () => {
       const updated = await knowledge.updateUserCorrection(correction.geohash, 60, 'user_entered_estimate');
       const removed = await knowledge.removeUserCorrection(correction.geohash);
 
-      expect(saved).toBe(true);
+      expect(saved).toMatchObject({
+        id: expect.any(String),
+        geohash: correction.geohash,
+        limitKmh: 50,
+        source: 'user_confirmed_posted_sign',
+        verificationStatus: 'confirmed_posted_sign',
+      });
       expect(updated).toBe(true);
       expect(removed).toBe(true);
       expect(listener).toHaveBeenCalledTimes(3);
+      expect(listener.mock.calls[0][0].detail.correctionId).toBe(saved.id);
       expect(listener.mock.calls.map(([event]) => event.detail.action)).toEqual([
         'save_correction',
         'update_correction',
@@ -121,5 +128,39 @@ describe('LocalSpeedKnowledge events', () => {
       matchReason: 'matched_traced_section',
     });
     expect(gap).toBeNull();
+  });
+
+  it('updates imported section-key corrections instead of duplicating them', async () => {
+    const store = memoryStore();
+    const knowledge = new LocalSpeedKnowledge(store);
+    await knowledge.replaceData({
+      cells: {},
+      corrections: [{
+        sectionKey: 'imported-section-key',
+        geohash: geohashEncode(43.6532, -79.3832, 6),
+        lat: 43.6532,
+        lng: -79.3832,
+        limitKmh: 50,
+        source: 'user_entered_estimate',
+        appliedAt: '2026-06-23T12:00:00.000Z',
+      }],
+    });
+
+    const updated = await knowledge.updateUserCorrection(
+      'imported-section-key',
+      50,
+      'user_confirmed_posted_sign',
+      'Confirmed posted sign'
+    );
+    const data = await knowledge.exportData();
+
+    expect(updated).toBe(true);
+    expect(data.corrections).toHaveLength(1);
+    expect(data.corrections[0]).toMatchObject({
+      id: 'imported-section-key',
+      sectionKey: 'imported-section-key',
+      source: 'user_confirmed_posted_sign',
+      verificationStatus: 'confirmed_posted_sign',
+    });
   });
 });

@@ -35,6 +35,7 @@ import {
   buildDrivingPrivacyReadout,
   buildOutboundPrivacyReadout,
   buildPrivacyRecommendations,
+  buildPrivacyEvidenceSnapshot,
   detectCompoundRisk,
   detectTimingPatternExposure,
   summarizeAudit,
@@ -610,6 +611,7 @@ describe('privacy intelligence summaries', () => {
 
     expect(plan.tone).toBe('error');
     expect(plan.primaryAction.id).toBe('raw_without_consent');
+    expect(plan.nextStep).toBe('Open transmissions: Review raw-coordinate sends.');
     expect(plan.issues.map((item) => item.id)).toEqual(expect.arrayContaining([
       'raw_without_consent',
       'failed_controls',
@@ -660,6 +662,61 @@ describe('privacy intelligence summaries', () => {
         action: 'Review zones',
       }),
     ]));
+  });
+
+  it('builds a concrete evidence snapshot for the overview', () => {
+    const snapshot = buildPrivacyEvidenceSnapshot({
+      protections: [
+        { status: 'warn' },
+        { status: 'unknown' },
+      ],
+      transmissions: {
+        entries: [{ id: 'raw' }],
+        rawWithoutConsentCount: 1,
+        rawWithConsentCount: 0,
+        claimedButUnverifiedCount: 0,
+      },
+      chainResult: { valid: true },
+      zoneSummary: {
+        zoneCount: 2,
+        pointsToday: 1,
+        eventsToday: 1,
+        pointsWeek: 3,
+        eventsWeek: 1,
+      },
+      drivingReadout: {
+        rawPointInsideZoneCount: 0,
+      },
+      actionPlan: {
+        primaryAction: {
+          id: 'raw_without_consent',
+          action: 'Open transmissions',
+          title: 'Review raw-coordinate sends',
+        },
+      },
+    });
+
+    expect(snapshot.primaryTakeaway).toBe('Open transmissions: Review raw-coordinate sends.');
+    expect(snapshot.items).toEqual([
+      expect.objectContaining({
+        id: 'location_masking',
+        tone: 'ok',
+        headline: '4 private records hidden this week',
+        targetTab: 'zones',
+      }),
+      expect.objectContaining({
+        id: 'outbound_sharing',
+        tone: 'error',
+        headline: 'Raw coordinates left without consent evidence',
+        targetTab: 'transmissions',
+      }),
+      expect.objectContaining({
+        id: 'control_trust',
+        tone: 'warn',
+        headline: 'Some controls need verification',
+        targetTab: 'protections',
+      }),
+    ]);
   });
 
   it('adds a protections action when the weekly privacy score drops by more than 10 points', () => {

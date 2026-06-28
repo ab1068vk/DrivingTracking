@@ -874,7 +874,7 @@ export const localSettings = {
         severity: failedKeys.length ? 'warn' : 'info',
       });
     }
-    return updated;
+    return persisted;
   },
 };
 

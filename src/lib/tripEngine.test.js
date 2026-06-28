@@ -2414,7 +2414,7 @@ describe('trip insights', () => {
     expect(buildScoreTips(trips)[0]).toContain('excellent');
     expect(buildScoreTips([{ ...trips[0], score_confidence: undefined }])[0]).toContain('Not enough data yet');
     const badges = calculateAchievementBadges(trips);
-    expect(badges).toHaveLength(25);
+    expect(badges).toHaveLength(40);
     expect(badges.find((badge) => badge.id === 'first_drive').earned).toBe(true);
     expect(badges.find((badge) => badge.id === 'perfect_trip').earned).toBe(true);
     expect(badges.find((badge) => badge.id === 'hundred_km').earned).toBe(true);

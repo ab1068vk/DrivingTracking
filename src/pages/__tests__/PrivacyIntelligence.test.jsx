@@ -106,11 +106,41 @@ const fixture = {
     tone: 'error',
     headline: 'Mixed findings need review',
     claim: 'Local evidence only.',
+    nextStep: 'Open protections: Error issue.',
     primaryAction: { targetTab: 'protections', action: 'Open protections' },
     issues: [
       { id: 'error', tone: 'error', targetTab: 'protections', title: 'Error issue', detail: 'Error detail' },
       { id: 'warn', tone: 'warn', targetTab: 'transmissions', title: 'Warning issue', detail: 'Warning detail' },
       { id: 'unknown', tone: 'unknown', targetTab: 'zones', title: 'Unknown issue', detail: 'Unknown detail' },
+    ],
+  },
+  evidenceSnapshot: {
+    primaryTakeaway: 'Open protections: Error issue.',
+    items: [
+      {
+        id: 'location_masking',
+        label: 'Private location masking',
+        tone: 'ok',
+        targetTab: 'zones',
+        headline: '6 private records hidden this week',
+        detail: '3 protected today across 2 configured zones.',
+      },
+      {
+        id: 'outbound_sharing',
+        label: 'Outbound sharing',
+        tone: 'warn',
+        targetTab: 'transmissions',
+        headline: 'Raw sharing happened with consent metadata',
+        detail: '1 retained request used raw coordinates. Confirm the endpoint is still trusted.',
+      },
+      {
+        id: 'control_trust',
+        label: 'Control trust',
+        tone: 'error',
+        targetTab: 'protections',
+        headline: 'Protection checks are failing',
+        detail: '1 protection check failed local verification.',
+      },
     ],
   },
   transmissions: {
@@ -234,6 +264,10 @@ describe('Privacy Intelligence tabs', () => {
 
     outputs.forEach((html) => expect(html.length).toBeGreaterThan(100));
     expect(outputs[0]).toContain('Mixed findings need review');
+    expect(outputs[0]).toContain('Evidence that matters');
+    expect(outputs[0]).toContain('6 private records hidden this week');
+    expect(outputs[0]).toContain('Raw sharing happened with consent metadata');
+    expect(outputs[0]).toContain('Next: Open protections: Error issue.');
     expect(outputs[1]).toContain('Verified protection');
     expect(outputs[1]).toContain('Raw - consented');
     expect(outputs[1]).toContain('Blocked');

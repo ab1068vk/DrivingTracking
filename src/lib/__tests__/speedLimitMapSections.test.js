@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildSpeedMapSections,
+  buildSpeedZoneReviewItems,
   buildSplitCorrections,
   filterSpeedMapSections,
   findOverlappingSpeedSections,
@@ -74,6 +76,170 @@ describe('speedLimitMapSections', () => {
     expect(result.tripId).toBe('trip-route-segment');
     expect(result.points).toEqual(route);
     expect(result.expandedPointCount).toBe(4);
+  });
+
+  it('keeps continuous unset route geometry together instead of slicing by geohash cells', () => {
+    const sections = buildSpeedMapSections([{
+      id: 'trip-with-unset-road',
+      status: 'completed',
+      route_points: [
+        { lat: 43.6500, lng: -79.3900, speed_limit_road_name: 'King Street' },
+        { lat: 43.6501, lng: -79.3880, speed_limit_road_name: 'King Street' },
+        { lat: 43.6502, lng: -79.3860, speed_limit_road_name: 'King Street' },
+        { lat: 43.6503, lng: -79.3840, speed_limit_road_name: 'King Street' },
+        { lat: 43.6504, lng: -79.3820, speed_limit_road_name: 'King Street' },
+      ],
+    }], []);
+
+    expect(sections).toHaveLength(1);
+    expect(sections[0]).toMatchObject({
+      saved: false,
+      roadName: 'King Street',
+      effectiveLimitKmh: null,
+      sampleCount: 5,
+    });
+    expect(sections[0].sectionKey).toMatch(/^route-section-/);
+    expect(sections[0].sectionPoints).toHaveLength(5);
+  });
+
+  it('drops isolated one-point unset route samples from the map model', () => {
+    const sections = buildSpeedMapSections([{
+      id: 'trip-with-single-sample',
+      status: 'completed',
+      route_points: [
+        { lat: 43.6500, lng: -79.3900, speed_limit_road_name: 'King Street' },
+      ],
+    }], []);
+
+    expect(sections).toEqual([]);
+  });
+
+  it('splits unset candidates on actual road changes', () => {
+    const sections = buildSpeedMapSections([{
+      id: 'trip-with-two-roads',
+      status: 'completed',
+      route_points: [
+        { lat: 43.6500, lng: -79.3900, speed_limit_road_name: 'King Street' },
+        { lat: 43.6501, lng: -79.3880, speed_limit_road_name: 'King Street' },
+        { lat: 43.6502, lng: -79.3860, speed_limit_road_name: 'Queen Street' },
+        { lat: 43.6503, lng: -79.3840, speed_limit_road_name: 'Queen Street' },
+      ],
+    }], []);
+
+    expect(sections.map((section) => section.roadName)).toEqual(['King Street', 'Queen Street']);
+    expect(sections.every((section) => section.sectionPoints.length >= 2)).toBe(true);
+  });
+
+  it('splits one trip into editable sections when observed speeds change', () => {
+    const sections = buildSpeedMapSections([{
+      id: 'trip-with-speed-zones',
+      status: 'completed',
+      route_points: [
+        { lat: 43.6500, lng: -79.3900, speed_limit_road_name: 'King Street', speed_limit_kmh: 50, speed_limit_source: 'openstreetmap' },
+        { lat: 43.6501, lng: -79.3880, speed_limit_road_name: 'King Street' },
+        { lat: 43.6502, lng: -79.3860, speed_limit_road_name: 'King Street', speed_limit_kmh: 60, speed_limit_source: 'openstreetmap' },
+        { lat: 43.6503, lng: -79.3840, speed_limit_road_name: 'King Street', speed_limit_kmh: 60, speed_limit_source: 'openstreetmap' },
+      ],
+    }], []);
+
+    expect(sections).toHaveLength(2);
+    expect(sections.map((section) => section.effectiveLimitKmh)).toEqual([50, 60]);
+    expect(sections.every((section) => section.roadName === 'King Street')).toBe(true);
+    expect(sections.every((section) => section.sectionKey.match(/^route-section-/))).toBe(true);
+  });
+
+  it('queues each observed zone from a multi-speed trip for segment review', () => {
+    const sections = buildSpeedMapSections([{
+      id: 'trip-with-review-zones',
+      status: 'completed',
+      route_points: [
+        { lat: 43.6500, lng: -79.3900, speed_limit_road_name: 'King Street', speed_limit_kmh: 50, speed_limit_source: 'openstreetmap' },
+        { lat: 43.6501, lng: -79.3880, speed_limit_road_name: 'King Street', speed_limit_kmh: 50, speed_limit_source: 'openstreetmap' },
+        { lat: 43.6502, lng: -79.3860, speed_limit_road_name: 'King Street', speed_limit_kmh: 60, speed_limit_source: 'openstreetmap' },
+        { lat: 43.6503, lng: -79.3840, speed_limit_road_name: 'King Street', speed_limit_kmh: 60, speed_limit_source: 'openstreetmap' },
+        { lat: 43.6504, lng: -79.3820, speed_limit_road_name: 'King Street', speed_limit_kmh: 80, speed_limit_source: 'openstreetmap' },
+        { lat: 43.6505, lng: -79.3800, speed_limit_road_name: 'King Street', speed_limit_kmh: 80, speed_limit_source: 'openstreetmap' },
+      ],
+    }], []);
+
+    const queue = buildSpeedZoneReviewItems(sections);
+
+    expect(queue.map((item) => item.limitKmh)).toEqual([50, 60, 80]);
+    expect(queue.map((item) => item.zoneIndex)).toEqual([1, 2, 3]);
+    expect(queue.every((item) => item.kind === 'speedZone')).toBe(true);
+    expect(queue.every((item) => item.zoneCount === 3)).toBe(true);
+  });
+
+  it('does not queue a trip with only one observed speed zone', () => {
+    const sections = buildSpeedMapSections([{
+      id: 'trip-with-one-zone',
+      status: 'completed',
+      route_points: [
+        { lat: 43.6500, lng: -79.3900, speed_limit_road_name: 'King Street', speed_limit_kmh: 50, speed_limit_source: 'openstreetmap' },
+        { lat: 43.6501, lng: -79.3880, speed_limit_road_name: 'King Street', speed_limit_kmh: 50, speed_limit_source: 'openstreetmap' },
+      ],
+    }], []);
+
+    expect(buildSpeedZoneReviewItems(sections)).toEqual([]);
+  });
+
+  it('does not leave a duplicate unset section under saved traced geometry', () => {
+    const route = [
+      { lat: 43.6500, lng: -79.3900, speed_limit_road_name: 'King Street' },
+      { lat: 43.6501, lng: -79.3880, speed_limit_road_name: 'King Street' },
+      { lat: 43.6502, lng: -79.3860, speed_limit_road_name: 'King Street' },
+    ];
+    const sections = buildSpeedMapSections([{
+      id: 'trip-covered-by-rule',
+      status: 'completed',
+      route_points: route,
+    }], [{
+      id: 'saved-rule',
+      geohash: 'dpz83b',
+      lat: 43.6501,
+      lng: -79.3880,
+      limitKmh: 50,
+      source: 'user_confirmed_posted_sign',
+      sectionPoints: route.map(({ lat, lng }) => ({ lat, lng })),
+    }]);
+
+    expect(sections).toHaveLength(1);
+    expect(sections[0]).toMatchObject({
+      id: 'saved-rule',
+      saved: true,
+      roadName: 'King Street',
+      affectedTripCount: 1,
+    });
+  });
+
+  it('does not leave a duplicate unset section when a saved trace covers a meaningful part of the route', () => {
+    const route = [
+      { lat: 43.6500, lng: -79.3900, speed_limit_road_name: 'King Street' },
+      { lat: 43.6501, lng: -79.3880, speed_limit_road_name: 'King Street' },
+      { lat: 43.6502, lng: -79.3860, speed_limit_road_name: 'King Street' },
+      { lat: 43.6503, lng: -79.3840, speed_limit_road_name: 'King Street' },
+      { lat: 43.6504, lng: -79.3820, speed_limit_road_name: 'King Street' },
+    ];
+    const sections = buildSpeedMapSections([{
+      id: 'trip-partly-covered-by-rule',
+      status: 'completed',
+      route_points: route,
+    }], [{
+      id: 'saved-rule',
+      geohash: 'dpz83b',
+      lat: 43.6501,
+      lng: -79.3880,
+      limitKmh: 40,
+      source: 'user_entered_estimate',
+      sectionPoints: route.slice(1, 3).map(({ lat, lng }) => ({ lat, lng })),
+    }]);
+
+    expect(sections).toHaveLength(1);
+    expect(sections[0]).toMatchObject({
+      id: 'saved-rule',
+      saved: true,
+      limitKmh: 40,
+    });
   });
 
   it('blocks overlapping saved sections with conflicting active speeds', () => {

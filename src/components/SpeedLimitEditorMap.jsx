@@ -112,6 +112,18 @@ const middlePosition = (positions = []) => (
       ]
 );
 
+const vertexHandleLabel = (index, count) => {
+  if (index === 0) return 'S';
+  if (index === count - 1) return 'E';
+  return String(index + 1);
+};
+
+const vertexHandleTitle = (index, count) => {
+  if (index === 0) return 'Start';
+  if (index === count - 1) return 'End';
+  return `Point ${index + 1}`;
+};
+
 const sectionCenter = (section = {}) => (
   sectionPositions(section)[0] || null
 );
@@ -134,17 +146,25 @@ const safeLeafletCall = (callback) => {
   }
 };
 
+const isUsableLeafletMap = (map) => Boolean(map?._container && map?._panes?.mapPane);
+
+const isUsableLayerGroup = (layerGroup) => Boolean(
+  layerGroup?._map && isUsableLeafletMap(layerGroup._map)
+);
+
 const stopLeafletMap = (map) => {
+  if (!isUsableLeafletMap(map)) return;
   safeLeafletCall(() => map?.stop?.());
   safeLeafletCall(() => map?.closePopup?.());
   safeLeafletCall(() => map?.closeTooltip?.());
 };
 
 const safeMapSetView = (map, center, zoom, options = {}) => safeLeafletCall(() => (
-  map?.setView?.(center, zoom, { animate: false, ...options })
+  isUsableLeafletMap(map) ? map?.setView?.(center, zoom, { animate: false, ...options }) : null
 ));
 
 const safeMapFitBounds = (map, bounds, options = {}) => measureSync('SpeedLimitEditorMap.fitBounds', () => {
+  if (!isUsableLeafletMap(map)) return null;
   if (!bounds || (typeof bounds.isValid === 'function' && !bounds.isValid())) return null;
   return safeLeafletCall(() => map?.fitBounds?.(bounds, { animate: false, ...options }));
 });
@@ -202,6 +222,7 @@ const addSectionToLayer = ({
   addMode = false,
   onSelect,
 }) => {
+  if (!isUsableLayerGroup(layerGroup)) return null;
   const display = sectionDisplay(section, selected, showPermanentLabel);
   const fallbackPosition = sectionCenter(section);
   if (display.positions.length < 2 && !fallbackPosition) return null;
@@ -298,6 +319,7 @@ function SpeedLimitEditorMapContent({
   const editLayerRef = useRef(null);
   const tileLayerRef = useRef(null);
   const initialFitDoneRef = useRef(false);
+  const lastFilterFitKeyRef = useRef('');
   const lastSelectedFitKeyRef = useRef('');
   const visibleBoundsRef = useRef(null);
   const addModeRef = useRef(addMode);
@@ -320,6 +342,14 @@ function SpeedLimitEditorMapContent({
     query: mapQuery,
     layers,
   }), [layers, mapQuery, rawSections]);
+  const visibleSectionsKey = useMemo(
+    () => sections.map(sectionKey).join('|'),
+    [sections]
+  );
+  const filterFitKey = useMemo(
+    () => JSON.stringify({ mapQuery, layers, visibleSectionsKey }),
+    [layers, mapQuery, visibleSectionsKey]
+  );
   const stats = useMemo(() => summarizeSpeedMapSections(rawSections), [rawSections]);
   const visibleStats = useMemo(() => summarizeSpeedMapSections(sections), [sections]);
   const center = sections.length
@@ -357,10 +387,6 @@ function SpeedLimitEditorMapContent({
     prioritized
       .filter((section) => section.saved || section.conflict)
       .forEach((section) => keys.add(sectionKey(section)));
-    for (const section of prioritized) {
-      if (keys.size >= permanentLabelLimit) break;
-      keys.add(sectionKey(section));
-    }
     return keys;
   }, [permanentLabelLimit, sections]);
 
@@ -373,9 +399,11 @@ function SpeedLimitEditorMapContent({
       attributionControl: true,
       fadeAnimation: false,
       markerZoomAnimation: false,
-      preferCanvas: true,
       zoomAnimation: false,
     });
+    // Use Leaflet's default SVG renderer. Canvas can keep queued redraws after
+    // dense speed layers are cleared, which can hit Leaflet's `_leaflet_pos`
+    // path with a detached renderer container.
     mapRef.current = map;
     safeMapSetView(map, center, 13);
     sectionLayersRef.current = L.layerGroup().addTo(map);
@@ -385,7 +413,7 @@ function SpeedLimitEditorMapContent({
     endMount({ outcome: 'success' });
 
     const timer = window.setTimeout(() => {
-      if (mapRef.current === map) safeLeafletCall(() => map.invalidateSize({ animate: false }));
+      if (mapRef.current === map && isUsableLeafletMap(map)) safeLeafletCall(() => map.invalidateSize({ animate: false }));
     }, 0);
 
     return () => {
@@ -421,7 +449,7 @@ function SpeedLimitEditorMapContent({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!mapReady || !map) return;
+    if (!mapReady || !isUsableLeafletMap(map)) return;
 
     safeLeafletCall(() => {
       if (tileLayerRef.current) {
@@ -440,13 +468,14 @@ function SpeedLimitEditorMapContent({
   useEffect(() => {
     const map = mapRef.current;
     const layers = sectionLayersRef.current;
-    if (!mapReady || !map || !layers) return;
+    if (!mapReady || !isUsableLeafletMap(map) || !isUsableLayerGroup(layers)) return;
     const endDraw = beginMeasure('SpeedLimitEditorMap.layerDraw', { sectionCount: sections.length });
 
     stopLeafletMap(map);
     safeLeafletCall(() => layers.clearLayers());
 
     sections.forEach((section) => {
+      if (selectedGeohash && sectionKey(section) === selectedGeohash) return;
       addSectionToLayer({
         section,
         layerGroup: layers,
@@ -459,11 +488,11 @@ function SpeedLimitEditorMapContent({
       });
     });
     endDraw({ outcome: 'success' });
-  }, [mapReady, permanentLabelKeys, sections]);
+  }, [mapReady, permanentLabelKeys, sections, selectedGeohash]);
 
   useEffect(() => {
     const layers = editLayerRef.current;
-    if (!mapReady || !layers) return;
+    if (!mapReady || !isUsableLayerGroup(layers)) return;
 
     safeLeafletCall(() => layers.clearLayers());
 
@@ -496,7 +525,7 @@ function SpeedLimitEditorMapContent({
 
   useEffect(() => {
     const selectedLayers = selectedLayerRef.current;
-    if (!mapReady || !selectedLayers) return;
+    if (!mapReady || !isUsableLayerGroup(selectedLayers)) return;
 
     safeLeafletCall(() => selectedLayers.clearLayers());
     const selectedSection = (
@@ -522,19 +551,19 @@ function SpeedLimitEditorMapContent({
 
     const selectedPoints = sectionPositions(selectedSection);
     if (onMoveSectionPointRef.current && selectedPoints.length >= 2 && !addModeRef.current) {
-      [
-        { index: 0, label: 'Start' },
-        { index: selectedPoints.length - 1, label: 'End' },
-      ].forEach(({ index, label }) => {
-        const marker = L.marker([selectedPoints[index][0], selectedPoints[index][1]], {
+      selectedPoints.forEach((position, index) => {
+        const label = vertexHandleTitle(index, selectedPoints.length);
+        const handleText = vertexHandleLabel(index, selectedPoints.length);
+        const endpoint = index === 0 || index === selectedPoints.length - 1;
+        const marker = L.marker([position[0], position[1]], {
           draggable: true,
           keyboard: true,
           title: `${label} of selected road section`,
           icon: L.divIcon({
-            html: `<div class="speed-limit-endpoint-handle">${label === 'Start' ? 'S' : 'E'}</div>`,
+            html: `<div class="${endpoint ? 'speed-limit-endpoint-handle' : 'speed-limit-vertex-handle'}">${handleText}</div>`,
             className: '',
-            iconSize: [26, 26],
-            iconAnchor: [13, 13],
+            iconSize: endpoint ? [26, 26] : [22, 22],
+            iconAnchor: endpoint ? [13, 13] : [11, 11],
           }),
         }).addTo(selectedLayers);
         marker.bindTooltip(`Drag ${label.toLowerCase()} to adjust the road section`, {
@@ -554,7 +583,7 @@ function SpeedLimitEditorMapContent({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!mapReady || !map) return;
+    if (!mapReady || !isUsableLeafletMap(map)) return;
     const points = sections.flatMap(sectionPositions);
     visibleBoundsRef.current = points.length > 1 ? L.latLngBounds(points) : null;
     if (!points.length) {
@@ -572,7 +601,30 @@ function SpeedLimitEditorMapContent({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!mapReady || !map) return;
+    if (!mapReady || !isUsableLeafletMap(map)) return;
+    if (!initialFitDoneRef.current) {
+      lastFilterFitKeyRef.current = filterFitKey;
+      return;
+    }
+    if (lastFilterFitKeyRef.current === filterFitKey) return;
+    lastFilterFitKeyRef.current = filterFitKey;
+    if (selectedGeohash) return;
+    const points = sections.flatMap(sectionPositions);
+    visibleBoundsRef.current = points.length > 1 ? L.latLngBounds(points) : null;
+    if (points.length === 0) {
+      safeMapSetView(map, center, 13);
+      return;
+    }
+    if (points.length === 1) {
+      safeMapSetView(map, points[0], 15);
+      return;
+    }
+    safeMapFitBounds(map, L.latLngBounds(points), { padding: [28, 28], maxZoom: 16 });
+  }, [center, filterFitKey, mapReady, sections, selectedGeohash]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!mapReady || !isUsableLeafletMap(map)) return;
     if (!selectedGeohash) {
       lastSelectedFitKeyRef.current = '';
       return;
@@ -598,7 +650,7 @@ function SpeedLimitEditorMapContent({
 
   const handleFitVisible = () => {
     const map = mapRef.current;
-    if (!mapReady || !map) return;
+    if (!mapReady || !isUsableLeafletMap(map)) return;
     const bounds = visibleBoundsRef.current;
     if (bounds) {
       safeMapFitBounds(map, bounds, { padding: [28, 28], maxZoom: 16 });

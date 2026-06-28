@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCommuteDetections,
+  buildDriverInsightBrief,
   buildMaintenanceReminders,
   buildRiskHotspots,
   buildRouteComparisons,
@@ -89,6 +90,101 @@ describe('mediumInsights', () => {
     ]);
 
     expect(summary.biggest_improvement).toBe('more trips needed');
+  });
+
+  it('builds a ranked driver brief from trend, event density, and route evidence', () => {
+    const now = new Date('2026-05-22T12:00:00.000Z');
+    const trips = [
+      trip({
+        id: 'current-1',
+        start_time: '2026-05-21T08:30:00',
+        score_overall: 72,
+        harsh_brakes_count: 3,
+        distance_km: 10,
+      }),
+      trip({
+        id: 'current-2',
+        start_time: '2026-05-20T08:30:00',
+        score_overall: 74,
+        harsh_brakes_count: 2,
+        distance_km: 10,
+      }),
+      trip({
+        id: 'previous-1',
+        start_time: '2026-05-13T08:30:00',
+        score_overall: 90,
+        harsh_brakes_count: 0,
+        distance_km: 10,
+      }),
+      trip({
+        id: 'previous-2',
+        start_time: '2026-05-12T08:30:00',
+        score_overall: 88,
+        harsh_brakes_count: 0,
+        distance_km: 10,
+      }),
+    ];
+
+    const brief = buildDriverInsightBrief(trips, {}, { now });
+
+    expect(brief.score_trend).toMatchObject({ direction: 'down', delta: -16 });
+    expect(brief.top_risk).toMatchObject({
+      id: 'harsh_brakes',
+      count: 5,
+      per100km: 12.5,
+    });
+    expect(brief.actions[0]).toMatchObject({
+      id: 'harsh_brakes',
+      priority: 'high',
+      title: 'Reduce harsh braking',
+    });
+    expect(brief.route_opportunity).toMatchObject({
+      label: 'Morning commute',
+      trend: 'declining',
+    });
+    expect(brief.evidence).toContain('4 driver trips');
+  });
+
+  it('uses the strongest context as the next action when no risk pattern needs attention', () => {
+    const brief = buildDriverInsightBrief([
+      trip({
+        id: 'clean-1',
+        start_time: '2026-05-21T08:30:00.000Z',
+        score_overall: 92,
+        harsh_brakes_count: 0,
+        rapid_accel_count: 0,
+        sharp_turns_count: 0,
+        speeding_events_count: 0,
+      }),
+      trip({
+        id: 'clean-2',
+        start_time: '2026-05-20T08:30:00.000Z',
+        score_overall: 90,
+        harsh_brakes_count: 0,
+        rapid_accel_count: 0,
+        sharp_turns_count: 0,
+        speeding_events_count: 0,
+      }),
+      trip({
+        id: 'clean-3',
+        start_time: '2026-05-19T08:30:00.000Z',
+        score_overall: 91,
+        harsh_brakes_count: 0,
+        rapid_accel_count: 0,
+        sharp_turns_count: 0,
+        speeding_events_count: 0,
+      }),
+    ], {}, { now: new Date('2026-05-22T12:00:00.000Z') });
+
+    expect(brief.actions[0]).toMatchObject({
+      id: 'protect_strength',
+      title: 'Repeat your city pattern',
+    });
+    expect(brief.risk_event_rate).toMatchObject({
+      total_events: 0,
+      per100km: 0,
+    });
+    expect(brief.weakest_context).toBeNull();
   });
 
   it('builds repeated event areas from repeated harsh or speeding events', () => {

@@ -37,10 +37,18 @@ const distanceWeightedScore = (trips = []) => {
     : null;
 };
 
+const tripsForVehicle = (vehicle, trips = []) => trips.filter((trip) => (
+  trip.status === 'completed' &&
+  (
+    String(trip.vehicle_id || '') === String(vehicle.id) ||
+    (vehicle.is_default && !trip.vehicle_id)
+  )
+));
+
 export default function VehicleCompare({ vehicles, trips }) {
   const stats = useMemo(() => {
     return vehicles.map((v, i) => {
-      const vTrips = trips.filter(t => t.vehicle_id === v.id && t.status === 'completed');
+      const vTrips = tripsForVehicle(v, trips);
       const count = vTrips.length;
       const weightedScore = count ? distanceWeightedScore(vTrips) : null;
       const avgScore = weightedScore == null ? null : Math.round(weightedScore);

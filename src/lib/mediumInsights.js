@@ -34,6 +34,45 @@ const distanceWeightedScore = (trips = [], field = 'score_overall') => {
     : null;
 };
 
+const eventRiskDefinitions = [
+  {
+    id: 'harsh_brakes',
+    label: 'Harsh braking',
+    field: 'harsh_brakes_count',
+    coaching: 'Brake earlier for the next five stops and leave one extra car length before intersections.',
+  },
+  {
+    id: 'rapid_accel',
+    label: 'Rapid acceleration',
+    field: 'rapid_accel_count',
+    coaching: 'Use a three-second throttle ramp after stops so launches stay smoother.',
+  },
+  {
+    id: 'sharp_turns',
+    label: 'Sharp turns',
+    field: 'sharp_turns_count',
+    coaching: 'Set corner speed before turning, then accelerate only as the wheel straightens.',
+  },
+  {
+    id: 'speeding',
+    label: 'Speeding',
+    field: 'speeding_events_count',
+    coaching: 'Pick a cruise target 5 km/h below your alert threshold on repeated routes.',
+  },
+];
+
+const scoreDeltaSummary = (currentScore, previousScore) => {
+  if (currentScore == null || previousScore == null) {
+    return { delta: null, direction: 'developing', label: 'More baseline needed' };
+  }
+  const delta = Math.round(currentScore - previousScore);
+  return {
+    delta,
+    direction: delta >= 3 ? 'up' : delta <= -3 ? 'down' : 'flat',
+    label: delta === 0 ? 'No change' : `${delta > 0 ? '+' : ''}${delta} pts`,
+  };
+};
+
 const timeBucketLabel = (dateInput) => {
   const date = new Date(dateInput);
   if (!Number.isFinite(date.getTime())) return 'Unknown';
@@ -298,6 +337,167 @@ export function buildGoalStatus(weekTrips = [], settings = {}) {
       display: `${Math.round(nightKm * 10) / 10}/${maxNightKm} km`,
     },
   ];
+}
+
+export function buildDriverInsightBrief(trips = [], settings = {}, options = {}) {
+  const nowMs = options.now ? new Date(options.now).getTime() : Date.now();
+  const trendTrips = excludePrivacyTouchedDaysFromTrends(trips);
+  const completed = trendTrips
+    .filter((trip) => trip.status === 'completed')
+    .sort((a, b) => new Date(b.start_time || b.created_at || 0).getTime() - new Date(a.start_time || a.created_at || 0).getTime());
+  const driverTrips = options.driverTrips || completed;
+  const driverCompleted = driverTrips
+    .filter((trip) => trip.status === 'completed')
+    .sort((a, b) => new Date(b.start_time || b.created_at || 0).getTime() - new Date(a.start_time || a.created_at || 0).getTime());
+  const totalDistanceKm = driverCompleted.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  const currentStartMs = nowMs - 7 * DAY_MS;
+  const previousStartMs = nowMs - 14 * DAY_MS;
+  let currentTrips = driverCompleted.filter((trip) => {
+    const time = new Date(trip.start_time || trip.created_at || 0).getTime();
+    return Number.isFinite(time) && time >= currentStartMs && time <= nowMs;
+  });
+  let previousTrips = driverCompleted.filter((trip) => {
+    const time = new Date(trip.start_time || trip.created_at || 0).getTime();
+    return Number.isFinite(time) && time >= previousStartMs && time < currentStartMs;
+  });
+
+  if (currentTrips.length === 0 && driverCompleted.length > 0) {
+    currentTrips = driverCompleted.slice(0, 5);
+    previousTrips = driverCompleted.slice(5, 10);
+  }
+
+  const averageScore = distanceWeightedScore(driverCompleted);
+  const currentScore = distanceWeightedScore(currentTrips);
+  const previousScore = distanceWeightedScore(previousTrips);
+  const scoreTrend = scoreDeltaSummary(
+    currentScore == null ? null : Math.round(currentScore),
+    previousScore == null ? null : Math.round(previousScore)
+  );
+  const riskRows = eventRiskDefinitions.map((definition) => {
+    const count = driverCompleted.reduce((sum, trip) => sum + (Number(trip[definition.field]) || 0), 0);
+    return {
+      ...definition,
+      count,
+      per100km: totalDistanceKm > 0 ? Math.round((count / totalDistanceKm) * 1000) / 10 : null,
+    };
+  });
+  const totalRiskEvents = riskRows.reduce((sum, row) => sum + row.count, 0);
+  const topRisk = riskRows
+    .filter((row) => row.count > 0)
+    .sort((a, b) => b.count - a.count || (b.per100km || 0) - (a.per100km || 0))[0] || null;
+  const roadTypes = buildRoadTypeBreakdown(driverCompleted).filter((road) => road.avg_score != null && road.trip_count >= 1);
+  const strongestContext = [...roadTypes].sort((a, b) => b.avg_score - a.avg_score || b.distance_km - a.distance_km)[0] || null;
+  const weakestContextCandidate = [...roadTypes].sort((a, b) => a.avg_score - b.avg_score || b.risk_events - a.risk_events)[0] || null;
+  const weakestContext = weakestContextCandidate && (
+    roadTypes.length > 1 ||
+    weakestContextCandidate.risk_events > 0 ||
+    weakestContextCandidate.avg_score < 80
+  )
+    ? weakestContextCandidate
+    : null;
+  const routes = buildRouteComparisons(driverCompleted);
+  const routeOpportunity = routes
+    .filter((route) => route.trend === 'declining' || (route.avg_score != null && route.avg_score < 80))
+    .sort((a, b) => (
+      (a.trend === 'declining' ? -1 : 0) - (b.trend === 'declining' ? -1 : 0) ||
+      (a.avg_score ?? 100) - (b.avg_score ?? 100)
+    ))[0] || null;
+  const weekStart = startOfWeek(new Date(nowMs));
+  const weekTrips = driverCompleted.filter((trip) => {
+    const time = new Date(trip.start_time || trip.created_at || 0).getTime();
+    return Number.isFinite(time) && time >= weekStart.getTime() && time <= nowMs;
+  });
+  const unmetGoal = buildGoalStatus(weekTrips, settings).find((goal) => !goal.met) || null;
+  const phoneUseSummary = options.phoneUseSummary || null;
+
+  const actions = [];
+  if (phoneUseSummary && ['medium', 'high'].includes(phoneUseSummary.worstRisk)) {
+    actions.push({
+      id: 'phone_use',
+      priority: 'high',
+      title: 'Remove phone-use exposure first',
+      detail: `${phoneUseSummary.tripsWithConfirmedUse} trip${phoneUseSummary.tripsWithConfirmedUse === 1 ? '' : 's'} include confirmed phone-use windows. Set navigation/audio before moving and use Do Not Disturb.`,
+      metric: `${phoneUseSummary.coveragePct}% Usage Access coverage`,
+    });
+  }
+  if (topRisk) {
+    actions.push({
+      id: topRisk.id,
+      priority: topRisk.per100km != null && topRisk.per100km >= 10 ? 'high' : 'medium',
+      title: `Reduce ${topRisk.label.toLowerCase()}`,
+      detail: topRisk.coaching,
+      metric: `${topRisk.count} event${topRisk.count === 1 ? '' : 's'}${topRisk.per100km == null ? '' : `, ${topRisk.per100km} per 100 km`}`,
+    });
+  }
+  if (routeOpportunity) {
+    actions.push({
+      id: 'route_opportunity',
+      priority: routeOpportunity.trend === 'declining' ? 'medium' : 'low',
+      title: `Review ${routeOpportunity.label.toLowerCase()}`,
+      detail: `This repeated route averages ${Math.round(routeOpportunity.avg_score)} and is usually strongest near ${routeOpportunity.safest_time}. Open the latest trip to compare timing and events.`,
+      metric: `${routeOpportunity.trip_count} matched trips`,
+      tripId: routeOpportunity.last_trip_id,
+    });
+  }
+  if (unmetGoal) {
+    actions.push({
+      id: `goal_${unmetGoal.id}`,
+      priority: 'medium',
+      title: 'Protect this week\'s goal',
+      detail: unmetGoal.label,
+      metric: unmetGoal.display,
+    });
+  }
+  if (actions.length === 0 && strongestContext) {
+    actions.push({
+      id: 'protect_strength',
+      priority: 'low',
+      title: `Repeat your ${strongestContext.label.toLowerCase()} pattern`,
+      detail: 'Your strongest context is a useful baseline. Compare tougher trips against its speed, braking, and route timing.',
+      metric: `${strongestContext.trip_count} trip${strongestContext.trip_count === 1 ? '' : 's'}, avg ${strongestContext.avg_score}`,
+    });
+  }
+
+  const confidence = driverCompleted.length >= 10 && totalDistanceKm >= 50
+    ? 'strong'
+    : driverCompleted.length >= 3
+      ? 'moderate'
+      : 'developing';
+  const headline = driverCompleted.length === 0
+    ? 'Complete a few trips to unlock a personalized brief.'
+    : actions[0]?.title || 'Keep building a clean driving baseline';
+
+  return {
+    headline,
+    confidence,
+    trip_count: driverCompleted.length,
+    distance_km: Math.round(totalDistanceKm * 10) / 10,
+    average_score: averageScore == null ? null : Math.round(averageScore),
+    current_period: {
+      trip_count: currentTrips.length,
+      avg_score: currentScore == null ? null : Math.round(currentScore),
+    },
+    previous_period: {
+      trip_count: previousTrips.length,
+      avg_score: previousScore == null ? null : Math.round(previousScore),
+    },
+    score_trend: scoreTrend,
+    risk_event_rate: {
+      total_events: totalRiskEvents,
+      per100km: totalDistanceKm > 0 ? Math.round((totalRiskEvents / totalDistanceKm) * 1000) / 10 : null,
+      rows: riskRows,
+    },
+    top_risk: topRisk,
+    strongest_context: strongestContext,
+    weakest_context: weakestContext,
+    route_opportunity: routeOpportunity,
+    actions: actions.slice(0, 4),
+    evidence: [
+      `${driverCompleted.length} driver trip${driverCompleted.length === 1 ? '' : 's'}`,
+      `${Math.round(totalDistanceKm * 10) / 10} km`,
+      confidence === 'strong' ? 'strong evidence' : confidence === 'moderate' ? 'moderate evidence' : 'developing evidence',
+    ],
+  };
 }
 
 const roadTypeForTrip = (trip = {}) => {

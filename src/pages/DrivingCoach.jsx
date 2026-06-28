@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Gauge, MapPinned, ShieldCheck, Target } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, Gauge, MapPinned, ShieldCheck, Target, TrendingUp } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { tripSummaryQueryOptions } from '@/api/trips';
 import { formatDistance, formatSpeed } from '@/lib/tripEngine';
@@ -18,6 +18,7 @@ import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly'
 import { logError } from '@/lib/errorReporting';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const focusLabels = {
   braking: 'Brake Earlier',
@@ -37,6 +38,27 @@ const focusLabels = {
 
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 
+function MetricCard({ icon: Icon, iconClassName, value, label, detail }) {
+  return (
+    <div className="bg-card border border-border rounded-2xl p-4">
+      <Icon className={`mb-2 h-5 w-5 ${iconClassName}`} />
+      <div className="font-grotesk font-bold text-2xl">{value}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      {detail && <div className="mt-1 text-[11px] text-muted-foreground">{detail}</div>}
+    </div>
+  );
+}
+
+function MiniMetric({ value, label, detail, className = '' }) {
+  return (
+    <div className="bg-secondary/50 rounded-xl p-3">
+      <div className={`font-grotesk font-bold text-xl ${className}`}>{value}</div>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      {detail && <div className="text-[11px] text-muted-foreground capitalize">{detail}</div>}
+    </div>
+  );
+}
+
 export default function DrivingCoach() {
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
@@ -46,6 +68,8 @@ export default function DrivingCoach() {
   });
 
   const coach = buildDrivingCoachInsights(completed, settings);
+  const coachBrief = coach.coach_brief;
+  const riskPatternMax = Math.max(1, ...(coach.risk_patterns || []).map((pattern) => pattern.count));
   const coachBaselineRangeLabel = coach.baseline?.baseline_includes_older_scores
     ? coach.baseline.baseline_label
     : coach.baseline?.baseline_confidence_interval_label;
@@ -68,6 +92,7 @@ export default function DrivingCoach() {
   const increasingAggressionShift = driverSignature?.style_shifts?.find((shift) => (
     shift.dimension === 'aggression' && shift.direction === 'increasing'
   ));
+
   useEffect(() => {
     if (driverSignature) {
       setJson(DRIVER_SIGNATURE_KEY, driverSignature).catch((err) => {
@@ -77,7 +102,8 @@ export default function DrivingCoach() {
         });
       });
     }
-  }, [driverSignature]);
+  }, [driverSignature, completed.length]);
+
   const timeOfDay = analyzeTimeOfDay(completed);
   const dayOfWeek = analyzeDayOfWeek(completed);
   const mergeScoreValues = completed
@@ -132,282 +158,377 @@ export default function DrivingCoach() {
             </div>
           )}
 
-          {driverSignature && (
+          {coachBrief && (
             <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="font-semibold">Your Driving Style</h2>
-                  <div className="mt-1 text-2xl font-grotesk font-bold capitalize">
-                    {driverSignature.archetype.replaceAll('_', ' ')}
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div className="max-w-2xl">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold uppercase text-primary">
+                      Current focus
+                    </span>
+                    <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-semibold capitalize text-muted-foreground">
+                      {coachBrief.confidence} evidence
+                    </span>
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Built from {driverSignature.trip_count_used} recent trips.
-                  </p>
+                  <h2 className="mt-3 text-2xl font-grotesk font-bold">
+                    {focusLabels[coach.focus_area] || coachBrief.title}
+                  </h2>
+                  <p className="mt-2 text-sm text-muted-foreground">{coachBrief.why}</p>
+                </div>
+                <div className="rounded-2xl bg-primary/10 p-3 text-primary">
+                  <Target className="h-6 w-6" />
                 </div>
               </div>
-              <ResponsiveContainer width="100%" height={220}>
-                <RadarChart data={signatureChartData} outerRadius={76}>
-                  <PolarGrid />
-                  <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 10 }} />
-                  <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.22} />
-                  <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
-                </RadarChart>
-              </ResponsiveContainer>
-              <div className="mb-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground">Braking signature: </span>
-                <span>{brakingStyle == null ? '—' : `${Math.round(brakingStyle * 100)}%`}</span>
-                <span className="ml-2">
-                  {brakingConfidence < 1 ? 'Low confidence' : 'High confidence'} ({Math.round(brakingConfidence * 100)}% braking evidence)
-                </span>
+
+              <div className="mt-5 grid gap-3 md:grid-cols-3">
+                <div className="rounded-2xl bg-secondary/50 p-4">
+                  <div className="flex items-center gap-2 text-xs font-bold uppercase text-muted-foreground">
+                    <Activity className="h-4 w-4" />
+                    Practice cue
+                  </div>
+                  <p className="mt-2 text-sm font-semibold">{coachBrief.cue}</p>
+                </div>
+                <div className="rounded-2xl bg-secondary/50 p-4">
+                  <div className="flex items-center gap-2 text-xs font-bold uppercase text-muted-foreground">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Success target
+                  </div>
+                  <p className="mt-2 text-sm font-semibold">{coachBrief.target.summary}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {coachBrief.target.metric}: {coachBrief.target.current} to {coachBrief.target.goal}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-secondary/50 p-4">
+                  <div className="flex items-center gap-2 text-xs font-bold uppercase text-muted-foreground">
+                    <TrendingUp className="h-4 w-4" />
+                    Progress check
+                  </div>
+                  <p className="mt-2 text-sm font-semibold">{coachBrief.progress_note}</p>
+                </div>
               </div>
-              {driverSignature.style_shifts.length > 0 && (
-                <div className="rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
-                  {driverSignature.style_shifts.map((shift) => (
-                    <span key={`${shift.dimension}-${shift.direction}`} className="mr-2 capitalize">
-                      {shift.dimension}: {shift.direction} {Math.round(shift.delta * 100)}%
-                    </span>
+
+              <div className="mt-5 grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+                <div>
+                  <div className="text-xs font-bold uppercase text-muted-foreground">{coachBrief.drill.title}</div>
+                  <div className="mt-3 space-y-2">
+                    {coachBrief.drill.steps.map((step, index) => (
+                      <div key={step} className="flex gap-3 rounded-xl border border-border/70 p-3 text-sm">
+                        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                          {index + 1}
+                        </div>
+                        <div className="text-muted-foreground">{step}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-bold uppercase text-muted-foreground">Evidence used</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {coachBrief.evidence.map((item) => (
+                      <span key={item} className="rounded-full bg-secondary px-3 py-1 text-xs font-semibold text-muted-foreground">
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <Tabs defaultValue="plan" className="space-y-4">
+            <TabsList className="grid h-auto w-full grid-cols-3 rounded-2xl">
+              <TabsTrigger value="plan" className="rounded-xl py-2 text-xs sm:text-sm">Plan</TabsTrigger>
+              <TabsTrigger value="evidence" className="rounded-xl py-2 text-xs sm:text-sm">Evidence</TabsTrigger>
+              <TabsTrigger value="profile" className="rounded-xl py-2 text-xs sm:text-sm">Profile</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="plan" className="space-y-4">
+              <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <Target className="mt-0.5 h-5 w-5 text-primary" />
+                  <div>
+                    <h2 className="font-semibold">Local Weekly Coach</h2>
+                    <div className="mt-2 text-lg font-grotesk font-bold">{weeklySummary.headline}</div>
+                    <p className="mt-1 text-xs text-muted-foreground">{weeklySummary.insight}</p>
+                  </div>
+                </div>
+                <div className="mt-4 space-y-2">
+                  {weeklySummary.actions.map((action) => (
+                    <div key={action} className="rounded-xl bg-secondary/50 p-3 text-sm text-muted-foreground">{action}</div>
                   ))}
                 </div>
-              )}
-            </div>
-          )}
-
-          <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-            <div className="flex items-start gap-3">
-              <Target className="mt-0.5 h-5 w-5 text-primary" />
-              <div>
-                <h2 className="font-semibold">Local Weekly Coach</h2>
-                <div className="mt-2 text-lg font-grotesk font-bold">{weeklySummary.headline}</div>
-                <p className="mt-1 text-xs text-muted-foreground">{weeklySummary.insight}</p>
               </div>
-            </div>
-            <div className="mt-4 space-y-2">
-              {weeklySummary.actions.map((action) => (
-                <div key={action} className="rounded-xl bg-secondary/50 p-3 text-sm text-muted-foreground">{action}</div>
-              ))}
-            </div>
-          </div>
 
-          {weeklySummary.plan?.length > 0 && (
-            <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-              <div className="flex items-start gap-3">
-                <Target className="mt-0.5 h-5 w-5 text-primary" />
-                <div>
+              {weeklySummary.plan?.length > 0 && (
+                <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
                   <h2 className="font-semibold">This Week's Plan</h2>
                   <p className="mt-1 text-xs text-muted-foreground">Three small actions tied to your current driving pattern</p>
+                  <div className="mt-4 grid gap-2 md:grid-cols-3">
+                    {weeklySummary.plan.map((item) => (
+                      <div key={item.id} className="rounded-2xl bg-secondary/50 p-3">
+                        <div className="text-xs font-bold uppercase text-primary">{item.title}</div>
+                        <div className="mt-2 text-sm font-semibold">{item.action}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{item.target}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+                <h2 className="font-semibold mb-3">Next Driving Actions</h2>
+                <div className="space-y-2">
+                  {coach.actions.map((action) => (
+                    <div key={action} className="text-sm text-muted-foreground bg-secondary/50 rounded-xl p-3">
+                      {action}
+                    </div>
+                  ))}
                 </div>
               </div>
-              <div className="mt-4 grid gap-2 md:grid-cols-3">
-                {weeklySummary.plan.map((item) => (
-                  <div key={item.id} className="rounded-2xl bg-secondary/50 p-3">
-                    <div className="text-xs font-bold uppercase text-primary">{item.title}</div>
-                    <div className="mt-2 text-sm font-semibold">{item.action}</div>
-                    <div className="mt-1 text-xs text-muted-foreground">{item.target}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+            </TabsContent>
 
-          {latestAnomaly && latestAnomaly.anomaly_level !== 'unknown' && (
-            <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-semibold">On-Device Driver Signature</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Last trip compared against {latestAnomaly.model_trip_count} local trips.
+            <TabsContent value="evidence" className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+                <MetricCard
+                  icon={AlertTriangle}
+                  iconClassName="text-orange-500"
+                  value={coach.risk_rate.events_per_100km ?? '-'}
+                  label={coach.risk_rate.insufficient_data ? `needs ${coach.risk_rate.minimum_distance_km} km` : 'events per 100 km'}
+                />
+                <MetricCard
+                  icon={ShieldCheck}
+                  iconClassName="text-emerald-500"
+                  value={formatEstimatedScore(coach.consistency.consistency_score)}
+                  label="consistency score"
+                />
+                <MetricCard
+                  icon={Gauge}
+                  iconClassName="text-blue-500"
+                  value={formatSpeed(coach.speed_discipline.p85_speed_kmh || 0, units)}
+                  label="85th percentile speed"
+                />
+                <MetricCard
+                  icon={MapPinned}
+                  iconClassName="text-violet-500"
+                  value={formatDistance(coach.risk_rate.distance_km, units)}
+                  label="distance analyzed"
+                />
+                <MetricCard
+                  icon={ShieldCheck}
+                  iconClassName="text-blue-500"
+                  value={coach.risk_rate.totals.stop_start_patterns || coach.risk_rate.totals.tailgate_cycles || 0}
+                  label="stop-start patterns"
+                />
+                <MetricCard
+                  icon={Gauge}
+                  iconClassName="text-slate-500"
+                  value={coach.risk_rate.totals.heading_deviations || 0}
+                  label="heading events (beta)"
+                />
+              </div>
+
+              {(coach.risk_patterns || []).length > 0 && (
+                <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h2 className="font-semibold">Risk Pattern Breakdown</h2>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Top contributors behind the current coaching focus.
+                      </p>
+                    </div>
+                    <AlertTriangle className="h-5 w-5 text-orange-500" />
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {coach.risk_patterns.map((pattern) => (
+                      <div key={pattern.key}>
+                        <div className="mb-1 flex items-center justify-between gap-3 text-sm">
+                          <span className="font-semibold">{pattern.label}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {pattern.count} events
+                            {pattern.events_per_100km == null ? '' : ` - ${pattern.events_per_100km}/100 km`}
+                          </span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-secondary">
+                          <div
+                            className="h-full rounded-full bg-primary"
+                            style={{ width: `${Math.max(8, Math.round((pattern.count / riskPatternMax) * 100))}%` }}
+                          />
+                        </div>
+                        <div className="mt-1 text-[11px] text-muted-foreground">{pattern.share_percent}% of recorded risk events</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                {coach.baseline?.trend !== 'unknown' && (
+                  <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+                    <h2 className="font-semibold mb-1">Adaptive Baseline</h2>
+                    <p className="text-xs text-muted-foreground mb-4">This week compared with your rolling 4-week average</p>
+                    <div className="grid grid-cols-3 gap-3">
+                      <MiniMetric value={coach.baseline.this_week_avg ?? '-'} label="this week" />
+                      <MiniMetric
+                        value={coach.baseline.baseline_avg == null ? '-' : coachBaselineRangeLabel ? `${coach.baseline.baseline_avg} (${coachBaselineRangeLabel})` : coach.baseline.baseline_avg}
+                        label="baseline"
+                      />
+                      <MiniMetric
+                        value={coach.baseline.trend}
+                        label="trend"
+                        className={`capitalize ${coach.baseline.trend === 'improving' ? 'text-emerald-500' : coach.baseline.trend === 'declining' ? 'text-red-500' : ''}`}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+                  <h2 className="font-semibold mb-1">Speed Discipline</h2>
+                  <p className="text-xs text-muted-foreground mb-4">
+                    {coach.speed_discipline.over_limit_percent}% of sampled route points were above the configured speed threshold.
+                  </p>
+                  <div className="grid grid-cols-3 gap-3">
+                    <MiniMetric value={coach.speed_discipline.sample_points} label="samples" />
+                    <MiniMetric value={coach.speed_discipline.over_limit_points} label="over limit" />
+                    <MiniMetric value={coach.speed_discipline.level.replace('_', ' ')} label="status" className="capitalize" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+                <h2 className="font-semibold mb-1">Highway And Traffic Pressure</h2>
+                <p className="text-xs text-muted-foreground mb-4">Merge quality, speed variability, and peak-hour behavior</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <MiniMetric
+                    value={formatEstimatedScore(avgMergeScore)}
+                    label="merge score"
+                    detail={avgMergeScore == null ? 'No merge evidence' : null}
+                    className={avgMergeScore == null ? 'text-muted-foreground' : avgMergeScore >= 80 ? 'text-emerald-500' : avgMergeScore >= 60 ? 'text-yellow-500' : 'text-red-500'}
+                  />
+                  <MiniMetric value={avgSvi ?? '-'} label="SVI km/h" detail={latestSviLabel} />
+                  <MiniMetric
+                    value={coach.peak_hour_stress.stress_ratio == null ? '-' : `${coach.peak_hour_stress.stress_ratio}x`}
+                    label="peak stress"
+                    detail={coach.peak_hour_stress.peak_stress_label}
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+                  <h2 className="font-semibold mb-1">Best Driving Window</h2>
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Average score by trip start time. Best-window coaching needs at least {coach.best_window_min_trips} trips in a bucket.
+                  </p>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={timeOfDay} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                      <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                      <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                      <Tooltip
+                        contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                        formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
+                      />
+                      <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Avg score" />
+                      <Bar dataKey="events" fill="#f97316" radius={[4, 4, 0, 0]} name="Risk events" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+                  <h2 className="font-semibold mb-1">Day Pattern</h2>
+                  <p className="text-xs text-muted-foreground mb-4">Risk events and score across the week</p>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={dayOfWeek} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                      <XAxis dataKey="day" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                      <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                      <Tooltip
+                        contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                        formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
+                      />
+                      <Bar dataKey="events" fill="#ef4444" radius={[4, 4, 0, 0]} name="Risk events" />
+                      <Bar dataKey="avgScore" fill="#22c55e" radius={[4, 4, 0, 0]} name="Avg score" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="profile" className="space-y-4">
+              {driverSignature ? (
+                <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h2 className="font-semibold">Your Driving Style</h2>
+                      <div className="mt-1 text-2xl font-grotesk font-bold capitalize">
+                        {driverSignature.archetype.replaceAll('_', ' ')}
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Built from {driverSignature.trip_count_used} recent trips.
+                      </p>
+                    </div>
+                  </div>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <RadarChart data={signatureChartData} outerRadius={76}>
+                      <PolarGrid />
+                      <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 10 }} />
+                      <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.22} />
+                      <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                    </RadarChart>
+                  </ResponsiveContainer>
+                  <div className="mb-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
+                    <span className="font-semibold text-foreground">Braking signature: </span>
+                    <span>{brakingStyle == null ? '-' : `${Math.round(brakingStyle * 100)}%`}</span>
+                    <span className="ml-2">
+                      {brakingConfidence < 1 ? 'Low confidence' : 'High confidence'} ({Math.round(brakingConfidence * 100)}% braking evidence)
+                    </span>
+                  </div>
+                  {driverSignature.style_shifts.length > 0 && (
+                    <div className="rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
+                      {driverSignature.style_shifts.map((shift) => (
+                        <span key={`${shift.dimension}-${shift.direction}`} className="mr-2 capitalize">
+                          {shift.dimension}: {shift.direction} {Math.round(shift.delta * 100)}%
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-3xl border border-dashed border-border p-5 text-sm text-muted-foreground">
+                  Complete at least five scored trips to unlock your driving style signature.
+                </div>
+              )}
+
+              {latestAnomaly && latestAnomaly.anomaly_level !== 'unknown' && (
+                <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h2 className="font-semibold">On-Device Driver Signature</h2>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Last trip compared against {latestAnomaly.model_trip_count} local trips.
+                      </p>
+                    </div>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-bold uppercase ${
+                      latestAnomaly.anomaly_level === 'high'
+                        ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
+                        : latestAnomaly.anomaly_level === 'moderate'
+                          ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
+                          : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                    }`}>
+                      {latestAnomaly.anomaly_level}
+                    </span>
+                  </div>
+                  <div className="mt-3 text-sm text-muted-foreground">
+                    Anomaly score {formatEstimatedScore(latestAnomaly.anomaly_score)}/100
+                    {latestAnomaly.reasons.length ? ` - unusual: ${latestAnomaly.reasons.join(', ').replace(/_/g, ' ')}` : ''}
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    This compares the trip with your own history. A moderate flag means the trip was notably different, not necessarily unsafe.
                   </p>
                 </div>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-bold uppercase ${
-                  latestAnomaly.anomaly_level === 'high'
-                    ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300'
-                    : latestAnomaly.anomaly_level === 'moderate'
-                      ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
-                      : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                }`}>
-                  {latestAnomaly.anomaly_level}
-                </span>
-              </div>
-              <div className="mt-3 text-sm text-muted-foreground">
-                Anomaly score {formatEstimatedScore(latestAnomaly.anomaly_score)}/100
-                {latestAnomaly.reasons.length ? ` · unusual: ${latestAnomaly.reasons.join(', ').replace(/_/g, ' ')}` : ''}
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                This compares the trip with your own history. A moderate flag means the trip was notably different, not necessarily unsafe.
-              </p>
-            </div>
-          )}
-
-          <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center">
-                <Target className="w-6 h-6 text-primary" />
-              </div>
-              <div className="flex-1">
-                <div className="text-xs text-muted-foreground mb-1">Current focus</div>
-                <h2 className="font-grotesk font-bold text-2xl">
-                  {focusLabels[coach.focus_area] || coach.focus_area}
-                </h2>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Based on {coach.trip_count} completed trips, {coach.risk_rate.total_events} risky events, and route speed samples.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-card border border-border rounded-2xl p-4">
-              <AlertTriangle className="w-5 h-5 text-orange-500 mb-2" />
-              <div className="font-grotesk font-bold text-2xl">{coach.risk_rate.events_per_100km ?? '-'}</div>
-              <div className="text-xs text-muted-foreground">
-                {coach.risk_rate.insufficient_data
-                  ? `needs ${coach.risk_rate.minimum_distance_km} km`
-                  : 'events per 100 km'}
-              </div>
-            </div>
-            <div className="bg-card border border-border rounded-2xl p-4">
-              <ShieldCheck className="w-5 h-5 text-emerald-500 mb-2" />
-              <div className="font-grotesk font-bold text-2xl">{formatEstimatedScore(coach.consistency.consistency_score)}</div>
-              <div className="text-xs text-muted-foreground">consistency score</div>
-            </div>
-            <div className="bg-card border border-border rounded-2xl p-4">
-              <Gauge className="w-5 h-5 text-blue-500 mb-2" />
-              <div className="font-grotesk font-bold text-2xl">{formatSpeed(coach.speed_discipline.p85_speed_kmh || 0, units)}</div>
-              <div className="text-xs text-muted-foreground">85th percentile speed</div>
-            </div>
-            <div className="bg-card border border-border rounded-2xl p-4">
-              <MapPinned className="w-5 h-5 text-violet-500 mb-2" />
-              <div className="font-grotesk font-bold text-2xl">{formatDistance(coach.risk_rate.distance_km, units)}</div>
-              <div className="text-xs text-muted-foreground">distance analyzed</div>
-            </div>
-            <div className="bg-card border border-border rounded-2xl p-4">
-              <ShieldCheck className="w-5 h-5 text-blue-500 mb-2" />
-              <div className="font-grotesk font-bold text-2xl">{coach.risk_rate.totals.stop_start_patterns || coach.risk_rate.totals.tailgate_cycles || 0}</div>
-              <div className="text-xs text-muted-foreground">stop-start patterns</div>
-            </div>
-            <div className="bg-card border border-border rounded-2xl p-4">
-              <Gauge className="w-5 h-5 text-slate-500 mb-2" />
-              <div className="font-grotesk font-bold text-2xl">{coach.risk_rate.totals.heading_deviations || 0}</div>
-              <div className="text-xs text-muted-foreground">heading events (beta)</div>
-            </div>
-          </div>
-
-          {coach.baseline?.trend !== 'unknown' && (
-            <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-              <h2 className="font-semibold mb-1">Adaptive Baseline</h2>
-              <p className="text-xs text-muted-foreground mb-4">This week compared with your rolling 4-week average</p>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-secondary/50 rounded-xl p-3">
-                  <div className="font-grotesk font-bold text-xl">{coach.baseline.this_week_avg ?? '-'}</div>
-                  <div className="text-xs text-muted-foreground">this week</div>
-                </div>
-                <div className="bg-secondary/50 rounded-xl p-3">
-                  <div className="font-grotesk font-bold text-xl">{coach.baseline.baseline_avg == null ? '-' : coachBaselineRangeLabel ? `${coach.baseline.baseline_avg} (${coachBaselineRangeLabel})` : coach.baseline.baseline_avg}</div>
-                  <div className="text-xs text-muted-foreground">approx baseline (recent trips)</div>
-                </div>
-                <div className="bg-secondary/50 rounded-xl p-3">
-                  <div className={`font-grotesk font-bold text-xl capitalize ${
-                    coach.baseline.trend === 'improving' ? 'text-emerald-500' : coach.baseline.trend === 'declining' ? 'text-red-500' : ''
-                  }`}>{coach.baseline.trend}</div>
-                  <div className="text-xs text-muted-foreground">trend</div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-            <h2 className="font-semibold mb-3">Next Driving Actions</h2>
-            <div className="space-y-2">
-              {coach.actions.map((action) => (
-                <div key={action} className="text-sm text-muted-foreground bg-secondary/50 rounded-xl p-3">
-                  {action}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-            <h2 className="font-semibold mb-1">Speed Discipline</h2>
-            <p className="text-xs text-muted-foreground mb-4">
-              {coach.speed_discipline.over_limit_percent}% of sampled route points were above the configured speed threshold.
-            </p>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="bg-secondary/50 rounded-xl p-3">
-                <div className="font-grotesk font-bold text-xl">{coach.speed_discipline.sample_points}</div>
-                <div className="text-xs text-muted-foreground">samples</div>
-              </div>
-              <div className="bg-secondary/50 rounded-xl p-3">
-                <div className="font-grotesk font-bold text-xl">{coach.speed_discipline.over_limit_points}</div>
-                <div className="text-xs text-muted-foreground">over limit</div>
-              </div>
-              <div className="bg-secondary/50 rounded-xl p-3">
-                <div className="font-grotesk font-bold text-xl capitalize">{coach.speed_discipline.level.replace('_', ' ')}</div>
-                <div className="text-xs text-muted-foreground">status</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-            <h2 className="font-semibold mb-1">Highway And Traffic Pressure</h2>
-            <p className="text-xs text-muted-foreground mb-4">Merge quality, speed variability, and peak-hour behavior</p>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="bg-secondary/50 rounded-xl p-3">
-                <div className={`font-grotesk font-bold text-xl ${
-                  avgMergeScore == null ? 'text-muted-foreground' : avgMergeScore >= 80 ? 'text-emerald-500' : avgMergeScore >= 60 ? 'text-yellow-500' : 'text-red-500'
-                }`}>{formatEstimatedScore(avgMergeScore)}</div>
-                <div className="text-xs text-muted-foreground">merge score</div>
-                {avgMergeScore == null && <div className="text-[11px] text-muted-foreground">No merge evidence</div>}
-              </div>
-              <div className="bg-secondary/50 rounded-xl p-3">
-                <div className="font-grotesk font-bold text-xl">{avgSvi ?? '-'}</div>
-                <div className="text-xs text-muted-foreground">SVI km/h</div>
-                <div className="text-[11px] text-muted-foreground capitalize">{latestSviLabel}</div>
-              </div>
-              <div className="bg-secondary/50 rounded-xl p-3">
-                <div className="font-grotesk font-bold text-xl">{coach.peak_hour_stress.stress_ratio == null ? '-' : `${coach.peak_hour_stress.stress_ratio}x`}</div>
-                <div className="text-xs text-muted-foreground">peak stress</div>
-                <div className="text-[11px] text-muted-foreground capitalize">{coach.peak_hour_stress.peak_stress_label}</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-            <h2 className="font-semibold mb-1">Best Driving Window</h2>
-            <p className="text-xs text-muted-foreground mb-4">
-              Average score by trip start time. Best-window coaching needs at least {coach.best_window_min_trips} trips in a bucket.
-            </p>
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={timeOfDay} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                <Tooltip
-                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                  formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
-                />
-                <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Avg score" />
-                <Bar dataKey="events" fill="#f97316" radius={[4, 4, 0, 0]} name="Risk events" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-            <h2 className="font-semibold mb-1">Day Pattern</h2>
-            <p className="text-xs text-muted-foreground mb-4">Risk events and score across the week</p>
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={dayOfWeek} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                <XAxis dataKey="day" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                <Tooltip
-                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                  formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
-                />
-                <Bar dataKey="events" fill="#ef4444" radius={[4, 4, 0, 0]} name="Risk events" />
-                <Bar dataKey="avgScore" fill="#22c55e" radius={[4, 4, 0, 0]} name="Avg score" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+              )}
+            </TabsContent>
+          </Tabs>
         </>
       )}
     </div>

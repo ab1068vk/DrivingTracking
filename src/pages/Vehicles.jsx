@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { tripSummaryQueryOptions } from '@/api/trips';
+import { tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
-import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle, Zap } from 'lucide-react';
+import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle, Zap, ClipboardCheck, Route, CalendarClock, TrendingUp, Sparkles } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
 import { calculateAverageEngineStressScore, calculatePredictiveMaintenance, calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm, getVehicleTripDistanceKm } from '@/lib/tripInsights';
 import { buildMaintenanceReminders, buildVehicleCostSummary } from '@/lib/mediumInsights';
+import { buildVehicleAssignmentSuggestions } from '@/lib/vehicleSuggestions';
 import { toast } from '@/components/ui/use-toast';
 import { logError } from '@/lib/errorReporting';
 import useLocalSettings from '@/hooks/useLocalSettings';
@@ -74,6 +75,94 @@ export function calculateAverageVehicleScore(trips = []) {
   return totalKm > 0
     ? Math.round(scored.reduce((sum, trip) => sum + trip.score * trip.distance, 0) / totalKm)
     : null;
+}
+
+export function getTripsForVehicle(vehicle, trips = []) {
+  if (!vehicle?.id) return [];
+  return trips.filter((trip) => (
+    trip.status === 'completed' &&
+    (
+      String(trip.vehicle_id || '') === String(vehicle.id) ||
+      (vehicle.is_default && !trip.vehicle_id)
+    )
+  ));
+}
+
+export function getUnassignedCompletedTrips(trips = []) {
+  return trips.filter((trip) => trip.status === 'completed' && !trip.vehicle_id);
+}
+
+export function getTripsNeedingVehicleReview(trips = []) {
+  return trips.filter((trip) => (
+    trip.status === 'completed' &&
+    (!trip.vehicle_id || trip.vehicle_assignment_status === 'needs_confirmation')
+  ));
+}
+
+const sameMonth = (date, now = new Date()) => {
+  if (!date) return false;
+  const parsed = new Date(date);
+  return !Number.isNaN(parsed.getTime()) &&
+    parsed.getFullYear() === now.getFullYear() &&
+    parsed.getMonth() === now.getMonth();
+};
+
+export function buildFleetIntelligence(vehicles = [], trips = [], settings = {}) {
+  const completedTrips = trips.filter((trip) => trip.status === 'completed');
+  const defaultVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
+  const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle]));
+  const vehicleForTrip = (trip) => vehicleById.get(String(trip.vehicle_id)) || (!trip.vehicle_id ? defaultVehicle : null) || {};
+  const totalKm = completedTrips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  const monthTrips = completedTrips.filter((trip) => sameMonth(trip.start_time || trip.end_time));
+  const monthlyCost = monthTrips.reduce((sum, trip) => (
+    sum + estimateTripEconomics(trip, vehicleForTrip(trip), settings).cost
+  ), 0);
+  const unassignedTrips = getUnassignedCompletedTrips(completedTrips);
+  const reviewTrips = getTripsNeedingVehicleReview(completedTrips);
+  const serviceItems = vehicles.flatMap((vehicle) => (
+    getMaintenanceStatus(vehicle, getTripsForVehicle(vehicle, completedTrips))
+      .filter((item) => item.status !== 'ok')
+      .map((item) => ({ vehicle, item }))
+  ));
+  const ranked = vehicles
+    .map((vehicle) => {
+      const vehicleTrips = getTripsForVehicle(vehicle, completedTrips);
+      const distanceKm = vehicleTrips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+      return {
+        vehicle,
+        trips: vehicleTrips.length,
+        distanceKm,
+        score: calculateAverageVehicleScore(vehicleTrips),
+        cost: vehicleTrips.reduce((sum, trip) => sum + estimateTripEconomics(trip, vehicle, settings).cost, 0),
+      };
+    })
+    .sort((a, b) => b.distanceKm - a.distanceKm);
+
+  return {
+    vehicleCount: vehicles.length,
+    completedTripCount: completedTrips.length,
+    unassignedTripCount: unassignedTrips.length,
+    assignmentReviewCount: reviewTrips.length,
+    totalKm,
+    monthlyCost,
+    serviceDueCount: serviceItems.length,
+    busiestVehicle: ranked[0] || null,
+    bestScoreVehicle: ranked
+      .filter((entry) => entry.score != null)
+      .sort((a, b) => b.score - a.score)[0] || null,
+  };
+}
+
+function formatTripDate(trip) {
+  const date = new Date(trip.start_time || trip.end_time || trip.created_at || Date.now());
+  if (Number.isNaN(date.getTime())) return 'Unknown date';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function suggestionTone(confidence = 0) {
+  if (confidence >= 75) return 'text-emerald-700 border-emerald-200 bg-emerald-50 dark:text-emerald-300 dark:border-emerald-900/60 dark:bg-emerald-950/30';
+  if (confidence >= 45) return 'text-blue-700 border-blue-200 bg-blue-50 dark:text-blue-300 dark:border-blue-900/60 dark:bg-blue-950/30';
+  return 'text-muted-foreground border-border bg-secondary/50';
 }
 
 function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
@@ -239,6 +328,37 @@ export default function Vehicles() {
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['vehicles'] });
+  const invalidateTrips = () => {
+    qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
+    qc.invalidateQueries({ queryKey: tripQueryKeys.map });
+  };
+
+  const fleetIntelligence = useMemo(
+    () => buildFleetIntelligence(vehicles, trips, settings),
+    [vehicles, trips, settings]
+  );
+  const unassignedTrips = useMemo(() => getUnassignedCompletedTrips(trips), [trips]);
+  const assignmentReviewTrips = useMemo(() => getTripsNeedingVehicleReview(trips), [trips]);
+  const assignmentSuggestions = useMemo(
+    () => buildVehicleAssignmentSuggestions(assignmentReviewTrips, vehicles, trips),
+    [assignmentReviewTrips, vehicles, trips]
+  );
+  const highConfidenceAssignments = useMemo(() => (
+    assignmentReviewTrips
+      .map((trip) => {
+        const suggestion = assignmentSuggestions.get(String(trip.id));
+        return suggestion?.confidence >= 75
+          ? {
+              tripId: trip.id,
+              vehicleId: suggestion.vehicle.id,
+              confidence: suggestion.confidence,
+              source: 'vehicle_suggestion',
+            }
+          : null;
+      })
+      .filter(Boolean)
+  ), [assignmentReviewTrips, assignmentSuggestions]);
+  const defaultVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
 
   const createMut = useMutation({
     mutationFn: (/** @type {any} */ d) => vehicleService.create(d),
@@ -255,6 +375,35 @@ export default function Vehicles() {
     onSuccess: () => {
       invalidate();
       toast({ title: 'Vehicle deleted', description: 'Vehicle stats were removed. Existing trips are kept.' });
+    },
+  });
+
+  const assignTripsMut = useMutation({
+    mutationFn: async (/** @type {{tripIds?:any[],vehicleId?:any,assignments?:Array<{tripId:any,vehicleId:any,confidence?:number,source?:string}>}} */ vars) => {
+      const confirmedAt = new Date().toISOString();
+      const assignments = Array.isArray(vars.assignments)
+        ? vars.assignments
+        : (vars.tripIds || []).map((tripId) => ({
+            tripId,
+            vehicleId: vars.vehicleId,
+            source: 'manual_assignment',
+          }));
+      await Promise.all(assignments.map((assignment) => tripService.update(assignment.tripId, {
+        vehicle_id: assignment.vehicleId,
+        vehicle_assignment_status: 'confirmed',
+        vehicle_assignment_source: assignment.source || 'manual_assignment',
+        vehicle_assignment_confidence: Number(assignment.confidence) || null,
+        vehicle_assignment_confirmed_at: confirmedAt,
+      })));
+      return { assignments };
+    },
+    onSuccess: ({ assignments }) => {
+      invalidateTrips();
+      invalidate();
+      toast({
+        title: 'Trips confirmed',
+        description: `${assignments.length} trip${assignments.length === 1 ? '' : 's'} now feed trusted vehicle cost, maintenance, and score insights.`,
+      });
     },
   });
 
@@ -329,10 +478,7 @@ export default function Vehicles() {
     invalidate();
   };
 
-  const tripListFor = (vehicle) => trips.filter(t => (
-    t.status === 'completed' &&
-    (t.vehicle_id === vehicle.id || (vehicle.is_default && !t.vehicle_id))
-  ));
+  const tripListFor = (vehicle) => getTripsForVehicle(vehicle, trips);
   const tripCountFor = (vehicle) => tripListFor(vehicle).length;
   const avgScoreFor = (vehicle) => {
     return calculateAverageVehicleScore(tripListFor(vehicle));
@@ -350,7 +496,7 @@ export default function Vehicles() {
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-grotesk font-bold">My Vehicles</h1>
-          <p className="text-muted-foreground text-sm mt-1">Manage vehicles and track per-car stats</p>
+          <p className="text-muted-foreground text-sm mt-1">Vehicle intelligence, ownership cost, and trip assignment</p>
         </div>
         <button
           onClick={() => setShowAdd(v => !v)}
@@ -359,6 +505,229 @@ export default function Vehicles() {
           <Plus className="w-4 h-4" /> Add
         </button>
       </motion.div>
+
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="grid gap-3 md:grid-cols-4">
+        <div className="rounded-2xl border border-border bg-card p-4">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Car className="h-4 w-4 text-primary" />
+            Garage
+          </div>
+          <div className="mt-2 text-2xl font-bold">{fleetIntelligence.vehicleCount}</div>
+          <div className="text-xs text-muted-foreground">
+            {fleetIntelligence.completedTripCount} completed trip{fleetIntelligence.completedTripCount === 1 ? '' : 's'}
+          </div>
+        </div>
+        <div className={`rounded-2xl border p-4 ${
+          fleetIntelligence.assignmentReviewCount
+            ? 'border-orange-200 bg-orange-50 dark:border-orange-900/60 dark:bg-orange-950/20'
+            : 'border-border bg-card'
+        }`}>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <ClipboardCheck className="h-4 w-4 text-primary" />
+            Assignment health
+          </div>
+          <div className={`mt-2 text-2xl font-bold ${fleetIntelligence.assignmentReviewCount ? 'text-orange-600 dark:text-orange-300' : ''}`}>
+            {fleetIntelligence.assignmentReviewCount}
+          </div>
+          <div className="text-xs text-muted-foreground">trip{fleetIntelligence.assignmentReviewCount === 1 ? '' : 's'} need vehicle review</div>
+        </div>
+        <div className="rounded-2xl border border-border bg-card p-4">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Fuel className="h-4 w-4 text-primary" />
+            This month
+          </div>
+          <div className="mt-2 text-2xl font-bold">{formatCurrencyAmount(fleetIntelligence.monthlyCost, currencySymbol)}</div>
+          <div className="text-xs text-muted-foreground">{Math.round(fleetIntelligence.totalKm).toLocaleString()} km total history</div>
+        </div>
+        <div className={`rounded-2xl border p-4 ${
+          fleetIntelligence.serviceDueCount
+            ? 'border-yellow-200 bg-yellow-50 dark:border-yellow-900/60 dark:bg-yellow-950/20'
+            : 'border-border bg-card'
+        }`}>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Wrench className="h-4 w-4 text-primary" />
+            Service watch
+          </div>
+          <div className={`mt-2 text-2xl font-bold ${fleetIntelligence.serviceDueCount ? 'text-yellow-700 dark:text-yellow-300' : ''}`}>
+            {fleetIntelligence.serviceDueCount}
+          </div>
+          <div className="text-xs text-muted-foreground">maintenance item{fleetIntelligence.serviceDueCount === 1 ? '' : 's'} due soon</div>
+        </div>
+      </motion.div>
+
+      {(fleetIntelligence.busiestVehicle || fleetIntelligence.bestScoreVehicle || fleetIntelligence.assignmentReviewCount > 0) && (
+        <div className="rounded-2xl border border-border bg-card p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+            <TrendingUp className="h-4 w-4 text-primary" />
+            Fleet intelligence
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-xl bg-secondary/50 p-3">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Route className="h-3.5 w-3.5" />
+                Busiest vehicle
+              </div>
+              <div className="mt-1 text-sm font-semibold">{fleetIntelligence.busiestVehicle?.vehicle?.name || 'No trip data yet'}</div>
+              <div className="text-xs text-muted-foreground">
+                {fleetIntelligence.busiestVehicle
+                  ? `${Math.round(fleetIntelligence.busiestVehicle.distanceKm).toLocaleString()} km across ${fleetIntelligence.busiestVehicle.trips} trip${fleetIntelligence.busiestVehicle.trips === 1 ? '' : 's'}`
+                  : 'Complete trips to build a vehicle profile'}
+              </div>
+            </div>
+            <div className="rounded-xl bg-secondary/50 p-3">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Activity className="h-3.5 w-3.5" />
+                Best scoring vehicle
+              </div>
+              <div className="mt-1 text-sm font-semibold">{fleetIntelligence.bestScoreVehicle?.vehicle?.name || 'Not enough scored trips'}</div>
+              <div className="text-xs text-muted-foreground">
+                {fleetIntelligence.bestScoreVehicle
+                  ? `${formatEstimatedScore(fleetIntelligence.bestScoreVehicle.score)} aggregate evidence`
+                  : 'Assign vehicles to compare real driving behavior'}
+              </div>
+            </div>
+            <div className="rounded-xl bg-secondary/50 p-3">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <CalendarClock className="h-3.5 w-3.5" />
+                Next action
+              </div>
+              <div className="mt-1 text-sm font-semibold">
+                {highConfidenceAssignments.length > 0
+                  ? 'Confirm suggested vehicles'
+                  : fleetIntelligence.assignmentReviewCount > 0
+                    ? 'Review vehicle assignments'
+                  : fleetIntelligence.serviceDueCount > 0
+                    ? 'Review service reminders'
+                    : 'Vehicle data is current'}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {highConfidenceAssignments.length > 0
+                  ? `${highConfidenceAssignments.length} high-confidence suggestion${highConfidenceAssignments.length === 1 ? '' : 's'} ${highConfidenceAssignments.length === 1 ? 'is' : 'are'} ready.`
+                  : fleetIntelligence.assignmentReviewCount > 0
+                    ? 'Confirmed assignment data unlocks better costs, CO2, odometer, and maintenance.'
+                  : fleetIntelligence.serviceDueCount > 0
+                    ? 'Mark completed service to keep forecasts accurate.'
+                    : 'New trips will keep the fleet profile fresh.'}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {vehicles.length > 0 && assignmentReviewTrips.length > 0 && (
+        <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4 dark:border-orange-900/60 dark:bg-orange-950/20">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-orange-800 dark:text-orange-200">
+                <ClipboardCheck className="h-4 w-4" />
+                Assignment Center
+              </div>
+              <div className="mt-1 max-w-2xl text-xs text-orange-700 dark:text-orange-300">
+                {assignmentReviewTrips.length} completed trip{assignmentReviewTrips.length === 1 ? '' : 's'} need vehicle confirmation. Suggestions use route, schedule, recent assignment, and distance evidence before the trip is trusted for cost, CO2, maintenance, and comparisons.
+              </div>
+            </div>
+            {highConfidenceAssignments.length > 0 ? (
+              <button
+                onClick={() => assignTripsMut.mutate({ assignments: highConfidenceAssignments })}
+                disabled={assignTripsMut.isPending}
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-orange-600 px-3 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                <Sparkles className="h-4 w-4" />
+                Confirm {highConfidenceAssignments.length} suggested
+              </button>
+            ) : defaultVehicle && unassignedTrips.length > 0 ? (
+              <button
+                onClick={() => assignTripsMut.mutate({
+                  assignments: unassignedTrips.map((trip) => ({
+                    tripId: trip.id,
+                    vehicleId: defaultVehicle.id,
+                    source: 'default_vehicle_confirmed',
+                  })),
+                })}
+                disabled={assignTripsMut.isPending}
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-orange-600 px-3 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                <Check className="h-4 w-4" />
+                Confirm unassigned as {defaultVehicle.name}
+              </button>
+            ) : null}
+          </div>
+          <div className="mt-3 space-y-2">
+            {assignmentReviewTrips.slice(0, 6).map((trip) => {
+              const suggestion = assignmentSuggestions.get(String(trip.id));
+              const suggestedVehicleId = suggestion?.vehicle?.id;
+              const locationLabel = `${trip.start_location || trip.start_address || 'Recorded trip'}${trip.end_location || trip.end_address ? ` to ${trip.end_location || trip.end_address}` : ''}`;
+              return (
+                <div key={trip.id} className="rounded-xl bg-card p-3 text-xs">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div className="min-w-0">
+                      <div className="font-semibold">{formatTripDate(trip)} - {(Number(trip.distance_km) || 0).toFixed(1)} km</div>
+                      <div className="truncate text-muted-foreground">{locationLabel}</div>
+                      {trip.vehicle_assignment_status === 'needs_confirmation' && (
+                        <div className="mt-1 text-[11px] text-orange-700 dark:text-orange-300">
+                          Currently guessed as {vehicles.find((vehicle) => String(vehicle.id) === String(trip.vehicle_id))?.name || 'a vehicle'}.
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {suggestion?.vehicle && (
+                        <button
+                          onClick={() => assignTripsMut.mutate({
+                            assignments: [{
+                              tripId: trip.id,
+                              vehicleId: suggestion.vehicle.id,
+                              confidence: suggestion.confidence,
+                              source: 'vehicle_suggestion',
+                            }],
+                          })}
+                          disabled={assignTripsMut.isPending}
+                          className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 font-semibold disabled:opacity-50 ${suggestionTone(suggestion.confidence)}`}
+                        >
+                          <Sparkles className="h-3.5 w-3.5" />
+                          {suggestion.vehicle.name} {suggestion.confidence}%
+                        </button>
+                      )}
+                      {vehicles
+                        .filter((vehicle) => String(vehicle.id) !== String(suggestedVehicleId))
+                        .slice(0, 3)
+                        .map((vehicle) => (
+                          <button
+                            key={vehicle.id}
+                            onClick={() => assignTripsMut.mutate({
+                              assignments: [{
+                                tripId: trip.id,
+                                vehicleId: vehicle.id,
+                                source: 'manual_assignment',
+                              }],
+                            })}
+                            disabled={assignTripsMut.isPending}
+                            className="rounded-lg border border-border bg-secondary px-2 py-1 font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+                          >
+                            {vehicle.name}
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                  {suggestion?.reasons?.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {suggestion.reasons.map((reason) => (
+                        <span key={`${trip.id}-${reason.label}`} className="rounded-full border border-border bg-secondary/50 px-2 py-0.5 text-[11px] text-muted-foreground">
+                          {reason.label}: {reason.detail}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {assignmentReviewTrips.length > 6 && (
+              <div className="text-xs text-orange-700 dark:text-orange-300">
+                {assignmentReviewTrips.length - 6} more trip{assignmentReviewTrips.length - 6 === 1 ? '' : 's'} are waiting for vehicle review.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <AnimatePresence>
         {showAdd && (

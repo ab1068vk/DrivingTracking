@@ -1061,6 +1061,16 @@ export function buildPrivacyActionPlan({
         ? 'Useful, but evidence is incomplete'
         : 'No urgent privacy issues recorded';
 
+  const defaultPrimaryAction = {
+    id: 'no_action',
+    tone: 'ok',
+    targetTab: 'overview',
+    title: 'Keep reviewing after trips',
+    detail: 'New trips, exports, and external lookups can change this posture.',
+    action: 'Stay on overview',
+  };
+  const primaryAction = issues[0] || defaultPrimaryAction;
+
   return {
     headline,
     tone: hasErrors ? 'error' : hasWarnings ? 'warn' : hasUnknowns ? 'unknown' : 'ok',
@@ -1070,15 +1080,159 @@ export function buildPrivacyActionPlan({
       : hasWarnings || hasUnknowns
         ? 'Treat this as local transparency, not a security assurance.'
         : 'The dashboard found no urgent local issues, but it is still not an external audit.',
-    primaryAction: issues[0] || {
-      id: 'no_action',
-      tone: 'ok',
-      targetTab: 'overview',
-      title: 'Keep reviewing after trips',
-      detail: 'New trips, exports, and external lookups can change this posture.',
-      action: 'Stay on overview',
-    },
+    nextStep: primaryAction.id === 'no_action'
+      ? 'Check this again after new trips, exports, or external lookups.'
+      : `${primaryAction.action}: ${primaryAction.title}.`,
+    primaryAction,
     issues: issues.slice(0, 5),
+  };
+}
+
+export function buildPrivacyEvidenceSnapshot({
+  protections = [],
+  transmissions = {},
+  chainResult = {},
+  zoneSummary = {},
+  drivingReadout = {},
+  actionPlan = {},
+} = {}) {
+  const failedControls = protections.filter((item) => item.status === 'error').length;
+  const warningControls = protections.filter((item) => item.status === 'warn').length;
+  const unknownControls = protections.filter((item) => item.status === 'unknown').length;
+  const zoneCount = Number(zoneSummary.zoneCount) || 0;
+  const protectedThisWeek = (Number(zoneSummary.pointsWeek) || 0) + (Number(zoneSummary.eventsWeek) || 0);
+  const protectedToday = (Number(zoneSummary.pointsToday) || 0) + (Number(zoneSummary.eventsToday) || 0);
+  const rawPointInsideZoneCount = Number(drivingReadout.rawPointInsideZoneCount) || 0;
+  const retainedOutboundCount = Number(transmissions.outboundReadout?.retainedCount ?? transmissions.entries?.length) || 0;
+  const rawWithoutConsentCount = Number(transmissions.rawWithoutConsentCount) || 0;
+  const rawWithConsentCount = Number(transmissions.rawWithConsentCount) || 0;
+  const unverifiedCount = Number(transmissions.claimedButUnverifiedCount) || 0;
+  const protectedOutboundCount = Number(transmissions.protectedTotal) || 0;
+  const blockedOutboundCount = Number(transmissions.blockedTotal) || 0;
+  const primaryAction = actionPlan.primaryAction || {};
+
+  const maskingItem = rawPointInsideZoneCount > 0
+    ? {
+        id: 'location_masking',
+        label: 'Private location masking',
+        tone: 'error',
+        targetTab: 'zones',
+        headline: 'Raw private samples still need purge',
+        detail: `${rawPointInsideZoneCount} saved route sample${rawPointInsideZoneCount === 1 ? '' : 's'} still match a configured privacy-zone guard.`,
+      }
+    : zoneCount === 0
+      ? {
+          id: 'location_masking',
+          label: 'Private location masking',
+          tone: 'unknown',
+          targetTab: 'zones',
+          headline: 'No private places are configured',
+          detail: 'Add home, work, or sensitive places before expecting endpoint masking.',
+        }
+      : protectedThisWeek > 0
+        ? {
+            id: 'location_masking',
+            label: 'Private location masking',
+            tone: 'ok',
+            targetTab: 'zones',
+            headline: `${protectedThisWeek} private record${protectedThisWeek === 1 ? '' : 's'} hidden this week`,
+            detail: `${protectedToday} protected today across ${zoneCount} configured zone${zoneCount === 1 ? '' : 's'}.`,
+          }
+        : {
+            id: 'location_masking',
+            label: 'Private location masking',
+            tone: 'unknown',
+            targetTab: 'zones',
+            headline: 'Zones exist, but no recent protection was recorded',
+            detail: `${zoneCount} zone${zoneCount === 1 ? '' : 's'} are configured. Review radius and placement against recent trips.`,
+          };
+
+  const outboundItem = rawWithoutConsentCount > 0
+    ? {
+        id: 'outbound_sharing',
+        label: 'Outbound sharing',
+        tone: 'error',
+        targetTab: 'transmissions',
+        headline: 'Raw coordinates left without consent evidence',
+        detail: `${rawWithoutConsentCount} retained request${rawWithoutConsentCount === 1 ? '' : 's'} sent raw coordinates without explicit-consent metadata.`,
+      }
+    : rawWithConsentCount > 0
+      ? {
+          id: 'outbound_sharing',
+          label: 'Outbound sharing',
+          tone: 'warn',
+          targetTab: 'transmissions',
+          headline: 'Raw sharing happened with consent metadata',
+          detail: `${rawWithConsentCount} retained request${rawWithConsentCount === 1 ? '' : 's'} used raw coordinates. Confirm the endpoint is still trusted.`,
+        }
+      : unverifiedCount > 0
+        ? {
+            id: 'outbound_sharing',
+            label: 'Outbound sharing',
+            tone: 'warn',
+            targetTab: 'transmissions',
+            headline: 'Some protected-request claims lack evidence',
+            detail: `${unverifiedCount} retained outbound record${unverifiedCount === 1 ? '' : 's'} need pre-send verification details.`,
+          }
+        : retainedOutboundCount > 0
+          ? {
+              id: 'outbound_sharing',
+              label: 'Outbound sharing',
+              tone: 'ok',
+              targetTab: 'transmissions',
+              headline: 'Retained outbound records look usable',
+              detail: `${protectedOutboundCount} verified transform${protectedOutboundCount === 1 ? '' : 's'} and ${blockedOutboundCount} blocked request${blockedOutboundCount === 1 ? '' : 's'} are retained locally.`,
+            }
+          : {
+              id: 'outbound_sharing',
+              label: 'Outbound sharing',
+              tone: 'unknown',
+              targetTab: 'transmissions',
+              headline: 'No outbound evidence is retained yet',
+              detail: 'Use weather, speed-limit, OSRM, or export features before trusting outbound privacy claims.',
+            };
+
+  const trustItem = chainResult.valid === false
+    ? {
+        id: 'control_trust',
+        label: 'Control trust',
+        tone: 'error',
+        targetTab: 'audit',
+        headline: 'Audit history did not verify',
+        detail: chainResult.reason || 'The local audit chain needs review before privacy activity can be trusted.',
+      }
+    : failedControls > 0
+      ? {
+          id: 'control_trust',
+          label: 'Control trust',
+          tone: 'error',
+          targetTab: 'protections',
+          headline: 'Protection checks are failing',
+          detail: `${failedControls} protection check${failedControls === 1 ? '' : 's'} failed local verification.`,
+        }
+      : warningControls + unknownControls > 0
+        ? {
+            id: 'control_trust',
+            label: 'Control trust',
+            tone: warningControls > 0 ? 'warn' : 'unknown',
+            targetTab: 'protections',
+            headline: 'Some controls need verification',
+            detail: `${warningControls} warning${warningControls === 1 ? '' : 's'} and ${unknownControls} unverified check${unknownControls === 1 ? '' : 's'} remain.`,
+          }
+        : {
+            id: 'control_trust',
+            label: 'Control trust',
+            tone: 'ok',
+            targetTab: 'protections',
+            headline: 'Local controls are currently verified',
+            detail: 'No failing, warning, or unknown protection checks are in the current session.',
+          };
+
+  return {
+    primaryTakeaway: primaryAction.id && primaryAction.id !== 'no_action'
+      ? `${primaryAction.action || 'Review'}: ${primaryAction.title || 'Review the top privacy finding'}.`
+      : 'No urgent local privacy issue is recorded right now.',
+    items: [maskingItem, outboundItem, trustItem],
   };
 }
 
@@ -1292,6 +1446,14 @@ export async function loadPrivacyIntelligence() {
     scoreTrend,
     postureRegression,
   });
+  const evidenceSnapshot = buildPrivacyEvidenceSnapshot({
+    protections,
+    transmissions,
+    chainResult,
+    zoneSummary,
+    drivingReadout,
+    actionPlan,
+  });
   const protectionSummary = {
     active: protections.filter((item) => item.status === 'ok').length,
     configured: protections.filter((item) => item.status === 'configured').length,
@@ -1321,5 +1483,6 @@ export async function loadPrivacyIntelligence() {
     chainResult,
     auditSummary: summarizeAudit(chain, lastCheckpointExportedAt),
     actionPlan,
+    evidenceSnapshot,
   };
 }

@@ -90,6 +90,17 @@ describe('advanced notifications', () => {
     expect(achievementIds.length).toBeLessThanOrEqual(MAX_ACHIEVEMENT_NOTIF_IDS);
   });
 
+  it('uses milestone wording for achievement notification surfaces', () => {
+    const source = readFileSync(new URL('../notificationService.js', import.meta.url), 'utf8');
+
+    expect(source).toContain("name: 'Milestones'");
+    expect(source).toContain("description: 'Milestone unlock notifications.'");
+    expect(source).toContain("title: 'Milestone unlocked'");
+    expect(source).toContain("title: `${newAchievements.length} milestones unlocked`");
+    expect(source).not.toContain("title: 'Achievement unlocked'");
+    expect(source).not.toContain('achievements unlocked');
+  });
+
   it('fires estimated brake-turn summary before lower-priority post-trip alerts', async () => {
     const notification = await dispatchPostTripNotification(trip({
       phone_use_risk: 'high',

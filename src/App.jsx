@@ -446,7 +446,7 @@ const AuthenticatedApp = () => {
             </AppRouteBoundary>
           )} />
           <Route path="/achievements" element={(
-            <AppRouteBoundary context="achievements_page" title="Achievements unavailable">
+            <AppRouteBoundary context="achievements_page" title="Milestones unavailable">
               <Achievements />
             </AppRouteBoundary>
           )} />

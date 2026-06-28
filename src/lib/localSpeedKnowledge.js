@@ -206,12 +206,29 @@ function correctionSpecificity(correction = {}) {
     (normalizeTimeRule(correction.timeRule).enabled ? 1 : 0);
 }
 
+function geometryIdentity(points = []) {
+  const clean = (Array.isArray(points) ? points : [])
+    .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng) }))
+    .filter((point) => isUsableCoordinate(point.lat, point.lng));
+  if (clean.length < 2) return null;
+  const sampleIndexes = [...new Set([
+    0,
+    Math.floor(clean.length / 2),
+    clean.length - 1,
+  ])];
+  return sampleIndexes
+    .map((index) => `${clean[index].lat.toFixed(5)},${clean[index].lng.toFixed(5)}`)
+    .join('|');
+}
+
 function correctionIdentity(correction = {}) {
   const mode = directionMode(correction.directionMode);
   const bearing = correctionBearing(correction);
   const timeRule = normalizeTimeRule(correction.timeRule);
+  const geometry = geometryIdentity(correction.sectionPoints);
   return JSON.stringify({
     geohash: correction.geohash || '',
+    geometry,
     mode,
     bearing: mode === 'both' || !Number.isFinite(bearing) ? null : Math.round(bearing / 15) * 15 % 360,
     timeRule: timeRule.enabled
@@ -224,10 +241,19 @@ function correctionIdentity(correction = {}) {
   });
 }
 
+function correctionRepairRank(correction = {}) {
+  const sourceScore = correctionSource(correction) === 'user_confirmed_posted_sign' ? 1000 : 0;
+  const evidenceScore = Number(correction.evidenceCount) || 0;
+  const updatedAt = new Date(correction.appliedAt || correction.verifiedAt || 0).getTime();
+  return sourceScore + evidenceScore + (Number.isFinite(updatedAt) ? updatedAt / 10000000000000 : 0);
+}
+
 function correctionMatchesSelector(correction = {}, selector = '') {
   return Boolean(selector) && (
     correction.id === selector ||
     correction.ruleId === selector ||
+    correction.sectionKey === selector ||
+    correction.correctionId === selector ||
     correction.geohash === selector
   );
 }
@@ -324,7 +350,7 @@ const normalizeData = (data) => ({
   corrections: Array.isArray(data?.corrections)
     ? data.corrections.map((correction, index) => ({
       ...correction,
-      id: correction?.id || correction?.ruleId || [
+      id: correction?.id || correction?.ruleId || correction?.sectionKey || [
         'legacy-speed-rule',
         correction?.geohash || 'unknown',
         directionMode(correction?.directionMode),
@@ -379,6 +405,33 @@ function correctionConfidence(source) {
 
 function verificationStatus(source) {
   return source === 'user_confirmed_posted_sign' ? 'confirmed_posted_sign' : 'user_estimate';
+}
+
+function userCorrectionView(correction = {}) {
+  const center = geohashCenter(correction.geohash);
+  const source = correctionSource(correction);
+  const savedLat = Number(correction.lat);
+  const savedLng = Number(correction.lng);
+  const hasSavedCoordinate = Number.isFinite(savedLat) && Number.isFinite(savedLng);
+  const view = {
+    ...correction,
+    lat: hasSavedCoordinate ? savedLat : center.lat,
+    lng: hasSavedCoordinate ? savedLng : center.lng,
+    coordinateSource: hasSavedCoordinate
+      ? (correction.coordinateSource || 'driven_route_sample')
+      : 'geohash_cell_center_legacy',
+    source,
+    confidence: correctionConfidence(source),
+  };
+  return {
+    ...view,
+    ...assessSpeedLimitEvidence({
+      ...view,
+      source,
+      confidence: correctionConfidence(source),
+    }),
+    verificationStatus: correction.verificationStatus || verificationStatus(source),
+  };
 }
 
 function auditEntry(action, details = {}) {
@@ -439,6 +492,30 @@ function applyBucketLimit(cell, timestampMs) {
   };
 }
 
+function lookupTimestampForPoint(point = {}) {
+  return point?.timestampMs ?? point?.timestamp_ms ?? point?.timestamp ?? point?.recorded_at ?? null;
+}
+
+function lookupOptionsForPoint(point = {}) {
+  return {
+    headingDeg: point?.headingDeg ?? point?.heading ?? null,
+  };
+}
+
+function sectionLookupPoints(point = {}) {
+  return (Array.isArray(point?.sectionPoints) ? point.sectionPoints : [])
+    .map((sectionPoint) => ({
+      lat: Number(sectionPoint?.lat),
+      lng: Number(sectionPoint?.lng),
+    }))
+    .filter((sectionPoint) => isUsableCoordinate(sectionPoint.lat, sectionPoint.lng));
+}
+
+function sectionLookupThreshold(pointCount) {
+  if (pointCount <= 1) return pointCount;
+  return Math.min(pointCount, Math.max(2, Math.ceil(pointCount * 0.2)));
+}
+
 export class LocalSpeedKnowledge {
   constructor(store) {
     this._store = store;
@@ -475,6 +552,66 @@ export class LocalSpeedKnowledge {
     await this._commit(next, snapshotData(current), action);
     emitSpeedKnowledgeChanged({ action });
     return true;
+  }
+
+  async repairSavedSpeedData() {
+    try {
+      const data = await this._load();
+      const previous = snapshotData(data);
+      const corrections = Array.isArray(data.corrections) ? data.corrections : [];
+      const byIdentity = new Map();
+      let removedExpired = 0;
+      let removedDuplicates = 0;
+
+      for (const correction of corrections) {
+        if (!isFreshCorrection(correction)) {
+          removedExpired += 1;
+          continue;
+        }
+        const identity = correctionIdentity(correction);
+        const existing = byIdentity.get(identity);
+        if (!existing || correctionRepairRank(correction) >= correctionRepairRank(existing)) {
+          if (existing) removedDuplicates += 1;
+          byIdentity.set(identity, correction);
+        } else {
+          removedDuplicates += 1;
+        }
+      }
+
+      const nextCorrections = [...byIdentity.values()];
+      const changed = removedExpired > 0 ||
+        removedDuplicates > 0 ||
+        nextCorrections.length !== corrections.length;
+      if (!changed) {
+        return {
+          changed: false,
+          removedExpired,
+          removedDuplicates,
+          keptCorrections: corrections.length,
+        };
+      }
+
+      data.corrections = nextCorrections;
+      await this._commit(data, previous, 'repair_saved_speed_data');
+      recordSpeedKnowledgeEvent('repair_saved_speed_data', {
+        removed_expired: removedExpired,
+        removed_duplicates: removedDuplicates,
+      });
+      emitSpeedKnowledgeChanged({
+        action: 'repair_saved_speed_data',
+        removedExpired,
+        removedDuplicates,
+      });
+      return {
+        changed: true,
+        removedExpired,
+        removedDuplicates,
+        keptCorrections: nextCorrections.length,
+      };
+    } catch (error) {
+      logSpeedKnowledgeFailure('repair_saved_speed_data', error);
+      throw error;
+    }
   }
 
   async getHistoryState() {
@@ -550,6 +687,9 @@ export class LocalSpeedKnowledge {
         confidence: correctionConfidence(source),
       });
       return {
+        id: correction.id || correction.ruleId || null,
+        ruleId: correction.ruleId || null,
+        sectionKey: correction.sectionKey || correction.id || correction.ruleId || correction.geohash,
         limitKmh: correction.limitKmh,
         source,
         confidence: evidence.confidence,
@@ -568,6 +708,15 @@ export class LocalSpeedKnowledge {
         contextLabel: correction.contextLabel || null,
         directionLabel: correction.directionLabel || null,
         timeLabel: correction.timeLabel || null,
+        lat: Number.isFinite(Number(correction.lat)) ? Number(correction.lat) : null,
+        lng: Number.isFinite(Number(correction.lng)) ? Number(correction.lng) : null,
+        distanceM: Number(correction.distanceM) || 0,
+        directionMode: correction.directionMode || 'both',
+        directionBearing: Number.isFinite(Number(correction.directionBearing)) ? Number(correction.directionBearing) : null,
+        timeRule: correction.timeRule || null,
+        sectionPoints: (Array.isArray(correction.sectionPoints) ? correction.sectionPoints : [])
+          .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng) }))
+          .filter((point) => isUsableCoordinate(point.lat, point.lng)),
         conflictResolution: correction.conflictResolution || null,
       };
     }
@@ -581,6 +730,48 @@ export class LocalSpeedKnowledge {
     return null;
   }
 
+  _resolveForPointOrSection(data, point = {}) {
+    const lat = Number(point?.lat);
+    const lng = Number(point?.lng);
+    if (!isUsableCoordinate(lat, lng)) return null;
+
+    const timestampMs = lookupTimestampForPoint(point);
+    const options = lookupOptionsForPoint(point);
+    const direct = this._resolveForPoint(data, lat, lng, timestampMs, options);
+    if (direct) return direct;
+
+    const sectionPoints = sectionLookupPoints(point);
+    const requiredMatches = sectionLookupThreshold(sectionPoints.length);
+    if (requiredMatches <= 0) return null;
+
+    const sectionMatches = new Map();
+    for (const sectionPoint of sectionPoints) {
+      const match = this._resolveForPoint(data, sectionPoint.lat, sectionPoint.lng, timestampMs, options);
+      if (!match?.correctionId) continue;
+      const key = String(match.correctionId);
+      const current = sectionMatches.get(key) || {
+        count: 0,
+        bestDistanceM: Infinity,
+        result: match,
+      };
+      current.count += 1;
+      const distanceM = Number(match.matchDistanceM);
+      if (Number.isFinite(distanceM) && distanceM < current.bestDistanceM) {
+        current.bestDistanceM = distanceM;
+        current.result = match;
+      }
+      sectionMatches.set(key, current);
+    }
+
+    return [...sectionMatches.values()]
+      .filter((match) => match.count >= requiredMatches)
+      .sort((a, b) => (
+        b.count - a.count ||
+        a.bestDistanceM - b.bestDistanceM ||
+        String(a.result.correctionId).localeCompare(String(b.result.correctionId))
+      ))[0]?.result || null;
+  }
+
   async getForPoint(lat, lng, timestampMs = null, options = {}) {
     const data = await this._load();
     return this._resolveForPoint(data, lat, lng, timestampMs, options);
@@ -588,20 +779,7 @@ export class LocalSpeedKnowledge {
 
   async getForPoints(points = []) {
     const data = await this._load();
-    return (Array.isArray(points) ? points : []).map((point) => {
-      const lat = Number(point?.lat);
-      const lng = Number(point?.lng);
-      if (!isUsableCoordinate(lat, lng)) return null;
-      return this._resolveForPoint(
-        data,
-        lat,
-        lng,
-        point?.timestampMs ?? point?.timestamp_ms ?? point?.timestamp ?? point?.recorded_at ?? null,
-        {
-          headingDeg: point?.headingDeg ?? point?.heading ?? null,
-        }
-      );
-    });
+    return (Array.isArray(points) ? points : []).map((point) => this._resolveForPointOrSection(data, point));
   }
 
   async learnFromTrip(confirmedPoints, privacyZones = []) {
@@ -709,7 +887,7 @@ export class LocalSpeedKnowledge {
         ? 'user_confirmed_posted_sign'
         : 'user_entered_estimate';
       const geohash = geohashEncode(latitude, longitude, CELL_PRECISION);
-      const nextCorrection = {
+      const draftCorrection = {
         id: createCorrectionId(),
         geohash,
         lat: latitude,
@@ -745,13 +923,23 @@ export class LocalSpeedKnowledge {
           }),
         ],
       };
-      const identity = correctionIdentity(nextCorrection);
+      const identity = correctionIdentity(draftCorrection);
+      const previousCorrection = data.corrections.find((correction) => correctionIdentity(correction) === identity);
+      const nextCorrection = {
+        ...draftCorrection,
+        id: previousCorrection?.id || previousCorrection?.ruleId || previousCorrection?.sectionKey || draftCorrection.id,
+      };
       data.corrections = data.corrections.filter((correction) => correctionIdentity(correction) !== identity);
       data.corrections.push(nextCorrection);
       await this._commit(data, previous, 'save_correction', metadata.historyGroup || null);
       recordSpeedKnowledgeEvent('save_correction', { source: correctionType });
-      emitSpeedKnowledgeChanged({ action: 'save_correction', geohash, source: correctionType });
-      return true;
+      emitSpeedKnowledgeChanged({
+        action: 'save_correction',
+        geohash,
+        correctionId: nextCorrection.id,
+        source: correctionType,
+      });
+      return userCorrectionView(nextCorrection);
     } catch (error) {
       logSpeedKnowledgeFailure('save_correction', error, { source });
       throw error;
@@ -763,29 +951,7 @@ export class LocalSpeedKnowledge {
       const data = await this._load();
       return (data.corrections || [])
         .filter(isFreshCorrection)
-        .map((correction) => {
-          const center = geohashCenter(correction.geohash);
-          const source = correctionSource(correction);
-          const savedLat = Number(correction.lat);
-          const savedLng = Number(correction.lng);
-          const hasSavedCoordinate = Number.isFinite(savedLat) && Number.isFinite(savedLng);
-          return {
-            ...correction,
-            lat: hasSavedCoordinate ? savedLat : center.lat,
-            lng: hasSavedCoordinate ? savedLng : center.lng,
-            coordinateSource: hasSavedCoordinate
-              ? (correction.coordinateSource || 'driven_route_sample')
-              : 'geohash_cell_center_legacy',
-            source,
-            confidence: correctionConfidence(source),
-            ...assessSpeedLimitEvidence({
-              ...correction,
-              source,
-              confidence: correctionConfidence(source),
-            }),
-            verificationStatus: correction.verificationStatus || verificationStatus(source),
-          };
-        })
+        .map(userCorrectionView)
         .sort((a, b) => new Date(b.appliedAt || 0).getTime() - new Date(a.appliedAt || 0).getTime());
     } catch (error) {
       logSpeedKnowledgeFailure('list_corrections', error);
@@ -897,10 +1063,15 @@ export class LocalSpeedKnowledge {
       const previous = snapshotData(data);
       data.corrections ??= [];
       const before = data.corrections.length;
-      const exactIdMatch = data.corrections.some((correction) => correction.id === selector || correction.ruleId === selector);
+      const exactIdMatch = data.corrections.some((correction) => (
+        correction.id === selector ||
+        correction.ruleId === selector ||
+        correction.sectionKey === selector ||
+        correction.correctionId === selector
+      ));
       data.corrections = data.corrections.filter((correction) => (
         exactIdMatch
-          ? correction.id !== selector && correction.ruleId !== selector
+          ? !correctionMatchesSelector(correction, selector)
           : correction.geohash !== selector
       ));
       if (data.corrections.length === before) return false;

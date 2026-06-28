@@ -2282,6 +2282,9 @@ export default function Dashboard() {
       start_time: tripToEnd.start_time,
       end_time: endTime,
       vehicle_id: completedVehicle?.id || null,
+      vehicle_assignment_status: completedVehicle ? 'needs_confirmation' : 'unassigned',
+      vehicle_assignment_source: completedVehicle ? 'default_vehicle' : 'none',
+      vehicle_assignment_confidence: completedVehicle ? 18 : 0,
       route_points: mapRoutePoints,
       route_points_raw_count: rawPoints.length,
       route_points_map_count: mapRoutePoints.length,
@@ -2715,7 +2718,6 @@ export default function Dashboard() {
         : baseline.delta == null
           ? `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). Record a trip this week for a comparison.`
           : `Approximate baseline: ${baseline.baseline_avg} (${baseline.baseline_confidence_interval_label} percentile range). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta}.`;
-
     return {
       avgScore,
       avgScoreEvidence,

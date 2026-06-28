@@ -277,6 +277,26 @@
     cursor: grabbing;
   }
 
+  .speed-limit-vertex-handle {
+    align-items: center;
+    background: hsl(var(--background));
+    border: 3px solid hsl(var(--primary));
+    border-radius: 9999px;
+    box-shadow: 0 4px 14px hsl(220 25% 10% / 0.24);
+    color: hsl(var(--primary));
+    cursor: grab;
+    display: flex;
+    font-size: 9px;
+    font-weight: 900;
+    height: 22px;
+    justify-content: center;
+    width: 22px;
+  }
+
+  .speed-limit-vertex-handle:active {
+    cursor: grabbing;
+  }
+
   /* Custom scrollbar */
   .thin-scrollbar::-webkit-scrollbar { width: 4px; }
   .thin-scrollbar::-webkit-scrollbar-track { @apply bg-transparent; }

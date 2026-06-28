@@ -113,8 +113,48 @@ describe('LocalSpeedKnowledge', () => {
     await expect(lsk.getForPoint(43.65045, -79.38062)).resolves.toMatchObject({
       limitKmh: 40,
       source: 'user_confirmed_posted_sign',
+      sectionPoints: [
+        { lat: 43.6500, lng: -79.3810 },
+        { lat: 43.6504, lng: -79.3806 },
+        { lat: 43.6508, lng: -79.3808 },
+      ],
     });
     await expect(lsk.getForPoint(43.6545, -79.3806)).resolves.toBeNull();
+  });
+
+  it('matches review cells by their highlighted section when the anchor point misses a saved trace', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+    const sectionPoints = [
+      { lat: 43.6500, lng: -79.3810 },
+      { lat: 43.6502, lng: -79.3807 },
+      { lat: 43.6504, lng: -79.3804 },
+      { lat: 43.6506, lng: -79.3801 },
+    ];
+    await lsk.saveUserCorrection(
+      43.6503,
+      -79.38055,
+      50,
+      'Saved road trace',
+      null,
+      [],
+      'user_confirmed_posted_sign',
+      { sectionPoints }
+    );
+
+    await expect(lsk.getForPoint(43.6512, -79.38055)).resolves.toBeNull();
+
+    const [match] = await lsk.getForPoints([{
+      lat: 43.6512,
+      lng: -79.38055,
+      sectionPoints,
+    }]);
+
+    expect(match).toMatchObject({
+      limitKmh: 50,
+      source: 'user_confirmed_posted_sign',
+      matchReason: 'matched_traced_section',
+    });
   });
 
   it('does not apply a traced road rule to a parallel road more than 45 metres away', async () => {
@@ -284,7 +324,12 @@ describe('LocalSpeedKnowledge', () => {
         { lat: 43.65, lng: -79.38 },
         { lat: 0, lng: 0 },
       ],
-    })).resolves.toBe(true);
+    })).resolves.toMatchObject({
+      id: expect.any(String),
+      limitKmh: 50,
+      source: 'user_entered_estimate',
+      sectionPoints: [{ lat: 43.65, lng: -79.38 }],
+    });
 
     const [saved] = await lsk.listUserCorrections();
     expect(saved.sectionPoints).toEqual([{ lat: 43.65, lng: -79.38 }]);
@@ -349,6 +394,119 @@ describe('LocalSpeedKnowledge', () => {
     expect(result.limitKmh).toBe(40);
     expect(result.source).toBe('user_confirmed_posted_sign');
     expect(data.corrections).toHaveLength(1);
+  });
+
+  it('keeps separate traced road sections in the same cell', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+
+    await lsk.saveUserCorrection(43.6500, -79.3805, 40, 'First trace', null, [], 'user_confirmed_posted_sign', {
+      sectionPoints: [
+        { lat: 43.6500, lng: -79.3810 },
+        { lat: 43.6500, lng: -79.3800 },
+      ],
+    });
+    await lsk.saveUserCorrection(43.6501, -79.3805, 50, 'Nearby trace', null, [], 'user_entered_estimate', {
+      sectionPoints: [
+        { lat: 43.6501, lng: -79.3810 },
+        { lat: 43.6501, lng: -79.3800 },
+      ],
+    });
+
+    const corrections = await lsk.listUserCorrections();
+    expect(corrections).toHaveLength(2);
+    expect(corrections.map((correction) => correction.limitKmh).sort()).toEqual([40, 50]);
+  });
+
+  it('replaces a matching traced road section instead of duplicating it', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+    const sectionPoints = [
+      { lat: 43.6500, lng: -79.3810 },
+      { lat: 43.6500, lng: -79.3800 },
+    ];
+
+    await lsk.saveUserCorrection(43.6500, -79.3805, 40, 'First trace', null, [], 'user_entered_estimate', {
+      sectionPoints,
+    });
+    await lsk.saveUserCorrection(43.6500, -79.3805, 50, 'Same trace', null, [], 'user_confirmed_posted_sign', {
+      sectionPoints,
+    });
+
+    const corrections = await lsk.listUserCorrections();
+    expect(corrections).toHaveLength(1);
+    expect(corrections[0]).toMatchObject({
+      limitKmh: 50,
+      source: 'user_confirmed_posted_sign',
+    });
+  });
+
+  it('repairs expired and duplicate saved speed rules without merging distinct traces', async () => {
+    const sectionPoints = [
+      { lat: 43.6500, lng: -79.3810 },
+      { lat: 43.6500, lng: -79.3800 },
+    ];
+    const store = new MockStore({
+      [STORAGE_KEY]: {
+        cells: {},
+        corrections: [
+          {
+            id: 'old-estimate',
+            geohash: geohashEncode(43.6500, -79.3805),
+            lat: 43.6500,
+            lng: -79.3805,
+            limitKmh: 40,
+            source: 'user_entered_estimate',
+            appliedAt: '2026-01-01T00:00:00.000Z',
+            sectionPoints,
+          },
+          {
+            id: 'new-posted',
+            geohash: geohashEncode(43.6500, -79.3805),
+            lat: 43.6500,
+            lng: -79.3805,
+            limitKmh: 40,
+            source: 'user_confirmed_posted_sign',
+            appliedAt: '2026-02-01T00:00:00.000Z',
+            sectionPoints,
+          },
+          {
+            id: 'nearby-trace',
+            geohash: geohashEncode(43.6501, -79.3805),
+            lat: 43.6501,
+            lng: -79.3805,
+            limitKmh: 50,
+            source: 'user_entered_estimate',
+            appliedAt: '2026-02-01T00:00:00.000Z',
+            sectionPoints: [
+              { lat: 43.6501, lng: -79.3810 },
+              { lat: 43.6501, lng: -79.3800 },
+            ],
+          },
+          {
+            id: 'expired',
+            geohash: geohashEncode(43.6600, -79.3900),
+            lat: 43.6600,
+            lng: -79.3900,
+            limitKmh: 30,
+            source: 'user_entered_estimate',
+            appliedAt: '2026-01-01T00:00:00.000Z',
+            expiresAt: '2026-01-02T00:00:00.000Z',
+          },
+        ],
+      },
+    });
+    const lsk = new LocalSpeedKnowledge(store);
+
+    await expect(lsk.repairSavedSpeedData()).resolves.toMatchObject({
+      changed: true,
+      removedDuplicates: 1,
+      removedExpired: 1,
+      keptCorrections: 2,
+    });
+    const corrections = await lsk.listUserCorrections();
+    expect(corrections).toHaveLength(2);
+    expect(corrections.map((correction) => correction.id).sort()).toEqual(['nearby-trace', 'new-posted']);
   });
 
   it('lists, updates, and removes user corrections', async () => {
