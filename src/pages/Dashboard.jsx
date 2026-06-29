@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Car, Play, Square, Navigation, Gauge,
   AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame, TrafficCone, X,
-  ParkingSquare, CheckCircle2, PhoneCall, Shield, Trash2
+  ParkingSquare, CheckCircle2, Shield, Trash2
 } from 'lucide-react';
 import {
   DEFAULT_THRESHOLDS,
@@ -1720,15 +1720,12 @@ export default function Dashboard() {
     setHazardMessage(null);
     recordTrackingDiagnostic({
       type: 'emergency_check_in',
-      title: action === 'call' ? 'Emergency call opened' : 'Driver checked in OK',
+      title: 'Driver checked in OK',
       reason: action,
       speed_kmh: Math.round(currentLocation?.speed_kmh || 0),
       stopped_seconds: 0,
       drift_m: 0,
     });
-    if (action === 'call' && typeof window !== 'undefined') {
-      window.location.href = 'tel:911';
-    }
   };
 
   const handleDiscardPrivateTrip = async () => {
@@ -3486,26 +3483,18 @@ export default function Dashboard() {
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-bold">Emergency check-in</div>
                     <div className="mt-1 text-xs text-red-50/85">
-                      Possible incident detected. Confirm you are OK or call emergency services.
+                      Possible incident detected. Confirm you are OK when it is safe.
                     </div>
                   </div>
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="mt-3">
                   <button
                     type="button"
                     onClick={() => acknowledgeEmergencyWorkflow('ok')}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/90 px-3 py-2 text-xs font-bold text-red-700"
+                    className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-white/90 px-3 py-2 text-xs font-bold text-red-700"
                   >
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     I'm OK
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => acknowledgeEmergencyWorkflow('call')}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-900 px-3 py-2 text-xs font-bold text-white"
-                  >
-                    <PhoneCall className="h-3.5 w-3.5" />
-                    Call 911
                   </button>
                 </div>
               </div>
@@ -3931,11 +3920,12 @@ function DashboardRiskPanel({
     currentLocation,
     habitProfile,
   }), [completedTrips, currentLocation, dangerZones, habitProfile]);
+  const historicalContextEnabled = settings.predictive_route_risk_enabled !== false;
 
   const preTripRisk = useMemo(() => computePreTripRisk(completedTrips, settings, dailyFatigue, {
-    nearbyDangerZoneCount: predictiveRouteRisk.nearbyDangerZoneCount,
-    predictiveRouteRisk,
-  }, habitProfile), [completedTrips, dailyFatigue, habitProfile, predictiveRouteRisk, settings]);
+    nearbyDangerZoneCount: historicalContextEnabled ? predictiveRouteRisk.nearbyDangerZoneCount : null,
+    predictiveRouteRisk: historicalContextEnabled ? predictiveRouteRisk : null,
+  }, habitProfile), [completedTrips, dailyFatigue, habitProfile, historicalContextEnabled, predictiveRouteRisk, settings]);
   const readinessEvidence = preTripRisk.dataQuality?.readinessEvidence || 'unavailable';
   const showReadinessNumber = readinessEvidence === 'high' && preTripRisk.readinessScore != null;
   const readinessSummary = preTripRisk.readinessScore == null
@@ -4016,7 +4006,7 @@ function DashboardRiskPanel({
               ))}
             </div>
           )}
-          {settings.predictive_route_risk_enabled !== false && (
+          {historicalContextEnabled && (
             predictiveRouteRisk.insufficientHistory ? (
               <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
                 <div className="font-semibold">Historical context</div>

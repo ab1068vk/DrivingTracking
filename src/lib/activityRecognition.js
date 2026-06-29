@@ -237,6 +237,37 @@ export async function getNativeDiagnostics() {
   }
 }
 
+export async function testVoiceSpeedMarkerRecognition({ timeoutMs = 10000 } = {}) {
+  if (!isAndroid()) {
+    return { recognized: false, reason: 'android_only', transcript: '' };
+  }
+  try {
+    const result = await ActivityRecognition.testVoiceSpeedMarker({ timeoutMs });
+    const normalized = {
+      recognized: result?.recognized === true,
+      reason: result?.reason || '',
+      transcript: result?.transcript || '',
+      limitKmh: Number.isFinite(Number(result?.limitKmh)) ? Math.round(Number(result.limitKmh)) : null,
+      posted: result?.posted === true,
+    };
+    recordSystemEvent('voice_speed_marker_test_completed', {
+      recognized: normalized.recognized,
+      reason: normalized.reason,
+      limit_kmh: normalized.limitKmh,
+      posted: normalized.posted,
+    }, {
+      category: 'permission',
+      source: 'android',
+      severity: normalized.recognized ? 'info' : 'warn',
+      title: 'Voice speed marker test completed',
+    });
+    return normalized;
+  } catch (error) {
+    logSystemFailure('voice_speed_marker_test', error);
+    throw error;
+  }
+}
+
 export async function clearNativeDiagnostics() {
   if (!isAndroid()) return;
   try {

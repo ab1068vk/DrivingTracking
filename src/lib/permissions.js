@@ -18,6 +18,7 @@ export async function getPermissionStatus() {
     phoneUsageAccess: 'unknown',
     motionSensors: 'unknown',
     bluetooth: 'unknown',
+    microphone: 'unknown',
   };
 
   try {
@@ -48,6 +49,7 @@ export async function getPermissionStatus() {
       const activity = await ActivityRecognition.checkPermissions();
       status.activityRecognition = asState(activity.activityRecognition);
       status.backgroundLocation = asState(activity.backgroundLocation);
+      status.microphone = asState(activity.microphone);
       try {
         const usage = await ActivityRecognition.usageAccessStatus();
         status.phoneUsageAccess = usage.usageAccessGranted ? 'granted' : 'not_requested';
@@ -74,6 +76,7 @@ export async function getPermissionStatus() {
     activity_permission_granted: status.activityRecognition === 'granted',
     background_location_granted: status.backgroundLocation === 'granted',
     phone_usage_access_granted: status.phoneUsageAccess === 'granted',
+    microphone_permission_granted: status.microphone === 'granted',
   });
 
   recordSystemEvent('permission_status_checked', {
@@ -84,6 +87,7 @@ export async function getPermissionStatus() {
     phoneUsageAccess: status.phoneUsageAccess,
     motionSensors: status.motionSensors,
     bluetooth: status.bluetooth,
+    microphone: status.microphone,
   }, {
     category: 'permission',
     title: 'Permission status checked',
@@ -164,6 +168,20 @@ export async function requestActivityRecognitionPermission() {
   }
 }
 
+export async function requestMicrophonePermission() {
+  if (!isAndroid()) return false;
+  try {
+    const result = await ActivityRecognition.requestMicrophone();
+    const granted = result.microphone === 'granted';
+    localSettings.update({ microphone_permission_granted: granted });
+    recordSystemEvent('permission_request_microphone', { result: result.microphone, granted }, { category: 'permission' });
+    return granted;
+  } catch (error) {
+    logSystemFailure('permission_request_microphone', error, { permission: 'microphone' });
+    return false;
+  }
+}
+
 export async function requestBackgroundLocationPermission() {
   const foregroundGranted = await requestForegroundLocationPermission();
   if (!foregroundGranted) return false;
@@ -213,6 +231,7 @@ export function getPermissionExplanation(kind) {
     phoneUsageAccess: 'Optional Android Usage Access lets Road Sage detect foreground app use during a trip. Without it, phone-use scoring is unavailable and GPS proxy counts stay diagnostic only.',
     motionSensors: 'Motion and gyroscope access lets Road Sage confirm harsh braking, sharp turns, phone movement, and possible incidents with on-device sensor samples. Android usually has no separate prompt; some platforms ask when tracking starts.',
     bluetooth: 'OBD-II Bluetooth is optional and only used when you connect a compatible adapter. Android may ask for Nearby Devices/Bluetooth access before pairing.',
+    microphone: 'Voice speed marker testing uses the microphone only when you tap Test marker. Always-on trip listening is paused.',
   };
   return copy[kind] || '';
 }

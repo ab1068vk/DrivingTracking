@@ -9,7 +9,7 @@ import {
   ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap, Car, MapPin,
   CornerUpRight, AlertTriangle, Moon, Trash2, Fuel, Leaf, Milestone,
   Building, Shuffle, Home, Waves, Shield, ShieldCheck, Focus, TimerReset, Tag,
-  ParkingSquare, Droplets, GitBranch, Route, Smartphone, Pencil, Save, Star, Info,
+  ParkingSquare, Droplets, GitBranch, Route, Smartphone, Pencil, Save, Star, Info, Mic,
   StickyNote, X
 } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -135,6 +135,43 @@ const diagnosticExplanationForEvent = (event = {}) => (
 );
 
 const isDiagnosticOnlyTripEvent = (event = {}) => Boolean(diagnosticExplanationForEvent(event));
+
+const voiceSpeedMarkerKey = (marker = {}, index = 0) => String(
+  marker.id ||
+  marker.marker_id ||
+  [
+    marker.timestamp || marker.timestamp_ms || 'voice-marker',
+    marker.lat,
+    marker.lng,
+    marker.speed_limit_kmh ?? marker.limitKmh,
+    index,
+  ].join(':')
+);
+
+const voiceSpeedMarkerLimit = (marker = {}) => {
+  const limit = Number(marker.speed_limit_kmh ?? marker.limitKmh ?? marker.limit_kmh);
+  return Number.isFinite(limit) && limit > 0 ? Math.round(limit) : null;
+};
+
+const publicVoiceSpeedMarker = (marker = {}) => (
+  Number.isFinite(Number(marker.lat)) &&
+  Number.isFinite(Number(marker.lng)) &&
+  marker.masked_for_privacy !== true &&
+  marker.privacy_gap !== true
+);
+
+const voiceSpeedMarkerEvent = (marker = {}, index = 0) => ({
+  ...marker,
+  type: 'voice_speed_limit_marker',
+  severity: 'low',
+  lat: Number(marker.lat),
+  lng: Number(marker.lng),
+  timestamp: marker.timestamp || (marker.timestamp_ms ? new Date(marker.timestamp_ms).toISOString() : null),
+  speed_limit_kmh: voiceSpeedMarkerLimit(marker),
+  speed_limit_source: marker.source || 'voice_user_estimate',
+  value: voiceSpeedMarkerLimit(marker),
+  markerIndex: index,
+});
 
 const uniqueTripEvents = (events = []) => {
   const seen = new Set();
@@ -534,6 +571,97 @@ export default function TripDetail() {
     if (!trip?.id || (!hasSavedRoadChange && !result.tripReviewComplete)) return;
     speedLimitReviewMutation.mutate(result);
   }, [speedLimitReviewMutation, trip?.id]);
+
+  const voiceSpeedMarkerMutation = useMutation({
+    mutationFn: async ({ marker, source }) => {
+      const limitKmh = voiceSpeedMarkerLimit(marker);
+      const lat = Number(marker?.lat);
+      const lng = Number(marker?.lng);
+      if (!limitKmh || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+        throw new Error('Voice speed marker is missing a usable location or limit.');
+      }
+      const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
+      const saved = await knowledge.saveUserCorrection(
+        lat,
+        lng,
+        limitKmh,
+        'Saved from voice speed marker after trip review',
+        null,
+        privacyZones,
+        source,
+        {
+          lat,
+          lng,
+          contextLabel: 'Voice marker during this trip',
+          directionLabel: Number.isFinite(Number(marker.heading)) ? 'Driven heading near marker' : '',
+          directionMode: 'both',
+          directionBearing: Number.isFinite(Number(marker.heading)) ? Number(marker.heading) : undefined,
+          distanceM: 0,
+        }
+      );
+      if (!saved) throw new Error('Could not save this speed marker.');
+
+      const markerKey = voiceSpeedMarkerKey(marker);
+      const reviewedAt = new Date().toISOString();
+      const markers = (Array.isArray(trip?.voice_speed_limit_markers) ? trip.voice_speed_limit_markers : [])
+        .map((item, index) => (
+          voiceSpeedMarkerKey(item, index) === markerKey
+            ? {
+              ...item,
+              review_status: 'saved',
+              reviewed_at: reviewedAt,
+              saved_source: source,
+              saved_correction_id: saved.id || saved.correctionId || null,
+            }
+            : item
+        ));
+      const patchedTrip = await tripService.update(id, {
+        voice_speed_limit_markers: markers,
+        voice_speed_limit_marker_reviewed_at: reviewedAt,
+      });
+      const refreshedTrip = await refreshTripForLocalSpeedKnowledge(patchedTrip, localSettings.get());
+      return { updatedTrip: refreshedTrip, correction: saved, source };
+    },
+    onSuccess: (result) => {
+      const updatedTrip = result?.updatedTrip;
+      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
+      qc.invalidateQueries({ queryKey: ['trip', id] });
+      invalidateTripLists();
+      setSpeedLimitKnowledgeRevision((value) => value + 1);
+      setFeedbackStatus(result?.source === 'user_confirmed_posted_sign'
+        ? 'Voice marker saved as a posted sign and this trip was re-scored locally.'
+        : 'Voice marker saved as a local estimate and this trip was re-scored locally.');
+      setTimeout(() => setFeedbackStatus(''), 6000);
+    },
+    onError: (error) => {
+      setFeedbackStatus(error?.message || 'Could not save that voice speed marker.');
+      setTimeout(() => setFeedbackStatus(''), 6000);
+    },
+  });
+  const ignoreVoiceSpeedMarker = useCallback(async (marker) => {
+    const markerKey = voiceSpeedMarkerKey(marker);
+    const reviewedAt = new Date().toISOString();
+    const markers = (Array.isArray(trip?.voice_speed_limit_markers) ? trip.voice_speed_limit_markers : [])
+      .map((item, index) => (
+        voiceSpeedMarkerKey(item, index) === markerKey
+          ? { ...item, review_status: 'ignored', reviewed_at: reviewedAt }
+          : item
+      ));
+    try {
+      const updatedTrip = await tripService.update(id, {
+        voice_speed_limit_markers: markers,
+        voice_speed_limit_marker_reviewed_at: reviewedAt,
+      });
+      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
+      qc.invalidateQueries({ queryKey: ['trip', id] });
+      invalidateTripLists();
+      setFeedbackStatus('Voice speed marker ignored for this trip.');
+      setTimeout(() => setFeedbackStatus(''), 6000);
+    } catch (error) {
+      setFeedbackStatus('Could not ignore that voice speed marker.');
+      setTimeout(() => setFeedbackStatus(''), 6000);
+    }
+  }, [id, qc, trip?.voice_speed_limit_markers]);
   const feedbackRescoreMutation = useMutation({
     mutationFn: async () => {
       await tripService.update(id, {
@@ -994,6 +1122,16 @@ export default function TripDetail() {
   const rawDrivingEvents = uniqueTripEvents([...(trip.driving_events || []), ...laneChangeEvents]);
   const displayEvents = mergePhoneUseEventsIntoDrivingEvents(rawDrivingEvents, displayPhoneUse)
     .filter((event) => event.type !== 'near_miss');
+  const voiceSpeedMarkers = (Array.isArray(trip.voice_speed_limit_markers) ? trip.voice_speed_limit_markers : [])
+    .map((marker, index) => ({
+      ...marker,
+      markerKey: voiceSpeedMarkerKey(marker, index),
+      markerIndex: index,
+      limitKmh: voiceSpeedMarkerLimit(marker),
+    }))
+    .filter((marker) => marker.limitKmh && publicVoiceSpeedMarker(marker));
+  const pendingVoiceSpeedMarkers = voiceSpeedMarkers.filter((marker) => marker.review_status !== 'saved' && marker.review_status !== 'ignored');
+  const voiceSpeedMarkerEvents = voiceSpeedMarkers.map(voiceSpeedMarkerEvent);
   const eventRows = displayEvents.map((event, index) => ({ event, originalIndex: index }));
   const phoneProxyDiagnosticRows = (displayPhoneUse.phone_proxy_events || [])
     .filter((event) => !displayEvents.some((candidate) => (
@@ -1040,8 +1178,8 @@ export default function TripDetail() {
   }, { accurate: 0, wrong: 0 });
   const mapDisplayEvents = displayEvents.filter((event) => !isGpsPhoneUseProxyEvent(event));
   const mapEvents = settings.phone_use_show_on_map === false
-    ? mapDisplayEvents.filter((event) => event.type !== 'phone_use')
-    : mapDisplayEvents;
+    ? [...mapDisplayEvents.filter((event) => event.type !== 'phone_use'), ...voiceSpeedMarkerEvents]
+    : [...mapDisplayEvents, ...voiceSpeedMarkerEvents];
   const fatigueChartData = Array.isArray(trip.segment_scores) && trip.segment_scores.length === 3
     ? [
       { label: 'First', score: trip.segment_scores[0] },
@@ -1890,6 +2028,97 @@ export default function TripDetail() {
                 height="300px"
               />
             </Suspense>
+          </div>
+        )}
+        {voiceSpeedMarkers.length > 0 && (
+          <div className="mt-4 rounded-2xl border border-border bg-secondary/30 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Mic className="h-4 w-4 text-primary" />
+                  Voice speed markers
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  These were spoken during the drive and saved as pending review. Confirm them while parked to add real saved road speeds.
+                </p>
+              </div>
+              <Link
+                to="/speed-limits"
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-secondary"
+              >
+                <MapPin className="h-3.5 w-3.5" />
+                Saved road speeds
+              </Link>
+            </div>
+            <div className="mt-3 grid gap-2">
+              {voiceSpeedMarkers.map((marker) => {
+                const saved = marker.review_status === 'saved';
+                const ignored = marker.review_status === 'ignored';
+                const disabled = voiceSpeedMarkerMutation.isPending || saved || ignored;
+                return (
+                  <div key={marker.markerKey} className="rounded-xl border border-border bg-background/70 p-3 text-xs">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-primary px-2 py-0.5 font-semibold text-primary-foreground">
+                            {marker.limitKmh} km/h
+                          </span>
+                          <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold text-muted-foreground">
+                            {saved ? 'Saved' : ignored ? 'Ignored' : 'Pending review'}
+                          </span>
+                          {marker.posted_phrase_detected && (
+                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+                              Posted phrase heard
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-muted-foreground">
+                          {formatDateTime(marker.timestamp || marker.timestamp_ms)} near {Number(marker.lat).toFixed(5)}, {Number(marker.lng).toFixed(5)}
+                        </div>
+                        {marker.transcript && (
+                          <div className="mt-1 text-muted-foreground">
+                            Heard: "{marker.transcript}"
+                          </div>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 lg:w-[24rem]">
+                        <button
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => voiceSpeedMarkerMutation.mutate({ marker, source: 'user_confirmed_posted_sign' })}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 font-semibold text-white hover:bg-emerald-700 disabled:opacity-55"
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                          Save sign
+                        </button>
+                        <button
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => voiceSpeedMarkerMutation.mutate({ marker, source: 'user_entered_estimate' })}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 font-semibold text-foreground hover:bg-secondary disabled:opacity-55"
+                        >
+                          <Gauge className="h-3.5 w-3.5" />
+                          Estimate
+                        </button>
+                        <button
+                          type="button"
+                          disabled={voiceSpeedMarkerMutation.isPending || saved || ignored}
+                          onClick={() => ignoreVoiceSpeedMarker(marker)}
+                          className="inline-flex items-center justify-center rounded-xl border border-border bg-card px-3 py-2 font-semibold text-muted-foreground hover:bg-secondary disabled:opacity-55"
+                        >
+                          Ignore
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {pendingVoiceSpeedMarkers.length === 0 && (
+              <div className="mt-3 rounded-xl bg-background/70 px-3 py-2 text-xs font-medium text-muted-foreground">
+                All voice markers for this trip have been reviewed.
+              </div>
+            )}
           </div>
         )}
       </motion.div>

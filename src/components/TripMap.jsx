@@ -57,6 +57,7 @@ const EVENT_COLORS = {
   near_miss: '#dc2626',
   close_proximity: '#dc2626',
   phone_use: '#dc2626',
+  voice_speed_limit_marker: '#2563eb',
   possible_crash: '#991b1b',
 };
 const EMPTY_ROUTE_POINTS = [];
@@ -77,6 +78,7 @@ const EVENT_LABELS = {
   near_miss: '!',
   close_proximity: '!',
   phone_use: 'P',
+  voice_speed_limit_marker: 'SL',
   possible_crash: '!!',
 };
 

@@ -4893,7 +4893,7 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 - src/pages/Dashboard.jsx:3 imports `limitedTripSummaryQueryOptions as limitedTripSummaryQueryOptions, tripService as tripService, tripSummaryQueryOptions as tripSummaryQueryOptions` from `@/api/trips`
 - src/pages/Dashboard.jsx:4 imports `vehicleService as vehicleService` from `@/api/vehicles`
 - src/pages/Dashboard.jsx:5 imports `useQuery as useQuery` from `@tanstack/react-query`
-- src/pages/Dashboard.jsx:6 imports `Car as Car, Play as Play, Square as Square, Navigation as Navigation, Gauge as Gauge, AlertTriangle as AlertTriangle, Zap as Zap, TrendingDown as TrendingDown, CornerUpRight as CornerUpRight, RefreshCw as RefreshCw, MapPin as MapPin, Target as Target, Flame as Flame, TrafficCone as TrafficCone, X as X, ParkingSquare as ParkingSquare, CheckCircle2 as CheckCircle2, PhoneCall as PhoneCall, Shield as Shield, Trash2 as Trash2` from `lucide-react`
+- src/pages/Dashboard.jsx:6 imports `Car as Car, Play as Play, Square as Square, Navigation as Navigation, Gauge as Gauge, AlertTriangle as AlertTriangle, Zap as Zap, TrendingDown as TrendingDown, CornerUpRight as CornerUpRight, RefreshCw as RefreshCw, MapPin as MapPin, Target as Target, Flame as Flame, TrafficCone as TrafficCone, X as X, ParkingSquare as ParkingSquare, CheckCircle2 as CheckCircle2, Shield as Shield, Trash2 as Trash2` from `lucide-react`
 - src/pages/Dashboard.jsx:11 imports `DEFAULT_THRESHOLDS as DEFAULT_THRESHOLDS, TRIP_STATES as TRIP_STATES, buildDrivingThresholds as buildDrivingThresholds, calculateAngularStdDev as calculateAngularStdDev, calculateSegmentMetrics as calculateSegmentMetrics, cleanRoutePoints as cleanRoutePoints, calculateTripStats as calculateTripStats, detectDrivingEvents as detectDrivingEvents, calculateTripScores as calculateTripScores, inferSpeedZones as inferSpeedZones, prefetchLocalKnowledge as prefetchLocalKnowledge, resolveEffectiveSpeedLimitForIndex as resolveEffectiveSpeedLimitForIndex, getTripComponentScore as getTripComponentScore, getScoreProvenanceStatus as getScoreProvenanceStatus, formatDistance as formatDistance, formatDuration as formatDuration, formatSpeed as formatSpeed, isNearRecentParkedLocation as isNearRecentParkedLocation, reviewManualTripSave as reviewManualTripSave, trimParkedTail as trimParkedTail, validateCandidateTrip as validateCandidateTrip` from `@/lib/tripEngine`
 - src/pages/Dashboard.jsx:30 imports `activeTripStore as activeTripStore, getLastParkedLocation as getLastParkedLocation, localSettings as localSettings, saveLastParkedLocation as saveLastParkedLocation, SETTINGS_CHANGED_EVENT as SETTINGS_CHANGED_EVENT` from `@/lib/trackingStore`
 - src/pages/Dashboard.jsx:31 imports `createDrivingTrackingService as createDrivingTrackingService` from `@/lib/trackingService`
@@ -9707,7 +9707,6 @@ Entry points: `index.html` loads `src/main.jsx`; `src/App.jsx` defines app route
 | 2866 | arrow function | `shouldPromptForCalibrationSurvey(tripId, labelCount, status)` | none detected | Time: O(n) candidate; Space: context dependent |
 | 2875 | function | `PostTripCalibrationSurvey({...})` | mutation | Time: O(n) candidate; Space: context dependent |
 | 2903 | arrow function | `toggleScoreIssue(type)` | mutation | Time: O(n) candidate; Space: context dependent |
-| 2911 | arrow function | `toggleContextTag(tag)` | mutation | Time: O(n) candidate; Space: context dependent |
 | 2919 | arrow function | `submit()` | mutation | Time: O(1) candidate; Space: O(1) candidate |
 | 3158 | function | `TripScoreOverview({...})` | none detected | Time: O(n) candidate; Space: context dependent |
 
@@ -21517,7 +21516,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 908 | `0.16` | numeric literal | opacity | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 909 | `1.5` | numeric literal | smoothFactor | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 910 | `'round'` | string literal | lineCap | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 911 | `'round'` | string literal | lineJoin | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 915 | `1` | numeric literal | i | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 915 | `1` | numeric literal | i | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 916 | `1` | numeric literal | prev | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
@@ -26184,7 +26182,7 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 139 | `'Encrypted backups depend on the password you choose; lost passwords cannot be recovered by the app. Readable exports are not protected. Imports can replace local data, and deletion or clearing data may be permanent.'` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 142 | `'Emergency limits'` | string literal | group | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 143 | `'No emergency monitoring'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 144 | `'Road Sage does not monitor you for emergencies, promise crash detection, contact emergency services, or replace roadside assistance, insurance claims processes, law enforcement, medical help, or human supervision.'` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
+| 144 | `'Road Sage does not monitor you for emergencies, promise crash detection, or replace roadside assistance, insurance claims processes, law enforcement, medical help, or human supervision.'` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 147 | `'Emergency limits'` | string literal | group | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 148 | `'Alerts may not arrive'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 149 | `'Voice alerts, notifications, possible-incident checks, phone-use warnings, speeding checks, route-risk messages, and maintenance reminders can be late, muted, blocked, missed, unavailable, or wrong. Do not depend on them to prevent harm.'` | string literal | body | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
@@ -28769,7 +28767,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 906 | `'trip_distance_history'` | string literal | dataSources | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 907 | `50` | numeric literal | minDistanceKm | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 908 | `'Penalty per 100 km is provisional.'` | string constant/key | calibrationNote | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 911 | `'Cornering Score'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 912 | `'Penalises sharp-turn events per 100 km.'` | string constant/key | description | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 913 | `'gps_events'` | string literal | dataSources | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 913 | `'trip_distance_history'` | string literal | dataSources | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
@@ -38281,7 +38278,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 1903 | `2` | numeric literal | count | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 1903 | `0` | numeric literal | count | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 1905 | `0` | numeric literal | variance | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1911 | `0` | numeric literal | total | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 1912 | `0` | numeric literal | sum | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 1913 | `0` | numeric literal | highway | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 1914 | `0` | numeric literal | urban | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
@@ -38713,7 +38709,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 2907 | `10` | numeric literal | lane_changing_rate_per_10km | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 2907 | `0` | numeric literal | lane_changing_rate_per_10km | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 2910 | `'unavailable'` | string literal | lane_changing_grade | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2911 | `'insufficient_data'` | string literal | lane_changing_confidence | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 2912 | `'gps_only'` | string literal | lane_changing_confidence_multiplier | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 2912 | `0.7` | numeric literal | lane_changing_confidence_multiplier | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 2912 | `1.0` | numeric literal | lane_changing_confidence_multiplier | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
@@ -40520,7 +40515,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 6901 | `0` | numeric literal | sampleCount | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 6902 | `'Android Usage Access is required for a scored phone-use signal.'` | string literal | note | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 6907 | `'GPS-only pattern estimate; it does not measure following distance.'` | string constant/key | note | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 6911 | `'GPS brake-turn manoeuvre alert; object proximity is not measured.'` | string constant/key | note | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 6929 | `0` | numeric literal | smooth_braking_score | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 6949 | `'GPS heading-drift beta estimate; this is not a fatigue diagnosis.'` | string constant/key | note | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 6952 | `'gps_altitude'` | string literal | hill_driving | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
@@ -43202,7 +43196,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 898 | `'web_geolocation_permission_denied'` | string literal | markActiveTripLocationPermissionLoss | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 902 | `'location_permission_loss'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 907 | `'data_gap_detected'` | string literal | score_confidence_flag | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 911 | `'location_permission_lost'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 924 | `'permission_denied'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 925 | `'Location tracking failed.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 929 | `'Location permission was denied.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
@@ -43453,15 +43446,11 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 1702 | `'possible_crash'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1703 | `false` | boolean flag | emergency_workflow_pending | Inline state/default flag; changing can flip behavior. |
 | 1712 | `'emergency_check_in'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1713 | `'call'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1713 | `'Emergency call opened'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1713 | `'Driver checked in OK'` | string literal | title | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1715 | `0` | numeric literal | speed_kmh | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 1716 | `0` | numeric literal | stopped_seconds | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 1717 | `0` | numeric literal | drift_m | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 1719 | `'call'` | string literal | action | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1719 | `'undefined'` | string literal | action | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 1720 | `'tel:911'` | string constant/key | href | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1727 | `'undefined'` | string literal | window | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1727 | `'Discard this private trip? No trip summary will be saved.'` | string literal | window | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 1730 | `true` | boolean flag | current | Inline state/default flag; changing can flip behavior. |
@@ -43941,7 +43930,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 2907 | `'border-border bg-card'` | string literal | border | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 2909 | `'text-emerald-600 dark:text-emerald-300'` | string constant/key | good | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 2910 | `'text-amber-600 dark:text-amber-300'` | string constant/key | warn | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2911 | `'text-red-600 dark:text-red-300'` | string constant/key | bad | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 2912 | `'text-primary'` | string literal | text | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 2916 | `'good'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 2928 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
@@ -44078,8 +44066,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 3480 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 3481 | `'ok'` | string literal | onClick | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 3488 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 3489 | `'call'` | string literal | onClick | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 3493 | `911` | numeric literal | inline_value | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 3521 | `'Saving...'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 3521 | `'Saving Trip...'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 3521 | `'Save Summary'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
@@ -45488,7 +45474,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 896 | `0` | numeric literal | length | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 908 | ``${zoneReadout.protectedRecords \|\| 0} protected records`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 910 | `'Configured but not matched'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 911 | `'Ready for future trips'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 917 | ``Last matched a saved trip ${formatRelativeTime(zone.lastActive)}. Route samples or events were hidden for this zone.`` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 919 | `'No saved trip has matched this zone yet. Check the radius or whether this is actually where trips start, end, or pass through.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 920 | `'This zone is configured and will be checked when trips are saved.'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
@@ -47332,7 +47317,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 2906 | `'Device integrity warning'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 2908 | ``${Math.max(0, rescoreTotal - rescoreCompleted)} trip${Math.max(0, rescoreTotal - rescoreCompleted) === 1 ? '' : 's'} re-scoring`` | string literal | rescoreTotal | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 2910 | ``${privacyZoneOverlaps.length} overlap${privacyZoneOverlaps.length === 1 ? '' : 's'} to review`` | string literal | length | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 2911 | `'Protected'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 2916 | `false` | boolean flag | tracking | Inline state/default flag; changing can flip behavior. |
 | 2929 | `0` | numeric literal | initial | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 2929 | `0.8` | numeric literal | initial | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
@@ -47742,7 +47726,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 3902 | `'—'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 3902 | `'—'` | string literal | inline_value | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 3906 | `4` | numeric literal | length | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
-| 3911 | `'running'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 3916 | `'running'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 3916 | `'Re-scoring trip history'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 3916 | `'Automatic re-score ready'` | string literal | status | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
@@ -48512,7 +48495,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 5904 | `'text'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 5904 | `'password'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 5908 | `'Enter'` | string literal | key | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 5911 | `"current-password"` | string literal | autoComplete | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 5915 | `"button"` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 5919 | `'Hide backup password'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 5919 | `'Show backup password'` | string literal | label | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
@@ -50266,7 +50248,6 @@ Named thresholds and policies are centralized around `SCORING_CONSTANTS`, `DEFAU
 | 908 | `0` | numeric literal | missingCoveragePercent | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 908 | `100` | numeric literal | missingCoveragePercent | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
 | 910 | `'location_permission_loss'` | string literal | hasLocationPermissionLoss | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
-| 911 | `'data_gap_detected'` | string literal | score_confidence_flag | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 912 | `'location_permission_lost'` | string literal | type | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 915 | `'possible_crash'` | string literal | possibleIncidentEvents | Label, key, enum, event name, route, selector, or message; changing can break storage/API/UI contracts. |
 | 916 | `0` | numeric literal | displayPhoneUse | Named or inline threshold, weight, scale, limit, timing value, or native constant; changing can alter scoring, risk classification, UX timing, or Android behavior. |
@@ -53100,7 +53081,6 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/localSpeedKnowledge.js | 799 | try { | protected operation |
 | src/lib/localSpeedKnowledge.js | 887 | } catch (error) { | handled fallback or diagnostic logging |
 | src/lib/localSpeedKnowledge.js | 895 | try { | protected operation |
-| src/lib/localSpeedKnowledge.js | 911 | } catch (error) { | handled fallback or diagnostic logging |
 | src/lib/localSpeedKnowledge.js | 918 | try { | protected operation |
 | src/lib/localSpeedKnowledge.js | 931 | } catch (error) { | handled fallback or diagnostic logging |
 | src/lib/localSpeedKnowledge.js | 947 | try { | protected operation |
@@ -53275,7 +53255,6 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/lib/privacyZones.js | 677 | } catch (error) { | handled fallback or diagnostic logging |
 | src/lib/privacyZones.js | 700 | try { | protected operation |
 | src/lib/privacyZones.js | 703 | } catch (stopError) { | handled fallback or diagnostic logging |
-| src/lib/privacyZones.js | 911 | try { | protected operation |
 | src/lib/privacyZones.js | 1487 | try { | protected operation |
 | src/lib/privacyZones.js | 1531 | try { | protected operation |
 | src/lib/privacyZones.js | 1545 | try { | protected operation |
@@ -53639,7 +53618,6 @@ Critical async operations should call `logError(context, error, extra)` when a f
 | src/pages/Settings.jsx | 1886 | throw new Error('Android did not confirm that native auto tracking stopped.'); | raises failure to caller |
 | src/pages/Settings.jsx | 1889 | } catch (error) { | handled fallback or diagnostic logging |
 | src/pages/Settings.jsx | 1892 | description: error.message \|\| 'Check Android permissions and try again.', | protected operation |
-| src/pages/Settings.jsx | 1911 | try { | protected operation |
 | src/pages/Settings.jsx | 1914 | } catch (error) { | handled fallback or diagnostic logging |
 | src/pages/Settings.jsx | 1989 | try { | protected operation |
 | src/pages/Settings.jsx | 1991 | } catch (error) { | handled fallback or diagnostic logging |

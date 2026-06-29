@@ -72,6 +72,43 @@ class DriveSenseNativeTripStore {
         saveCompletedTrips(context, next.toString());
     }
 
+    static boolean acknowledgePendingEmergencyWorkflow(Context context, String acknowledgedAt) {
+        JSONArray current = getCompletedTrips(context);
+        JSONArray next = new JSONArray();
+        boolean changed = false;
+        for (int i = 0; i < current.length(); i++) {
+            JSONObject trip = current.optJSONObject(i);
+            if (trip == null) continue;
+            boolean tripChanged = false;
+            JSONArray events = trip.optJSONArray("driving_events");
+            if (events != null) {
+                for (int eventIndex = 0; eventIndex < events.length(); eventIndex++) {
+                    JSONObject event = events.optJSONObject(eventIndex);
+                    if (event == null || !"possible_crash".equals(event.optString("type", ""))) continue;
+                    if (!event.optBoolean("emergency_workflow_pending", false) && event.has("emergency_workflow_acknowledged")) continue;
+                    try {
+                        event.put("emergency_workflow_pending", false);
+                        event.put("emergency_workflow_acknowledged", "ok");
+                        event.put("emergency_workflow_acknowledged_at", acknowledgedAt);
+                        tripChanged = true;
+                    } catch (JSONException ignored) {}
+                }
+            }
+            if (trip.optBoolean("emergency_workflow_pending", false)) {
+                try {
+                    trip.put("emergency_workflow_pending", false);
+                    trip.put("emergency_workflow_acknowledged_at", acknowledgedAt);
+                    trip.put("emergency_workflow_acknowledged_action", "ok");
+                    tripChanged = true;
+                } catch (JSONException ignored) {}
+            }
+            if (tripChanged) changed = true;
+            next.put(trip);
+        }
+        if (changed) saveCompletedTrips(context, next.toString());
+        return changed;
+    }
+
     static void clearCompletedTrips(Context context) {
         if (!SecureDeleteHelper.overwriteAndRemovePreference(prefs(context), KEY_COMPLETED_TRIPS)) {
             saveCompletedTrips(context, "[]");

@@ -6,7 +6,7 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { calibrationLabelService } from '@/api/calibrationLabels';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, ArrowLeft, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, ArrowLeft, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff, Mic
 } from 'lucide-react';
 import {
   Dialog,
@@ -41,6 +41,7 @@ import {
   requestActivityRecognitionPermission,
   requestBackgroundLocationPermission,
   requestForegroundLocationPermission,
+  requestMicrophonePermission,
   requestNotificationPermission,
 } from '@/lib/permissions';
 import { isAndroid } from '@/lib/nativePlatform';
@@ -52,6 +53,7 @@ import {
   clearNativeCompletedTrips,
   startNativeAutoTracking,
   stopNativeAutoTracking,
+  testVoiceSpeedMarkerRecognition,
 } from '@/lib/activityRecognition';
 import { syncReminderNotifications } from '@/lib/notificationService';
 import {
@@ -779,6 +781,8 @@ export default function Settings() {
   const [privacyDeleteImpact, setPrivacyDeleteImpact] = useState({ loading: false, tripCount: null });
   const [obdPairingStatus, setObdPairingStatus] = useState('');
   const [voiceTestStatus, setVoiceTestStatus] = useState('');
+  const [voiceSpeedMarkerTestStatus, setVoiceSpeedMarkerTestStatus] = useState('');
+  const [voiceSpeedMarkerTestBusy, setVoiceSpeedMarkerTestBusy] = useState(false);
   const [settingsSearchInput, setSettingsSearchInput] = useState('');
   const [settingsSearch, setSettingsSearch] = useState('');
   const [isSettingsSearchPending, startSettingsSearchTransition] = useTransition();
@@ -1510,6 +1514,38 @@ export default function Settings() {
     const ok = await testVoiceAlert(cfg);
     setVoiceTestStatus(ok ? 'Voice test sent.' : 'Speech output is unavailable in this browser/WebView.');
     setTimeout(() => setVoiceTestStatus(''), 3000);
+  };
+
+  const runVoiceSpeedMarkerTest = async () => {
+    if (!isAndroid()) {
+      setVoiceSpeedMarkerTestStatus('Voice speed marker listening is available on Android.');
+      return;
+    }
+    if (voiceSpeedMarkerTestBusy) return;
+    setVoiceSpeedMarkerTestBusy(true);
+    setVoiceSpeedMarkerTestStatus('Listening now. Say "Road Sage speed 60" or "posted speed is 60".');
+    try {
+      const microphoneGranted = await requestMicrophonePermission();
+      if (!microphoneGranted) {
+        setVoiceSpeedMarkerTestStatus('Microphone permission is needed to test voice speed markers.');
+        return;
+      }
+      const result = await testVoiceSpeedMarkerRecognition({ timeoutMs: 10000 });
+      if (result.recognized) {
+        setVoiceSpeedMarkerTestStatus(
+          `Heard ${result.limitKmh} km/h${result.posted ? ' as a posted sign' : ' as an estimate'}${result.transcript ? ` from "${result.transcript}"` : ''}.`
+        );
+      } else if (result.transcript) {
+        setVoiceSpeedMarkerTestStatus(`Heard "${result.transcript}", but it was not a speed marker phrase.`);
+      } else {
+        const reason = String(result.reason || '').replace(/_/g, ' ');
+        setVoiceSpeedMarkerTestStatus(`No speed marker was recognized${reason ? ` (${reason})` : ''}.`);
+      }
+    } catch (error) {
+      setVoiceSpeedMarkerTestStatus(error?.message || 'Voice speed marker test could not run.');
+    } finally {
+      setVoiceSpeedMarkerTestBusy(false);
+    }
   };
 
   const runCalibration = async () => {
@@ -3222,6 +3258,7 @@ export default function Settings() {
             { key: 'backgroundLocation', label: 'Background Location', sub: getPermissionExplanation('backgroundLocation'), action: requestBackgroundLocationPermission },
             { key: 'activityRecognition', label: 'Physical Activity', sub: getPermissionExplanation('activityRecognition'), action: requestActivityRecognitionPermission },
             { key: 'notifications', label: 'Notifications', sub: getPermissionExplanation('notifications'), action: requestNotificationPermission },
+            ...(isAndroid() ? [{ key: 'microphone', label: 'Microphone', sub: getPermissionExplanation('microphone'), action: requestMicrophonePermission }] : []),
             { key: 'motionSensors', label: 'Motion Sensors', sub: getPermissionExplanation('motionSensors'), action: handleMotionPermission },
             { key: 'bluetooth', label: 'Bluetooth / Nearby Devices', sub: getPermissionExplanation('bluetooth'), action: handleObdPairing },
             ...(isAndroid() ? [{ key: 'phoneUsageAccess', label: 'Phone Usage Access', sub: getPermissionExplanation('phoneUsageAccess'), action: openAndroidUsageAccessSettings }] : []),
@@ -3302,7 +3339,7 @@ export default function Settings() {
             },
             {
               label: 'Live voice alerts and rule-based driving coach summaries',
-              sub: 'Runs on-device with rules and speech output. No microphone, paid AI service, or cloud permission is required.',
+              sub: 'Voice alerts use speech output. Voice speed marker testing uses the microphone only when you tap Test marker.',
               value: 'none',
             },
             {
@@ -4202,6 +4239,32 @@ export default function Settings() {
           <div className="px-1 pb-3 text-xs text-muted-foreground">
             <span className="font-semibold text-foreground">{voiceDeliveryStatus.label}:</span> {voiceDeliveryStatus.detail}
           </div>
+          <SettingRow
+            icon={Mic}
+            label="Voice speed marker test"
+            sublabel="Always-on trip listening is paused because Android speech recognition reopens the mic repeatedly. Use this parked test to check phrases like Road Sage speed 60."
+          >
+            <div className="flex items-center gap-2">
+              {isAndroid() && (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    runVoiceSpeedMarkerTest();
+                  }}
+                  disabled={voiceSpeedMarkerTestBusy}
+                  className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground disabled:opacity-60"
+                >
+                  {voiceSpeedMarkerTestBusy ? 'Listening...' : 'Test marker'}
+                </button>
+              )}
+            </div>
+          </SettingRow>
+          {voiceSpeedMarkerTestStatus && (
+            <div className="px-1 pb-3 text-xs text-muted-foreground">
+              {voiceSpeedMarkerTestStatus}
+            </div>
+          )}
           <SettingRow
             icon={Bluetooth}
             label="OBD-II Bluetooth"

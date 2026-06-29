@@ -164,6 +164,19 @@ function correctionMatchesDirection(correction = {}, headingDeg = null) {
   return angleDiffDeg(heading, expected) <= DIRECTION_MATCH_TOLERANCE_DEG;
 }
 
+function correctionHeadingDelta(correction = {}, headingDeg = null) {
+  const heading = Number(headingDeg);
+  if (!Number.isFinite(heading)) return Infinity;
+  const bearing = correctionBearing(correction);
+  if (!Number.isFinite(bearing)) return Infinity;
+  const forwardDelta = angleDiffDeg(heading, bearing);
+  const reverseDelta = angleDiffDeg(heading, (bearing + 180) % 360);
+  const mode = directionMode(correction.directionMode);
+  if (mode === 'forward') return forwardDelta;
+  if (mode === 'reverse') return reverseDelta;
+  return Math.min(forwardDelta, reverseDelta);
+}
+
 function parseTimeMinutes(value) {
   const match = String(value || '').match(/^(\d{1,2}):(\d{2})$/);
   if (!match) return null;
@@ -204,6 +217,12 @@ function normalizeTimeRule(rule = null) {
 function correctionSpecificity(correction = {}) {
   return (directionMode(correction.directionMode) === 'both' ? 0 : 2) +
     (normalizeTimeRule(correction.timeRule).enabled ? 1 : 0);
+}
+
+function compareOptionalNumber(a, b) {
+  const left = Number.isFinite(Number(a)) ? Number(a) : Number.MAX_SAFE_INTEGER;
+  const right = Number.isFinite(Number(b)) ? Number(b) : Number.MAX_SAFE_INTEGER;
+  return left - right;
 }
 
 function geometryIdentity(points = []) {
@@ -308,6 +327,7 @@ function correctionMatchDetails(correction, lat, lng, radiusKm = ROAD_SECTION_MA
       reason: bestDistanceKm <= radiusKm ? 'matched_traced_section' : 'too_far_from_traced_section',
       matchType: 'traced_section',
       matchDistanceM: Number.isFinite(bestDistanceKm) ? Math.round(bestDistanceKm * 1000) : null,
+      headingDeltaDeg: correctionHeadingDelta(correction, options.headingDeg ?? null),
     };
   }
 
@@ -319,6 +339,7 @@ function correctionMatchDetails(correction, lat, lng, radiusKm = ROAD_SECTION_MA
     reason: matched ? 'matched_geohash_cell' : 'too_far_from_geohash_cell',
     matchType: 'geohash_cell',
     matchDistanceM: Number.isFinite(distance) ? Math.round(distance * 1000) : null,
+    headingDeltaDeg: correctionHeadingDelta(correction, options.headingDeg ?? null),
   };
 }
 
@@ -676,6 +697,8 @@ export class LocalSpeedKnowledge {
       .filter((item) => item.match.matched)
       .sort((a, b) => (
         correctionSpecificity(b.correction) - correctionSpecificity(a.correction) ||
+        compareOptionalNumber(a.match.headingDeltaDeg, b.match.headingDeltaDeg) ||
+        compareOptionalNumber(a.match.matchDistanceM, b.match.matchDistanceM) ||
         new Date(b.correction.appliedAt || 0).getTime() - new Date(a.correction.appliedAt || 0).getTime()
       ))[0];
     const correction = correctionMatch?.correction;

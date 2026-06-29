@@ -34,12 +34,13 @@ describe('tracking store default settings', () => {
     expect(migrateDefaultSettings({
       settings_defaults_version: 13,
     }).settings).toMatchObject({
-      settings_defaults_version: 14,
+      settings_defaults_version: 16,
       heightened_privacy_mode: true,
       weather_context_enabled: false,
       speed_limit_lookup_enabled: false,
       map_matching_enabled: false,
       osrm_data_sharing_consented: false,
+      voice_speed_markers_enabled: false,
     });
     expect(sanitizeImportedSettings({
       heightened_privacy_mode: true,
@@ -275,7 +276,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(14);
+    expect(legacySunset.settings_defaults_version).toBe(16);
     expect(legacySunset.raw_gps_retention_days).toBe(30);
     expect(legacyCustom.night_end_time).toBe('06:00');
     expect(legacyCustom.raw_gps_retention_days).toBe(30);

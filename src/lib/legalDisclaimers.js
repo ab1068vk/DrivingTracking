@@ -141,7 +141,7 @@ export const LEGAL_DISCLAIMER_ITEMS = [
   {
     group: 'Emergency limits',
     title: 'No emergency monitoring',
-    body: 'Road Sage does not monitor you for emergencies, promise crash detection, contact emergency services, or replace roadside assistance, insurance claims processes, law enforcement, medical help, or human supervision.',
+    body: 'Road Sage does not monitor you for emergencies, promise crash detection, or replace roadside assistance, insurance claims processes, law enforcement, medical help, or human supervision.',
   },
   {
     group: 'Emergency limits',

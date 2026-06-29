@@ -287,6 +287,7 @@ describe('core page component renders', () => {
   beforeEach(() => {
     queryData.clear();
     delete settings.advanced_safety_detection_enabled;
+    settings.predictive_route_risk_enabled = true;
     setTripSummaries([sampleTrip]);
     queryData.set(JSON.stringify(['vehicles']), [{ id: 'vehicle-1', name: 'Commuter', fuel_type: 'gasoline' }]);
     queryData.set(JSON.stringify(['trip', 'trip-1']), sampleTrip);
@@ -335,6 +336,25 @@ describe('core page component renders', () => {
     expect(html).toContain('Not enough driving history');
     expect(html).not.toContain('Estimated historical context');
     expect(html).not.toContain('Signal contributions');
+  });
+
+  it('removes historical context from readiness when the setting is disabled', async () => {
+    settings.predictive_route_risk_enabled = false;
+    setTripSummaries(Array.from({ length: 5 }, (_, index) => ({
+      ...sampleTrip,
+      id: `risky-trip-${index + 1}`,
+      score_overall: 20,
+      harsh_brakes_count: 8,
+      speeding_events_count: 6,
+      sharp_turns_count: 4,
+      start_time: new Date(Date.now() - index * 3600000).toISOString(),
+    })));
+    const { default: Dashboard } = await import('@/pages/Dashboard');
+    const html = renderToStaticMarkup(<Dashboard />);
+
+    expect(html).not.toContain('Estimated historical context');
+    expect(html).not.toContain('Signal contributions');
+    expect(html).not.toContain('Historical context estimate looks elevated');
   });
 
   it('renders TripDetail with road, weather, and feedback sections', async () => {

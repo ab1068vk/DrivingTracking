@@ -186,7 +186,7 @@ const sectionDisplay = (section = {}, selected = false, showPermanentLabel = fal
     ? `${Math.round(Number(section.limitKmh))} km/h - ${section.roadName || 'Saved road section'}`
     : `Speed not set - ${section.roadName || 'Recorded road section'}`;
   const displayTooltip = hasDisplayLimit
-    ? `${Math.round(Number(displayLimitKmh))} km/h - ${section.roadName || (section.saved ? 'Saved road section' : 'Labeled road section')}`
+    ? `${Math.round(Number(displayLimitKmh))} km/h - ${section.roadName || (section.voiceSpeedMarker ? 'Voice marker' : section.saved ? 'Saved road section' : 'Labeled road section')}`
     : tooltip;
   const labelClassName = labelClassForSection({
     selected,

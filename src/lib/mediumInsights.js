@@ -597,20 +597,7 @@ export function buildMaintenanceReminders(vehicle = {}, trips = []) {
       status: remaining <= 0 ? 'due' : remaining <= Math.max(500, interval * 0.1) ? 'soon' : 'ok',
     };
   });
-  const dateItems = [
-    { id: 'registration', label: 'Registration renewal', date: vehicle.registration_renewal_date },
-    { id: 'insurance', label: 'Insurance renewal', date: vehicle.insurance_renewal_date },
-  ].filter((item) => item.date);
-  const dateReminders = dateItems.map((item) => {
-    const days = Math.ceil((new Date(item.date).getTime() - Date.now()) / DAY_MS);
-    return {
-      ...item,
-      type: 'date',
-      remaining_days: days,
-      status: days <= 0 ? 'due' : days <= 30 ? 'soon' : 'ok',
-    };
-  });
-  return [...distanceReminders, ...dateReminders].sort((a, b) => {
+  return distanceReminders.sort((a, b) => {
     const severity = { due: 0, soon: 1, ok: 2 };
     return severity[a.status] - severity[b.status];
   });

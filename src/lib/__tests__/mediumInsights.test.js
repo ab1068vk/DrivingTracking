@@ -202,11 +202,10 @@ describe('mediumInsights', () => {
     expect(hotspots[0].typeBreakdown.speeding).toBe(1);
   });
 
-  it('uses completed vehicle distance and renewal dates for maintenance reminders', () => {
+  it('uses completed vehicle distance for maintenance reminders', () => {
     const reminders = buildMaintenanceReminders(
       {
         odometer_km: undefined,
-        registration_renewal_date: '2026-05-20',
         maintenance_items: [
           { id: 'oil', label: 'Oil change', interval_km: 1000, last_service_km: 0 },
         ],
@@ -221,6 +220,6 @@ describe('mediumInsights', () => {
       remaining_km: -200,
       status: 'due',
     });
-    expect(reminders.find((item) => item.id === 'registration')?.type).toBe('date');
+    expect(reminders.every((item) => item.type === 'distance')).toBe(true);
   });
 });

@@ -2,6 +2,7 @@ import { getJson, setJson } from '@/lib/mobileStorage';
 import { DEFAULT_EV_KWH_PER_100KM, DEFAULT_MAINTENANCE_ITEMS } from '@/lib/tripEconomyDefaults';
 
 export const VEHICLES_KEY = 'drivesense_vehicles';
+const LEGACY_VEHICLE_ADMIN_FIELDS = ['plate', 'registration_renewal_date', 'insurance_renewal_date'];
 
 const mergeMaintenanceItems = (items = []) => {
   const byId = new Map((Array.isArray(items) ? items : []).map((item) => [item.id, item]));
@@ -11,6 +12,18 @@ const mergeMaintenanceItems = (items = []) => {
   }));
 };
 
+const scrubLegacyVehicleAdminFields = (vehicle = {}) => {
+  const next = { ...vehicle };
+  let changed = false;
+  LEGACY_VEHICLE_ADMIN_FIELDS.forEach((field) => {
+    if (field in next) {
+      delete next[field];
+      changed = true;
+    }
+  });
+  return { vehicle: next, changed };
+};
+
 const normalizeVehicle = (vehicle) => ({
   id: vehicle.id || `vehicle_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
   name: String(vehicle.name || '').trim(),
@@ -18,7 +31,6 @@ const normalizeVehicle = (vehicle) => ({
   model: String(vehicle.model || '').trim(),
   year: vehicle.year ? Number(vehicle.year) : '',
   color: vehicle.color || '#3b82f6',
-  plate: String(vehicle.plate || '').trim().toUpperCase(),
   odometer_km: Number(vehicle.odometer_km) || 0,
   odometer_trip_distance_anchor_km: Number(vehicle.odometer_trip_distance_anchor_km) || 0,
   auto_odometer_last_sync_at: vehicle.auto_odometer_last_sync_at || null,
@@ -27,8 +39,6 @@ const normalizeVehicle = (vehicle) => ({
   ev_efficiency_kwh_per_100km: Number(vehicle.ev_efficiency_kwh_per_100km) || DEFAULT_EV_KWH_PER_100KM,
   fuel_price_per_liter: Number(vehicle.fuel_price_per_liter) || 1.65,
   maintenance_reserve_per_km: Number(vehicle.maintenance_reserve_per_km) || 0.08,
-  registration_renewal_date: vehicle.registration_renewal_date || '',
-  insurance_renewal_date: vehicle.insurance_renewal_date || '',
   maintenance_items: mergeMaintenanceItems(vehicle.maintenance_items),
   is_default: Boolean(vehicle.is_default),
   created_date: vehicle.created_date || vehicle.created_at || new Date().toISOString(),
@@ -51,10 +61,21 @@ const ensureOneDefault = (vehicles) => {
   return vehicles.map((vehicle, index) => ({ ...vehicle, is_default: index === 0 }));
 };
 
-const readVehicles = async () => ensureOneDefault(await getJson(VEHICLES_KEY, []));
+const readVehicles = async () => {
+  const stored = await getJson(VEHICLES_KEY, []);
+  let changed = false;
+  const scrubbed = (Array.isArray(stored) ? stored : []).map((vehicle) => {
+    const result = scrubLegacyVehicleAdminFields(vehicle);
+    changed = changed || result.changed;
+    return result.vehicle;
+  });
+  const vehicles = ensureOneDefault(scrubbed);
+  if (changed) await setJson(VEHICLES_KEY, vehicles);
+  return vehicles;
+};
 
 const writeVehicles = async (vehicles) => {
-  const normalized = ensureOneDefault(vehicles);
+  const normalized = ensureOneDefault(vehicles.map((vehicle) => scrubLegacyVehicleAdminFields(vehicle).vehicle));
   await setJson(VEHICLES_KEY, normalized);
   return normalized;
 };

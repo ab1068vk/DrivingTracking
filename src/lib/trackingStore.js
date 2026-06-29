@@ -43,7 +43,7 @@ let lastNativeSettingsSync = '';
 let memorySettings = null;
 let activeTripMemory = null;
 let activeTripWriteQueue = Promise.resolve();
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 14;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 16;
 const SYSTEM_THEME_QUERY = '(prefers-color-scheme: dark)';
 let activeThemeMode = 'system';
 let systemThemeQueryList = null;
@@ -281,6 +281,7 @@ export const DEFAULT_SETTINGS = {
   tracking_paused: false,
   live_coaching_enabled: true,
   voice_alerts_enabled: true,
+  voice_speed_markers_enabled: false,
   sensor_fusion_enabled: true,
   crash_detection_enabled: true,
   emergency_workflow_enabled: false,
@@ -431,6 +432,10 @@ export function migrateDefaultSettings(parsed = {}) {
     if (Number(merged.raw_gps_retention_days) > 30 || parsed.raw_gps_retention_days == null) {
       merged.raw_gps_retention_days = 30;
     }
+  }
+
+  if (version < 16) {
+    merged.voice_speed_markers_enabled = false;
   }
 
   const osrmZoneGuardChanged = merged.osrm_block_near_any_zone !== true;

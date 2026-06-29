@@ -236,6 +236,27 @@ describe('LocalSpeedKnowledge', () => {
     await expect(lsk.getForPoint(43.6500, -79.3805, null, { headingDeg: 270 })).resolves.toMatchObject({ limitKmh: 60 });
   });
 
+  it('prefers the heading-aligned saved road when traced speed sections cross at an intersection', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+
+    await lsk.saveUserCorrection(43.6500, -79.3800, 50, 'North-south road', null, [], 'user_confirmed_posted_sign', {
+      sectionPoints: [
+        { lat: 43.6490, lng: -79.3800 },
+        { lat: 43.6510, lng: -79.3800 },
+      ],
+    });
+    await lsk.saveUserCorrection(43.6500, -79.3800, 40, 'East-west side road', null, [], 'user_confirmed_posted_sign', {
+      sectionPoints: [
+        { lat: 43.6500, lng: -79.3810 },
+        { lat: 43.6500, lng: -79.3790 },
+      ],
+    });
+
+    await expect(lsk.getForPoint(43.6500, -79.3800, null, { headingDeg: 0 })).resolves.toMatchObject({ limitKmh: 50 });
+    await expect(lsk.getForPoint(43.6500, -79.3800, null, { headingDeg: 90 })).resolves.toMatchObject({ limitKmh: 40 });
+  });
+
   it('updates a saved correction center when snapped geometry moves', async () => {
     const store = new MockStore();
     const lsk = new LocalSpeedKnowledge(store);

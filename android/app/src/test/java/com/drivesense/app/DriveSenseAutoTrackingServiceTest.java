@@ -15,6 +15,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.TimeZone;
 
+import com.google.android.gms.location.DetectedActivity;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
@@ -170,6 +172,58 @@ public class DriveSenseAutoTrackingServiceTest {
     }
 
     @Test
+    public void nativePossibleIncidentDetectorMatchesBackgroundWorkflowGate() throws Exception {
+        long now = Instant.parse("2026-01-01T12:00:20Z").toEpochMilli();
+        JSONArray points = new JSONArray()
+            .put(routePoint(43.6500d, -79.3800d, now - 12_000L, 45d))
+            .put(routePoint(43.6501d, -79.3800d, now - 10_000L, 0d))
+            .put(routePoint(43.6501d, -79.3800d, now, 0d));
+        JSONArray samples = new JSONArray()
+            .put(motionSample(now - 2_000L, 0d, 0d))
+            .put(motionSample(now - 1_000L, 26d, 120d))
+            .put(motionSample(now, 0d, 0d));
+
+        JSONObject incident = DriveSenseAutoTrackingService.detectNativePossibleIncident(
+            points,
+            samples,
+            DetectedActivity.STILL,
+            80,
+            true
+        );
+
+        assertNotNull(incident);
+        assertEquals("possible_crash", incident.getString("type"));
+        assertEquals("medium", incident.getString("severity"));
+        assertEquals(45L, incident.getLong("speed_before_kmh"));
+        assertEquals(10L, incident.getLong("stopped_seconds"));
+        assertEquals("still", incident.getString("activity_type"));
+        assertNull(DriveSenseAutoTrackingService.detectNativePossibleIncident(
+            points,
+            samples,
+            DetectedActivity.STILL,
+            80,
+            false
+        ));
+    }
+
+    @Test
+    public void voiceSpeedMarkerParserExtractsReviewedSpeedCommands() {
+        DriveSenseSpeedVoiceController.SpeedCommand posted =
+            DriveSenseSpeedVoiceController.parseTranscript("Hey Road Sage, posted speed is 60");
+        DriveSenseSpeedVoiceController.SpeedCommand estimate =
+            DriveSenseSpeedVoiceController.parseTranscript("speed limit fifty");
+
+        assertNotNull(posted);
+        assertEquals(60, posted.limitKmh);
+        assertTrue(posted.posted);
+        assertNotNull(estimate);
+        assertEquals(50, estimate.limitKmh);
+        assertFalse(estimate.posted);
+        assertNull(DriveSenseSpeedVoiceController.parseTranscript("call Sarah when we get home"));
+        assertNull(DriveSenseSpeedVoiceController.parseTranscript("Road Sage speed 17"));
+    }
+
+    @Test
     public void nativeBackgroundSpeedLookupUsesLatestMatchingUserCorrection() throws Exception {
         double lat = 43.6532d;
         double lng = -79.3832d;
@@ -291,6 +345,39 @@ public class DriveSenseAutoTrackingServiceTest {
     }
 
     @Test
+    public void nativeBackgroundSpeedLookupPrefersHeadingAlignedSectionAtIntersection() throws Exception {
+        JSONObject data = new JSONObject()
+            .put("corrections", new JSONArray()
+                .put(new JSONObject()
+                    .put("geohash", DriveSenseAutoTrackingService.geohashEncode(43.6500d, -79.3800d, 6))
+                    .put("limitKmh", 50d)
+                    .put("source", "user_confirmed_posted_sign")
+                    .put("appliedAt", "2026-06-23T12:00:00Z")
+                    .put("sectionPoints", new JSONArray()
+                        .put(new JSONObject().put("lat", 43.6490d).put("lng", -79.3800d))
+                        .put(new JSONObject().put("lat", 43.6510d).put("lng", -79.3800d))))
+                .put(new JSONObject()
+                    .put("geohash", DriveSenseAutoTrackingService.geohashEncode(43.6500d, -79.3800d, 6))
+                    .put("limitKmh", 40d)
+                    .put("source", "user_confirmed_posted_sign")
+                    .put("appliedAt", "2026-06-23T12:01:00Z")
+                    .put("sectionPoints", new JSONArray()
+                        .put(new JSONObject().put("lat", 43.6500d).put("lng", -79.3810d))
+                        .put(new JSONObject().put("lat", 43.6500d).put("lng", -79.3790d)))));
+        long activeTime = Instant.parse("2026-06-23T12:05:00Z").toEpochMilli();
+
+        DriveSenseAutoTrackingService.NativeSpeedLimit northbound =
+            DriveSenseAutoTrackingService.findLocalSpeedLimit(data, 43.6500d, -79.3800d, 0d, activeTime);
+        DriveSenseAutoTrackingService.NativeSpeedLimit eastbound =
+            DriveSenseAutoTrackingService.findLocalSpeedLimit(data, 43.6500d, -79.3800d, 90d, activeTime);
+
+        assertNotNull(northbound);
+        assertEquals(50d, northbound.limitKmh, 0.0d);
+        assertNotNull(eastbound);
+        assertEquals(40d, eastbound.limitKmh, 0.0d);
+    }
+
+    @Test
     public void nativeBackgroundSpeedLookupHonorsDirectionAndTimeRules() throws Exception {
         double sectionLat = 43.65320d;
         double sectionLng = -79.38320d;
@@ -400,9 +487,19 @@ public class DriveSenseAutoTrackingServiceTest {
         point.put("lat", lat);
         point.put("lng", lng);
         point.put("timestamp", Instant.ofEpochMilli(timestampMs).toString());
+        point.put("timestamp_ms", timestampMs);
         point.put("speed_kmh", speedKmh);
         point.put("accuracy", 5d);
         return point;
+    }
+
+    private static JSONObject motionSample(long timestampMs, double linearMs2, double rotationDegS) throws Exception {
+        JSONObject sample = new JSONObject();
+        sample.put("timestamp", Instant.ofEpochMilli(timestampMs).toString());
+        sample.put("timestamp_ms", timestampMs);
+        sample.put("linear_magnitude_ms2", linearMs2);
+        sample.put("rotation_magnitude_deg_s", rotationDegS);
+        return sample;
     }
 
     private static long longConstant(String name) throws Exception {

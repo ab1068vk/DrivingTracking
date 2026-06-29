@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.graphics.Color;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -22,6 +23,7 @@ import android.os.IBinder;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
+import androidx.core.app.ServiceCompat;
 import androidx.core.content.ContextCompat;
 
 import com.google.android.gms.location.ActivityRecognition;
@@ -53,6 +55,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     static final String ACTION_STOP_SPEECH = "com.drivesense.app.action.STOP_NATIVE_SPEECH";
     static final String ACTION_END_TRIP = "com.drivesense.app.action.END_NATIVE_TRIP";
     static final String ACTION_DISCARD_MANUAL_TRIP = "com.drivesense.app.action.DISCARD_NATIVE_MANUAL_TRIP";
+    static final String ACTION_ACKNOWLEDGE_INCIDENT = "com.drivesense.app.action.ACKNOWLEDGE_POSSIBLE_INCIDENT";
     static final String ACTION_ACTIVITY = "com.drivesense.app.action.ACTIVITY_UPDATE";
     static final String EXTRA_ACTIVITY_TYPE = "activityType";
     static final String EXTRA_ACTIVITY_CONFIDENCE = "activityConfidence";
@@ -63,6 +66,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final int NOTIF_ID_TRACKING_START = 4101;
     private static final int ACTIVITY_RECOGNITION_REQUEST_CODE = 4102;
     private static final int NOTIF_ID_AUTO_STATUS = 4103;
+    private static final int NOTIF_ID_POSSIBLE_INCIDENT = 4011;
     private static final int NIGHT_START_HOUR = 22;
     private static final int NIGHT_END_HOUR = 5;
     private static final String CHANNEL_ID = "drivesense_native_auto_tracking";
@@ -112,8 +116,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final String GEOHASH_BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
     private static final int SPEED_KNOWLEDGE_GEOHASH_PRECISION = 6;
     private static final double SPEED_KNOWLEDGE_MATCH_RADIUS_KM = 0.8d;
-    private static final double SPEED_KNOWLEDGE_SECTION_MATCH_RADIUS_KM = 0.08d;
-    private static final double SPEED_KNOWLEDGE_DIRECTION_TOLERANCE_DEG = 100.0d;
+    private static final double SPEED_KNOWLEDGE_SECTION_MATCH_RADIUS_KM = 0.045d;
+    private static final double SPEED_KNOWLEDGE_DIRECTION_TOLERANCE_DEG = 60.0d;
     private static final String NOTIFICATION_PREFS = "drivesense_native_notification_state";
     private static final String KEY_LAST_PHONE_USE_NOTIFICATION_MS = "last_phone_use_notification_ms";
     private static final String KEY_LAST_TRIP_COMPLETED_NOTIFICATION_ID = "last_trip_completed_notification_id";
@@ -158,6 +162,15 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final int MAX_NATIVE_MOTION_SAMPLES = 5000;
     private static final long MOTION_SAMPLE_MIN_INTERVAL_MS = 100L;
     private static final long MOTION_AXIS_FRESH_MS = 500L;
+    private static final int POSSIBLE_INCIDENT_RECENT_POINTS = 8;
+    private static final long POSSIBLE_INCIDENT_SAMPLE_WINDOW_MS = 12_000L;
+    private static final long POSSIBLE_INCIDENT_ALERT_COOLDOWN_MS = 5 * 60_000L;
+    private static final double POSSIBLE_INCIDENT_MIN_SPEED_KMH = 20.0d;
+    private static final double POSSIBLE_INCIDENT_LINEAR_MS2 = 18.0d;
+    private static final double POSSIBLE_INCIDENT_HIGH_LINEAR_MS2 = 28.0d;
+    private static final double POSSIBLE_INCIDENT_ROTATION_DEG_S = 90.0d;
+    private static final long POSSIBLE_INCIDENT_STOPPED_SECONDS = 8L;
+    private static final long POSSIBLE_INCIDENT_HIGH_STOPPED_SECONDS = 15L;
 
     private ActivityRecognitionClient activityClient;
     private FusedLocationProviderClient locationClient;
@@ -169,6 +182,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private JSONArray activePoints;
     private JSONArray activeTimeline;
     private JSONArray activeMotionSamples;
+    private JSONArray activeVoiceSpeedMarkers;
+    private JSONArray activeIncidentEvents;
     private long activeStartMs = 0L;
     private long stillSinceMs = 0L;
     private long nonVehicleSinceMs = 0L;
@@ -188,6 +203,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private long lastNativePhoneWindowMs = 0L;
     private long lastLiveNotificationMs = 0L;
     private DriveSenseSpeechController speechController;
+    private DriveSenseSpeedVoiceController speedVoiceController;
     private long speedingSinceMs = 0L;
     private long lastSpeedAlertMs = 0L;
     private long lastHarshBrakeAlertMs = 0L;
@@ -225,13 +241,26 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private long lastGyroSensorMs = 0L;
     private long lastMotionSampleMs = 0L;
     private long lastNativeSpeechDiagnosticMs = 0L;
+    private long lastVoiceSpeedMarkerMs = 0L;
+    private long lastPossibleIncidentAlertMs = 0L;
 
     @Override
     public void onCreate() {
         super.onCreate();
-        startForeground(NOTIF_ID_TRACKING_START, buildNotification("Ready when you start moving"));
+        updateForegroundNotification("Ready when you start moving", false);
         ensureSafetyAlertsChannel();
         speechController = new DriveSenseSpeechController(this);
+        speedVoiceController = new DriveSenseSpeedVoiceController(this, new DriveSenseSpeedVoiceController.Callback() {
+            @Override
+            public void onSpeedLimitCommand(int limitKmh, boolean posted, String transcript) {
+                recordVoiceSpeedMarker(limitKmh, posted, transcript);
+            }
+
+            @Override
+            public void onDiagnostic(String type, String reason) {
+                recordDiagnostic(type, "Voice speed marker listener unavailable.", reason, lastKnownSpeedKmh, 0L, 0d);
+            }
+        });
         activityClient = ActivityRecognition.getClient(this);
         locationClient = LocationServices.getFusedLocationProviderClient(this);
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
@@ -259,9 +288,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent != null ? intent.getAction() : null;
-        startForeground(
-            NOTIF_ID_TRACKING_START,
-            buildNotification(isTripActive() ? buildLiveTripStatus(System.currentTimeMillis()) : "Ready when you start moving")
+        updateForegroundNotification(
+            isTripActive() ? buildLiveTripStatus(System.currentTimeMillis()) : "Ready when you start moving",
+            false
         );
 
         if (ACTION_STOP.equals(action)) {
@@ -272,6 +301,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (ACTION_STOP_SPEECH.equals(action)) {
             if (speechController != null) speechController.stop();
             speedingSinceMs = 0L;
+            return START_STICKY;
+        }
+        if (ACTION_ACKNOWLEDGE_INCIDENT.equals(action)) {
+            acknowledgePossibleIncidentFromNotification();
             return START_STICKY;
         }
 
@@ -323,8 +356,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         removeActivityUpdates();
         stopLocationUpdates();
         stopMotionSensors();
+        stopVoiceSpeedMarkers();
         DriveSenseNativeTripStore.setServiceEnabled(this, false);
         if (speechController != null) speechController.shutdown();
+        if (speedVoiceController != null) speedVoiceController.stop();
         super.onDestroy();
     }
 
@@ -605,6 +640,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         activePoints = new JSONArray();
         activeTimeline = new JSONArray();
         activeMotionSamples = new JSONArray();
+        activeVoiceSpeedMarkers = new JSONArray();
+        activeIncidentEvents = new JSONArray();
         hasPermissionLoss = false;
         previousLocation = null;
         armedPreviousLocation = null;
@@ -620,6 +657,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         lastNativeProxyWindowMs = 0L;
         lastNativePhoneWindowMs = 0L;
         lastLiveNotificationMs = 0L;
+        lastVoiceSpeedMarkerMs = 0L;
         resetNativeAlertState();
         nativeAutoStartReason = "manual_button";
         lastNativeAutoStopReason = "";
@@ -637,6 +675,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         updateNotification("Manual trip recording in background");
         startMotionSensors();
         startTripLocationUpdates();
+        startVoiceSpeedMarkersIfEnabled();
         speakTrackingReadyOnce();
     }
 
@@ -649,6 +688,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         activePoints = new JSONArray();
         activeTimeline = new JSONArray();
         activeMotionSamples = new JSONArray();
+        activeVoiceSpeedMarkers = new JSONArray();
+        activeIncidentEvents = new JSONArray();
         hasPermissionLoss = false;
         previousLocation = null;
         armedPreviousLocation = null;
@@ -664,6 +705,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         lastNativeProxyWindowMs = 0L;
         lastNativePhoneWindowMs = 0L;
         lastLiveNotificationMs = 0L;
+        lastVoiceSpeedMarkerMs = 0L;
         resetNativeAlertState();
         nativeAutoStartReason = reason;
         lastNativeAutoStopReason = "";
@@ -694,6 +736,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         updateNotification(candidateNearParked ? "Checking movement near parked car" : "Checking movement");
         startMotionSensors();
         startTripLocationUpdates();
+        startVoiceSpeedMarkersIfEnabled();
     }
 
     private boolean isTripActive() {
@@ -818,6 +861,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             if (maybeFinishForStaleActivityGpsFallback()) return;
         }
 
+        if (!candidateTrip) {
+            evaluatePossibleIncident();
+        }
         updateLiveTripNotification(false);
     }
 
@@ -865,6 +911,147 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             point.put("timestamp", iso(location.getTime() > 0L ? location.getTime() : System.currentTimeMillis()));
         } catch (JSONException ignored) {}
         return point;
+    }
+
+    private void startVoiceSpeedMarkersIfEnabled() {
+        if (speedVoiceController == null) return;
+        if (!isSettingEnabled("voice_speed_markers_enabled", false)) {
+            speedVoiceController.stop();
+            return;
+        }
+        speedVoiceController.stop();
+        recordDiagnostic(
+            "voice_speed_marker_listener_paused",
+            "Voice speed marker listener paused during active tracking.",
+            "continuous_speech_recognition_disabled",
+            lastKnownSpeedKmh,
+            0L,
+            0d
+        );
+    }
+
+    private void stopVoiceSpeedMarkers() {
+        if (speedVoiceController != null) speedVoiceController.stop();
+        updateForegroundNotification(
+            isTripActive() ? buildLiveTripStatus(System.currentTimeMillis()) : "Ready when you start moving",
+            false
+        );
+    }
+
+    private boolean hasRecordAudioPermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean updateForegroundNotification(String message, boolean includeMicrophone) {
+        Notification notification = buildNotification(message);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            startForeground(NOTIF_ID_TRACKING_START, notification);
+            return true;
+        }
+        int foregroundType = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
+        if (includeMicrophone && hasRecordAudioPermission()) {
+            foregroundType |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+        }
+        try {
+            ServiceCompat.startForeground(this, NOTIF_ID_TRACKING_START, notification, foregroundType);
+            return !includeMicrophone || (foregroundType & ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0;
+        } catch (Exception error) {
+            try {
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIF_ID_TRACKING_START,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                );
+            } catch (Exception ignored) {
+                startForeground(NOTIF_ID_TRACKING_START, notification);
+            }
+            return false;
+        }
+    }
+
+    private void recordVoiceSpeedMarker(int limitKmh, boolean posted, String transcript) {
+        if (!isTripActive()) return;
+        long now = System.currentTimeMillis();
+        if (now - lastVoiceSpeedMarkerMs < 4_000L) return;
+        Location location = previousLocation != null ? previousLocation : armedPreviousLocation;
+        if (location == null) {
+            recordDiagnostic(
+                "voice_speed_marker_skipped",
+                "Voice speed marker could not be placed.",
+                "no_recent_location",
+                lastKnownSpeedKmh,
+                0L,
+                0d
+            );
+            return;
+        }
+        double lat = location.getLatitude();
+        double lng = location.getLongitude();
+        if (PrivacyZoneChecker.isInsidePrivacyZone(this, lat, lng)) {
+            recordDiagnostic(
+                "voice_speed_marker_privacy_suppressed",
+                "Voice speed marker suppressed inside a privacy zone.",
+                "privacy_zone",
+                lastKnownSpeedKmh,
+                0L,
+                0d
+            );
+            speakNativeAlert("Speed marker skipped in a privacy zone.", true);
+            return;
+        }
+
+        lastVoiceSpeedMarkerMs = now;
+        if (activeVoiceSpeedMarkers == null) activeVoiceSpeedMarkers = new JSONArray();
+        JSONObject marker = new JSONObject();
+        try {
+            marker.put("id", "voice_speed_marker_" + now + "_" + activeVoiceSpeedMarkers.length());
+            marker.put("type", "voice_speed_limit_marker");
+            marker.put("lat", lat);
+            marker.put("lng", lng);
+            marker.put("timestamp", iso(now));
+            marker.put("timestamp_ms", now);
+            marker.put("speed_limit_kmh", limitKmh);
+            marker.put("limitKmh", limitKmh);
+            marker.put("source", posted ? "voice_user_posted_sign" : "voice_user_estimate");
+            marker.put("review_status", "pending_review");
+            marker.put("review_required", true);
+            marker.put("posted_phrase_detected", posted);
+            marker.put("transcript", sanitizeVoiceMarkerTranscript(transcript));
+            marker.put("vehicle_speed_kmh", Math.round(Math.max(0d, lastKnownSpeedKmh)));
+            if (location.hasBearing()) marker.put("heading", location.getBearing());
+            else marker.put("heading", JSONObject.NULL);
+            if (location.hasAccuracy()) marker.put("accuracy", location.getAccuracy());
+            else marker.put("accuracy", JSONObject.NULL);
+            activeVoiceSpeedMarkers.put(marker);
+        } catch (JSONException ignored) {}
+        recordTimeline(
+            "voice_speed_limit_marker",
+            "Voice speed marker recorded.",
+            posted ? "posted_speed_voice_command" : "speed_voice_command",
+            lastKnownSpeedKmh,
+            0L,
+            0d
+        );
+        recordDiagnostic(
+            "voice_speed_limit_marker",
+            "Voice speed marker recorded.",
+            posted ? "posted_speed_voice_command" : "speed_voice_command",
+            lastKnownSpeedKmh,
+            0L,
+            0d
+        );
+        speakNativeAlert(
+            posted
+                ? String.format(Locale.US, "Marked posted %d kilometers per hour.", limitKmh)
+                : String.format(Locale.US, "Marked %d kilometers per hour for review.", limitKmh),
+            true
+        );
+    }
+
+    private String sanitizeVoiceMarkerTranscript(String transcript) {
+        String value = transcript == null ? "" : transcript.trim().replaceAll("\\s+", " ");
+        return value.length() <= 140 ? value : value.substring(0, 140);
     }
 
     private boolean keepServiceArmed() {
@@ -995,6 +1182,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         activePoints = null;
         activeTimeline = null;
         activeMotionSamples = null;
+        activeVoiceSpeedMarkers = null;
+        activeIncidentEvents = null;
         hasPermissionLoss = false;
         activeStartMs = 0L;
         previousLocation = null;
@@ -1014,11 +1203,13 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         nativeManualTripId = "";
         candidateConfirmedMs = 0L;
         lastLiveNotificationMs = 0L;
+        lastVoiceSpeedMarkerMs = 0L;
         resetNativeAlertState();
         recentHeadings.clear();
         nativeHeadingDriftWindow.clear();
         resetMotionState();
         stopMotionSensors();
+        stopVoiceSpeedMarkers();
         stopLocationUpdates();
         if (keepArmed && DriveSenseNativeTripStore.isServiceEnabled(this)) {
             startArmedLocationUpdates();
@@ -1085,6 +1276,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         JSONArray points = activePoints;
         JSONArray timeline = activeTimeline != null ? activeTimeline : new JSONArray();
         JSONArray motionSamples = activeMotionSamples != null ? activeMotionSamples : new JSONArray();
+        JSONArray voiceSpeedMarkers = activeVoiceSpeedMarkers != null ? activeVoiceSpeedMarkers : new JSONArray();
+        JSONArray incidentEvents = activeIncidentEvents != null ? activeIncidentEvents : new JSONArray();
         long startMs = activeStartMs;
         boolean startedNearParked = candidateNearParked;
         long confirmedMs = candidateConfirmedMs;
@@ -1106,9 +1299,12 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         }
         recordTimeline("trip_ended", "Native trip ended.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
         recordDiagnostic("trip_ended", "Native trip ended.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
+        stopVoiceSpeedMarkers();
         activePoints = null;
         activeTimeline = null;
         activeMotionSamples = null;
+        activeVoiceSpeedMarkers = null;
+        activeIncidentEvents = null;
         hasPermissionLoss = false;
         activeStartMs = 0L;
         previousLocation = null;
@@ -1126,6 +1322,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         nativeTripStartSource = "native_auto";
         nativeManualTripId = "";
         lastLiveNotificationMs = 0L;
+        lastVoiceSpeedMarkerMs = 0L;
         resetNativeAlertState();
         recentHeadings.clear();
         nativeHeadingDriftWindow.clear();
@@ -1164,7 +1361,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             trip.put("route_points", PrivacyZoneChecker.redactRoutePoints(this, points));
             trip.put("motion_samples", motionSamples);
             trip.put("native_motion_sample_count", motionSamples.length());
-            trip.put("driving_events", new JSONArray());
+            trip.put("voice_speed_limit_markers", voiceSpeedMarkers);
+            trip.put("voice_speed_limit_marker_count", voiceSpeedMarkers.length());
+            trip.put("driving_events", incidentEvents);
+            trip.put("possible_crash_count", incidentEvents.length());
+            trip.put("emergency_workflow_pending", hasPendingEmergencyWorkflow(incidentEvents));
             trip.put("score_overall", JSONObject.NULL);
             trip.put("score_safety", JSONObject.NULL);
             trip.put("score_smoothness", JSONObject.NULL);
@@ -1415,6 +1616,187 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         } catch (JSONException ignored) {}
     }
 
+    private void evaluatePossibleIncident() {
+        if (activeIncidentEvents == null) activeIncidentEvents = new JSONArray();
+        if (activeIncidentEvents.length() > 0) return;
+        long now = System.currentTimeMillis();
+        if (now - lastPossibleIncidentAlertMs < POSSIBLE_INCIDENT_ALERT_COOLDOWN_MS) return;
+
+        JSONObject incident = detectNativePossibleIncident(
+            activePoints,
+            activeMotionSamples,
+            lastActivityType,
+            lastActivityConfidence,
+            isSettingEnabled("sensor_fusion_enabled", true) &&
+                isSettingEnabled("crash_detection_enabled", true)
+        );
+        if (incident == null) return;
+
+        boolean emergencyWorkflow = isSettingEnabled("emergency_workflow_enabled", false);
+        try {
+            incident.put("emergency_workflow_pending", emergencyWorkflow);
+            incident.put("source", "android_native_background");
+            incident.put("native_background", true);
+        } catch (JSONException ignored) {}
+        activeIncidentEvents.put(incident);
+        lastPossibleIncidentAlertMs = now;
+
+        String workflowBody = emergencyWorkflow
+            ? "Possible incident signal recorded. Emergency check-in is active until you review the trip."
+            : "Possible incident signal recorded. Check in now if you can.";
+        recordTimeline(
+            "possible_crash",
+            "Possible incident signal recorded.",
+            emergencyWorkflow ? "emergency_workflow_active" : "check_in_prompt",
+            incident.optDouble("speed_before_kmh", lastKnownSpeedKmh),
+            incident.optLong("stopped_seconds", 0L),
+            maxDriftSinceStopM
+        );
+        recordDiagnostic(
+            "possible_incident",
+            "Possible incident signal recorded.",
+            emergencyWorkflow ? "emergency_workflow_active" : "check_in_prompt",
+            incident.optDouble("speed_before_kmh", lastKnownSpeedKmh),
+            incident.optLong("stopped_seconds", 0L),
+            maxDriftSinceStopM
+        );
+        sendPossibleIncidentNotification(emergencyWorkflow);
+        if (isSettingEnabled("voice_alerts_enabled", true)) {
+            speakNativeAlert(workflowBody, true);
+        }
+        updateNotification(emergencyWorkflow ? "Possible incident - open Road Sage to check in" : "Possible incident signal recorded");
+    }
+
+    @Nullable
+    static JSONObject detectNativePossibleIncident(
+        @Nullable JSONArray points,
+        @Nullable JSONArray motionSamples,
+        int activityType,
+        int activityConfidence,
+        boolean crashDetectionEnabled
+    ) {
+        if (!crashDetectionEnabled || points == null || motionSamples == null) return null;
+        if (points.length() < 2 || motionSamples.length() < 3) return null;
+
+        int startIndex = Math.max(0, points.length() - POSSIBLE_INCIDENT_RECENT_POINTS);
+        JSONObject latestPoint = points.optJSONObject(points.length() - 1);
+        if (latestPoint == null) return null;
+        long latestMs = jsonTimestampMs(latestPoint);
+        if (latestMs <= 0L) latestMs = System.currentTimeMillis();
+
+        double maxRecentSpeed = 0d;
+        long stoppedSeconds = 0L;
+        Long previousStoppedMs = null;
+        for (int i = startIndex; i < points.length(); i++) {
+            JSONObject point = points.optJSONObject(i);
+            if (point == null) continue;
+            double speed = Math.max(0d, point.optDouble("speed_kmh", 0d));
+            maxRecentSpeed = Math.max(maxRecentSpeed, speed);
+            if (speed < 3d) {
+                long pointMs = jsonTimestampMs(point);
+                if (previousStoppedMs != null && pointMs > previousStoppedMs) {
+                    stoppedSeconds += Math.max(0L, (pointMs - previousStoppedMs) / 1000L);
+                }
+                if (pointMs > 0L) previousStoppedMs = pointMs;
+            }
+        }
+
+        double peakLinear = 0d;
+        double peakRotation = 0d;
+        for (int i = 0; i < motionSamples.length(); i++) {
+            JSONObject sample = motionSamples.optJSONObject(i);
+            if (sample == null) continue;
+            long sampleMs = jsonTimestampMs(sample);
+            if (sampleMs <= 0L || Math.abs(sampleMs - latestMs) > POSSIBLE_INCIDENT_SAMPLE_WINDOW_MS) continue;
+            peakLinear = Math.max(peakLinear, sample.optDouble("linear_magnitude_ms2", 0d));
+            peakRotation = Math.max(peakRotation, sample.optDouble("rotation_magnitude_deg_s", 0d));
+        }
+
+        boolean stillActivity = activityType == DetectedActivity.STILL && activityConfidence >= 60;
+        boolean likelyIncident = maxRecentSpeed >= POSSIBLE_INCIDENT_MIN_SPEED_KMH &&
+            peakLinear >= POSSIBLE_INCIDENT_LINEAR_MS2 &&
+            peakRotation >= POSSIBLE_INCIDENT_ROTATION_DEG_S &&
+            (stoppedSeconds >= POSSIBLE_INCIDENT_STOPPED_SECONDS || stillActivity);
+        if (!likelyIncident) return null;
+
+        JSONObject incident = new JSONObject();
+        try {
+            incident.put("type", "possible_crash");
+            incident.put("severity", peakLinear >= POSSIBLE_INCIDENT_HIGH_LINEAR_MS2 ? "high" : "medium");
+            incident.put("lat", latestPoint.optDouble("lat", Double.NaN));
+            incident.put("lng", latestPoint.optDouble("lng", Double.NaN));
+            incident.put("timestamp", latestPoint.optString("timestamp", iso(latestMs)));
+            incident.put("timestamp_ms", latestMs);
+            incident.put("speed_before_kmh", Math.round(maxRecentSpeed));
+            incident.put("peak_linear_ms2", round(peakLinear, 2));
+            incident.put("peak_rotation_deg_s", round(peakRotation, 2));
+            incident.put("stopped_seconds", Math.round(stoppedSeconds));
+            incident.put("activity_type", activityType == DetectedActivity.STILL ? "still" : "unknown");
+            incident.put("activity_confidence", activityConfidence);
+            incident.put("confidence", peakLinear >= POSSIBLE_INCIDENT_HIGH_LINEAR_MS2 && stoppedSeconds >= POSSIBLE_INCIDENT_HIGH_STOPPED_SECONDS ? 0.9d : 0.72d);
+        } catch (JSONException ignored) {}
+        return incident;
+    }
+
+    private static long jsonTimestampMs(JSONObject object) {
+        if (object == null) return 0L;
+        long direct = object.optLong("timestamp_ms", 0L);
+        if (direct > 0L) return direct;
+        String timestamp = object.optString("timestamp", "");
+        if (timestamp == null || timestamp.trim().isEmpty()) return 0L;
+        try {
+            return Instant.parse(timestamp).toEpochMilli();
+        } catch (DateTimeParseException ignored) {
+            return 0L;
+        }
+    }
+
+    private static boolean hasPendingEmergencyWorkflow(JSONArray events) {
+        if (events == null) return false;
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject event = events.optJSONObject(i);
+            if (event != null && event.optBoolean("emergency_workflow_pending", false)) return true;
+        }
+        return false;
+    }
+
+    private void acknowledgePossibleIncidentFromNotification() {
+        String acknowledgedAt = iso(System.currentTimeMillis());
+        boolean activeUpdated = acknowledgeIncidentEvents(activeIncidentEvents, acknowledgedAt);
+        boolean storedUpdated = DriveSenseNativeTripStore.acknowledgePendingEmergencyWorkflow(this, acknowledgedAt);
+        recordDiagnostic(
+            "emergency_check_in",
+            activeUpdated || storedUpdated
+                ? "Driver checked in OK from notification."
+                : "Driver check-in notification action received.",
+            "notification_ok",
+            lastKnownSpeedKmh,
+            0L,
+            maxDriftSinceStopM
+        );
+        NotificationManagerCompat.from(this).cancel(NOTIF_ID_POSSIBLE_INCIDENT);
+        if (activeUpdated && isTripActive()) {
+            updateNotification("Possible incident acknowledged");
+        }
+    }
+
+    private static boolean acknowledgeIncidentEvents(@Nullable JSONArray events, String acknowledgedAt) {
+        if (events == null) return false;
+        boolean changed = false;
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject event = events.optJSONObject(i);
+            if (event == null || !"possible_crash".equals(event.optString("type", ""))) continue;
+            if (!event.optBoolean("emergency_workflow_pending", false) && event.has("emergency_workflow_acknowledged")) continue;
+            try {
+                event.put("emergency_workflow_pending", false);
+                event.put("emergency_workflow_acknowledged", "ok");
+                event.put("emergency_workflow_acknowledged_at", acknowledgedAt);
+                changed = true;
+            } catch (JSONException ignored) {}
+        }
+        return changed;
+    }
+
     private static double haversineKm(double lat1, double lng1, double lat2, double lng2) {
         double earthKm = 6371d;
         double dLat = Math.toRadians(lat2 - lat1);
@@ -1584,6 +1966,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (message.startsWith("Sharp cornering detected.")) return "sharp_cornering";
         if (message.startsWith("Attention pattern recorded.")) return "heading_drift";
         if (message.startsWith("Phone use detected.")) return "phone_use";
+        if (message.startsWith("Possible incident signal recorded.")) return "possible_incident";
         return "native_voice_alert";
     }
 
@@ -1828,7 +2211,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         JSONArray corrections = data.optJSONArray("corrections");
         if (corrections == null) return null;
 
-        NativeSpeedLimit best = null;
+        NativeSpeedLimitMatch bestMatch = null;
         long bestAppliedAtMs = Long.MIN_VALUE;
         for (int index = 0; index < corrections.length(); index++) {
             JSONObject correction = corrections.optJSONObject(index);
@@ -1839,39 +2222,73 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
             long expiresAtMs = parseIsoEpochMs(correction.optString("expiresAt", ""));
             if (expiresAtMs > 0L && expiresAtMs <= nowMs) continue;
-            if (!correctionMatchesLocation(correction, geohash, lat, lng, headingDeg, nowMs)) continue;
+            NativeSpeedLimitMatch match = correctionLocationMatch(correction, geohash, lat, lng, headingDeg, nowMs);
+            if (match == null) continue;
 
             long appliedAtMs = parseIsoEpochMs(correction.optString("appliedAt", ""));
-            if (best != null && appliedAtMs < bestAppliedAtMs) continue;
+            if (bestMatch != null) {
+                int comparison = compareSpeedLimitMatches(match, appliedAtMs, bestMatch, bestAppliedAtMs);
+                if (comparison >= 0) continue;
+            }
             String source = "user_confirmed_posted_sign".equals(correction.optString("source", ""))
                 ? "user_confirmed_posted_sign"
                 : "user_entered_estimate";
-            best = new NativeSpeedLimit(limitKmh, source);
+            match.speedLimit = new NativeSpeedLimit(limitKmh, source);
+            bestMatch = match;
             bestAppliedAtMs = appliedAtMs;
         }
-        return best;
+        return bestMatch == null ? null : bestMatch.speedLimit;
     }
 
     static boolean correctionMatchesLocation(JSONObject correction, String geohash, double lat, double lng, double headingDeg, long nowMs) {
-        if (!correctionActiveAt(correction, nowMs)) return false;
-        if (!correctionMatchesDirection(correction, headingDeg)) return false;
+        return correctionLocationMatch(correction, geohash, lat, lng, headingDeg, nowMs) != null;
+    }
+
+    @Nullable
+    private static NativeSpeedLimitMatch correctionLocationMatch(JSONObject correction, String geohash, double lat, double lng, double headingDeg, long nowMs) {
+        if (!correctionActiveAt(correction, nowMs)) return null;
+        if (!correctionMatchesDirection(correction, headingDeg)) return null;
         JSONArray sectionPoints = correction == null ? null : correction.optJSONArray("sectionPoints");
+        double headingDeltaDeg = correctionHeadingDelta(correction, headingDeg);
         if (sectionPoints != null && sectionPoints.length() >= 2) {
             JSONObject previous = null;
+            double bestDistanceKm = Double.POSITIVE_INFINITY;
             for (int index = 0; index < sectionPoints.length(); index++) {
                 JSONObject current = sectionPoints.optJSONObject(index);
                 if (!isUsableCoordinate(current)) continue;
-                if (previous != null &&
-                    pointToSegmentDistanceKm(lat, lng, previous, current) <= SPEED_KNOWLEDGE_SECTION_MATCH_RADIUS_KM) {
-                    return true;
+                if (previous != null) {
+                    bestDistanceKm = Math.min(bestDistanceKm, pointToSegmentDistanceKm(lat, lng, previous, current));
                 }
                 previous = current;
             }
-            return false;
+            return bestDistanceKm <= SPEED_KNOWLEDGE_SECTION_MATCH_RADIUS_KM
+                ? new NativeSpeedLimitMatch(bestDistanceKm, headingDeltaDeg)
+                : null;
         }
 
         double[] center = geohashCenter(geohash);
-        return center != null && haversineKm(center[0], center[1], lat, lng) <= SPEED_KNOWLEDGE_MATCH_RADIUS_KM;
+        if (center == null) return null;
+        double distanceKm = haversineKm(center[0], center[1], lat, lng);
+        return distanceKm <= SPEED_KNOWLEDGE_MATCH_RADIUS_KM
+            ? new NativeSpeedLimitMatch(distanceKm, headingDeltaDeg)
+            : null;
+    }
+
+    private static int compareSpeedLimitMatches(
+        NativeSpeedLimitMatch candidate,
+        long candidateAppliedAtMs,
+        NativeSpeedLimitMatch current,
+        long currentAppliedAtMs
+    ) {
+        int headingComparison = Double.compare(sortableMatchValue(candidate.headingDeltaDeg), sortableMatchValue(current.headingDeltaDeg));
+        if (headingComparison != 0) return headingComparison;
+        int distanceComparison = Double.compare(sortableMatchValue(candidate.distanceKm), sortableMatchValue(current.distanceKm));
+        if (distanceComparison != 0) return distanceComparison;
+        return Long.compare(currentAppliedAtMs, candidateAppliedAtMs);
+    }
+
+    private static double sortableMatchValue(double value) {
+        return Double.isFinite(value) ? value : Double.MAX_VALUE;
     }
 
     private static boolean correctionActiveAt(@Nullable JSONObject correction, long nowMs) {
@@ -1912,6 +2329,21 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (!Double.isFinite(bearing)) return false;
         double expected = "reverse".equals(mode) ? normalizeBearing(bearing + 180d) : normalizeBearing(bearing);
         return angleDiffDeg(headingDeg, expected) <= SPEED_KNOWLEDGE_DIRECTION_TOLERANCE_DEG;
+    }
+
+    private static double correctionHeadingDelta(@Nullable JSONObject correction, double headingDeg) {
+        if (!Double.isFinite(headingDeg) || correction == null) return Double.POSITIVE_INFINITY;
+        double bearing = correction.optDouble("directionBearing", Double.NaN);
+        if (!Double.isFinite(bearing)) {
+            bearing = sectionBearing(correction.optJSONArray("sectionPoints"));
+        }
+        if (!Double.isFinite(bearing)) return Double.POSITIVE_INFINITY;
+        String mode = correction.optString("directionMode", "both");
+        double forwardDelta = angleDiffDeg(headingDeg, bearing);
+        double reverseDelta = angleDiffDeg(headingDeg, normalizeBearing(bearing + 180d));
+        if ("forward".equals(mode)) return forwardDelta;
+        if ("reverse".equals(mode)) return reverseDelta;
+        return Math.min(forwardDelta, reverseDelta);
     }
 
     private static double sectionBearing(@Nullable JSONArray points) {
@@ -2067,6 +2499,17 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         }
     }
 
+    private static final class NativeSpeedLimitMatch {
+        final double distanceKm;
+        final double headingDeltaDeg;
+        NativeSpeedLimit speedLimit;
+
+        NativeSpeedLimitMatch(double distanceKm, double headingDeltaDeg) {
+            this.distanceKm = distanceKm;
+            this.headingDeltaDeg = headingDeltaDeg;
+        }
+    }
+
     static boolean shouldTriggerSpeedAlert(double speedKmh, double limitKmh, double marginKmh) {
         return Double.isFinite(speedKmh) &&
             Double.isFinite(limitKmh) &&
@@ -2124,6 +2567,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         lastHeadingDriftAlertMs = 0L;
         lastIdleAlertMs = 0L;
         lastFatigueAlertMs = 0L;
+        lastPossibleIncidentAlertMs = 0L;
         nativeHeadingDriftWindow.clear();
         stopStartWindowStartMs = 0L;
         stopStartCycleCount = 0;
@@ -2137,6 +2581,59 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         while (diff > 180d) diff -= 360d;
         while (diff <= -180d) diff += 360d;
         return diff;
+    }
+
+    private void sendPossibleIncidentNotification(boolean emergencyWorkflow) {
+        if (!isSettingEnabled("notifications_enabled", true) ||
+            !isSettingEnabled("notif_safety_alerts_enabled", true)) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+
+        ensureSafetyAlertsChannel();
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.putExtra("deeplink", "drivesense://dashboard");
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+            this,
+            2,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT | immutableFlag()
+        );
+        Intent okIntent = new Intent(this, DriveSenseAutoTrackingService.class);
+        okIntent.setAction(ACTION_ACKNOWLEDGE_INCIDENT);
+        PendingIntent okPendingIntent = PendingIntent.getService(
+            this,
+            3,
+            okIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | immutableFlag()
+        );
+
+        String body = emergencyWorkflow
+            ? "Impact-like motion and little movement were recorded. Open Road Sage to check in."
+            : "Road Sage recorded impact-like motion followed by little movement.";
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, SAFETY_ALERTS_CHANNEL_ID)
+            .setSmallIcon(getResources().getIdentifier("ic_stat_drivesense", "drawable", getPackageName()))
+            .setContentTitle("Possible Incident Signal")
+            .setContentText(body)
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setOnlyAlertOnce(true)
+            .setVibrate(new long[]{ 0, 500, 150, 500, 150, 500 });
+        if (emergencyWorkflow) {
+            builder.addAction(
+                getResources().getIdentifier("ic_stat_drivesense", "drawable", getPackageName()),
+                "I'm OK",
+                okPendingIntent
+            );
+        }
+
+        NotificationManagerCompat.from(this).notify(NOTIF_ID_POSSIBLE_INCIDENT, builder.build());
     }
 
     private void sendPhoneUseWarningNotification() {

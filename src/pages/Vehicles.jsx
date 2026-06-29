@@ -172,15 +172,12 @@ function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
     model: '',
     year: '',
     color: '#3b82f6',
-    plate: '',
     odometer_km: 0,
     fuel_type: 'gasoline',
     fuel_efficiency_l_per_100km: 8.5,
     ev_efficiency_kwh_per_100km: 18,
     fuel_price_per_liter: 1.65,
     maintenance_reserve_per_km: 0.08,
-    registration_renewal_date: '',
-    insurance_renewal_date: '',
     ...initial,
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -217,11 +214,6 @@ function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Plate</label>
-          <input value={form.plate} onChange={e => set('plate', e.target.value.toUpperCase())} placeholder="ABC 123"
-            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
-        </div>
-        <div>
           <label className="text-xs text-muted-foreground mb-1 block">Odometer (km)</label>
           <input value={form.odometer_km} onChange={e => set('odometer_km', e.target.value)} placeholder="42000" type="number"
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
@@ -252,16 +244,6 @@ function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
         <div className="col-span-2">
           <label className="text-xs text-muted-foreground mb-1 block">Maintenance reserve ({displayCurrencySymbol}/km)</label>
           <input value={form.maintenance_reserve_per_km} onChange={e => set('maintenance_reserve_per_km', e.target.value)} placeholder="0.08" type="number" step="0.01"
-            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
-        </div>
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Registration renewal</label>
-          <input value={form.registration_renewal_date || ''} onChange={e => set('registration_renewal_date', e.target.value)} type="date"
-            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
-        </div>
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Insurance renewal</label>
-          <input value={form.insurance_renewal_date || ''} onChange={e => set('insurance_renewal_date', e.target.value)} type="date"
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
         </div>
       </div>
@@ -469,14 +451,6 @@ export default function Vehicles() {
       cancelled = true;
     };
   }, [vehicles, trips]);
-
-  const handleRenewalDone = async (vehicle, reminder) => {
-    const nextDate = new Date();
-    nextDate.setFullYear(nextDate.getFullYear() + 1);
-    const key = reminder.id === 'registration' ? 'registration_renewal_date' : 'insurance_renewal_date';
-    await vehicleService.update(vehicle.id, { [key]: nextDate.toISOString().slice(0, 10) });
-    invalidate();
-  };
 
   const tripListFor = (vehicle) => getTripsForVehicle(vehicle, trips);
   const tripCountFor = (vehicle) => tripListFor(vehicle).length;
@@ -830,7 +804,6 @@ export default function Vehicles() {
                       </div>
                       <div className="text-xs text-muted-foreground mt-0.5">
                         {[v.year, v.make, v.model].filter(Boolean).join(' ') || 'No details'}
-                        {v.plate && <span className="ml-1.5 bg-secondary px-1.5 py-0.5 rounded font-mono">{v.plate}</span>}
                       </div>
                       <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                         <span>{count} trip{count !== 1 ? 's' : ''}</span>
@@ -981,19 +954,13 @@ export default function Vehicles() {
                             <div className={`mt-0.5 ${
                               reminder.status === 'due' ? 'text-red-500' : reminder.status === 'soon' ? 'text-orange-500' : 'text-muted-foreground'
                             }`}>
-                              {reminder.type === 'date'
-                                ? reminder.remaining_days <= 0
-                                  ? `${Math.abs(reminder.remaining_days)} day${Math.abs(reminder.remaining_days) === 1 ? '' : 's'} overdue`
-                                  : `${reminder.remaining_days} day${reminder.remaining_days === 1 ? '' : 's'} left`
-                                : reminder.remaining_km <= 0
-                                  ? `${Math.abs(reminder.remaining_km).toLocaleString()} km overdue`
-                                  : `${reminder.remaining_km.toLocaleString()} km left`}
+                              {reminder.remaining_km <= 0
+                                ? `${Math.abs(reminder.remaining_km).toLocaleString()} km overdue`
+                                : `${reminder.remaining_km.toLocaleString()} km left`}
                             </div>
                           </div>
                           <button
-                            onClick={() => reminder.type === 'date'
-                              ? handleRenewalDone(v, reminder)
-                              : handleServiceDone(v, reminder, odometerKm)}
+                            onClick={() => handleServiceDone(v, reminder, odometerKm)}
                             className="rounded-lg bg-card px-2 py-1 text-muted-foreground hover:text-foreground"
                           >
                             Done

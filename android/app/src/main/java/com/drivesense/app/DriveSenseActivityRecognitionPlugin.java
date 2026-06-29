@@ -10,10 +10,16 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.MediaStore;
 import android.provider.Settings;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.util.Base64;
 
 import com.getcapacitor.JSObject;
@@ -37,6 +43,8 @@ import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Locale;
 
 @CapacitorPlugin(
     name = "DriveSenseActivityRecognition",
@@ -48,6 +56,10 @@ import java.nio.charset.StandardCharsets;
         @Permission(
             alias = "backgroundLocation",
             strings = { Manifest.permission.ACCESS_BACKGROUND_LOCATION }
+        ),
+        @Permission(
+            alias = "microphone",
+            strings = { Manifest.permission.RECORD_AUDIO }
         )
     }
 )
@@ -100,6 +112,17 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         requestPermissionForAlias("backgroundLocation", call, "backgroundLocationPermissionCallback");
     }
 
+    @PluginMethod
+    public void requestMicrophone(PluginCall call) {
+        requestPermissionForAlias("microphone", call, "microphonePermissionCallback");
+    }
+
+    @PluginMethod
+    public void testVoiceSpeedMarker(PluginCall call) {
+        Handler handler = new Handler(Looper.getMainLooper());
+        handler.post(() -> runVoiceSpeedMarkerTest(call, handler));
+    }
+
     @PermissionCallback
     private void activityPermissionCallback(PluginCall call) {
         call.resolve(permissionPayload());
@@ -107,6 +130,11 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
 
     @PermissionCallback
     private void backgroundLocationPermissionCallback(PluginCall call) {
+        call.resolve(permissionPayload());
+    }
+
+    @PermissionCallback
+    private void microphonePermissionCallback(PluginCall call) {
         call.resolve(permissionPayload());
     }
 
@@ -226,6 +254,138 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
                 call.reject(message);
             }
         });
+    }
+
+    private void runVoiceSpeedMarkerTest(PluginCall call, Handler handler) {
+        if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            resolveVoiceSpeedMarkerTest(call, null, null, false, "record_audio_permission_missing", null);
+            return;
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(getContext())) {
+            resolveVoiceSpeedMarkerTest(call, null, null, false, "speech_recognizer_unavailable", null);
+            return;
+        }
+
+        int timeoutMs = Math.max(5_000, Math.min(15_000, call.getInt("timeoutMs", 10_000)));
+        SpeechRecognizer recognizer = SpeechRecognizer.createSpeechRecognizer(getContext());
+        final boolean[] finished = { false };
+        Runnable timeout = () -> {
+            if (finished[0]) return;
+            finished[0] = true;
+            resolveVoiceSpeedMarkerTest(call, recognizer, null, false, "timeout_no_marker_phrase_heard", null);
+        };
+
+        recognizer.setRecognitionListener(new RecognitionListener() {
+            @Override public void onReadyForSpeech(Bundle params) {}
+            @Override public void onBeginningOfSpeech() {}
+            @Override public void onRmsChanged(float rmsdB) {}
+            @Override public void onBufferReceived(byte[] buffer) {}
+            @Override public void onEndOfSpeech() {}
+            @Override public void onPartialResults(Bundle partialResults) {}
+            @Override public void onEvent(int eventType, Bundle params) {}
+
+            @Override
+            public void onError(int error) {
+                if (finished[0]) return;
+                finished[0] = true;
+                handler.removeCallbacks(timeout);
+                resolveVoiceSpeedMarkerTest(call, recognizer, null, false, speechRecognizerErrorReason(error), null);
+            }
+
+            @Override
+            public void onResults(Bundle results) {
+                if (finished[0]) return;
+                finished[0] = true;
+                handler.removeCallbacks(timeout);
+                ArrayList<String> matches = results == null
+                    ? null
+                    : results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                DriveSenseSpeedVoiceController.SpeedCommand command = null;
+                String transcript = "";
+                if (matches != null) {
+                    for (String candidate : matches) {
+                        DriveSenseSpeedVoiceController.SpeedCommand parsed = DriveSenseSpeedVoiceController.parseTranscript(candidate);
+                        if (parsed != null) {
+                            command = parsed;
+                            transcript = candidate == null ? "" : candidate.trim();
+                            break;
+                        }
+                    }
+                    if (transcript.isEmpty() && !matches.isEmpty()) transcript = String.valueOf(matches.get(0));
+                }
+                resolveVoiceSpeedMarkerTest(
+                    call,
+                    recognizer,
+                    command,
+                    command != null,
+                    command != null ? "recognized" : "no_marker_phrase_heard",
+                    transcript
+                );
+            }
+        });
+
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault());
+        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
+        intent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
+        try {
+            handler.postDelayed(timeout, timeoutMs);
+            recognizer.startListening(intent);
+        } catch (Exception error) {
+            handler.removeCallbacks(timeout);
+            resolveVoiceSpeedMarkerTest(call, recognizer, null, false, "speech_recognizer_start_failed", null);
+        }
+    }
+
+    private void resolveVoiceSpeedMarkerTest(
+        PluginCall call,
+        SpeechRecognizer recognizer,
+        DriveSenseSpeedVoiceController.SpeedCommand command,
+        boolean recognized,
+        String reason,
+        String transcript
+    ) {
+        if (recognizer != null) {
+            try {
+                recognizer.cancel();
+                recognizer.destroy();
+            } catch (Exception ignored) {}
+        }
+        JSObject payload = new JSObject();
+        payload.put("recognized", recognized);
+        payload.put("reason", reason);
+        payload.put("transcript", transcript == null ? "" : transcript);
+        if (command != null) {
+            payload.put("limitKmh", command.limitKmh);
+            payload.put("posted", command.posted);
+        }
+        call.resolve(payload);
+    }
+
+    private String speechRecognizerErrorReason(int error) {
+        switch (error) {
+            case SpeechRecognizer.ERROR_AUDIO:
+                return "audio_capture_error";
+            case SpeechRecognizer.ERROR_CLIENT:
+                return "speech_client_error";
+            case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS:
+                return "record_audio_permission_missing";
+            case SpeechRecognizer.ERROR_NETWORK:
+            case SpeechRecognizer.ERROR_NETWORK_TIMEOUT:
+                return "speech_network_unavailable";
+            case SpeechRecognizer.ERROR_NO_MATCH:
+                return "no_marker_phrase_heard";
+            case SpeechRecognizer.ERROR_RECOGNIZER_BUSY:
+                return "speech_recognizer_busy";
+            case SpeechRecognizer.ERROR_SERVER:
+                return "speech_service_error";
+            case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
+                return "speech_timeout_no_speech";
+            default:
+                return "speech_recognizer_error_" + error;
+        }
     }
 
     @PluginMethod
@@ -480,6 +640,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         JSObject payload = new JSObject();
         payload.put("activityRecognition", permissionString());
         payload.put("backgroundLocation", backgroundPermissionString());
+        payload.put("microphone", microphonePermissionString());
         return payload;
     }
 
@@ -494,6 +655,13 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     private String backgroundPermissionString() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return "granted";
         PermissionState state = getPermissionState("backgroundLocation");
+        if (state == PermissionState.GRANTED) return "granted";
+        if (state == PermissionState.DENIED) return "denied";
+        return "prompt";
+    }
+
+    private String microphonePermissionString() {
+        PermissionState state = getPermissionState("microphone");
         if (state == PermissionState.GRANTED) return "granted";
         if (state == PermissionState.DENIED) return "denied";
         return "prompt";

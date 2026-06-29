@@ -5,6 +5,10 @@ export function speedLimitSourceLabel(source, { short = false } = {}) {
     case 'user_entered_estimate':
     case 'user_correction':
       return short ? 'User estimate' : 'Your saved estimate';
+    case 'voice_user_posted_sign':
+      return short ? 'Voice sign' : 'Voice marker for a posted sign';
+    case 'voice_user_estimate':
+      return short ? 'Voice estimate' : 'Voice marker estimate';
     case 'openstreetmap':
       return short ? 'OSM maxspeed' : 'OpenStreetMap posted limit';
     case 'osm_highway_default':
@@ -30,8 +34,11 @@ export function speedLimitSourceBadgeClass(source) {
   if (source === 'openstreetmap' || source === 'user_confirmed_posted_sign') {
     return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200';
   }
-  if (source === 'user_entered_estimate' || source === 'user_correction' || source === 'learned_local' || source === 'trip_consensus' || source === 'time_of_day_bucket') {
+  if (source === 'user_entered_estimate' || source === 'user_correction' || source === 'voice_user_estimate' || source === 'learned_local' || source === 'trip_consensus' || source === 'time_of_day_bucket') {
     return 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-200';
+  }
+  if (source === 'voice_user_posted_sign') {
+    return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200';
   }
   if (source === 'osm_highway_default' || source === 'region_default_estimate' || source === 'inferred') {
     return 'bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-100';
@@ -82,4 +89,3 @@ export function speedLimitScorePreview(previousLimitKmh, nextLimitKmh) {
   }
   return 'Likely lowers speed-limit compliance where recorded speeds were above the new limit.';
 }
-
