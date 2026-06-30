@@ -183,6 +183,32 @@ describe('mapMatching', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('does not send route points to non-HTTPS OSRM endpoints', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      osrm_map_matching_url: 'http://osrm.example',
+      osrm_data_sharing_consented: true,
+    });
+
+    expect(result.status).toBe('needs_endpoint');
+    expect(result.error).toContain('HTTPS');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('also rejects loopback HTTP OSRM endpoints before sending GPS data', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await mapMatchRoute([point(0), point(1), point(2)], {
+      osrm_map_matching_url: 'http://localhost:5000',
+      osrm_data_sharing_consented: true,
+    });
+
+    expect(result.status).toBe('needs_endpoint');
+    expect(result.error).toContain('HTTPS');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('keeps the privacy-zone endpoint guard on even if a legacy setting disables it', async () => {
     // Checklist: "Try a route endpoint inside a zone and confirm OSRM is blocked and logged as blocked."
     vi.stubGlobal('fetch', vi.fn());

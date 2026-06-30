@@ -1,12 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { escapeHtml } from '@/lib/htmlUtils';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { escapeCssIdentifier, escapeHtml, sanitizeCssColor } from '@/lib/htmlUtils';
 import { buildDangerZonePopupHtml, buildRouteRiskSegmentPopupHtml, buildSpeedSegmentPopupHtml } from '@/lib/mapPopupHtml';
+import { ChartStyle } from '@/components/ui/chart';
 
 describe('HTML escaping', () => {
   it('escapes special characters before values are inserted into popup HTML', () => {
     expect(escapeHtml('<script>')).toBe('&lt;script&gt;');
     expect(escapeHtml('Tom & "Jerry"')).toBe('Tom &amp; &quot;Jerry&quot;');
     expect(escapeHtml("driver's route")).toBe('driver&#039;s route');
+  });
+
+  it('sanitizes CSS identifiers and color values before style injection', () => {
+    expect(escapeCssIdentifier('speed"]{body{color:red}}')).toBe('speed___body_color_red__');
+    expect(sanitizeCssColor('#0f766e')).toBe('#0f766e');
+    expect(sanitizeCssColor('hsl(var(--chart-1))')).toBe('hsl(var(--chart-1))');
+    expect(sanitizeCssColor('red; background:url(javascript:alert(1))', null)).toBeNull();
+  });
+
+  it('renders chart style config without preserving selector or CSS payload injection', () => {
+    const html = renderToStaticMarkup(createElement(ChartStyle, {
+      id: 'road"]{body{background:red}}',
+      config: {
+        'speed;body': { color: '#0f766e' },
+        attack: { color: 'red; background:url(javascript:alert(1))' },
+      },
+    }));
+
+    expect(html).toContain('data-chart="road___body_background_red__"');
+    expect(html).toContain('--color-speed_body: #0f766e;');
+    expect(html).not.toContain('javascript:');
+    expect(html).not.toContain('background:url');
+    expect(html).not.toContain('speed;body');
   });
 
   it('renders route risk popup values as text instead of HTML', () => {

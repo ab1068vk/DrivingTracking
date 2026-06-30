@@ -11,6 +11,7 @@ import { recordSystemEvent } from '@/lib/systemLog';
 import { scoringValue } from '@/lib/scoringConstants';
 import { ECO_DEFAULTS } from '@/lib/ecoDefaults';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
+import { describeEndpointValidationError, normalizeHttpsEndpoint } from '@/lib/urlSecurity';
 import {
   DEFAULT_CO2_BASELINE_KG_PER_100KM,
   DEFAULT_EV_KWH_PER_100KM,
@@ -66,11 +67,7 @@ const finiteNumber = (value) => {
 const defaultOsrmEndpoint = () => {
   const value = String(import.meta.env.VITE_DEFAULT_OSRM_URL || '').trim();
   if (!value || isPublicOsrmDemoUrl(value)) return '';
-  try {
-    return new URL(value).toString().replace(/\/$/, '');
-  } catch {
-    return '';
-  }
+  return normalizeHttpsEndpoint(value);
 };
 
 const defaultOsrmTimeoutMs = () => {
@@ -678,12 +675,8 @@ export function validateSettingsPatch(patch = {}) {
     if (key === 'osrm_map_matching_url') {
       const endpoint = String(value || '').trim();
       if (!endpoint) return;
-      try {
-        new URL(endpoint);
-      } catch {
-        errors.push('osrm_map_matching_url must be a valid URL.');
-        return;
-      }
+      const endpointError = describeEndpointValidationError(endpoint);
+      if (endpointError) errors.push(`osrm_map_matching_url ${endpointError}`);
       if (isPublicOsrmDemoUrl(endpoint)) errors.push('Use a private or trusted OSRM endpoint; the public OSRM demo cannot be saved as a route-snapping endpoint.');
       return;
     }

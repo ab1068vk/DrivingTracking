@@ -134,6 +134,21 @@ describe('external service contracts', () => {
     });
   });
 
+  it('ignores unsafe custom Overpass endpoints and falls back to HTTPS providers', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ elements: [] }),
+    })));
+
+    await annotateRouteSpeedLimits(route, {
+      overpass_speed_limit_url: 'http://overpass.example/api/interpreter',
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url] = fetch.mock.calls[0];
+    expect(url).toBe('https://overpass-api.de/api/interpreter');
+  });
+
   it('marks country-aware OSM highway defaults when maxspeed is missing', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,

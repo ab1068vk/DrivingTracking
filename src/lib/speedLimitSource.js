@@ -4,6 +4,7 @@ import { boundsOverlapPrivacyZone, getPrivacyZones, isPointInPrivacyZone } from 
 import { privacyGatedFetch } from '@/lib/privacyGatedFetch';
 import { enqueueLocationRequest } from '@/lib/requestObfuscator';
 import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
+import { normalizeHttpsEndpoint } from '@/lib/urlSecurity';
 
 const SPEED_LIMIT_CACHE_KEY = 'drivesense_osm_speed_limit_cache_v2';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
@@ -698,12 +699,16 @@ function overpassQuery(bounds) {
   `;
 }
 
-function overpassNativeRequest(bounds, settings = {}) {
-  const url = [
-    settings.overpass_speed_limit_url,
+function overpassUrls(settings = {}) {
+  return uniqueBy([
+    normalizeHttpsEndpoint(settings.overpass_speed_limit_url),
     OVERPASS_URL,
     ...FALLBACK_OVERPASS_URLS,
-  ].find(Boolean);
+  ].filter(Boolean), (url) => url);
+}
+
+function overpassNativeRequest(bounds, settings = {}) {
+  const url = overpassUrls(settings)[0];
   const body = new URLSearchParams({ data: overpassQuery(bounds) }).toString();
   return {
     url,
@@ -714,11 +719,7 @@ function overpassNativeRequest(bounds, settings = {}) {
 }
 
 async function fetchOverpassWays(bounds, settings = {}) {
-  const urls = uniqueBy([
-    settings.overpass_speed_limit_url,
-    OVERPASS_URL,
-    ...FALLBACK_OVERPASS_URLS,
-  ].filter(Boolean), (url) => url);
+  const urls = overpassUrls(settings);
   let lastError = null;
   for (const url of urls) {
     try {
@@ -877,7 +878,7 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
   const bounds = routeBounds(safeRoutePoints);
   if (!bounds) {
     if (privacyZones.length && routePoints.length) {
-      await privacyGatedFetch('overpass', { url: settings.overpass_speed_limit_url || OVERPASS_URL }, {
+      await privacyGatedFetch('overpass', { url: overpassUrls(settings)[0] }, {
         type: 'Speed limit query',
         coordinateDisclosure: 'blocked',
         block: {
@@ -912,7 +913,7 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
 
   if (!queryBounds.length) {
     if (privacyZones.length && routePoints.length) {
-      await privacyGatedFetch('overpass', { url: settings.overpass_speed_limit_url || OVERPASS_URL }, {
+      await privacyGatedFetch('overpass', { url: overpassUrls(settings)[0] }, {
         type: 'Speed limit query',
         coordinateDisclosure: 'blocked',
         block: {

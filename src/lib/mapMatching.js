@@ -6,6 +6,7 @@ import { appendPrivacyEvent } from '@/lib/hashChainLog';
 import { privacyGatedFetch } from '@/lib/privacyGatedFetch';
 import { getPrivacyZones, isPointInPrivacyZone, routeTouchesPrivacyZone } from '@/lib/privacyZones';
 import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
+import { describeEndpointValidationError, normalizeHttpsEndpoint } from '@/lib/urlSecurity';
 
 const CACHE_KEY = 'drivesense_map_matching_cache_v2';
 const MAX_MATCH_POINTS = 100;
@@ -194,8 +195,21 @@ function osrmHealthCheckUrl(baseUrl) {
 
 export async function checkOsrmEndpointHealth(endpoint) {
   let url;
+  const endpointError = describeEndpointValidationError(endpoint);
+  if (endpointError) {
+    recordSystemEvent('osrm_health_invalid_endpoint', {
+      reason: endpointError,
+    }, { category: 'osrm', severity: 'warn', title: 'OSRM health check failed' });
+    return {
+      status: 'unreachable',
+      ok: false,
+      checked_at: new Date().toISOString(),
+      error: endpointError,
+    };
+  }
+
   try {
-    url = new URL(String(endpoint || '').trim());
+    url = new URL(normalizeHttpsEndpoint(endpoint));
   } catch {
     recordSystemEvent('osrm_health_invalid_endpoint', {
       reason: 'The OSRM endpoint is not a valid URL.',
@@ -511,27 +525,26 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
   if (cache[key]) return { ...cache[key], status: 'cache_hit', provider: 'osrm', isOsrmDemoUrl };
 
   try {
-    const endpoint = settings.osrm_map_matching_url;
+    const endpoint = normalizeHttpsEndpoint(settings.osrm_map_matching_url);
     const timeoutMs = osrmTimeoutMs(settings);
-    try {
-      new URL(endpoint);
-    } catch {
+    if (!endpoint) {
+      const endpointError = describeEndpointValidationError(settings.osrm_map_matching_url) || 'The OSRM endpoint is not a valid URL.';
       recordSystemEvent('osrm_map_matching_failed', {
         status: 'needs_endpoint',
-        reason: 'The OSRM endpoint is not a valid URL.',
+        reason: endpointError,
       }, { category: 'osrm', severity: 'warn', title: 'Operation failed: osrm_map_matching' });
       appendOsrmAuditEvent({
         op: 'OSRM_SKIPPED',
         details: {
           status: 'needs_endpoint',
-          reason: 'The OSRM endpoint is not a valid URL.',
+          reason: endpointError,
         },
       });
       return {
         routePoints: osrmRoutePoints,
         status: 'needs_endpoint',
         provider: 'osrm',
-        error: 'The OSRM endpoint is not a valid URL.',
+        error: endpointError,
         isOsrmDemoUrl,
       };
     }

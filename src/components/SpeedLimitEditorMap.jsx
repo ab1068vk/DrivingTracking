@@ -238,7 +238,7 @@ const addSectionToLayer = ({
     });
 
   layer
-    .bindTooltip(display.displayTooltip, { sticky: true })
+    .bindTooltip(escapeHtml(display.displayTooltip), { sticky: true })
     .on('click', () => {
       if (!addMode) onSelect?.(section);
     })

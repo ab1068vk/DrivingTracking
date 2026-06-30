@@ -72,6 +72,10 @@ describe('tracking store default settings', () => {
     expect(validateSettingsPatch({ osrm_timeout_ms: 5000 })).toMatchObject({ valid: true });
     expect(validateSettingsPatch({ osrm_timeout_ms: 4999 })).toMatchObject({ valid: false });
     expect(validateSettingsPatch({ osrm_block_near_any_zone: false })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ osrm_map_matching_url: 'https://osrm.example' })).toMatchObject({ valid: true });
+    expect(validateSettingsPatch({ osrm_map_matching_url: 'http://localhost:5000' })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ osrm_map_matching_url: 'http://osrm.example' })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ osrm_map_matching_url: 'file:///tmp/osrm' })).toMatchObject({ valid: false });
   });
 
   it('does not import native privacy sync state from backups', () => {
