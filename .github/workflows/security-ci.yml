@@ -39,6 +39,9 @@ jobs:
       - name: Check repository hygiene
         run: npm run check:repo-hygiene
 
+      - name: Check certificate pin renewal window
+        run: npm run check:cert-pins
+
       - name: Test
         run: npm test
 

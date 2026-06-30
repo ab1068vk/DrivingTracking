@@ -1023,6 +1023,45 @@ describe('privacyZones', () => {
     expect(hashes).not.toContain('pzc_hajz95');
   });
 
+  it('does not let synthetic self-test zones replace hydrated display zones', async () => {
+    const values = new Map([[
+      'drivesense_settings',
+      JSON.stringify({
+        settings_defaults_version: 16,
+        privacy_zones: [],
+      }),
+    ]]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    await savePrivacyZonesToStorage([{ ...zone, sensitivity: 'high' }], localSettings.get());
+
+    const syntheticSettings = {
+      privacy_zones: [{
+        id: 'zone-protection-self-test',
+        label: 'Self test',
+        lat: 43,
+        lng: -79,
+        radius_m: 120,
+      }],
+    };
+    maskRoutePointsForPrivacy([{ lat: 43, lng: -79 }], syntheticSettings);
+
+    const activeZones = getPrivacyZones(localSettings.get());
+
+    expect(activeZones).toHaveLength(1);
+    expect(activeZones[0]).toMatchObject({
+      id: 'home',
+      label: 'Home',
+      radius_m: 100,
+      sensitivity: 'high',
+    });
+    expect(activeZones.some((item) => item.label === 'Self test' || item.radius_m === 120)).toBe(false);
+  });
+
   it('downsamples a saved route to the corridor waypoint limit while preserving endpoints', () => {
     const route = Array.from({ length: 60 }, (_, index) => ({
       lat: 43.65 + index * 0.0001,

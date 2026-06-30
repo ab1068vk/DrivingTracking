@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { appendPrivacyEvent, verifyCheckpoint } from '@/lib/hashChainLog';
 import { verifyExport } from '@/lib/exportIntegrity';
 import {
+  decryptPrivacyReportText,
+  ENCRYPTED_PRIVACY_REPORT_FORMAT,
+  exportEncryptedPrivacyReport,
   exportPrivacyReport,
   PRIVACY_REPORT_HEADER,
 } from '@/lib/privacyReport';
@@ -73,5 +76,76 @@ describe('Privacy Report export', () => {
       valid: true,
       signatureStatus: 'unsigned',
     });
+  });
+
+  it('exports when no audit checkpoint exists yet', async () => {
+    const report = await exportPrivacyReport({
+      score: { overall: 72, label: 'Checking', tone: 'warn' },
+      chainResult: { valid: true, length: 0 },
+    });
+
+    expect(await verifyExport(report)).toMatchObject({ valid: true });
+    expect(report.payload.auditCheckpoint).toBeNull();
+    expect(report.payload.audit).toMatchObject({
+      checkpointAvailable: false,
+      signatureStatus: 'unavailable',
+    });
+  });
+
+  it('encrypts the report and keeps sensitive source fields out of the decrypted payload', async () => {
+    const password = 'correct horse battery staple';
+    const { report, encryptedText } = await exportEncryptedPrivacyReport({
+      score: { overall: 90, label: 'Good', tone: 'ok' },
+      protectionSummary: {
+        warnings: 0,
+        findings: [{
+          id: 'network',
+          label: 'Network control',
+          status: 'ok',
+          evidence: 'Checked lat=43.65001 and contact test@example.com before export.',
+          token: 'should-not-export',
+        }],
+        rawCoordinates: { lat: 43.65001, lng: -79.38001 },
+      },
+      zoneSummary: {
+        zoneCount: 1,
+        activeZoneCount: 1,
+        lat: 43.65001,
+        lng: -79.38001,
+        radius_m: 150,
+        label: 'Home',
+      },
+      drivingReadout: {
+        tripCount: 2,
+        rawPointInsideZoneCount: 0,
+        route_points: [{ lat: 43.65001, lng: -79.38001 }],
+      },
+      chainResult: {
+        valid: true,
+        length: 0,
+        reason: 'No issue at 43.65001,-79.38001',
+      },
+    }, password);
+
+    expect(JSON.parse(encryptedText)).toMatchObject({
+      app: 'Road Sage',
+      format: ENCRYPTED_PRIVACY_REPORT_FORMAT,
+    });
+    expect(encryptedText).not.toContain('43.65001');
+    expect(encryptedText).not.toContain('test@example.com');
+    expect(encryptedText).not.toContain('Home');
+
+    const decrypted = JSON.parse(await decryptPrivacyReportText(encryptedText, password));
+    expect(decrypted).toEqual(report);
+    expect(await verifyExport(decrypted)).toMatchObject({ valid: true });
+
+    const plaintext = JSON.stringify(decrypted);
+    expect(plaintext).not.toContain('43.65001');
+    expect(plaintext).not.toContain('-79.38001');
+    expect(plaintext).not.toContain('test@example.com');
+    expect(plaintext).not.toContain('should-not-export');
+    expect(plaintext).not.toContain('Home');
+    expect(decrypted.payload.protectionSummary.findings[0].evidence).toContain('[redacted-coordinate]');
+    expect(decrypted.payload.protectionSummary.findings[0].evidence).toContain('[redacted-email]');
   });
 });

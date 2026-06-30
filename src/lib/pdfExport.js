@@ -154,9 +154,9 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   const doc = new jsPDF();
   const summary = generateReportSummary(tripList);
   const now = new Date();
-  const filename = `road-sage-monthly-report-${period}-${now.toISOString().slice(0, 10)}.pdf`;
+  const filename = `road-sage-driving-report-${period}-${now.toISOString().slice(0, 10)}.pdf`;
   recordSystemEvent('pdf_export_started', {
-    report_type: 'monthly',
+    report_type: 'driving_report',
     period,
     trip_count: tripList.length,
   }, { category: 'storage', title: 'PDF export started' });
@@ -279,7 +279,7 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
       base64: true,
     });
     recordSystemEvent('pdf_export_completed', {
-      report_type: 'monthly',
+      report_type: 'driving_report',
       native: true,
       period,
       trip_count: tripList.length,
@@ -290,7 +290,7 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
 
   doc.save(filename);
   recordSystemEvent('pdf_export_completed', {
-    report_type: 'monthly',
+    report_type: 'driving_report',
     native: false,
     period,
     trip_count: tripList.length,

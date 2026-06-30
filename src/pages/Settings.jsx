@@ -546,7 +546,7 @@ const SETTINGS_SECTIONS = [
       { label: 'Export everything', keywords: 'data portability json download' },
       { label: 'Export full backup', keywords: 'encrypted save password' },
       { label: 'Import backup', keywords: 'restore encrypted json' },
-      { label: 'Erase all local data', keywords: 'delete erasure receipt proof' },
+      { label: 'Erase all local data', keywords: 'delete erasure receipt local data' },
       { label: 'Data retention', keywords: 'delete trips days forever' },
       { label: 'Privacy log retention', keywords: 'operation records hours' },
       { label: 'Raw GPS retention', keywords: 'route coordinates delete days' },
@@ -2667,7 +2667,7 @@ export default function Settings() {
       }
     } catch (error) {
       if (error?.dataErased === true && typeof window !== 'undefined') {
-        window.alert('All local Road Sage data was erased, but the proof-of-erasure receipt could not be saved. Road Sage will reload now.');
+        window.alert('All local Road Sage data was erased, but the erasure receipt could not be saved. Road Sage will reload now.');
         window.location.reload();
         return;
       }
@@ -5484,7 +5484,7 @@ export default function Settings() {
           <SettingRow
             icon={Trash2}
             label="Erase All Local Data"
-            sublabel="Overwrite/remove local Road Sage stores and export a proof-of-erasure receipt. Last app action before reload."
+            sublabel="Overwrite/remove local Road Sage stores and export an erasure receipt. Last app action before reload."
             onClick={handleEraseAllLocalData}
           >
             <span className="rounded-full border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">

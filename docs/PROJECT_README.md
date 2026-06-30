@@ -112,6 +112,7 @@ Other project documentation lives in this `docs/` folder:
 
 - [Privacy Intelligence](PRIVACY_INTELLIGENCE.md) covers the privacy dashboard, score model, protection checks, transmission logging, audit chain, storage/encryption behavior, test gaps, and release-readiness limits.
 - [Speed and fallback behavior](speed-and-fallbacks.md) covers speed capture, limit inference, OpenStreetMap enrichment, and live voice alerts.
+- [Certificate pin renewal](CERTIFICATE_PIN_RENEWAL.md) owns the Android TLS pin review cadence, renewal deadlines, and update checklist for pinned road-data providers.
 - [Recovery plan](RECOVERY_PLAN.md), [upgrade verification](UPGRADE_VERIFICATION.md), and [version code 2 verification](VERSION_CODE_2_VERIFICATION.md) record Android in-place upgrade safety work.
 
 Regenerate it after meaningful code or README changes:
@@ -198,6 +199,12 @@ Check repository hygiene before pushing machine-specific files:
 
 ```bash
 npm run check:repo-hygiene
+```
+
+Check Android certificate pin renewal windows:
+
+```bash
+npm run check:cert-pins
 ```
 
 ## Android Setup

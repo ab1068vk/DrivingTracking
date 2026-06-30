@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeUBIReport } from '@/lib/ubiReport';
 import { exportMonthlyReportPDF, exportUBIReportPDF } from '@/lib/pdfExport';
 
-const { pdfText } = vi.hoisted(() => ({ pdfText: vi.fn() }));
+const { pdfSave, pdfText } = vi.hoisted(() => ({ pdfSave: vi.fn(), pdfText: vi.fn() }));
 
 vi.mock('jspdf', () => ({
   jsPDF: class {
@@ -15,7 +15,7 @@ vi.mock('jspdf', () => ({
     roundedRect() {}
     addPage() {}
     text(...args) { pdfText(...args); }
-    save() {}
+    save(...args) { pdfSave(...args); }
   },
 }));
 
@@ -29,6 +29,7 @@ vi.mock('@/lib/nativeDownloads', () => ({
 
 describe('UBI PDF export', () => {
   beforeEach(() => {
+    pdfSave.mockClear();
     pdfText.mockClear();
   });
 
@@ -74,7 +75,7 @@ describe('UBI PDF export', () => {
     expect(renderedText).toContain('underwriting, or pricing');
   });
 
-  it('adds trip metric registry metadata to monthly PDFs', async () => {
+  it('adds trip metric registry metadata to selected-period PDFs', async () => {
     await exportMonthlyReportPDF([{
       status: 'completed',
       start_time: '2026-05-01T08:00:00.000Z',
@@ -86,14 +87,16 @@ describe('UBI PDF export', () => {
       score_eco: 83,
       harsh_brakes_count: 1,
       speeding_events_count: 0,
-    }], 'month');
+    }], 'week');
     const renderedText = pdfText.mock.calls.map(([text]) => String(text)).join(' ');
 
+    expect(renderedText).toContain('This Week Driving Report');
     expect(renderedText).toContain('Metric Reference');
     expect(renderedText).toContain('Scores are estimates');
     expect(renderedText).toContain('~82');
     expect(renderedText).toContain('Total estimated fuel cost');
     expect(renderedText).toContain('Safety Pattern Estimate [score_safety]');
     expect(renderedText).toContain('not calibrated to crashes, claims, or safety outcomes');
+    expect(pdfSave).toHaveBeenCalledWith(expect.stringMatching(/^road-sage-driving-report-week-\d{4}-\d{2}-\d{2}\.pdf$/));
   });
 });

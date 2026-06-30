@@ -28,7 +28,7 @@ What it cannot establish:
 - It does not cryptographically validate every outbound payload against the transmission metadata.
 - It cannot protect against a compromised app bundle or malicious same-origin JavaScript.
 - An unsigned local audit chain only protects against casual tampering because an attacker with local rewrite access could replace both the chain and anchor.
-- A verified signed checkpoint protects against later history rewrites only if the user retains the exported checkpoint file.
+- A retained signed checkpoint can detect later local history rewrites when compared with the current chain; it is not third-party proof.
 - Native Android protections are stronger than the web runtime, but still depend on the app and platform behaving correctly.
 
 Safe product wording:
@@ -158,7 +158,7 @@ Audited but not changed: single-trip display fields, live safety alerts, daily f
 Phase 10 adds two user-owned data actions in Settings > Privacy & Data:
 
 - Export Everything creates a versioned JSON portability bundle containing retained trip records, vehicles, current settings, hydrated privacy-zone configuration, and Privacy Intelligence score history. This is the user's own backup/portability file, not a shareable privacy posture summary.
-- Erase All Local Data enumerates the app's known local storage keys from the key-rotation manifest and privacy/audit stores, overwrites/removes key-value stores, securely deletes trip records through the existing IndexedDB overwrite-then-delete path, exports a proof-of-erasure receipt, then reloads the app so stale in-memory state is not reused.
+- Erase All Local Data enumerates the app's known local storage keys from the key-rotation manifest and privacy/audit stores, overwrites/removes key-value stores, securely deletes trip records through the existing IndexedDB overwrite-then-delete path, exports an erasure receipt, then reloads the app so stale in-memory state is not reused.
 
 The erasure receipt is signed with the native AuditAnchor pattern when native signing is available. Web receipts are explicitly marked unsigned. This is app-level evidence of attempted local erasure; it cannot inspect flash wear-leveling, browser caches, OS backups, a rooted device under attacker control, or a compromised app bundle.
 
@@ -415,7 +415,7 @@ const CONTROL_REGISTRY = [
   control('kinematic_nulling', 'inference', 2, 'Kinematic data nulling', checkKinematicNulling, 'Boundary motion fields could help infer private route segments.', 'Keep all recorded kinematic fields in the sanitization list.'),
   control('differential_privacy', 'inference', 2, 'Differential privacy', checkDifferentialPrivacy, 'Repeated aggregate exports could reveal private activity.', 'Verify metric budgets and Laplace noise.'),
   control('commitment_scheme', 'inference', 2, 'Export commitments', checkCommitmentScheme, 'Repeated exports could expose privacy-zone centers.', 'Ensure commitments use fresh salts and exclude coordinates.'),
-  control('export_signing', 'integrity', 2, 'Export HMAC signing', checkExportSigning, 'Modified backups could be accepted as authentic.', 'Verify signing keys and tamper rejection.'),
+  control('export_signing', 'integrity', 2, 'Local export integrity', checkExportSigning, 'Modified backups could be accepted as unchanged local exports.', 'Verify signing keys and tamper rejection.'),
   control('crash_scrubbing', 'integrity', 2, 'Crash report scrubbing', checkCrashScrubbing, 'Crash payloads could disclose GPS coordinates.', 'Keep sensitive key and coordinate patterns current.'),
   control('audit_log', 'integrity', 1, 'Local audit chain', checkAuditLog, 'Privacy operations could be altered without detection.', 'Verify append and chain validation together.'),
   control('root_detection', 'device', 3, 'Root / jailbreak detection', checkDeviceIntegrity, 'A compromised device can weaken every local protection.', null),
@@ -856,7 +856,7 @@ const OUTBOUND_SERVICE_PROFILES = Object.freeze({
     expectedDisclosure: 'committed',
     enabled: () => true,
     usefulFor: 'Manual backup files',
-    safeShape: 'Coordinate-free zone commitments and signed backup metadata.',
+    safeShape: 'Coordinate-free zone commitments and local integrity metadata.',
   },
 });
 ```
@@ -1395,7 +1395,7 @@ export async function verifyCheckpoint(checkpoint = {}) {
 }
 ```
 
-Honest limitation: a verified signed checkpoint protects against later history rewrites if the user retains the exported file. An unsigned chain only protects against casual tampering because the chain and local anchor can be rewritten together. Neither mode is equivalent to a server-side append-only log.
+Honest limitation: a retained signed checkpoint can detect later local history rewrites when compared with the current chain. An unsigned chain only protects against casual tampering because the chain and local anchor can be rewritten together. Neither mode is equivalent to a server-side append-only log or third-party proof.
 
 ## Storage Encryption
 
@@ -1735,7 +1735,7 @@ Important UI copy and behavior:
 - V2 banner: "Privacy Intelligence now checks protection status from local evidence."
 - Score card label: "Local evidence posture."
 - Score disclaimer: "Local evidence only. Unknown checks are not evidence of safety."
-- Overview can export a signed Privacy Report JSON containing the current score, summaries, five user-facing recommendations, audit status, and an embedded checkpoint.
+- Overview can export a Privacy Report JSON with a local integrity signature containing the current score, summaries, five user-facing recommendations, audit status, and an embedded checkpoint.
 - Action plan claim can explicitly say "Treat this as local transparency, not a security assurance."
 - Audit tab says local verification can reveal local history changes, but it cannot stop local rewrites.
 - Zones tab explains that counts come from redacted records saved with each trip and refreshing the page does not increment them.
@@ -1905,7 +1905,7 @@ The editor intentionally has no address-search or remote-geocoder path. It accep
 
 ## Privacy Report Export
 
-`src/lib/privacyReport.js` builds the shareable report payload and wraps it with the existing `signExport()` integrity envelope. It does not introduce another signing format.
+`src/lib/privacyReport.js` builds the shareable report payload and wraps it with the existing `signExport()` local integrity envelope. It does not introduce another signing format.
 
 The payload contains:
 
@@ -1924,7 +1924,7 @@ audit.signatureStatus
 auditCheckpoint
 ```
 
-The header reuses the safe product wording from this document. The embedded `auditCheckpoint` can be passed to `verifyCheckpoint()` later while the signed export envelope can be checked with `verifyExport()`.
+The header reuses the safe product wording from this document. The embedded `auditCheckpoint` can be passed to `verifyCheckpoint()` later while the local export envelope can be checked with `verifyExport()` on the same trust boundary.
 
 `OutboundPrivacyReadout`:
 
@@ -2120,7 +2120,7 @@ privacyVerificationWarnings
 
 Done in Phase 3: Cap the web runtime score at 89 after normal computation, risk-weight same-status recommendations, and retain one encrypted score snapshot per local day for trend reporting.
 
-Done in Phase 4: Add user guidance for every review-status control, a signed Privacy Report with an embedded checkpoint, the request-obfuscation decoy tooltip, and distinct OSRM disabled/current-consent evidence.
+Done in Phase 4: Add user guidance for every review-status control, a locally integrity-signed Privacy Report with an embedded checkpoint, the request-obfuscation decoy tooltip, and distinct OSRM disabled/current-consent evidence.
 
 Done in Phase 5: Add mixed-status component coverage for all five tabs plus authentication rejection, success, and background timeout behavior.
 

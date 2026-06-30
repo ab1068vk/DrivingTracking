@@ -1,6 +1,6 @@
-import nativeCrypto from '@/lib/driveSenseNativePlugin';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { isAndroid, isNativePlatform } from '@/lib/nativePlatform';
+import { secureCall } from '@/lib/secureBridge';
 
 export const SIGNED_EXPORT_FORMAT = 'road-sage-signed-export';
 export const SIGNED_EXPORT_FORMAT_VERSION = 1;
@@ -133,7 +133,7 @@ const getWebSigningKey = async () => {
 const getAndroidSigningKey = async () => {
   const stored = await getJson(SIGNING_KEY_ALIAS, null);
   if (stored?.encrypted_key) {
-    const decrypted = await nativeCrypto.decryptSensitivePayload({
+    const decrypted = await secureCall('SecureBridge', 'decryptSensitivePayload', {
       ciphertext: stored.encrypted_key,
       context: SIGNING_KEY_CONTEXT,
     });
@@ -142,7 +142,7 @@ const getAndroidSigningKey = async () => {
 
   const key = await generateExtractableSigningKey();
   const raw = new Uint8Array(await cryptoProvider().subtle.exportKey('raw', key));
-  const encrypted = await nativeCrypto.encryptSensitivePayload({
+  const encrypted = await secureCall('SecureBridge', 'encryptSensitivePayload', {
     plaintext: bytesToBase64(raw),
     context: SIGNING_KEY_CONTEXT,
   });

@@ -116,7 +116,7 @@ const OUTBOUND_SERVICE_PROFILES = Object.freeze({
     expectedDisclosure: 'committed',
     enabled: () => true,
     usefulFor: 'Manual backup files',
-    safeShape: 'Coordinate-free zone commitments and signed backup metadata.',
+    safeShape: 'Coordinate-free zone commitments and local integrity metadata.',
   },
 });
 
@@ -172,7 +172,7 @@ const CONTROL_REGISTRY = [
   control('score_input_masking', 'inference', 2, 'Score input masking', checkScoreInputMasking, 'Trip scores could statistically reveal privacy-zone-adjacent movement even when the map is redacted.', 'Keep privacy-zone masking ahead of every trip scoring call path.'),
   control('differential_privacy', 'inference', 2, 'Differential privacy', checkDifferentialPrivacy, 'Repeated aggregate exports could reveal private activity.', 'Verify metric budgets and Laplace noise.'),
   control('commitment_scheme', 'inference', 2, 'Export commitments', checkCommitmentScheme, 'Repeated exports could expose privacy-zone centers.', 'Ensure commitments use fresh salts and exclude coordinates.'),
-  control('export_signing', 'integrity', 2, 'Export HMAC signing', checkExportSigning, 'Modified backups could be accepted as authentic.', 'Verify signing keys and tamper rejection.'),
+  control('export_signing', 'integrity', 2, 'Local export integrity', checkExportSigning, 'Modified backups could be accepted as unchanged local exports.', 'Verify signing keys and tamper rejection.'),
   control('crash_scrubbing', 'integrity', 2, 'Crash report scrubbing', checkCrashScrubbing, 'Crash payloads could disclose GPS coordinates.', 'Keep sensitive key and coordinate patterns current.'),
   control('audit_log', 'integrity', 1, 'Local audit chain', checkAuditLog, 'Privacy operations could be altered without detection.', 'Verify append and chain validation together.'),
   control('root_detection', 'device', 3, 'Root / jailbreak detection', checkDeviceIntegrity, 'A compromised device can weaken every local protection.', null),

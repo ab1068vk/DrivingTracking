@@ -14,6 +14,7 @@ const checkedFiles = [
   'src/lib/exportIntegrity.js',
   'src/lib/pdfExport.js',
   'src/lib/ubiReport.js',
+  'src/pages/Settings.jsx',
   'docs/PROJECT_README.md',
   'docs/README.md',
   'docs/PRIVACY_INTELLIGENCE.md',
@@ -27,6 +28,11 @@ const bannedWording = [
   { label: 'no data left the device', pattern: /\bno data left the device\b/i },
   { label: 'private route snapping', pattern: /\bprivate route snapping\b/i },
   { label: 'proof-of-safety paraphrase', pattern: /\bproof (?:of safety|that no sensitive data|no private data)\b/i },
+  { label: 'proof-of-erasure', pattern: /\bproof-of-erasure\b/i },
+  { label: 'positive third-party proof claim', pattern: /\b(?:as|is|are|provides?|gives?|offers?) third-party proof\b/i },
+  { label: 'third-party-verifiable', pattern: /\bthird-party-verifiable\b/i },
+  { label: 'authentic export claim', pattern: /\baccepted as authentic\b/i },
+  { label: 'audit checkpoint overclaim', pattern: /\bprotects against later history rewrites\b/i },
 ];
 
 function readProjectFile(relativePath) {

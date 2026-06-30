@@ -831,7 +831,7 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
       'privacy zones are exported as coordinate-free commitments',
     ],
     sentCoords: '0 - zone coordinates and ranges excluded, boundary points committed',
-    protections: ['HMAC-signed', 'commitment scheme', 'no zone centers or ranges included'],
+    protections: ['local HMAC integrity', 'commitment scheme', 'no zone centers or ranges included'],
     offsetMeters: null,
     bytesOut: JSON.stringify(signedBackup).length,
     status: 'safe',

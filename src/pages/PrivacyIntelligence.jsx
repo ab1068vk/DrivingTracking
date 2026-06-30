@@ -29,7 +29,10 @@ import { authenticateDevice } from '@/lib/biometricGate';
 import { loadPrivacyIntelligence } from '@/lib/privacyIntelligence';
 import { clearTransmissionLog } from '@/lib/transmissionLog';
 import { exportAuditCheckpoint, verifyCheckpoint } from '@/lib/hashChainLog';
-import { exportPrivacyReport } from '@/lib/privacyReport';
+import {
+  downloadPrivacyReport as savePrivacyReportDownload,
+  PRIVACY_REPORT_PASSWORD_MIN_LENGTH,
+} from '@/lib/privacyReport';
 import { dismissPrivacyZoneSuggestion } from '@/lib/privacyZoneSuggestions';
 import { logSystemFailure } from '@/lib/systemLog';
 import ProtectionGuidance from '@/components/privacy/ProtectionGuidance';
@@ -404,31 +407,42 @@ export function OverviewTab({ data, onOpenTab, onOpenSettings }) {
   const compoundRiskFindings = score.compoundRiskFindings || [];
   const [showThreatModel, setShowThreatModel] = useState(false);
   const [reportError, setReportError] = useState('');
+  const [reportSuccess, setReportSuccess] = useState('');
+  const [reportPassword, setReportPassword] = useState('');
+  const [reportPasswordConfirm, setReportPasswordConfirm] = useState('');
   const [exportingReport, setExportingReport] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(() => (
     globalThis.localStorage?.getItem(V2_BANNER_KEY) === 'true'
   ));
   const downloadPrivacyReport = useCallback(async () => {
+    if (reportPassword.length < PRIVACY_REPORT_PASSWORD_MIN_LENGTH) {
+      setReportError(`Choose a report password with at least ${PRIVACY_REPORT_PASSWORD_MIN_LENGTH} characters.`);
+      return;
+    }
+    if (reportPassword !== reportPasswordConfirm) {
+      setReportError('Report passwords do not match.');
+      return;
+    }
     setExportingReport(true);
     setReportError('');
+    setReportSuccess('');
     try {
-      const report = await exportPrivacyReport(data);
-      const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `road-sage-privacy-report-${new Date().toISOString().slice(0, 10)}.json`;
-      link.click();
-      URL.revokeObjectURL(url);
+      const result = await savePrivacyReportDownload(data, reportPassword);
+      setReportPassword('');
+      setReportPasswordConfirm('');
+      setReportSuccess(result?.native
+        ? `Encrypted report saved to Downloads as ${result.filename}.`
+        : `Encrypted report downloaded as ${result.filename}.`);
     } catch (reportExportError) {
       logSystemFailure('privacy_report_export_failed', reportExportError, {
         has_data: Boolean(data),
+        encrypted: true,
       });
       setReportError(reportExportError?.message || 'Privacy Report could not be exported.');
     } finally {
       setExportingReport(false);
     }
-  }, [data]);
+  }, [data, reportPassword, reportPasswordConfirm]);
   return (
     <div className="min-w-0 space-y-4 overflow-hidden">
       {!bannerDismissed && (
@@ -548,16 +562,50 @@ export function OverviewTab({ data, onOpenTab, onOpenSettings }) {
             <p key={finding.id} className="mt-2 break-words text-xs font-semibold opacity-90">{finding.detail}</p>
           ))}
           <p className="mt-2 break-words text-xs opacity-75">Local evidence only. Unknown checks are not evidence of safety.</p>
-          <button
-            type="button"
-            onClick={downloadPrivacyReport}
-            disabled={exportingReport}
-            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+          <form
+            className="mt-4 space-y-2 rounded-2xl bg-background/60 p-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              downloadPrivacyReport();
+            }}
           >
-            <Download className="h-4 w-4" />
-            {exportingReport ? 'Preparing report...' : 'Export Privacy Report'}
-          </button>
+            <div>
+              <div className="text-xs font-semibold">Password-protected report</div>
+              <p className="mt-1 text-[11px] opacity-75">Exports an encrypted summary with a local integrity signature. Raw coordinates, addresses, tokens, and privacy-zone geometry are excluded.</p>
+            </div>
+            <label className="block text-[11px] font-semibold">
+              Report password
+              <input
+                type="password"
+                value={reportPassword}
+                onChange={(event) => setReportPassword(event.target.value)}
+                autoComplete="new-password"
+                className="mt-1 h-9 w-full rounded-xl border border-input bg-background px-3 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
+                minLength={PRIVACY_REPORT_PASSWORD_MIN_LENGTH}
+              />
+            </label>
+            <label className="block text-[11px] font-semibold">
+              Confirm password
+              <input
+                type="password"
+                value={reportPasswordConfirm}
+                onChange={(event) => setReportPasswordConfirm(event.target.value)}
+                autoComplete="new-password"
+                className="mt-1 h-9 w-full rounded-xl border border-input bg-background px-3 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
+                minLength={PRIVACY_REPORT_PASSWORD_MIN_LENGTH}
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={exportingReport}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+            >
+              <Download className="h-4 w-4" />
+              {exportingReport ? 'Encrypting report...' : 'Export encrypted report'}
+            </button>
+          </form>
           {reportError && <p className="mt-2 text-xs font-medium text-red-700 dark:text-red-200">{reportError}</p>}
+          {reportSuccess && <p className="mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-200">{reportSuccess}</p>}
         </section>
 
         <section className="grid min-w-0 gap-3 sm:grid-cols-2">
@@ -1061,14 +1109,14 @@ export function AuditTab({ data }) {
   return (
     <div className="space-y-4">
       <div className={`rounded-2xl border p-4 ${chainValid ? (hasHardwareSignedEntry && signatureCoverage === 0 ? statusClass.ok : statusClass.warn) : statusClass.error}`}>
-        <div className="flex items-start gap-3">{chainValid ? <ShieldCheck className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}<div><div className="font-semibold">{chainValid ? (hasHardwareSignedEntry && signatureCoverage === 0 ? 'Hash-chain consistent, hardware-signed tip available' : hasHardwareSignedEntry ? `Hash-chain consistent, ${signatureCoverage} entries since the last hardware-signed checkpoint` : 'Hash-chain consistent, hardware signature unavailable') : 'Audit chain broken'}</div><div className="mt-1 text-xs opacity-80">{chainValid ? `${data.chainResult.length || 0} entries are linked in order. Tip ${shortHash(data.chainResult.tip)}. ${hasHardwareSignedEntry ? 'Retain an exported signed checkpoint to detect later local history rewrites.' : 'An unsigned local chain only protects against casual tampering.'}` : `Entry ${(data?.chainResult?.brokenAt ?? 0) + 1}: ${data?.chainResult?.reason || 'Verification failed'}`}</div></div></div>
+        <div className="flex items-start gap-3">{chainValid ? <ShieldCheck className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}<div><div className="font-semibold">{chainValid ? (hasHardwareSignedEntry && signatureCoverage === 0 ? 'Hash-chain consistent, hardware-signed tip available' : hasHardwareSignedEntry ? `Hash-chain consistent, ${signatureCoverage} entries since the last hardware-signed checkpoint` : 'Hash-chain consistent, hardware signature unavailable') : 'Audit chain broken'}</div><div className="mt-1 text-xs opacity-80">{chainValid ? `${data.chainResult.length || 0} entries are linked in order. Tip ${shortHash(data.chainResult.tip)}. ${hasHardwareSignedEntry ? 'Keep an exported checkpoint outside the app to compare against later local history.' : 'An unsigned local chain only protects against casual tampering.'}` : `Entry ${(data?.chainResult?.brokenAt ?? 0) + 1}: ${data?.chainResult?.reason || 'Verification failed'}`}</div></div></div>
       </div>
-      <div className="rounded-2xl border border-border bg-card p-4 text-sm shadow-sm"><div className="flex items-start gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="font-semibold">What the audit log can show</div><p className="mt-1 text-xs text-muted-foreground">Each entry includes the previous entry's hash. A verified signed checkpoint protects against later history rewrites if you retain the exported file. An unsigned chain only protects against casual tampering because the local chain and anchor can be rewritten together. The log intentionally excludes coordinates, addresses, tokens, and zone radius details.</p></div></div></div>
+      <div className="rounded-2xl border border-border bg-card p-4 text-sm shadow-sm"><div className="flex items-start gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="font-semibold">What the audit log can show</div><p className="mt-1 text-xs text-muted-foreground">Each entry includes the previous entry&apos;s hash. A retained signed checkpoint can detect later local history rewrites when compared with the current chain. An unsigned chain only protects against casual tampering because the local chain and anchor can be rewritten together. This is local evidence, not third-party proof.</p></div></div></div>
       {checkpointReminderDue && (
         <div className={`rounded-2xl border p-4 ${statusClass.warn}`}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="font-semibold">Export a checkpoint to protect against undetected local history rewrites.</div>
+              <div className="font-semibold">Export a checkpoint so later verification has an outside reference.</div>
               <div className="mt-1 text-xs opacity-80">Keep the exported file outside the app and verify it later against the live chain.</div>
             </div>
             <button type="button" onClick={exportCheckpoint} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground">
@@ -1116,12 +1164,12 @@ export function AuditTab({ data }) {
           <div className={`mt-3 rounded-lg border p-3 text-xs ${checkpointResult.valid ? (checkpointResult.signatureStatus === 'verified' ? statusClass.ok : statusClass.warn) : statusClass.error}`}>
             {checkpointResult.valid
               ? checkpointResult.signatureStatus === 'verified'
-                ? 'Chain history matches the saved checkpoint and its hardware-backed signature is valid.'
+                ? 'Chain history matches the saved checkpoint and its hardware-backed signature is valid local evidence.'
                 : 'Hash-chain consistent, hardware signature unavailable.'
               : checkpointResult.reason}
           </div>
         )}
-        <p className="mt-3 text-xs text-muted-foreground">A retained, verified signed checkpoint protects against later history rewrites. An unsigned checkpoint can still detect ordinary edits while the local anchor remains trustworthy.</p>
+        <p className="mt-3 text-xs text-muted-foreground">A retained, verified signed checkpoint can detect later local history rewrites when compared with the current chain. An unsigned checkpoint can still detect ordinary edits while the local anchor remains trustworthy.</p>
       </section>
       <div className="grid gap-3 sm:grid-cols-3"><SummaryCard icon={History} label="Entries today" value={data?.auditSummary?.todayTotal || 0} detail={`${data?.auditSummary?.weekTotal || 0} this week`} /><SummaryCard icon={Activity} label="Operation types" value={operations.length} detail="Distinct privacy actions" /><SummaryCard icon={Clock3} label="Latest entry" value={data?.auditSummary?.latestAt ? formatRelativeTime(data.auditSummary.latestAt) : 'None'} detail={data?.auditSummary?.latestAt ? formatTime(data.auditSummary.latestAt) : 'No audit activity yet'} /></div>
       <div className="grid gap-2 rounded-2xl border border-border bg-card p-4 shadow-sm md:grid-cols-[1fr_220px]"><label className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search audit activity" className="h-9 w-full rounded-xl border border-input bg-background pl-9 pr-3 text-sm outline-none focus:ring-1 focus:ring-ring" /></label><select value={operation} onChange={(event) => setOperation(event.target.value)} className="h-9 rounded-xl border border-input bg-background px-3 text-sm"><option value="all">All operations</option>{operations.map((item) => <option key={item.operation} value={item.operation}>{titleCase(item.operation)} ({item.count})</option>)}</select></div>

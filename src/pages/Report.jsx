@@ -71,7 +71,7 @@ export function buildReportExportSummary(trips = [], period = 'week') {
     periodLabel,
     tripCount: safeTrips.length,
     dateRangeLabel,
-    formats: ['CSV trip table', 'Monthly PDF', 'Driver score card PDF'],
+    formats: ['CSV trip table', `${periodLabel} PDF`, 'Driver score card PDF'],
     description: safeTrips.length
       ? `${safeTrips.length} completed trip${safeTrips.length === 1 ? '' : 's'} included`
       : 'Exports unlock after a completed trip matches the selected period.',
@@ -188,6 +188,7 @@ function buildReportInsights({ trips, period, periodDays, summary, previousSumma
 
 export default function Reports() {
   const [period, setPeriod] = useState('week');
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [ubiLoading, setUbiLoading] = useState(false);
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
@@ -210,6 +211,7 @@ export default function Reports() {
   const cutoff = period === 'all' ? 0 : now - periodDays * 24 * 3600 * 1000;
   const trips = completed.filter(t => new Date(t.start_time).getTime() >= cutoff);
   const exportSummary = buildReportExportSummary(trips, period);
+  const periodPdfLabel = `${exportSummary.periodLabel} PDF`;
 
   const summary = generateReportSummary(trips);
   const economics = trips.reduce((totals, trip) => {
@@ -369,40 +371,48 @@ export default function Reports() {
   };
 
   const handlePdfExport = async () => {
-    const result = await exportMonthlyReportPDF(trips, period, settings);
-    toast({
-      title: 'PDF saved',
-      description: result?.native
-        ? `${result.filename} was saved to Downloads.`
-        : `${result?.filename || 'Monthly PDF report'} is downloading.`,
-    });
-    if (result?.native) {
-      await notifyExportSaved({
-        filename: result.filename,
-        uri: result.uri,
-        mimeType: 'application/pdf',
-        label: 'PDF report',
-      }).catch(() => {});
+    setPdfLoading(true);
+    try {
+      const result = await exportMonthlyReportPDF(trips, period, settings);
+      toast({
+        title: 'PDF saved',
+        description: result?.native
+          ? `${result.filename} was saved to Downloads.`
+          : `${result?.filename || `${periodPdfLabel} report`} is downloading.`,
+      });
+      if (result?.native) {
+        await notifyExportSaved({
+          filename: result.filename,
+          uri: result.uri,
+          mimeType: 'application/pdf',
+          label: periodPdfLabel,
+        }).catch(() => {});
+      }
+    } finally {
+      setPdfLoading(false);
     }
   };
 
   const handleUbiExport = async () => {
     setUbiLoading(true);
-    const result = await exportUBIReportPDF(ubiReport, settings);
-    setUbiLoading(false);
-    toast({
-      title: 'Score card saved',
-      description: result?.native
-        ? `${result.filename} was saved to Downloads.`
-        : `${result?.filename || 'Score card PDF'} is downloading.`,
-    });
-    if (result?.native) {
-      await notifyExportSaved({
-        filename: result.filename,
-        uri: result.uri,
-        mimeType: 'application/pdf',
-        label: 'Score card',
-      }).catch(() => {});
+    try {
+      const result = await exportUBIReportPDF(ubiReport, settings);
+      toast({
+        title: 'Score card saved',
+        description: result?.native
+          ? `${result.filename} was saved to Downloads.`
+          : `${result?.filename || 'Score card PDF'} is downloading.`,
+      });
+      if (result?.native) {
+        await notifyExportSaved({
+          filename: result.filename,
+          uri: result.uri,
+          mimeType: 'application/pdf',
+          label: 'Score card',
+        }).catch(() => {});
+      }
+    } finally {
+      setUbiLoading(false);
     }
   };
 
@@ -474,15 +484,17 @@ export default function Reports() {
           </button>
           <button
             onClick={handlePdfExport}
-            className="flex items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground transition-opacity hover:opacity-90"
+            disabled={pdfLoading}
+            title={`Export ${exportSummary.periodLabel.toLowerCase()} report as PDF`}
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             <FileText className="w-4 h-4" />
-            Monthly PDF
+            {pdfLoading ? 'Generating...' : periodPdfLabel}
           </button>
           <button
             onClick={handleUbiExport}
-            disabled={ubiLoading || ubiReport.insufficientData}
-            title={ubiReport.insufficientData ? `Complete at least ${ubiReport.minimumDistanceKm ?? 50} km to export a score card.` : 'Export score card as PDF'}
+            disabled={ubiLoading}
+            title={ubiReport.insufficientData ? 'Export score card PDF with the current insufficient-data status' : 'Export score card as PDF'}
             className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-secondary disabled:opacity-60"
           >
             <Award className="w-4 h-4" />

@@ -533,49 +533,17 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     }
 
     @PluginMethod
-    public void encryptSensitivePayload(PluginCall call) {
-        String plaintext = call.getString("plaintext");
-        String context = call.getString("context", "drivesense");
-        if (plaintext == null) {
-            call.reject("plaintext is required.");
-            return;
-        }
-        try {
-            JSObject payload = new JSObject();
-            payload.put("ciphertext", DriveSensePayloadCrypto.encrypt(plaintext, context));
-            call.resolve(payload);
-        } catch (Exception error) {
-            call.reject("Sensitive payload encryption failed.", error);
-        }
-    }
-
-    @PluginMethod
-    public void decryptSensitivePayload(PluginCall call) {
-        String ciphertext = call.getString("ciphertext");
-        String context = call.getString("context", "drivesense");
-        if (ciphertext == null) {
-            call.reject("ciphertext is required.");
-            return;
-        }
-        try {
-            JSObject payload = new JSObject();
-            payload.put("plaintext", DriveSensePayloadCrypto.decrypt(ciphertext, context));
-            call.resolve(payload);
-        } catch (Exception error) {
-            call.reject("Sensitive payload decryption failed.", error);
-        }
-    }
-
-    @PluginMethod
     public void saveExportToDownloads(PluginCall call) {
-        String filename = call.getString("filename");
+        String filename;
+        try {
+            filename = validateDownloadFilename(call.getString("filename"));
+        } catch (IllegalArgumentException error) {
+            call.reject(error.getMessage());
+            return;
+        }
         String data = call.getString("data");
         String mimeType = call.getString("mimeType", "application/octet-stream");
         boolean isBase64 = Boolean.TRUE.equals(call.getBoolean("base64", false));
-        if (filename == null || filename.trim().isEmpty()) {
-            call.reject("filename is required.");
-            return;
-        }
         if (data == null) {
             call.reject("data is required.");
             return;
@@ -691,6 +659,29 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
         PowerManager powerManager = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
         return powerManager != null && powerManager.isIgnoringBatteryOptimizations(getContext().getPackageName());
+    }
+
+    private static String validateDownloadFilename(String filename) {
+        if (filename == null || filename.trim().isEmpty()) {
+            throw new IllegalArgumentException("filename is required.");
+        }
+
+        String trimmed = filename.trim();
+        if (".".equals(trimmed) || "..".equals(trimmed)) {
+            throw new IllegalArgumentException("filename is invalid.");
+        }
+        if (trimmed.length() > 180) {
+            throw new IllegalArgumentException("filename is too long.");
+        }
+
+        for (int index = 0; index < trimmed.length(); index++) {
+            char c = trimmed.charAt(index);
+            if (c < 0x20 || c == 0x7f || "\\/:*?\"<>|".indexOf(c) >= 0) {
+                throw new IllegalArgumentException("filename contains invalid path characters.");
+            }
+        }
+
+        return trimmed;
     }
 
     private JSObject saveDownload(String filename, byte[] data, String mimeType) throws Exception {

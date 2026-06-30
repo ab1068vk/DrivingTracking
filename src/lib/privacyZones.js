@@ -72,6 +72,7 @@ export const NATIVE_PRIVACY_SYNC_STATUS_OK = 'ok';
 export const NATIVE_PRIVACY_SYNC_STATUS_FAILED = 'failed';
 let privacyZonesMemory = null;
 let privacyZonesRevision = 0;
+let privacyZonesStorageLoadPromise = null;
 let zoneStatsWriteQueue = Promise.resolve();
 
 const appendPrivacyAuditEvent = (event) => {
@@ -639,7 +640,6 @@ const cellOnlyPrivacyZones = (zones = []) => (
 export function getPrivacyZones(settings = localSettings.get()) {
   const settingsZones = normalizePrivacyZones(settings?.privacy_zones);
   if (settingsZones.length) {
-    privacyZonesMemory = settingsZones;
     return effectivePrivacyZones(settingsZones, settings);
   }
   if (Array.isArray(settings?.privacy_zones) && settings.privacy_zones.length === 0) return [];
@@ -695,6 +695,16 @@ export async function loadPrivacyZonesFromStorage(settings = localSettings.get()
   }
 
   return zones;
+}
+
+export function ensurePrivacyZonesLoaded(settings = localSettings.get()) {
+  if (!privacyZonesStorageLoadPromise) {
+    privacyZonesStorageLoadPromise = loadPrivacyZonesFromStorage(settings).catch((error) => {
+      privacyZonesStorageLoadPromise = null;
+      throw error;
+    });
+  }
+  return privacyZonesStorageLoadPromise;
 }
 
 export async function syncZonesToNative(zones = getPrivacyZones()) {

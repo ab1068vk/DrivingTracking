@@ -639,7 +639,8 @@ describe('core page component renders', () => {
 
     expect(html).toContain('Driver Score Card');
     expect(html).toContain('Insufficient data');
-    expect(html).toContain('Complete at least 50 km');
+    expect(html).toContain('Add at least 50 km');
+    expect(html).toContain('Export score card PDF with the current insufficient-data status');
     expect(html).toContain('NOT AN INSURANCE RATING');
     expect(html).toContain('internal coaching estimate');
     expect(html).not.toContain('Non-preferred');
@@ -686,7 +687,7 @@ describe('core page component renders', () => {
     expect(html).toContain('Assign vehicles to trips to unlock CO2 savings estimates.');
     expect(html).toContain('Export package');
     expect(html).toContain('CSV trip table');
-    expect(html).toContain('Monthly PDF');
+    expect(html).toContain('This Week PDF');
     expect(html).toContain('Driver score card PDF');
     expect(html).toContain('do not modify trips, settings, backups, storage names, or permissions');
   });
@@ -702,7 +703,7 @@ describe('core page component renders', () => {
       periodLabel: 'This Month',
       tripCount: 2,
       description: '2 completed trips included',
-      formats: ['CSV trip table', 'Monthly PDF', 'Driver score card PDF'],
+      formats: ['CSV trip table', 'This Month PDF', 'Driver score card PDF'],
     });
     expect(summary.dateRangeLabel).toContain('to');
   });
