@@ -1,3 +1,4 @@
+// @ts-check
 import { AlertTriangle, Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Star, StickyNote, Moon, Smartphone } from 'lucide-react';
 import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed, getTripComponentScore } from '@/lib/tripEngine';
 import {

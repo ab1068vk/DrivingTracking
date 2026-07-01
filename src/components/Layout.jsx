@@ -1,3 +1,4 @@
+// @ts-check
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { Activity, Brain, Car, ClipboardList, Gauge, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route } from 'lucide-react';

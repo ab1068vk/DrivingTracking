@@ -1,3 +1,4 @@
+// @ts-check
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default function PageSkeleton({

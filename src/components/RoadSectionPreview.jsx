@@ -1,3 +1,4 @@
+// @ts-check
 import { useEffect, useMemo, useRef, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 import { ChevronDown, ChevronUp, Clock3, Compass, Map, Route } from 'lucide-react';

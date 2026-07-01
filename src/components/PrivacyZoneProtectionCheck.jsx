@@ -1,3 +1,4 @@
+// @ts-check
 import { CheckCircle2, EyeOff, MapPin, Route, Shield } from 'lucide-react';
 
 const validPoint = (point) => {

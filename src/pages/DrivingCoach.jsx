@@ -1,3 +1,4 @@
+// @ts-check
 import { motion } from 'framer-motion';
 import { useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -38,7 +39,7 @@ const focusLabels = {
 
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 
-function MetricCard({ icon: Icon, iconClassName, value, label, detail }) {
+function MetricCard({ icon: Icon, iconClassName, value, label, detail = null }) {
   return (
     <div className="bg-card border border-border rounded-2xl p-4">
       <Icon className={`mb-2 h-5 w-5 ${iconClassName}`} />
@@ -49,7 +50,7 @@ function MetricCard({ icon: Icon, iconClassName, value, label, detail }) {
   );
 }
 
-function MiniMetric({ value, label, detail, className = '' }) {
+function MiniMetric({ value, label, detail = null, className = '' }) {
   return (
     <div className="bg-secondary/50 rounded-xl p-3">
       <div className={`font-grotesk font-bold text-xl ${className}`}>{value}</div>

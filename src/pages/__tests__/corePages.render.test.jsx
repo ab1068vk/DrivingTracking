@@ -316,6 +316,11 @@ describe('core page component renders', () => {
     const { default: Dashboard } = await import('@/pages/Dashboard');
     const html = renderToStaticMarkup(<Dashboard />);
 
+    expect(html).toContain('Pre-trip readiness planner');
+    expect(html).toContain('Before you start');
+    expect(html).toContain('Better window');
+    expect(html).toContain('Saved speed checks');
+    expect(html).toContain('Watch road areas');
     expect(html).toContain('Estimated historical context');
     expect(html).toContain('Signal contributions');
     expect(html).toContain('Driving-event density');

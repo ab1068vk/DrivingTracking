@@ -17,6 +17,7 @@ import {
   TRIP_EVENT_MIGRATION_KEY,
   TRIP_EVENT_MIGRATION_VERSION,
   TRIP_SCHEMA_VERSION,
+  verifyTripsPersistedForNativeAcknowledge,
 } from '@/lib/localTripRepository';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
 import { DEFAULT_THRESHOLDS, buildScoreConstantsSnapshot } from '@/lib/tripEngine';
@@ -414,6 +415,24 @@ describe('localTripRepository IndexedDB migrations', () => {
     });
     expect(JSON.stringify(storedRecord)).not.toContain('43.6532');
     expect(JSON.stringify(storedRecord)).not.toContain('-79.3832');
+  });
+
+  it('verifies imported native trips are readable before acknowledging the native cache', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+
+    const importedTrip = await localTripRepository.create({
+      id: 'native-imported-trip',
+      status: 'completed',
+      start_time: '2026-05-22T10:00:00.000Z',
+      end_time: '2026-05-22T10:15:00.000Z',
+      route_points: [{ lat: 43.6532, lng: -79.3832 }],
+    });
+
+    await expect(verifyTripsPersistedForNativeAcknowledge([importedTrip])).resolves.toBe(true);
+    await expect(verifyTripsPersistedForNativeAcknowledge([
+      { id: 'missing-native-trip' },
+    ])).rejects.toThrow('Native trip import was not persisted: missing-native-trip');
   });
 
   it('opens one trip by key and serves lightweight summaries without scanning full trip records', async () => {

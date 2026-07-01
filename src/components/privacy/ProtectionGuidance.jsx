@@ -1,3 +1,4 @@
+// @ts-check
 import { ChevronRight } from 'lucide-react';
 
 const REVIEW_STATUSES = new Set(['error', 'warn', 'unknown']);

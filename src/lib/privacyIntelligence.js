@@ -1088,6 +1088,16 @@ export function buildPrivacyActionPlan({
   };
 }
 
+/**
+ * @param {{
+ *   protections?: any[],
+ *   transmissions?: Record<string, any>,
+ *   chainResult?: Record<string, any>,
+ *   zoneSummary?: Record<string, any>,
+ *   drivingReadout?: Record<string, any>,
+ *   actionPlan?: Record<string, any>,
+ * }} options
+ */
 export function buildPrivacyEvidenceSnapshot({
   protections = [],
   transmissions = {},

@@ -1,3 +1,4 @@
+// @ts-check
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Activity, Bell, Car, Check, ChevronRight, Globe2, Map, MapPin, Play, Search, Shield } from 'lucide-react';

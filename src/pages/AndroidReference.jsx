@@ -1,3 +1,4 @@
+// @ts-check
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react';

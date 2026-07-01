@@ -204,6 +204,10 @@ const privacyZonePortabilityPlaceholders = (zones = []) => (
   }))
 );
 
+/**
+ * @param {Record<string, any>} settings
+ * @param {any[]} zones
+ */
 const privacySafeSettingsForPortability = (settings = {}, zones = []) => {
   const safe = { ...(settings || {}) };
   delete safe.last_map_center;

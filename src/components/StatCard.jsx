@@ -1,3 +1,4 @@
+// @ts-check
 import { TrendingUp } from 'lucide-react';
 
 export default function StatCard({ icon: Icon, label, value, sub = '', gradient, index: _index = 0, onClick = null }) {

@@ -1,3 +1,4 @@
+// @ts-check
 import { getScoreColor } from '@/lib/tripEngine';
 import { isApproximateScoreOutput } from '@/lib/scoreDisplay';
 

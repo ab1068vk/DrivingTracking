@@ -1,3 +1,4 @@
+// @ts-check
 import { Component, Fragment } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { logError } from '@/lib/errorReporting';

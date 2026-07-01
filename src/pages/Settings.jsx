@@ -1,3 +1,4 @@
+// @ts-check
 import { memo, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -826,7 +827,7 @@ export default function Settings() {
   // Load settings from local storage
   const [cfg, setCfg] = useState(() => localSettings.get());
   const cfgRef = useRef(cfg);
-  const settingsPersistenceQueueRef = useRef(Promise.resolve());
+  const settingsPersistenceQueueRef = useRef(/** @type {Promise<any>} */ (Promise.resolve()));
   cfgRef.current = cfg;
   const [thresholdEditingEnabled, setThresholdEditingEnabled] = useState(false);
   const updateSettingsSearch = (value) => {

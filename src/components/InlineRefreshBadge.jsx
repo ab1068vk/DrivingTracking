@@ -1,3 +1,4 @@
+// @ts-check
 import { RefreshCw } from 'lucide-react';
 
 export default function InlineRefreshBadge({ visible, label = 'Refreshing' }) {

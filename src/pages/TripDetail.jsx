@@ -1,3 +1,4 @@
+// @ts-check
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -573,6 +574,9 @@ export default function TripDetail() {
   }, [speedLimitReviewMutation, trip?.id]);
 
   const voiceSpeedMarkerMutation = useMutation({
+    /**
+     * @param {{ marker: Record<string, any>, source: string }} variables
+     */
     mutationFn: async ({ marker, source }) => {
       const limitKmh = voiceSpeedMarkerLimit(marker);
       const lat = Number(marker?.lat);
@@ -600,6 +604,7 @@ export default function TripDetail() {
         }
       );
       if (!saved) throw new Error('Could not save this speed marker.');
+      const savedCorrection = /** @type {Record<string, any>} */ (saved);
 
       const markerKey = voiceSpeedMarkerKey(marker);
       const reviewedAt = new Date().toISOString();
@@ -611,7 +616,7 @@ export default function TripDetail() {
               review_status: 'saved',
               reviewed_at: reviewedAt,
               saved_source: source,
-              saved_correction_id: saved.id || saved.correctionId || null,
+              saved_correction_id: savedCorrection.id || savedCorrection.correctionId || null,
             }
             : item
         ));

@@ -76,6 +76,13 @@ function tripReviewFingerprint(trip = null) {
   ].join(':');
 }
 
+/**
+ * @param {{
+ *   conflictedCells?: any[],
+ *   reviewTrip?: Record<string, any> | null,
+ *   reviewCellCount?: number,
+ * }} options
+ */
 export function buildDashboardSpeedLimitReviewFingerprint({
   conflictedCells = [],
   reviewTrip = null,
@@ -133,6 +140,9 @@ export function isDashboardSpeedLimitReviewDismissed(dismissedFingerprint = '', 
   return currentItems.every((item) => dismissedItems.has(item));
 }
 
+/**
+ * @returns {Array<Record<string, any>>}
+ */
 export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {}) {
   const points = Array.isArray(trip.route_points) ? trip.route_points.filter(validPublicPoint) : [];
   if (!points.length) return [];

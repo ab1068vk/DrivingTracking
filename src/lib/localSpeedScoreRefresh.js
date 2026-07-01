@@ -53,7 +53,7 @@ const correctionTimeSignature = (rule = null) => {
   ].join(':');
 };
 
-const correctionIdentityKey = (correction = {}) => {
+const correctionIdentityKey = (correction = {}, _index = 0) => {
   const stableId = correction?.id || correction?.ruleId || correction?.sectionKey || correction?.correctionId;
   if (stableId) return `id:${stableId}`;
   return [

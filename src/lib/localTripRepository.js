@@ -1088,6 +1088,27 @@ const emptyNativeImportResult = () => ({
   matchedActiveTrip: null,
 });
 
+export async function verifyTripsPersistedForNativeAcknowledge(trips = []) {
+  const missingTripIds = [];
+
+  for (const trip of trips) {
+    if (trip?.id == null) {
+      missingTripIds.push('(missing-id)');
+      continue;
+    }
+    const stored = await getStoredTripById(trip.id);
+    if (!stored || String(stored.id) !== String(trip.id)) {
+      missingTripIds.push(String(trip.id));
+    }
+  }
+
+  if (missingTripIds.length) {
+    throw new Error(`Native trip import was not persisted: ${missingTripIds.join(', ')}`);
+  }
+
+  return true;
+}
+
 const importNativeCompletedTrips = async () => {
   if (!isAndroid()) return emptyNativeImportResult();
   if (nativeTripImportPromise) return nativeTripImportPromise;
@@ -1174,7 +1195,12 @@ const importNativeCompletedTrips = async () => {
       }
     }
 
-    await clearNativeCompletedTrips();
+    await verifyTripsPersistedForNativeAcknowledge(importedTrips);
+    await clearNativeCompletedTrips().catch((error) => {
+      logSystemFailure('native_completed_trips_clear_after_verified_import', error, {
+        imported_trip_count: importedTrips.length,
+      });
+    });
     const matchedActiveTrip = findNativeManualCompletion(importedTrips, activeTripAtImport);
     if (matchedActiveTrip && activeTripAtImport) {
       const currentActiveTrip = activeTripStore.get();

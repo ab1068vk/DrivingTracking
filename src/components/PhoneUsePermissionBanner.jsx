@@ -1,3 +1,4 @@
+// @ts-check
 import { AlertTriangle, ExternalLink } from 'lucide-react';
 import { openAndroidUsageAccessSettings } from '@/lib/activityRecognition';
 import { METRIC_REGISTRY } from '@/lib/metricRegistry';

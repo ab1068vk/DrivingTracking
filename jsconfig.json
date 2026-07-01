@@ -7,9 +7,9 @@
     "jsx": "react-jsx",
     "module": "esnext",
     "moduleResolution": "bundler",
-    "lib": ["esnext", "dom"],
+    "lib": ["esnext", "dom", "dom.iterable"],
     "target": "esnext",
-    "checkJs": true,
+    "checkJs": false,
     "skipLibCheck": true,
     "maxNodeModuleJsDepth": 0,
     "allowSyntheticDefaultImports": true,
@@ -17,6 +17,22 @@
     "resolveJsonModule": true,
     "types": []
   },
-  "include": ["src/**/*.d.ts", "src/components/**/*.js", "src/pages/**/*.jsx", "src/Layout.jsx"],
-  "exclude": ["node_modules", "dist", "src/vite-plugins", "src/components/ui", "src/api", "src/lib"]
-} 
+  "include": [
+    "src/**/*.d.ts",
+    "src/App.jsx",
+    "src/main.jsx",
+    "src/components/**/*.js",
+    "src/components/**/*.jsx",
+    "src/pages/**/*.jsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/vite-plugins",
+    "src/components/ui",
+    "src/**/*.test.js",
+    "src/**/*.test.jsx",
+    "src/**/__tests__/**",
+    "src/**/__fixtures__/**"
+  ]
+}

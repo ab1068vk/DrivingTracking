@@ -1,3 +1,4 @@
+// @ts-check
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 export default function InlineLoadError({

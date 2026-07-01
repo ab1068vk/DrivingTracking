@@ -17,6 +17,7 @@ const safeMark = (name) => {
 
 export const TRIAGE_DISABLE_MAPS = import.meta.env.VITE_TRIAGE_DISABLE_MAPS === 'true';
 export const TRIAGE_DASHBOARD_LIMITED_SUMMARIES = import.meta.env.VITE_TRIAGE_DASHBOARD_LIMITED_SUMMARIES === 'true';
+export const TRIAGE_LOGS_ENABLED = import.meta.env.DEV || import.meta.env.VITE_PERF_TRIAGE_LOGS === 'true';
 
 export function beginMeasure(name, detail = {}) {
   const id = `${name}:${++measureSequence}`;
@@ -45,7 +46,9 @@ export function beginMeasure(name, detail = {}) {
       window.__PERF_TRIAGE__ = window.__PERF_TRIAGE__ || [];
       window.__PERF_TRIAGE__.push(entry);
     }
-    console.info(TRIAGE_PREFIX, JSON.stringify(entry));
+    if (TRIAGE_LOGS_ENABLED) {
+      console.info(TRIAGE_PREFIX, JSON.stringify(entry));
+    }
     return entry;
   };
 }

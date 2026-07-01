@@ -712,6 +712,10 @@ const privacyZoneExportPlaceholders = (zones = []) => (
   }))
 );
 
+/**
+ * @param {Record<string, any>} settings
+ * @param {any[]} privacyZones
+ */
 const privacySafeSettingsForBackup = (settings = {}, privacyZones = []) => {
   const safe = { ...(settings || {}) };
   delete safe.last_map_center;

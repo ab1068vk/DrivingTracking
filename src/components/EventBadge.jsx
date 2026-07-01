@@ -1,3 +1,4 @@
+// @ts-check
 import { Zap, TrendingDown, CornerUpRight, Gauge, Clock } from 'lucide-react';
 
 const EVENT_CONFIG = {
