@@ -96,6 +96,7 @@ import { formatEstimatedScore, formatScoreWithProvenance } from '@/lib/scoreDisp
 import { formatDataSourceLabel } from '@/lib/metricRegistry';
 import { tripScoreDeltaSummary } from '@/lib/speedLimitDisplay';
 import { summarizeTripSpeedLimitIntelligence } from '@/lib/speedLimitIntelligence';
+import { recordSystemEvent } from '@/lib/systemLog';
 import useLocalSettings from '@/hooks/useLocalSettings';
 
 // CHANGES (session):
@@ -372,6 +373,7 @@ export default function TripDetail() {
   const [speedLimitLocalKnowledgeResults, setSpeedLimitLocalKnowledgeResults] = useState([]);
   const metadataSectionRef = useRef(null);
   const speedLimitReviewSectionRef = useRef(null);
+  const trip3dAvailabilityLogRef = useRef('');
   const invalidateTripLists = () => {
     qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
   };
@@ -882,6 +884,39 @@ export default function TripDetail() {
     };
   }, [trip?.id]);
 
+  useEffect(() => {
+    if (!trip?.id || isLoading) return;
+    const pointCount = Array.isArray(trip.route_points) ? trip.route_points.length : 0;
+    const summaryOnly = trip.privacy_mode === 'summary_only';
+    const expired = Boolean(trip.route_data_expired_at);
+    const available = !summaryOnly && !expired && pointCount > 1;
+    const reason = available
+      ? 'available'
+      : summaryOnly
+        ? 'summary_only_private_trip'
+        : expired
+          ? 'route_data_expired'
+          : 'insufficient_route_points';
+    const key = `${trip.id}:${reason}:${pointCount}`;
+    if (trip3dAvailabilityLogRef.current === key) return;
+    trip3dAvailabilityLogRef.current = key;
+    recordSystemEvent(
+      available ? 'trip_3d_playback_available' : 'trip_3d_playback_unavailable',
+      {
+        trip_id: trip.id,
+        reason,
+        route_point_count: pointCount,
+        route_data_expired: expired,
+        summary_only_private_trip: summaryOnly,
+      },
+      {
+        category: 'diagnostics',
+        title: available ? '3D drive available' : '3D drive unavailable',
+        severity: available ? 'info' : 'warn',
+      }
+    );
+  }, [isLoading, trip?.id, trip?.privacy_mode, trip?.route_data_expired_at, trip?.route_points]);
+
   if (isLoading) {
     return (
       <div className="space-y-4 pb-4">
@@ -1228,6 +1263,7 @@ export default function TripDetail() {
   const summaryOnlyPrivateTrip = trip.privacy_mode === 'summary_only';
   const tripRawPointCount = Number(trip.route_points_raw_count) || tripMapPointCount;
   const routeDataExpired = Boolean(trip.route_data_expired_at);
+  const showTrip3DPage = !summaryOnlyPrivateTrip && !routeDataExpired && tripMapPointCount > 1;
   const tripPointSummary = summaryOnlyPrivateTrip
     ? 'No GPS coordinates were stored for this private trip'
     : routeDataExpired
@@ -1409,6 +1445,15 @@ export default function TripDetail() {
                 speedLimitReviewNeededForTrip(trip) ? 'Review speed limits' : 'Check speed limits'
               )}
             </button>
+          )}
+          {showTrip3DPage && (
+            <Link
+              to={`/trips/${encodeURIComponent(String(id))}/3d`}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground transition-colors hover:opacity-90"
+            >
+              <Car className="h-4 w-4" />
+              3D replay
+            </Link>
           )}
           {trip && (
             <Link

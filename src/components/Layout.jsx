@@ -1,7 +1,7 @@
 // @ts-check
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { Activity, Brain, Car, ClipboardList, Gauge, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route } from 'lucide-react';
+import { Activity, Brain, Car, ClipboardList, Gauge, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route, Cuboid } from 'lucide-react';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
 import { LEGAL_DISCLAIMER_SHORT } from '@/lib/legalDisclaimers';
 import { activeTripStore } from '@/lib/trackingStore';
@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/trips', label: 'Trips', icon: History },
+  { path: '/3d-replay', label: '3D Replay', icon: Cuboid },
   { path: '/map', label: 'Map', icon: Map },
   { path: '/coach', label: 'Coach', icon: Brain },
   { path: '/insights', label: 'Insights', icon: TrendingUp },
@@ -22,8 +23,8 @@ const navItems = [
 ];
 
 const navSections = [
-  { label: 'Drive', items: navItems.slice(0, 7) },
-  { label: 'Manage', items: navItems.slice(7) },
+  { label: 'Drive', items: navItems.slice(0, 8) },
+  { label: 'Manage', items: navItems.slice(8) },
 ];
 
 function BrandMark({ className = '' }) {

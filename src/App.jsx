@@ -79,7 +79,9 @@ const showDebugRoutes = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEBUG_R
 const Onboarding = lazy(() => import('@/pages/Onboarding'));
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const TripHistory = lazy(() => import('@/pages/TripHistory'));
+const Trip3DReplay = lazy(() => import('@/pages/Trip3DReplay'));
 const TripDetail = lazy(() => import('@/pages/TripDetail'));
+const TripDrive3DPage = lazy(() => import('@/pages/TripDrive3DPage'));
 const SpeedAnalysis = lazy(() => import('@/pages/SpeedAnalysis'));
 const MapScreen = lazy(() => import('@/pages/MapScreen'));
 const Reports = lazy(() => import('@/pages/Report'));
@@ -409,6 +411,11 @@ const AuthenticatedApp = () => {
               <TripHistory />
             </AppRouteBoundary>
           )} />
+          <Route path="/3d-replay" element={(
+            <AppRouteBoundary context="trip_3d_replay_page" title="3D replay unavailable">
+              <Trip3DReplay />
+            </AppRouteBoundary>
+          )} />
           <Route path="/trips/:id" element={(
             <PageRouteSuspense title="Loading trip detail">
               <SectionErrorBoundary
@@ -428,6 +435,17 @@ const AuthenticatedApp = () => {
                 message="Something went wrong while opening speed analysis for this trip. Reload to try again."
               >
                 <SpeedAnalysis />
+              </SectionErrorBoundary>
+            </PageRouteSuspense>
+          )} />
+          <Route path="/trips/:id/3d" element={(
+            <PageRouteSuspense title="Loading 3D drive">
+              <SectionErrorBoundary
+                context="trip_3d_page"
+                title="3D drive unavailable"
+                message="Something went wrong while opening the 3D drive. Reload to try again."
+              >
+                <TripDrive3DPage />
               </SectionErrorBoundary>
             </PageRouteSuspense>
           )} />

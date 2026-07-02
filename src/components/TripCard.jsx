@@ -1,5 +1,5 @@
 // @ts-check
-import { AlertTriangle, Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Star, StickyNote, Moon, Smartphone } from 'lucide-react';
+import { AlertTriangle, Clock, Gauge, Navigation, ChevronRight, ShieldAlert, Flame, Star, StickyNote, Moon, Smartphone, Cuboid } from 'lucide-react';
 import { formatDistance, formatDuration, formatDate, formatTime, getScoreColor, formatSpeed, getTripComponentScore } from '@/lib/tripEngine';
 import {
   buildScoreExplanation,
@@ -31,6 +31,7 @@ export default function TripCard({
   const unavailableScore = overallScore.value == null;
   const privateTrip = trip.privacy_mode === 'summary_only';
   const routeDataExpired = Boolean(trip.route_data_expired_at);
+  const replay3dAvailable = trip.route_replay_available === true && !privateTrip && !routeDataExpired;
   const speedLimitReviewRequired = trip.speed_limit_review_required === true && Boolean(trip.id) && !privateTrip;
   const scoreUnavailableMessage = privateTrip
     ? 'Score unavailable because this private trip saved no route data'
@@ -156,6 +157,22 @@ export default function TripCard({
             >
               <AlertTriangle className="h-3.5 w-3.5" />
               Review speed
+            </button>
+          )}
+
+          {replay3dAvailable && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                navigate(`/3d-replay?tripId=${encodeURIComponent(String(trip.id))}`);
+              }}
+              className="pointer-events-auto relative z-10 mt-2 inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs font-semibold text-primary hover:bg-primary/15"
+              title="Open this trip in 3D Replay"
+              aria-label={`Open 3D replay for ${title}`}
+            >
+              <Cuboid className="h-3.5 w-3.5" />
+              3D replay
             </button>
           )}
 
