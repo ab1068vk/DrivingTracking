@@ -43,6 +43,7 @@ import {
   calculatePeakHourStress,
 } from '@/lib/tripInsights';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const PERIODS = [
   { id: 'week', label: 'This Week', days: 7 },
@@ -661,6 +662,16 @@ export default function Reports() {
             ))}
           </div>
 
+          <Tabs defaultValue="score" className="space-y-5">
+            <div className="overflow-x-auto pb-1">
+              <TabsList className="min-w-max rounded-full border border-border bg-card p-1">
+                <TabsTrigger value="score" className="rounded-full px-4">Score</TabsTrigger>
+                <TabsTrigger value="efficiency" className="rounded-full px-4">Efficiency</TabsTrigger>
+                <TabsTrigger value="risk" className="rounded-full px-4">Risk</TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent value="score" className="mt-0 grid gap-5">
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
@@ -789,6 +800,9 @@ export default function Reports() {
             </div>
           </motion.div>
 
+            </TabsContent>
+
+            <TabsContent value="efficiency" className="mt-0 grid gap-5 lg:grid-cols-2">
           {roadTypeData.length > 0 && (
             <motion.div
               initial={{ opacity: 0, y: 16 }}
@@ -916,6 +930,9 @@ export default function Reports() {
             </motion.div>
           )}
 
+            </TabsContent>
+
+            <TabsContent value="risk" className="mt-0 grid gap-5 lg:grid-cols-2">
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1212,6 +1229,8 @@ export default function Reports() {
               )}
             </motion.div>
           )}
+            </TabsContent>
+          </Tabs>
         </>
       )}
     </div>

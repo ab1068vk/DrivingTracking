@@ -28,6 +28,7 @@ import {
   buildWeeklyDriverSummary,
 } from '@/lib/mediumInsights';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const dayInitials = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const nhtsaDistractedDrivingFacts = [
@@ -148,6 +149,17 @@ export default function Insights() {
             ))}
           </section>
 
+          <Tabs defaultValue="overview" className="space-y-5">
+            <div className="overflow-x-auto pb-1">
+              <TabsList className="min-w-max rounded-full border border-border bg-card p-1">
+                <TabsTrigger value="overview" className="rounded-full px-4">Overview</TabsTrigger>
+                <TabsTrigger value="safety" className="rounded-full px-4">Safety</TabsTrigger>
+                <TabsTrigger value="patterns" className="rounded-full px-4">Patterns</TabsTrigger>
+                <TabsTrigger value="goals" className="rounded-full px-4">Goals</TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent value="overview" className="mt-0 grid gap-5 lg:grid-cols-[1fr_0.85fr]">
           <section className="rounded-3xl border border-border bg-card p-5 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -222,7 +234,9 @@ export default function Insights() {
               <SummaryLine label="Biggest improvement" value={weekly.biggest_improvement} />
             </div>
           </section>
+            </TabsContent>
 
+            <TabsContent value="safety" className="mt-0">
           <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
             <div className="grid gap-0 lg:grid-cols-[1.05fr_0.95fr]">
               <div className="p-5">
@@ -436,7 +450,9 @@ export default function Insights() {
               </div>
             </div>
           </section>
+            </TabsContent>
 
+            <TabsContent value="patterns" className="mt-0 grid gap-5">
           <section className="rounded-3xl border border-border bg-card p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <div>
@@ -566,7 +582,9 @@ export default function Insights() {
               </div>
             )}
           </section>
+            </TabsContent>
 
+            <TabsContent value="goals" className="mt-0">
           <section className="grid gap-5 md:grid-cols-2">
             <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
               <div className="mb-4 flex items-start justify-between">
@@ -619,6 +637,8 @@ export default function Insights() {
               )}
             </div>
           </section>
+            </TabsContent>
+          </Tabs>
         </>
       )}
     </div>

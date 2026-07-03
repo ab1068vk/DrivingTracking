@@ -1382,19 +1382,46 @@ export default function TripDetail() {
   return (
     <div className="space-y-5 pb-4">
       {/* Header */}
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-wrap items-center justify-between gap-3">
-        <button
-          onClick={() => navigate('/trips')}
-          className="flex shrink-0 items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span className="text-sm">Back</span>
-        </button>
-        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => navigate('/trips')}
+            className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-transparent px-1 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span>Back</span>
+          </button>
+          <div className="inline-flex items-center gap-1">
+            <button
+              onClick={() => metadataMutation.mutate({ is_favorite: trip.is_favorite !== true })}
+              aria-label={trip.is_favorite ? 'Remove trip from favorites' : 'Add trip to favorites'}
+              title={trip.is_favorite ? 'Remove favorite' : 'Favorite trip'}
+              className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
+                trip.is_favorite ? 'bg-amber-500/15 text-amber-400' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'
+              }`}
+            >
+              <Star className={`h-4 w-4 ${trip.is_favorite ? 'fill-current' : ''}`} />
+            </button>
+            <button
+              type="button"
+              aria-label="Delete trip"
+              title="Delete trip"
+              onClick={() => {
+                if (confirm('Delete this trip? This cannot be undone.')) deleteMutation.mutate();
+              }}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/50"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           {parkStops.length > 0 && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <button className="px-3 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:opacity-90 transition-opacity">
+                <button className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60">
+                  <Shuffle className="h-4 w-4" />
                   Split Trip
                 </button>
               </AlertDialogTrigger>
@@ -1434,10 +1461,10 @@ export default function TripDetail() {
             <button
               type="button"
               onClick={toggleSpeedLimitReview}
-              className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
+              className={`inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 min-[360px]:flex-none ${
                 reviewSpeedLimitConflicts
                   ? 'bg-amber-600 text-white hover:bg-amber-700'
-                  : 'border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-100 dark:hover:bg-amber-950/50'
+                  : 'border border-amber-500/35 bg-amber-500/10 text-amber-950 hover:bg-amber-500/15 dark:text-amber-100'
               }`}
             >
               <Gauge className="h-4 w-4" />
@@ -1449,41 +1476,12 @@ export default function TripDetail() {
           {showTrip3DPage && (
             <Link
               to={`/trips/${encodeURIComponent(String(id))}/3d`}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground transition-colors hover:opacity-90"
+              className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 min-[360px]:flex-none"
             >
               <Car className="h-4 w-4" />
               3D replay
             </Link>
           )}
-          {trip && (
-            <Link
-              to={`/speed-limits?tripId=${encodeURIComponent(String(id))}`}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-secondary"
-            >
-              <Gauge className="h-4 w-4" />
-              Saved speeds
-            </Link>
-          )}
-          <button
-            onClick={() => metadataMutation.mutate({ is_favorite: trip.is_favorite !== true })}
-            aria-label={trip.is_favorite ? 'Remove trip from favorites' : 'Add trip to favorites'}
-            title={trip.is_favorite ? 'Remove favorite' : 'Favorite trip'}
-            className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${
-              trip.is_favorite ? 'text-amber-500 bg-amber-50 dark:bg-amber-950/30' : 'text-muted-foreground hover:bg-secondary'
-            }`}
-          >
-            <Star className={`w-4 h-4 ${trip.is_favorite ? 'fill-current' : ''}`} />
-          </button>
-          <button
-            type="button"
-            aria-label="Delete trip"
-            onClick={() => {
-              if (confirm('Delete this trip? This cannot be undone.')) deleteMutation.mutate();
-            }}
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
         </div>
       </motion.div>
 
