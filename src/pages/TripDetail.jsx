@@ -1382,15 +1382,15 @@ export default function TripDetail() {
   return (
     <div className="space-y-5 pb-4">
       {/* Header */}
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-wrap items-center justify-between gap-3">
         <button
           onClick={() => navigate('/trips')}
-          className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
+          className="flex shrink-0 items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
           <span className="text-sm">Back</span>
         </button>
-        <div className="flex gap-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
           {parkStops.length > 0 && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -1466,18 +1466,21 @@ export default function TripDetail() {
           )}
           <button
             onClick={() => metadataMutation.mutate({ is_favorite: trip.is_favorite !== true })}
+            aria-label={trip.is_favorite ? 'Remove trip from favorites' : 'Add trip to favorites'}
             title={trip.is_favorite ? 'Remove favorite' : 'Favorite trip'}
-            className={`p-2 rounded-xl transition-colors ${
+            className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${
               trip.is_favorite ? 'text-amber-500 bg-amber-50 dark:bg-amber-950/30' : 'text-muted-foreground hover:bg-secondary'
             }`}
           >
             <Star className={`w-4 h-4 ${trip.is_favorite ? 'fill-current' : ''}`} />
           </button>
           <button
+            type="button"
+            aria-label="Delete trip"
             onClick={() => {
               if (confirm('Delete this trip? This cannot be undone.')) deleteMutation.mutate();
             }}
-            className="p-2 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-500 rounded-xl transition-colors"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30"
           >
             <Trash2 className="w-4 h-4" />
           </button>
