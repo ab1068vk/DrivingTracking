@@ -6,6 +6,14 @@
         <item name="colorPrimary">@color/roadsage_primary</item>
         <item name="colorPrimaryDark">@color/roadsage_primary_dark</item>
         <item name="colorAccent">@color/roadsage_accent</item>
+        <item name="android:background">@color/roadsage_native_surface</item>
+        <item name="android:colorBackground">@color/roadsage_native_surface</item>
+        <item name="android:navigationBarColor">@color/roadsage_native_surface</item>
+        <item name="android:statusBarColor">@color/roadsage_native_surface</item>
+        <item name="android:windowBackground">@color/roadsage_native_surface</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowLightStatusBar">@bool/roadsage_light_system_bars</item>
+        <item name="android:windowLightNavigationBar">@bool/roadsage_light_system_bars</item>
         <item name="android:forceDarkAllowed">false</item>
     </style>
 
@@ -18,9 +26,12 @@
         <item name="android:colorAccent">@color/roadsage_accent</item>
         <item name="android:background">@color/roadsage_native_surface</item>
         <item name="android:colorBackground">@color/roadsage_native_surface</item>
-        <item name="android:navigationBarColor">@color/roadsage_primary_dark</item>
-        <item name="android:statusBarColor">@color/roadsage_primary_dark</item>
-        <item name="android:windowBackground">@color/roadsage_primary_dark</item>
+        <item name="android:navigationBarColor">@color/roadsage_native_surface</item>
+        <item name="android:statusBarColor">@color/roadsage_native_surface</item>
+        <item name="android:windowBackground">@color/roadsage_native_surface</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowLightStatusBar">@bool/roadsage_light_system_bars</item>
+        <item name="android:windowLightNavigationBar">@bool/roadsage_light_system_bars</item>
         <item name="android:textColorPrimary">@color/roadsage_native_text_primary</item>
         <item name="android:textColorSecondary">@color/roadsage_native_text_secondary</item>
         <item name="android:forceDarkAllowed">false</item>
@@ -62,5 +73,13 @@
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
+        <item name="android:colorBackground">@color/roadsage_native_surface</item>
+        <item name="android:navigationBarColor">@color/roadsage_native_surface</item>
+        <item name="android:statusBarColor">@color/roadsage_native_surface</item>
+        <item name="android:windowBackground">@color/roadsage_native_surface</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowLightStatusBar">@bool/roadsage_light_system_bars</item>
+        <item name="android:windowLightNavigationBar">@bool/roadsage_light_system_bars</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
 </resources>

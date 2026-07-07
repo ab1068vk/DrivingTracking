@@ -25,6 +25,8 @@ import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import {
   buildDrivingThresholds,
   calculateSegmentMetrics,
+  classifyRoadTypesByPoint,
+  createZoneLookup,
   formatDistance,
   formatDuration,
   formatDateTime,
@@ -258,12 +260,16 @@ function buildSpeedLimitSourceBreakdown(trip = {}, settings = {}, speedLimitCont
 
   const thresholds = buildDrivingThresholds(settings);
   const inferredZones = inferSpeedZones(points, thresholds);
+  const zoneForIndex = createZoneLookup(inferredZones);
+  const roadTypesByPoint = classifyRoadTypesByPoint(points);
   const fallbackCountry = speedLimitContext?.fallback_country || speedLimitDefaultCountryKey(settings);
   const buckets = new Map();
 
   for (const { point, index } of samples) {
     const resolved = resolveEffectiveSpeedLimitForIndex(points, index, thresholds, {
       inferredZones,
+      zoneForIndex,
+      roadTypesByPoint,
       settings,
       localKnowledge: localKnowledgeResults[index] ?? null,
     });
@@ -781,9 +787,10 @@ export default function TripDetail() {
 
     const points = trip.route_points || [];
     const zones = inferSpeedZones(points);
+    const zoneForIndex = createZoneLookup(zones);
     const byZone = new Map();
     for (let i = 1; i < points.length; i++) {
-      const zone = zones.find((item) => i >= item.startIndex && i <= item.endIndex);
+      const zone = zoneForIndex(i);
       if (!zone) continue;
       const segment = calculateSegmentMetrics(points[i - 1], points[i]);
       if (segment.dt <= 0 || segment.dt > 120 || segment.isNoise) continue;

@@ -7,7 +7,7 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { calibrationLabelService } from '@/api/calibrationLabels';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, ArrowLeft, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff, Mic
+  Moon, Sun, Monitor, Cpu, Trash2, Download, Upload, Shield, ChevronRight, ArrowLeft, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff, Mic
 } from 'lucide-react';
 import {
   Dialog,
@@ -3378,11 +3378,12 @@ export default function Settings() {
         <div className="space-y-1">
           <div>
             <div className="text-sm font-medium mb-2 px-1">Theme</div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
                 { id: 'light', icon: Sun, label: 'Light' },
                 { id: 'dark', icon: Moon, label: 'Dark' },
                 { id: 'system', icon: Monitor, label: 'System' },
+                { id: 'cyber_lab', icon: Cpu, label: 'Cyber Lab' },
               ].map(({ id, icon: Icon, label }) => (
                 <button
                   key={id}

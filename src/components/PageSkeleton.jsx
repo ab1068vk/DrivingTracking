@@ -7,7 +7,7 @@ export default function PageSkeleton({
   cardCount = 3,
 }) {
   return (
-    <div className="space-y-5" role="status" aria-label={title}>
+    <div className="cyber-page-skeleton space-y-5" role="status" aria-label={title}>
       <div className="flex items-center justify-between gap-4">
         <div className="space-y-2">
           <Skeleton className="h-7 w-48" />

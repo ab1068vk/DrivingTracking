@@ -49,6 +49,7 @@ const SYSTEM_THEME_QUERY = '(prefers-color-scheme: dark)';
 let activeThemeMode = 'system';
 let systemThemeQueryList = null;
 let systemThemeQueryListener = null;
+let lastSystemBarsSignature = '';
 
 const settingsStorage = () => {
   try {
@@ -503,7 +504,7 @@ const SETTINGS_ENUMS = {
   tracking_mode: ['manual', 'auto_detect', 'background_auto'],
   units: ['metric', 'imperial'],
   currencySymbol: CURRENCY_SYMBOL_OPTIONS.map((option) => option.value),
-  dark_mode: ['system', 'light', 'dark'],
+  dark_mode: ['system', 'light', 'dark', 'cyber_lab'],
   night_detection_mode: ['sunset', 'custom'],
   phone_use_sensitivity: ['low', 'medium', 'high'],
   configurable_country_defaults: STATUTORY_REGION_SETTING_VALUES,
@@ -882,7 +883,28 @@ export function clearSettingsMemoryForErasure() {
   lastNativeSettingsSync = '';
 }
 
-const normalizeThemeMode = (mode) => (['light', 'dark', 'system'].includes(mode) ? mode : 'system');
+const normalizeThemeMode = (mode) => (['light', 'dark', 'system', 'cyber_lab'].includes(mode) ? mode : 'system');
+
+const syncNativeSystemBars = (themeMode, resolvedTheme) => {
+  if (typeof window === 'undefined') return;
+  const signature = `${themeMode}:${resolvedTheme}`;
+  if (signature === lastSystemBarsSignature) return;
+  lastSystemBarsSignature = signature;
+
+  import('@capacitor/core')
+    .then(({ Capacitor }) => {
+      if (!Capacitor.isNativePlatform()) return null;
+      const plugin = Capacitor.Plugins?.SystemBars || globalThis.Capacitor?.Plugins?.SystemBars;
+      if (typeof plugin?.setStyle !== 'function') return null;
+      return plugin.setStyle({ themeMode, resolvedTheme });
+    })
+    .catch((error) => {
+      logError('system_bars_theme_sync', error, {
+        theme_mode: themeMode,
+        resolved_theme: resolvedTheme,
+      });
+    });
+};
 
 const getSystemThemeQueryList = () => {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return null;
@@ -894,11 +916,17 @@ const renderThemeMode = (mode) => {
   if (typeof document === 'undefined') return;
   const normalized = normalizeThemeMode(mode);
   const shouldUseDark = normalized === 'dark' ||
+    normalized === 'cyber_lab' ||
     (normalized === 'system' && getSystemThemeQueryList()?.matches === true);
+  const resolvedTheme = normalized === 'cyber_lab'
+    ? 'cyber_lab'
+    : shouldUseDark ? 'dark' : 'light';
   document.documentElement.classList.toggle('dark', shouldUseDark);
+  document.documentElement.classList.toggle('cyber-lab', normalized === 'cyber_lab');
   document.documentElement.dataset.themeMode = normalized;
-  document.documentElement.dataset.resolvedTheme = shouldUseDark ? 'dark' : 'light';
+  document.documentElement.dataset.resolvedTheme = resolvedTheme;
   document.documentElement.style.colorScheme = shouldUseDark ? 'dark' : 'light';
+  syncNativeSystemBars(normalized, resolvedTheme);
 };
 
 const detachSystemThemeListener = () => {

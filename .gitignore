@@ -31,3 +31,8 @@ dist-ssr
 
 .env
 .vite
+
+# Local generated assets and test artifacts
+marketing/
+scripts/render-promo-video.mjs
+test-results/

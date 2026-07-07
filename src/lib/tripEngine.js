@@ -1824,7 +1824,7 @@ function normalizeRoadTypeLabel(roadType, point = {}) {
   return 'urban';
 }
 
-function classifyRoadTypesByPoint(routePoints = [], windowSize = 30) {
+export function classifyRoadTypesByPoint(routePoints = [], windowSize = 30) {
   const points = routePoints || [];
   const halfWindow = Math.max(1, Math.floor(windowSize / 2));
   return points.map((point, index) => {
@@ -1949,7 +1949,7 @@ function roadTypeFromWindowSummary(summary) {
   };
 }
 
-function createZoneLookup(zones = []) {
+export function createZoneLookup(zones = []) {
   let cursor = 0;
   return (index) => {
     while (cursor + 1 < zones.length && index >= zones[cursor + 1].startIndex) cursor++;

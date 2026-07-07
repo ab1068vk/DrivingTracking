@@ -138,7 +138,7 @@ export default function Layout() {
   }, []);
 
   return (
-    <div className="min-h-dvh min-w-0 bg-background flex flex-col">
+    <div className="cyber-app-shell min-h-dvh min-w-0 bg-background flex flex-col">
       <a
         href="#main-content"
         className="sr-only fixed left-3 top-3 z-[70] rounded-lg bg-primary px-4 py-3 font-semibold text-primary-foreground shadow-lg focus:not-sr-only"
@@ -146,13 +146,17 @@ export default function Layout() {
         Skip to main content
       </a>
       {/* Top Header */}
-      <header className="sticky top-0 z-50 min-w-0 border-b border-border/60 bg-background/88 px-4 pt-[env(safe-area-inset-top)] shadow-sm shadow-slate-900/5 backdrop-blur-xl supports-[backdrop-filter]:bg-background/72">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4">
+      <header className="cyber-top-frame sticky top-0 z-50 min-w-0 border-b border-border/60 bg-background/88 px-4 pt-[env(safe-area-inset-top)] shadow-sm shadow-slate-900/5 backdrop-blur-xl supports-[backdrop-filter]:bg-background/72">
+        <div className="cyber-header-inner mx-auto flex h-16 max-w-7xl items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
-            <BrandMark className="h-9 w-9 shrink-0" />
-            <div className="min-w-0">
+            <BrandMark className="cyber-brand-mark h-9 w-9 shrink-0" />
+            <div className="cyber-brand-copy min-w-0">
               <span className="block truncate font-grotesk text-lg font-bold tracking-normal">Road Sage</span>
               <span className="hidden text-[11px] font-medium uppercase tracking-normal text-muted-foreground sm:block">Drive intelligence</span>
+            </div>
+            <div className="cyber-only cyber-status-strip" aria-hidden="true">
+              <span className="cyber-status-cell"><Activity className="h-4 w-4" /></span>
+              <span className="cyber-status-cell"><Gauge className="h-4 w-4" /></span>
             </div>
             {trackingActive && (
               <div className="flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-600 dark:border-red-800/50 dark:bg-red-950/40 dark:text-red-400">
@@ -173,14 +177,14 @@ export default function Layout() {
           {/* Desktop Nav */}
           <nav
             aria-label="Primary navigation"
-            className="hidden min-w-0 items-center gap-1 rounded-full border border-border/70 bg-secondary/70 p-1 shadow-inner shadow-white/30 xl:flex dark:shadow-black/10"
+            className="cyber-nav-rack hidden min-w-0 items-center gap-1 rounded-full border border-border/70 bg-secondary/70 p-1 shadow-inner shadow-white/30 xl:flex dark:shadow-black/10"
           >
             {navItems.map(item => <NavItemLink key={item.path} item={item} />)}
           </nav>
 
           {/* Mobile menu toggle */}
           <button
-            className="grid min-h-11 min-w-11 shrink-0 place-items-center rounded-full border border-border/70 bg-card text-foreground shadow-sm transition-colors hover:bg-secondary xl:hidden"
+            className="cyber-menu-button grid min-h-11 min-w-11 shrink-0 place-items-center rounded-full border border-border/70 bg-card text-foreground shadow-sm transition-colors hover:bg-secondary xl:hidden"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
             aria-expanded={mobileMenuOpen}
@@ -195,7 +199,7 @@ export default function Layout() {
       {mobileMenuOpen && (
         <>
           <div
-            className="fixed inset-0 z-[1000] bg-black/40 xl:hidden"
+            className="cyber-mobile-backdrop fixed inset-0 z-[1000] bg-black/40 xl:hidden"
             onClick={() => setMobileMenuOpen(false)}
           />
           <div
@@ -203,11 +207,11 @@ export default function Layout() {
             role="dialog"
             aria-modal="true"
             aria-label="Navigation menu"
-            className="fixed bottom-0 right-0 top-0 z-[1010] flex w-[min(22rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-l-3xl border-l border-border bg-card shadow-2xl xl:hidden"
+            className="cyber-mobile-drawer fixed bottom-0 right-0 top-0 z-[1010] flex w-[min(22rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-l-3xl border-l border-border bg-card shadow-2xl xl:hidden"
           >
             <div className="flex items-center justify-between gap-3 border-b border-border/70 px-5 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)]">
               <div className="flex min-w-0 items-center gap-3">
-                <BrandMark className="h-10 w-10 shrink-0" />
+                <BrandMark className="cyber-brand-mark h-10 w-10 shrink-0" />
                 <div className="min-w-0">
                   <div className="truncate font-grotesk text-lg font-bold">Road Sage</div>
                   <div className="text-xs font-medium text-muted-foreground">Navigation</div>
@@ -247,10 +251,10 @@ export default function Layout() {
       )}
 
       {/* Main Content */}
-      <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 container max-w-6xl mx-auto px-4 py-6">
+      <main id="main-content" tabIndex={-1} className="cyber-main-content flex-1 min-w-0 container max-w-6xl mx-auto px-4 py-6">
         <Outlet />
       </main>
-      <footer className="border-t border-border/50 px-4 py-3 text-center text-[11px] leading-relaxed text-muted-foreground">
+      <footer className="cyber-footer border-t border-border/50 px-4 py-3 text-center text-[11px] leading-relaxed text-muted-foreground">
         {LEGAL_DISCLAIMER_SHORT} Obey posted signs and local laws.
       </footer>
     </div>

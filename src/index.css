@@ -74,6 +74,44 @@
     --chart-4: 262 83% 65%;
     --chart-5: 0 70% 60%;
   }
+
+  .cyber-lab {
+    color-scheme: dark;
+    --background: 205 52% 5%;
+    --foreground: 184 100% 88%;
+    --card: 203 42% 10%;
+    --card-foreground: 184 100% 88%;
+    --popover: 204 46% 8%;
+    --popover-foreground: 184 100% 88%;
+    --primary: 188 100% 62%;
+    --primary-foreground: 206 58% 6%;
+    --secondary: 205 36% 15%;
+    --secondary-foreground: 180 88% 82%;
+    --muted: 204 32% 14%;
+    --muted-foreground: 186 44% 68%;
+    --accent: 132 88% 66%;
+    --accent-foreground: 204 54% 6%;
+    --destructive: 354 88% 64%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 186 58% 28%;
+    --input: 188 46% 24%;
+    --ring: 168 100% 64%;
+    --radius: 0.5rem;
+
+    --ds-blue: 192 100% 58%;
+    --ds-green: 132 88% 66%;
+    --ds-orange: 43 100% 64%;
+    --ds-red: 354 88% 64%;
+    --ds-purple: 268 100% 72%;
+    --ds-surface: 205 52% 5%;
+    --ds-card: 203 42% 10%;
+    --ds-glass: 202 40% 10% / 0.78;
+    --chart-1: 188 100% 62%;
+    --chart-2: 132 88% 66%;
+    --chart-3: 43 100% 64%;
+    --chart-4: 268 100% 72%;
+    --chart-5: 354 88% 64%;
+  }
 }
 
 @layer base {
@@ -136,6 +174,71 @@
     @apply bg-white/95 dark:bg-card border border-white/50 dark:border-border/50;
   }
 
+  html.cyber-lab {
+    background: hsl(205 52% 5%);
+  }
+
+  .cyber-lab {
+    --cyber-cyan: 188 100% 62%;
+    --cyber-cyan-soft: 184 100% 86%;
+    --cyber-green: 132 88% 66%;
+    --cyber-metal-1: 205 22% 21%;
+    --cyber-metal-2: 205 34% 12%;
+    --cyber-metal-3: 204 58% 6%;
+    --cyber-copper: 31 54% 50%;
+    --cyber-bevel: polygon(0 16px, 16px 0, calc(100% - 22px) 0, 100% 22px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px));
+  }
+
+  .cyber-lab body {
+    background-color: hsl(205 52% 5%);
+    background-image:
+      radial-gradient(circle at 14% 9%, hsl(var(--cyber-cyan) / 0.12), transparent 18rem),
+      radial-gradient(circle at 84% 31%, hsl(var(--cyber-green) / 0.09), transparent 16rem),
+      linear-gradient(90deg, hsl(var(--cyber-cyan) / 0.085) 1px, transparent 1px),
+      linear-gradient(0deg, hsl(var(--cyber-green) / 0.055) 1px, transparent 1px),
+      repeating-linear-gradient(135deg, transparent 0 19px, hsl(var(--cyber-copper) / 0.13) 20px 21px, transparent 22px),
+      linear-gradient(180deg, hsl(205 56% 7%) 0%, hsl(210 58% 4%) 52%, hsl(194 58% 6%) 100%);
+    background-size: auto, auto, 34px 34px, 34px 34px, 156px 156px, auto;
+    background-attachment: fixed;
+  }
+
+  .cyber-lab body::before,
+  .cyber-lab body::after {
+    content: "";
+    position: fixed;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .cyber-lab body::before {
+    inset: 0;
+    background:
+      linear-gradient(90deg, hsl(188 100% 62% / 0.52), transparent 2.75rem, transparent calc(100% - 2.75rem), hsl(188 100% 62% / 0.5)),
+      linear-gradient(180deg, hsl(132 88% 66% / 0.26), transparent 8rem, transparent calc(100% - 8rem), hsl(188 100% 62% / 0.18)),
+      repeating-linear-gradient(0deg, transparent 0 13px, hsl(188 100% 62% / 0.035) 14px 15px);
+    mask-image: linear-gradient(90deg, black 0 1.1rem, transparent 3.75rem calc(100% - 3.75rem), black calc(100% - 1.1rem));
+    opacity: 0.65;
+  }
+
+  .cyber-lab body::after {
+    inset: 0;
+    background:
+      linear-gradient(90deg, transparent 0 12%, hsl(188 100% 62% / 0.13) 12.2% 12.45%, transparent 12.7% 37%, hsl(132 88% 66% / 0.11) 37.2% 37.45%, transparent 37.7% 68%, hsl(188 100% 62% / 0.12) 68.2% 68.45%, transparent 68.7%),
+      linear-gradient(0deg, transparent 0 18%, hsl(32 62% 58% / 0.12) 18.2% 18.45%, transparent 18.7% 54%, hsl(188 100% 62% / 0.1) 54.2% 54.45%, transparent 54.7% 78%, hsl(132 88% 66% / 0.1) 78.2% 78.45%, transparent 78.7%),
+      repeating-linear-gradient(90deg, transparent 0 5.5rem, hsl(32 62% 58% / 0.14) 5.55rem 5.65rem, transparent 5.7rem 9rem);
+    mix-blend-mode: screen;
+    opacity: 0.44;
+  }
+
+  .cyber-lab #root {
+    position: relative;
+    z-index: 1;
+    background-color: transparent;
+    background-image:
+      linear-gradient(180deg, hsl(var(--cyber-cyan) / 0.12), transparent 9rem),
+      linear-gradient(90deg, transparent, hsl(var(--cyber-green) / 0.07), transparent);
+  }
+
   .render-lazy {
     content-visibility: auto;
     contain-intrinsic-size: 1px 160px;
@@ -188,6 +291,1178 @@
 
   .score-ring {
     filter: drop-shadow(0 0 8px hsl(var(--ds-blue) / 0.4));
+  }
+
+  .cyber-lab .score-ring {
+    filter:
+      drop-shadow(0 0 10px hsl(188 100% 62% / 0.65))
+      drop-shadow(0 0 22px hsl(132 88% 66% / 0.28));
+  }
+
+  .cyber-only {
+    display: none;
+  }
+
+  .cyber-lab .cyber-app-shell {
+    position: relative;
+    isolation: isolate;
+    color: hsl(184 100% 88%);
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+  }
+
+  .cyber-lab .cyber-app-shell::before {
+    content: "";
+    position: fixed;
+    inset: 4.6rem 0 0;
+    pointer-events: none;
+    z-index: -1;
+    background:
+      linear-gradient(90deg, transparent 0 7%, hsl(31 54% 50% / 0.26) 7.12% 7.34%, transparent 7.46% 19%, hsl(188 100% 62% / 0.18) 19.1% 19.28%, transparent 19.42% 49%, hsl(132 88% 66% / 0.2) 49.12% 49.34%, transparent 49.46% 76%, hsl(31 54% 50% / 0.2) 76.1% 76.28%, transparent 76.42%),
+      linear-gradient(0deg, transparent 0 10%, hsl(31 54% 50% / 0.22) 10.1% 10.32%, transparent 10.46% 28%, hsl(188 100% 62% / 0.16) 28.1% 28.3%, transparent 28.44% 61%, hsl(132 88% 66% / 0.18) 61.1% 61.32%, transparent 61.46% 83%, hsl(31 54% 50% / 0.18) 83.1% 83.3%, transparent 83.44%),
+      radial-gradient(circle at 7.22% 10.22%, hsl(31 54% 58% / 0.38) 0 0.16rem, transparent 0.19rem),
+      radial-gradient(circle at 49.22% 61.22%, hsl(132 88% 66% / 0.32) 0 0.16rem, transparent 0.19rem),
+      radial-gradient(circle at 76.2% 83.2%, hsl(188 100% 62% / 0.34) 0 0.16rem, transparent 0.19rem);
+    opacity: 0.72;
+  }
+
+  .cyber-lab .cyber-app-shell::after {
+    content: "";
+    position: fixed;
+    inset: 0.28rem;
+    z-index: 4;
+    pointer-events: none;
+    border: 1px solid hsl(var(--cyber-cyan) / 0.22);
+    background:
+      radial-gradient(circle at 0.72rem 0.72rem, hsl(205 18% 78% / 0.62) 0 0.1rem, hsl(205 40% 5% / 0.95) 0.12rem 0.25rem, transparent 0.27rem),
+      radial-gradient(circle at calc(100% - 0.72rem) 0.72rem, hsl(205 18% 78% / 0.55) 0 0.1rem, hsl(205 40% 5% / 0.95) 0.12rem 0.25rem, transparent 0.27rem),
+      linear-gradient(90deg, hsl(var(--cyber-cyan) / 0.42), transparent 2.8rem, transparent calc(100% - 2.8rem), hsl(var(--cyber-cyan) / 0.42)),
+      linear-gradient(180deg, hsl(var(--cyber-green) / 0.22), transparent 7rem, transparent calc(100% - 7rem), hsl(var(--cyber-cyan) / 0.18));
+    clip-path: polygon(0 1.2rem, 1.2rem 0, calc(100% - 1.2rem) 0, 100% 1.2rem, 100% calc(100% - 1.2rem), calc(100% - 1.2rem) 100%, 1.2rem 100%, 0 calc(100% - 1.2rem));
+    box-shadow:
+      inset 0 0 0 1px hsl(205 16% 82% / 0.09),
+      inset 0 0 28px hsl(188 100% 62% / 0.08);
+    opacity: 0.72;
+  }
+
+  .cyber-lab .cyber-app-shell > :not(.cyber-mobile-backdrop):not(.cyber-mobile-drawer) {
+    position: relative;
+    z-index: 5;
+  }
+
+  .cyber-lab .cyber-main-content {
+    padding-top: clamp(1.1rem, 3vw, 1.55rem);
+    padding-bottom: clamp(1.1rem, 3vw, 1.65rem);
+  }
+
+  .cyber-lab .cyber-top-frame {
+    padding-top: 0.35rem;
+    padding-inline: clamp(0.65rem, 2vw, 1.15rem);
+    background:
+      radial-gradient(circle at 1rem 1rem, hsl(205 18% 76% / 0.65) 0 0.1rem, hsl(205 38% 5% / 0.95) 0.12rem 0.26rem, transparent 0.28rem),
+      radial-gradient(circle at calc(100% - 1rem) 1rem, hsl(205 18% 76% / 0.65) 0 0.1rem, hsl(205 38% 5% / 0.95) 0.12rem 0.26rem, transparent 0.28rem),
+      linear-gradient(hsl(188 100% 62% / 0.18) 0 0) 1.1rem 0.25rem / calc(100% - 2.2rem) 1px no-repeat,
+      linear-gradient(90deg, transparent 0 6%, hsl(210 14% 42% / 0.8) 6.4% 16%, transparent 16.4% 38%, hsl(188 100% 62% / 0.16) 38.2% 62%, transparent 62.4% 84%, hsl(210 14% 42% / 0.72) 84.4% 94%, transparent 94.4%),
+      linear-gradient(180deg, hsl(210 20% 22% / 0.96), hsl(204 45% 9% / 0.98) 38%, hsl(202 60% 5% / 0.96)),
+      repeating-linear-gradient(90deg, transparent 0 18px, hsl(188 100% 62% / 0.14) 19px 20px),
+      repeating-linear-gradient(0deg, transparent 0 11px, hsl(132 88% 66% / 0.08) 12px 13px);
+    border-color: hsl(188 100% 62% / 0.38);
+    box-shadow:
+      inset 0 -1px 0 hsl(132 88% 66% / 0.34),
+      inset 0 -10px 22px hsl(205 75% 3% / 0.44),
+      0 0 0 1px hsl(210 12% 72% / 0.08),
+      0 0 32px hsl(188 100% 62% / 0.18);
+  }
+
+  .cyber-lab .cyber-header-inner {
+    height: 4.8rem;
+    max-width: 82rem;
+    padding-inline: clamp(0.45rem, 1.6vw, 1rem);
+    position: relative;
+  }
+
+  .cyber-lab .cyber-header-inner::before,
+  .cyber-lab .cyber-header-inner::after {
+    content: "";
+    position: absolute;
+    pointer-events: none;
+  }
+
+  .cyber-lab .cyber-header-inner::before {
+    inset: 0.45rem 34% auto 34%;
+    height: 1rem;
+    border: 1px solid hsl(188 100% 62% / 0.18);
+    background:
+      linear-gradient(180deg, hsl(205 65% 3% / 0.84), hsl(205 42% 10% / 0.82)),
+      linear-gradient(90deg, transparent, hsl(188 100% 62% / 0.18), transparent);
+    clip-path: polygon(0 0, 100% 0, calc(100% - 0.8rem) 100%, 0.8rem 100%);
+    box-shadow: inset 0 0 12px hsl(188 100% 62% / 0.12);
+  }
+
+  .cyber-lab .cyber-header-inner::after {
+    inset: auto 0.35rem 0.4rem 0.35rem;
+    height: 0.34rem;
+    background:
+      linear-gradient(90deg, transparent, hsl(132 88% 66% / 0.82) 34%, hsl(188 100% 62% / 0.9) 50%, hsl(132 88% 66% / 0.7) 66%, transparent),
+      linear-gradient(90deg, transparent 0 20%, hsl(205 62% 4%) 20% 22%, transparent 22% 78%, hsl(205 62% 4%) 78% 80%, transparent 80%);
+    box-shadow: 0 0 18px hsl(188 100% 62% / 0.62);
+    clip-path: polygon(0.8rem 0, calc(100% - 0.8rem) 0, 100% 100%, 0 100%);
+  }
+
+  .cyber-lab .cyber-brand-mark {
+    height: 3.2rem;
+    width: 3.2rem;
+    border-radius: 0;
+    border: 1px solid hsl(188 100% 72% / 0.62);
+    background:
+      linear-gradient(135deg, hsl(188 100% 28%), hsl(201 100% 16%) 50%, hsl(132 88% 22%)),
+      repeating-linear-gradient(90deg, transparent 0 6px, hsl(188 100% 78% / 0.18) 7px 8px);
+    clip-path: polygon(0 0.55rem, 0.55rem 0, calc(100% - 0.65rem) 0, 100% 0.65rem, 100% calc(100% - 0.55rem), calc(100% - 0.55rem) 100%, 0.55rem 100%, 0 calc(100% - 0.55rem));
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 92% / 0.18),
+      inset 0 0 18px hsl(188 100% 62% / 0.2),
+      0 0 22px hsl(188 100% 62% / 0.28);
+  }
+
+  .cyber-lab .cyber-brand-mark > span {
+    background: hsl(132 88% 66%);
+    box-shadow: 0 0 9px hsl(132 88% 66% / 0.9);
+  }
+
+  .cyber-lab .cyber-brand-copy span:first-child {
+    color: hsl(188 100% 66%);
+    font-size: clamp(1.25rem, 2vw, 1.75rem);
+    line-height: 1;
+    text-shadow:
+      0 0 10px hsl(188 100% 62% / 0.48),
+      0 0 24px hsl(188 100% 62% / 0.18);
+  }
+
+  .cyber-lab .cyber-brand-copy span:last-child {
+    color: hsl(132 88% 76% / 0.82);
+  }
+
+  .cyber-lab .cyber-status-strip {
+    align-items: center;
+    gap: 0.45rem;
+    margin-left: 0.35rem;
+  }
+
+  .cyber-lab .cyber-status-cell {
+    display: grid;
+    height: 2.55rem;
+    width: 2.55rem;
+    place-items: center;
+    border: 1px solid hsl(132 88% 66% / 0.38);
+    color: hsl(132 88% 76%);
+    background:
+      linear-gradient(135deg, hsl(205 58% 8% / 0.94), hsl(153 72% 14% / 0.78)),
+      linear-gradient(90deg, transparent 0 38%, hsl(132 88% 66% / 0.16) 39% 41%, transparent 42%);
+    clip-path: polygon(0 0.45rem, 0.45rem 0, calc(100% - 0.45rem) 0, 100% 0.45rem, 100% calc(100% - 0.45rem), calc(100% - 0.45rem) 100%, 0.45rem 100%, 0 calc(100% - 0.45rem));
+    box-shadow:
+      inset 0 0 14px hsl(132 88% 66% / 0.12),
+      0 0 15px hsl(132 88% 66% / 0.12);
+  }
+
+  @media (min-width: 760px) {
+    .cyber-lab .cyber-status-strip {
+      display: flex;
+    }
+  }
+
+  .cyber-lab .cyber-nav-rack {
+    border-radius: 0;
+    padding: 0.35rem;
+    border-color: hsl(188 100% 62% / 0.3);
+    background:
+      linear-gradient(180deg, hsl(204 50% 8% / 0.9), hsl(201 58% 5% / 0.94)),
+      repeating-linear-gradient(90deg, transparent 0 14px, hsl(188 100% 62% / 0.11) 15px 16px);
+    clip-path: polygon(0 0.55rem, 0.55rem 0, calc(100% - 0.55rem) 0, 100% 0.55rem, 100% calc(100% - 0.55rem), calc(100% - 0.55rem) 100%, 0.55rem 100%, 0 calc(100% - 0.55rem));
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 84% / 0.09),
+      inset 0 0 18px hsl(188 100% 62% / 0.08);
+  }
+
+  .cyber-lab .cyber-nav-rack a {
+    border-radius: 0;
+    clip-path: polygon(0 0.4rem, 0.4rem 0, calc(100% - 0.4rem) 0, 100% 0.4rem, 100% calc(100% - 0.4rem), calc(100% - 0.4rem) 100%, 0.4rem 100%, 0 calc(100% - 0.4rem));
+  }
+
+  .cyber-lab .cyber-nav-rack a[aria-current="page"] {
+    color: hsl(184 100% 92%);
+    background:
+      linear-gradient(135deg, hsl(188 100% 50% / 0.2), hsl(132 88% 66% / 0.13)),
+      linear-gradient(180deg, hsl(204 44% 12% / 0.92), hsl(198 48% 7% / 0.92));
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 72% / 0.26),
+      0 0 18px hsl(188 100% 62% / 0.18);
+  }
+
+  .cyber-lab .cyber-menu-button,
+  .cyber-lab .cyber-mobile-drawer {
+    border-radius: 0;
+    clip-path: polygon(0 0.65rem, 0.65rem 0, calc(100% - 0.65rem) 0, 100% 0.65rem, 100% calc(100% - 0.65rem), calc(100% - 0.65rem) 100%, 0.65rem 100%, 0 calc(100% - 0.65rem));
+  }
+
+  .cyber-lab .cyber-mobile-drawer {
+    position: fixed;
+    inset: 0 0 0 auto;
+    z-index: 1010;
+    width: min(22rem, calc(100vw - 1.5rem));
+    height: 100dvh;
+    max-height: 100dvh;
+    border-width: 0 0 0 1px;
+    border-color: hsl(188 100% 62% / 0.42);
+    background:
+      linear-gradient(180deg, hsl(204 46% 13% / 0.97), hsl(202 58% 6% / 0.98)),
+      repeating-linear-gradient(90deg, transparent 0 24px, hsl(188 100% 62% / 0.08) 25px 26px),
+      repeating-linear-gradient(0deg, transparent 0 18px, hsl(132 88% 66% / 0.055) 19px 20px);
+    box-shadow:
+      inset 1px 0 0 hsl(188 100% 84% / 0.16),
+      -18px 0 36px hsl(204 80% 2% / 0.62),
+      -6px 0 24px hsl(188 100% 62% / 0.16);
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 0 calc(100% - 1.1rem), 0.9rem calc(100% - 2rem), 0.9rem 2rem, 0 1.1rem);
+  }
+
+  .cyber-lab .cyber-mobile-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background:
+      radial-gradient(circle at 70% 18%, hsl(188 100% 62% / 0.08), transparent 12rem),
+      hsl(205 80% 2% / 0.62);
+    backdrop-filter: blur(2px);
+  }
+
+  .cyber-lab .cyber-footer {
+    color: hsl(186 44% 68%);
+    text-shadow: 0 0 8px hsl(188 100% 62% / 0.18);
+  }
+
+  .cyber-lab :where(header, footer) {
+    border-color: hsl(188 100% 62% / 0.24);
+    background:
+      linear-gradient(180deg, hsl(205 45% 13% / 0.94), hsl(205 55% 7% / 0.86)),
+      repeating-linear-gradient(90deg, hsl(188 100% 62% / 0.16) 0 1px, transparent 1px 26px);
+    box-shadow:
+      inset 0 -1px 0 hsl(132 88% 66% / 0.28),
+      0 0 28px hsl(188 100% 62% / 0.12);
+  }
+
+  .cyber-lab header {
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 0.55rem), calc(100% - 1.1rem) 100%, 1.1rem 100%, 0 calc(100% - 0.55rem));
+  }
+
+  .cyber-lab header::after {
+    content: "";
+    position: absolute;
+    inset: auto 1.25rem 0.18rem 1.25rem;
+    height: 0.18rem;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, hsl(188 100% 62% / 0.85), hsl(132 88% 66% / 0.72), transparent);
+    box-shadow: 0 0 16px hsl(188 100% 62% / 0.62);
+    pointer-events: none;
+  }
+
+  .cyber-lab :where(svg) {
+    filter: drop-shadow(0 0 5px hsl(188 100% 62% / 0.34));
+  }
+
+  .cyber-lab :where(header .rounded-xl, nav .rounded-full, [data-setting-label] .rounded-xl, .w-16.h-16.bg-secondary, .h-10.w-10, .h-11.w-11) {
+    border: 1px solid hsl(188 100% 62% / 0.32);
+    background:
+      linear-gradient(135deg, hsl(190 88% 26% / 0.72), hsl(204 46% 9% / 0.92)),
+      repeating-linear-gradient(90deg, transparent 0 8px, hsl(188 100% 62% / 0.13) 9px 10px);
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 86% / 0.12),
+      inset 0 0 18px hsl(188 100% 62% / 0.12),
+      0 0 16px hsl(188 100% 62% / 0.14);
+    color: hsl(184 100% 88%);
+  }
+
+  .cyber-lab main {
+    position: relative;
+  }
+
+  .cyber-lab main::before,
+  .cyber-lab main::after {
+    content: "";
+    position: fixed;
+    top: 5rem;
+    bottom: 3.5rem;
+    width: 0.42rem;
+    border-radius: 999px;
+    pointer-events: none;
+    background:
+      linear-gradient(180deg, transparent, hsl(188 100% 62% / 0.74) 18%, hsl(132 88% 66% / 0.62) 52%, hsl(188 100% 62% / 0.72) 82%, transparent),
+      repeating-linear-gradient(0deg, transparent 0 2.2rem, hsl(205 55% 6%) 2.25rem 2.65rem);
+    box-shadow:
+      0 0 16px hsl(188 100% 62% / 0.52),
+      0 0 28px hsl(132 88% 66% / 0.18);
+    opacity: 0.38;
+    z-index: -1;
+  }
+
+  .cyber-lab main::before {
+    left: max(0.45rem, calc((100vw - 74rem) / 2 - 1.25rem));
+  }
+
+  .cyber-lab main::after {
+    right: max(0.45rem, calc((100vw - 74rem) / 2 - 1.25rem));
+  }
+
+  .cyber-lab :where(.font-grotesk, h1, h2, h3) {
+    text-shadow: 0 0 16px hsl(188 100% 62% / 0.25);
+  }
+
+  .cyber-lab :where(h1, h2) {
+    color: hsl(184 100% 86%);
+  }
+
+  .cyber-lab :where(h1, h2)::selection {
+    color: hsl(205 52% 5%);
+  }
+
+  .cyber-lab :where([class*="bg-card"], .glass-card, [role="dialog"]) {
+    border-color: hsl(188 100% 62% / 0.34);
+    background-image:
+      linear-gradient(135deg, hsl(189 80% 16% / 0.82), hsl(208 48% 8% / 0.94)),
+      linear-gradient(90deg, hsl(188 100% 62% / 0.12) 1px, transparent 1px),
+      linear-gradient(0deg, hsl(132 88% 66% / 0.08) 1px, transparent 1px);
+    background-size: auto, 32px 32px, 32px 32px;
+    box-shadow:
+      inset 0 1px 0 hsl(188 100% 80% / 0.22),
+      inset 0 -1px 0 hsl(132 88% 66% / 0.12),
+      0 14px 34px hsl(204 70% 2% / 0.42),
+      0 0 24px hsl(188 100% 62% / 0.08);
+  }
+
+  .cyber-lab :where([class*="rounded"][class*="border"][class*="bg-card"], .glass-card) {
+    position: relative;
+    overflow: hidden;
+    clip-path: polygon(0 12px, 12px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px));
+  }
+
+  .cyber-lab :where([class*="rounded"][class*="border"][class*="bg-card"], .glass-card)::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(90deg, transparent 0 42%, hsl(188 100% 62% / 0.38) 47% 53%, transparent 58%),
+      linear-gradient(180deg, hsl(188 100% 62% / 0.16), transparent 22%, transparent 78%, hsl(132 88% 66% / 0.12));
+    opacity: 0.42;
+  }
+
+  .cyber-lab :where([class*="bg-secondary"], nav) {
+    border-color: hsl(132 88% 66% / 0.22);
+    background-color: hsl(203 38% 12% / 0.84);
+    box-shadow: inset 0 0 18px hsl(188 100% 62% / 0.07);
+  }
+
+  .cyber-lab :where(button, [role="button"], a) {
+    transition-property: color, background-color, border-color, box-shadow, transform, opacity;
+  }
+
+  .cyber-lab :where(button, [role="button"]):hover {
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 62% / 0.22),
+      0 0 18px hsl(188 100% 62% / 0.16);
+  }
+
+  .cyber-lab :where(input, select, textarea) {
+    border-color: hsl(188 100% 62% / 0.32);
+    background-color: hsl(202 44% 8% / 0.92);
+    color: hsl(var(--foreground));
+    box-shadow: inset 0 0 18px hsl(188 100% 62% / 0.08);
+  }
+
+  .cyber-lab :where(input, select, textarea)::placeholder {
+    color: hsl(186 44% 68% / 0.72);
+  }
+
+  .cyber-lab :where(button.rounded-lg, button.rounded-xl, button.rounded-2xl, a.rounded-lg, a.rounded-xl, a.rounded-2xl, [role="button"].rounded-lg, [role="button"].rounded-xl) {
+    position: relative;
+    border-color: hsl(188 100% 62% / 0.32);
+    background-image:
+      linear-gradient(135deg, hsl(204 44% 12% / 0.72), hsl(188 78% 13% / 0.42)),
+      linear-gradient(90deg, hsl(188 100% 62% / 0.08), transparent 38%, hsl(132 88% 66% / 0.06));
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 82% / 0.08),
+      inset 0 0 14px hsl(188 100% 62% / 0.06);
+  }
+
+  .cyber-lab :where(button.rounded-lg, button.rounded-xl, button.rounded-2xl, a.rounded-lg, a.rounded-xl, a.rounded-2xl, [role="button"].rounded-lg, [role="button"].rounded-xl):not(.cyber-start-button)::after {
+    content: "";
+    position: absolute;
+    inset: auto 0.55rem 0.26rem 0.55rem;
+    height: 1px;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, hsl(188 100% 62% / 0.44), transparent);
+    opacity: 0.72;
+  }
+
+  .cyber-lab :where(button.rounded-lg, button.rounded-xl, button.rounded-2xl):active {
+    transform: translateY(1px);
+  }
+
+  .cyber-lab .gradient-primary {
+    background:
+      linear-gradient(135deg, hsl(197 100% 28%), hsl(188 100% 52%) 52%, hsl(268 100% 68%));
+    border: 1px solid hsl(188 100% 72% / 0.44);
+    box-shadow: 0 0 28px hsl(188 100% 62% / 0.18);
+  }
+
+  .cyber-lab .gradient-success {
+    background:
+      linear-gradient(135deg, hsl(151 82% 18%), hsl(132 78% 42%) 58%, hsl(188 100% 45%));
+    border: 1px solid hsl(132 88% 66% / 0.42);
+    box-shadow: 0 0 28px hsl(132 88% 66% / 0.14);
+  }
+
+  .cyber-lab .gradient-warning {
+    background:
+      linear-gradient(135deg, hsl(205 45% 10%), hsl(43 100% 42%) 55%, hsl(22 95% 48%));
+    border: 1px solid hsl(43 100% 64% / 0.48);
+    box-shadow: 0 0 28px hsl(43 100% 64% / 0.14);
+  }
+
+  .cyber-lab .gradient-danger {
+    background:
+      linear-gradient(135deg, hsl(205 44% 10%), hsl(354 78% 44%) 55%, hsl(268 100% 58%));
+    border: 1px solid hsl(354 88% 64% / 0.48);
+    box-shadow: 0 0 28px hsl(354 88% 64% / 0.16);
+  }
+
+  .cyber-lab :where(.border-red-200, .dark\:border-red-800\/50) {
+    border-color: hsl(354 88% 64% / 0.42);
+  }
+
+  .cyber-lab .cyber-dashboard {
+    isolation: isolate;
+  }
+
+  .cyber-lab .cyber-dashboard::before {
+    content: "01010011 01000001 01000111 01000101";
+    position: absolute;
+    right: 0.25rem;
+    top: -0.6rem;
+    color: hsl(var(--cyber-cyan) / 0.22);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.55rem;
+    letter-spacing: 0.08em;
+    pointer-events: none;
+  }
+
+  .cyber-lab .cyber-dashboard > div:first-child > h1,
+  .cyber-lab .cyber-dashboard > div:first-child > p {
+    display: none;
+  }
+
+  .cyber-lab .cyber-dashboard > div:first-child {
+    min-height: 0;
+    margin-bottom: -0.55rem;
+  }
+
+  .cyber-lab .cyber-dashboard > :where(div, section) {
+    position: relative;
+  }
+
+  .cyber-lab .cyber-hero-panel {
+    border: 1px solid hsl(188 100% 62% / 0.58);
+    background:
+      radial-gradient(circle at 77% 28%, hsl(188 100% 62% / 0.2), transparent 7.8rem),
+      linear-gradient(90deg, transparent 0 58%, hsl(188 100% 62% / 0.08) 58.4% 59%, transparent 59.5%),
+      repeating-linear-gradient(90deg, transparent 0 9px, hsl(188 100% 82% / 0.035) 10px 11px),
+      radial-gradient(circle at 1.05rem 1.05rem, hsl(205 18% 76% / 0.82) 0 0.1rem, hsl(205 38% 6% / 0.92) 0.12rem 0.24rem, transparent 0.26rem),
+      radial-gradient(circle at calc(100% - 1.05rem) 1.05rem, hsl(205 18% 76% / 0.72) 0 0.1rem, hsl(205 38% 6% / 0.92) 0.12rem 0.24rem, transparent 0.26rem),
+      radial-gradient(circle at 1.05rem calc(100% - 1.05rem), hsl(205 18% 76% / 0.66) 0 0.1rem, hsl(205 38% 6% / 0.9) 0.12rem 0.24rem, transparent 0.26rem),
+      radial-gradient(circle at calc(100% - 1.05rem) calc(100% - 1.05rem), hsl(205 18% 76% / 0.66) 0 0.1rem, hsl(205 38% 6% / 0.9) 0.12rem 0.24rem, transparent 0.26rem),
+      linear-gradient(135deg, hsl(191 64% 16% / 0.92), hsl(205 48% 8% / 0.96) 54%, hsl(185 64% 13% / 0.9)),
+      repeating-linear-gradient(90deg, transparent 0 34px, hsl(188 100% 62% / 0.09) 35px 36px),
+      repeating-linear-gradient(0deg, transparent 0 18px, hsl(132 88% 66% / 0.07) 19px 20px);
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 85% / 0.2),
+      inset 0 18px 38px hsl(188 100% 62% / 0.08),
+      inset 0 -18px 34px hsl(132 88% 66% / 0.08),
+      0 0 0 1px hsl(205 20% 70% / 0.08),
+      0 0 34px hsl(188 100% 62% / 0.22),
+      0 22px 46px hsl(204 80% 2% / 0.72);
+    clip-path: polygon(0 18px, 18px 0, calc(100% - 28px) 0, 100% 28px, 100% calc(100% - 18px), calc(100% - 18px) 100%, 18px 100%, 0 calc(100% - 18px));
+  }
+
+  .cyber-lab .cyber-hero-panel .font-grotesk {
+    color: hsl(181 100% 86%);
+    font-size: clamp(1.85rem, 8vw, 2.75rem);
+    line-height: 1;
+    text-shadow:
+      0 0 12px hsl(var(--cyber-cyan) / 0.42),
+      0 0 28px hsl(var(--cyber-green) / 0.18);
+  }
+
+  .cyber-lab .cyber-hero-panel .text-muted-foreground {
+    color: hsl(184 100% 84% / 0.92);
+  }
+
+  .cyber-lab .cyber-hero-panel::before,
+  .cyber-lab .cyber-hero-panel::after {
+    content: "";
+    position: absolute;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .cyber-lab .cyber-hero-panel::before {
+    inset: 0.55rem 1.1rem auto 1.1rem;
+    height: 0.28rem;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, hsl(132 88% 66%), hsl(188 100% 62%), transparent);
+    box-shadow: 0 0 18px hsl(188 100% 62% / 0.72);
+  }
+
+  .cyber-lab .cyber-hero-panel::after {
+    inset: 0;
+    background:
+      linear-gradient(hsl(188 100% 72% / 0.64) 0 0) 1.5rem 0.78rem / 4.8rem 0.16rem no-repeat,
+      linear-gradient(hsl(132 88% 66% / 0.58) 0 0) calc(100% - 6.3rem) calc(100% - 0.95rem) / 4.8rem 0.16rem no-repeat,
+      linear-gradient(90deg, hsl(188 100% 62% / 0.58), hsl(132 88% 66% / 0.58)) 0.8rem 50% / 0.18rem calc(100% - 3.2rem) no-repeat,
+      linear-gradient(180deg, hsl(132 88% 66% / 0.46), hsl(188 100% 62% / 0.54)) calc(100% - 0.98rem) 50% / 0.18rem calc(100% - 3.2rem) no-repeat,
+      linear-gradient(90deg, transparent 0 68%, hsl(188 100% 62% / 0.14) 68% 70%, transparent 70%),
+      linear-gradient(135deg, transparent 0 72%, hsl(188 100% 62% / 0.18) 72.4% 73.2%, transparent 73.6%),
+      repeating-linear-gradient(0deg, transparent 0 6px, hsl(188 100% 62% / 0.045) 7px 8px);
+  }
+
+  .cyber-lab .cyber-hero-panel > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .cyber-lab .cyber-start-button {
+    width: 5.1rem;
+    height: 5.1rem;
+    border: 2px solid hsl(188 100% 78% / 0.68);
+    background:
+      linear-gradient(135deg, hsl(186 100% 58%), hsl(225 100% 62%) 48%, hsl(268 100% 66%));
+    box-shadow:
+      inset 0 0 0 3px hsl(205 45% 8% / 0.58),
+      inset 0 0 18px hsl(188 100% 90% / 0.34),
+      0 0 18px hsl(188 100% 62% / 0.5),
+      0 0 38px hsl(268 100% 66% / 0.3);
+    transform: rotate(45deg);
+  }
+
+  .cyber-lab .cyber-start-button svg {
+    filter: drop-shadow(0 0 8px hsl(188 100% 92% / 0.9));
+    transform: rotate(-45deg);
+  }
+
+  .cyber-lab .cyber-private-trip {
+    min-height: 6.6rem;
+    border-color: hsl(132 88% 66% / 0.34);
+    background:
+      linear-gradient(90deg, hsl(205 50% 5% / 0.48), transparent 5.3rem),
+      radial-gradient(circle at 0.9rem 0.9rem, hsl(205 18% 76% / 0.72) 0 0.09rem, hsl(205 38% 6% / 0.92) 0.11rem 0.21rem, transparent 0.24rem),
+      radial-gradient(circle at calc(100% - 0.9rem) calc(100% - 0.9rem), hsl(132 88% 76% / 0.5) 0 0.08rem, hsl(205 38% 6% / 0.92) 0.1rem 0.2rem, transparent 0.23rem),
+      linear-gradient(135deg, hsl(204 38% 13% / 0.92), hsl(174 62% 10% / 0.82)),
+      repeating-linear-gradient(90deg, transparent 0 22px, hsl(132 88% 66% / 0.09) 23px 24px);
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 72% / 0.12),
+      0 0 22px hsl(132 88% 66% / 0.09);
+    clip-path: polygon(0 12px, 12px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px));
+  }
+
+  .cyber-lab .cyber-private-trip::after {
+    content: "";
+    position: absolute;
+    inset: 0.35rem;
+    pointer-events: none;
+    border: 1px solid hsl(132 88% 66% / 0.18);
+    clip-path: polygon(0 8px, 8px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px));
+  }
+
+  .cyber-lab .cyber-private-trip > div:first-child {
+    border: 1px solid hsl(188 100% 62% / 0.34);
+    background:
+      linear-gradient(135deg, hsl(210 24% 20%), hsl(202 68% 8%)),
+      repeating-linear-gradient(90deg, transparent 0 5px, hsl(var(--cyber-cyan) / 0.18) 6px 7px);
+    box-shadow:
+      inset 0 0 14px hsl(var(--cyber-cyan) / 0.12),
+      0 0 16px hsl(var(--cyber-cyan) / 0.14);
+    clip-path: polygon(0 0.55rem, 0.55rem 0, calc(100% - 0.55rem) 0, 100% 0.55rem, 100% calc(100% - 0.55rem), calc(100% - 0.55rem) 100%, 0.55rem 100%, 0 calc(100% - 0.55rem));
+  }
+
+  .cyber-lab .cyber-active-trip {
+    border: 1px solid hsl(var(--cyber-cyan) / 0.52);
+    background:
+      radial-gradient(circle at 1.05rem 1.05rem, hsl(205 18% 78% / 0.72) 0 0.1rem, hsl(205 42% 5% / 0.95) 0.12rem 0.25rem, transparent 0.27rem),
+      radial-gradient(circle at calc(100% - 1.05rem) calc(100% - 1.05rem), hsl(var(--cyber-green) / 0.5) 0 0.08rem, hsl(205 42% 5% / 0.95) 0.1rem 0.22rem, transparent 0.24rem),
+      linear-gradient(135deg, hsl(198 88% 23% / 0.96), hsl(205 58% 8% / 0.98) 58%, hsl(172 76% 14% / 0.92)),
+      repeating-linear-gradient(90deg, transparent 0 25px, hsl(var(--cyber-cyan) / 0.08) 26px 27px),
+      repeating-linear-gradient(0deg, transparent 0 18px, hsl(var(--cyber-green) / 0.06) 19px 20px);
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 86% / 0.18),
+      inset 0 -26px 48px hsl(205 75% 4% / 0.48),
+      0 0 34px hsl(var(--cyber-cyan) / 0.2),
+      0 20px 44px hsl(204 80% 2% / 0.68);
+    clip-path: var(--cyber-bevel);
+  }
+
+  .cyber-lab .cyber-active-trip::before,
+  .cyber-lab .cyber-active-trip::after {
+    content: "";
+    position: absolute;
+    pointer-events: none;
+  }
+
+  .cyber-lab .cyber-active-trip::before {
+    inset: 0.55rem;
+    border: 1px solid hsl(var(--cyber-cyan) / 0.22);
+    background:
+      linear-gradient(hsl(var(--cyber-cyan) / 0.62) 0 0) 1rem 0.62rem / 4.6rem 0.14rem no-repeat,
+      linear-gradient(hsl(var(--cyber-green) / 0.5) 0 0) calc(100% - 5.6rem) calc(100% - 0.74rem) / 4.6rem 0.14rem no-repeat;
+    clip-path: polygon(0 12px, 12px 0, calc(100% - 14px) 0, 100% 14px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px));
+  }
+
+  .cyber-lab .cyber-active-trip::after {
+    inset: auto 1.2rem 0.72rem 1.2rem;
+    height: 0.2rem;
+    background: linear-gradient(90deg, transparent, hsl(var(--cyber-cyan) / 0.85), hsl(var(--cyber-green) / 0.68), transparent);
+    box-shadow: 0 0 16px hsl(var(--cyber-cyan) / 0.58);
+  }
+
+  .cyber-lab .cyber-active-trip > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .cyber-lab .cyber-stat-card {
+    min-height: 8rem;
+    border: 1px solid hsl(188 100% 70% / 0.44);
+    clip-path: polygon(0 16px, 16px 0, calc(100% - 20px) 0, 100% 20px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px));
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 88% / 0.16),
+      inset 0 -24px 44px hsl(205 70% 4% / 0.38),
+      0 0 24px hsl(188 100% 62% / 0.16);
+  }
+
+  .cyber-lab .cyber-stat-card .font-grotesk {
+    color: hsl(var(--cyber-green) / 0.96);
+    font-size: clamp(2rem, 8.2vw, 3.05rem);
+    line-height: 0.94;
+    text-shadow:
+      0 0 12px hsl(var(--cyber-green) / 0.48),
+      0 0 26px hsl(var(--cyber-cyan) / 0.22);
+  }
+
+  .cyber-lab .cyber-stat-card .text-white\/80 {
+    color: hsl(var(--cyber-green) / 0.86);
+    font-size: clamp(1rem, 4vw, 1.35rem);
+  }
+
+  .cyber-lab .cyber-stat-card .text-white\/60 {
+    color: hsl(184 100% 84% / 0.62);
+  }
+
+  .cyber-lab .cyber-stat-card::before {
+    content: "";
+    position: absolute;
+    inset: 0.35rem;
+    pointer-events: none;
+    border: 1px solid hsl(188 100% 76% / 0.2);
+    background:
+      radial-gradient(circle at 0.58rem 0.58rem, hsl(205 18% 78% / 0.66) 0 0.08rem, hsl(205 38% 6% / 0.95) 0.1rem 0.2rem, transparent 0.22rem),
+      radial-gradient(circle at calc(100% - 0.58rem) 0.58rem, hsl(205 18% 78% / 0.5) 0 0.08rem, hsl(205 38% 6% / 0.95) 0.1rem 0.2rem, transparent 0.22rem),
+      linear-gradient(90deg, transparent, hsl(188 100% 62% / 0.14), transparent) 0.85rem 0.5rem / calc(100% - 1.7rem) 0.13rem no-repeat,
+      linear-gradient(90deg, transparent, hsl(132 88% 66% / 0.12), transparent) 0.85rem calc(100% - 0.62rem) / calc(100% - 1.7rem) 0.13rem no-repeat;
+    clip-path: polygon(0 10px, 10px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px));
+    box-shadow: inset 0 0 16px hsl(188 100% 62% / 0.08);
+  }
+
+  .cyber-lab .cyber-stat-card .stat-orb {
+    border-radius: 0;
+    background:
+      linear-gradient(90deg, transparent, hsl(188 100% 78% / 0.22), transparent),
+      repeating-linear-gradient(0deg, transparent 0 5px, hsl(188 100% 62% / 0.22) 6px 7px);
+    opacity: 0.58;
+    transform: skewX(-22deg);
+  }
+
+  .cyber-lab .cyber-stat-card .stat-orb-top {
+    right: 0.8rem;
+    top: 0.75rem;
+    width: 4.3rem;
+    height: 2.6rem;
+  }
+
+  .cyber-lab .cyber-stat-card .stat-orb-bottom {
+    bottom: 0.75rem;
+    left: 0.8rem;
+    width: 4.8rem;
+    height: 1.6rem;
+  }
+
+  .cyber-lab .cyber-stat-icon {
+    position: relative;
+    border: 1px solid hsl(132 88% 66% / 0.48);
+    border-radius: 999px;
+    background:
+      linear-gradient(135deg, hsl(190 92% 18% / 0.9), hsl(135 72% 18% / 0.78));
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 88% / 0.14),
+      inset 0 0 16px hsl(132 88% 66% / 0.18),
+      0 0 14px hsl(132 88% 66% / 0.22);
+  }
+
+  .cyber-lab .cyber-stat-icon::before {
+    content: "";
+    position: absolute;
+    inset: -0.35rem;
+    border: 1px solid hsl(132 88% 66% / 0.26);
+    border-radius: 999px;
+    background:
+      linear-gradient(90deg, transparent 46%, hsl(132 88% 66% / 0.36) 47% 53%, transparent 54%),
+      linear-gradient(0deg, transparent 46%, hsl(188 100% 62% / 0.3) 47% 53%, transparent 54%);
+    opacity: 0.7;
+  }
+
+  .cyber-lab .cyber-stat-icon > svg {
+    position: relative;
+    z-index: 1;
+    color: hsl(132 88% 76%);
+    stroke-width: 2.4;
+  }
+
+  .cyber-lab .cyber-stat-schematic {
+    opacity: 0.3;
+    color: hsl(132 88% 76%);
+    stroke-width: 1.25;
+    filter:
+      drop-shadow(0 0 8px hsl(132 88% 66% / 0.58))
+      drop-shadow(0 0 16px hsl(188 100% 62% / 0.24));
+  }
+
+  .cyber-lab .cyber-stat-card-blue {
+    background:
+      radial-gradient(circle at 77% 28%, hsl(var(--cyber-cyan) / 0.16), transparent 5.8rem),
+      radial-gradient(circle at 0.9rem 0.9rem, hsl(205 18% 78% / 0.72) 0 0.09rem, hsl(214 86% 8% / 0.96) 0.11rem 0.23rem, transparent 0.25rem),
+      radial-gradient(circle at calc(100% - 0.9rem) calc(100% - 0.9rem), hsl(188 100% 72% / 0.56) 0 0.08rem, hsl(214 86% 8% / 0.96) 0.1rem 0.21rem, transparent 0.24rem),
+      linear-gradient(135deg, hsl(214 86% 20%), hsl(197 100% 25%) 58%, hsl(229 86% 38%)),
+      repeating-linear-gradient(0deg, transparent 0 16px, hsl(188 100% 62% / 0.14) 17px 18px);
+  }
+
+  .cyber-lab .cyber-stat-card-green {
+    border-color: hsl(132 88% 66% / 0.48);
+    background:
+      radial-gradient(circle at 77% 28%, hsl(var(--cyber-green) / 0.15), transparent 5.8rem),
+      radial-gradient(circle at 0.9rem 0.9rem, hsl(205 18% 78% / 0.72) 0 0.09rem, hsl(158 82% 8% / 0.96) 0.11rem 0.23rem, transparent 0.25rem),
+      radial-gradient(circle at calc(100% - 0.9rem) calc(100% - 0.9rem), hsl(132 88% 76% / 0.58) 0 0.08rem, hsl(158 82% 8% / 0.96) 0.1rem 0.21rem, transparent 0.24rem),
+      linear-gradient(135deg, hsl(158 82% 16%), hsl(132 76% 28%) 58%, hsl(175 94% 20%)),
+      repeating-linear-gradient(0deg, transparent 0 16px, hsl(132 88% 66% / 0.14) 17px 18px);
+    box-shadow:
+      inset 0 0 0 1px hsl(132 88% 86% / 0.16),
+      inset 0 -24px 44px hsl(205 70% 4% / 0.38),
+      0 0 24px hsl(132 88% 66% / 0.16);
+  }
+
+  .cyber-lab .cyber-stat-card::after {
+    content: "";
+    position: absolute;
+    inset: auto 0.8rem 0.65rem 0.8rem;
+    height: 0.22rem;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, hsl(188 100% 70% / 0.9), transparent);
+    box-shadow: 0 0 14px hsl(188 100% 62% / 0.6);
+  }
+
+  .cyber-lab .cyber-trip-card {
+    min-height: 9.5rem;
+    border-color: hsl(188 100% 62% / 0.4);
+    background:
+      radial-gradient(circle at 0.95rem 0.95rem, hsl(205 18% 78% / 0.72) 0 0.09rem, hsl(205 38% 6% / 0.96) 0.11rem 0.23rem, transparent 0.25rem),
+      radial-gradient(circle at calc(100% - 0.95rem) 0.95rem, hsl(188 100% 72% / 0.48) 0 0.08rem, hsl(205 38% 6% / 0.96) 0.1rem 0.21rem, transparent 0.24rem),
+      radial-gradient(circle at 0.95rem calc(100% - 0.95rem), hsl(132 88% 76% / 0.46) 0 0.08rem, hsl(205 38% 6% / 0.96) 0.1rem 0.21rem, transparent 0.24rem),
+      linear-gradient(135deg, hsl(204 42% 12% / 0.94), hsl(198 52% 7% / 0.96)),
+      linear-gradient(125deg, transparent 0 62%, hsl(188 100% 62% / 0.12) 62.4% 63.3%, transparent 63.8%),
+      repeating-linear-gradient(90deg, transparent 0 24px, hsl(188 100% 62% / 0.07) 25px 26px),
+      repeating-linear-gradient(0deg, transparent 0 18px, hsl(132 88% 66% / 0.05) 19px 20px);
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 84% / 0.14),
+      inset 0 -22px 38px hsl(205 80% 3% / 0.38),
+      0 0 22px hsl(188 100% 62% / 0.12),
+      0 14px 30px hsl(204 80% 2% / 0.42);
+    clip-path: polygon(0 0.85rem, 0.85rem 0, calc(100% - 1.2rem) 0, 100% 1.2rem, 100% calc(100% - 0.85rem), calc(100% - 0.85rem) 100%, 0.85rem 100%, 0 calc(100% - 0.85rem));
+    overflow: hidden;
+  }
+
+  .cyber-lab .cyber-trip-card::before,
+  .cyber-lab .cyber-trip-card::after {
+    content: "";
+    position: absolute;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .cyber-lab .cyber-trip-card::before {
+    inset: 0.42rem;
+    border: 1px solid hsl(188 100% 72% / 0.2);
+    background:
+      linear-gradient(hsl(188 100% 72% / 0.46) 0 0) 0.75rem 0.55rem / 4.1rem 0.12rem no-repeat,
+      linear-gradient(hsl(132 88% 66% / 0.4) 0 0) calc(100% - 4.85rem) calc(100% - 0.7rem) / 4.1rem 0.12rem no-repeat,
+      linear-gradient(180deg, hsl(188 100% 62% / 0.3), hsl(132 88% 66% / 0.28)) 0.6rem 1rem / 0.12rem calc(100% - 2rem) no-repeat,
+      linear-gradient(180deg, hsl(132 88% 66% / 0.28), hsl(188 100% 62% / 0.3)) calc(100% - 0.72rem) 1rem / 0.12rem calc(100% - 2rem) no-repeat,
+      linear-gradient(90deg, transparent 0 12%, hsl(188 100% 62% / 0.18) 12.4% 13%, transparent 13.4%),
+      linear-gradient(180deg, transparent 0 72%, hsl(132 88% 66% / 0.12) 72.4% 73%, transparent 73.4%);
+    clip-path: polygon(0 0.55rem, 0.55rem 0, calc(100% - 0.7rem) 0, 100% 0.7rem, 100% calc(100% - 0.55rem), calc(100% - 0.55rem) 100%, 0.55rem 100%, 0 calc(100% - 0.55rem));
+    opacity: 0.8;
+  }
+
+  .cyber-lab .cyber-trip-card::after {
+    inset: auto 1rem 0.55rem 1rem;
+    height: 0.16rem;
+    background: linear-gradient(90deg, transparent, hsl(188 100% 62% / 0.72), hsl(132 88% 66% / 0.54), transparent);
+    box-shadow: 0 0 12px hsl(188 100% 62% / 0.44);
+  }
+
+  .cyber-lab .cyber-trip-card:hover {
+    border-color: hsl(132 88% 66% / 0.52);
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 84% / 0.18),
+      0 0 30px hsl(132 88% 66% / 0.16),
+      0 16px 34px hsl(204 80% 2% / 0.5);
+  }
+
+  .cyber-lab .cyber-trip-card .cyber-trip-open-target {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    border: 0;
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+    clip-path: inherit;
+  }
+
+  .cyber-lab .cyber-trip-card .cyber-trip-open-target::after {
+    content: none;
+  }
+
+  .cyber-lab .cyber-trip-content {
+    position: relative;
+    z-index: 3;
+  }
+
+  .cyber-lab .cyber-trip-metrics {
+    border-left: 2px solid hsl(188 100% 62% / 0.28);
+    padding-left: 0.7rem;
+  }
+
+  .cyber-lab .cyber-trip-score {
+    border-radius: 0;
+    min-height: 3.35rem;
+    min-width: 3.35rem;
+    border-color: hsl(132 88% 66% / 0.45);
+    background:
+      linear-gradient(135deg, hsl(190 80% 14% / 0.94), hsl(132 72% 16% / 0.72)),
+      linear-gradient(90deg, transparent 47%, hsl(132 88% 66% / 0.18) 48% 52%, transparent 53%);
+    clip-path: polygon(0 0.55rem, 0.55rem 0, calc(100% - 0.55rem) 0, 100% 0.55rem, 100% calc(100% - 0.55rem), calc(100% - 0.55rem) 100%, 0.55rem 100%, 0 calc(100% - 0.55rem));
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 88% / 0.14),
+      inset 0 0 16px hsl(132 88% 66% / 0.16),
+      0 0 18px hsl(132 88% 66% / 0.16);
+  }
+
+  .cyber-lab .cyber-trip-card :where(.rounded-full, .rounded-md) {
+    border-radius: 0.35rem;
+  }
+
+  .cyber-lab .cyber-trip-card :where(.bg-red-50, .dark\:bg-red-950\/30, .dark\:bg-red-950\/40) {
+    background-color: hsl(354 68% 18% / 0.62);
+    border-color: hsl(354 88% 64% / 0.44);
+    color: hsl(354 100% 78%);
+  }
+
+  .cyber-lab .cyber-trip-card :where(.bg-yellow-50, .bg-orange-50, .dark\:bg-yellow-950\/30, .dark\:bg-orange-950\/30, .dark\:bg-amber-950\/40) {
+    background-color: hsl(43 88% 18% / 0.62);
+    border-color: hsl(43 100% 64% / 0.48);
+    color: hsl(43 100% 76%);
+  }
+
+  .cyber-lab .cyber-trip-card :where(.bg-blue-50, .dark\:bg-blue-950\/30) {
+    background-color: hsl(199 88% 18% / 0.62);
+    border-color: hsl(188 100% 62% / 0.48);
+    color: hsl(188 100% 78%);
+  }
+
+  .cyber-lab .cyber-score-panel {
+    border-color: hsl(188 100% 62% / 0.46);
+    background:
+      radial-gradient(circle at 1rem 1rem, hsl(205 18% 78% / 0.7) 0 0.09rem, hsl(205 38% 6% / 0.96) 0.11rem 0.23rem, transparent 0.25rem),
+      radial-gradient(circle at calc(100% - 1rem) 1rem, hsl(188 100% 72% / 0.52) 0 0.08rem, hsl(205 38% 6% / 0.96) 0.1rem 0.21rem, transparent 0.24rem),
+      radial-gradient(circle at 1rem calc(100% - 1rem), hsl(132 88% 76% / 0.48) 0 0.08rem, hsl(205 38% 6% / 0.96) 0.1rem 0.21rem, transparent 0.24rem),
+      linear-gradient(135deg, hsl(204 42% 12% / 0.94), hsl(189 72% 8% / 0.94)),
+      linear-gradient(115deg, transparent 0 66%, hsl(132 88% 66% / 0.12) 66.5% 68%, transparent 68.5%),
+      linear-gradient(90deg, transparent 0 72%, hsl(188 100% 62% / 0.12) 72.4% 73%, transparent 73.4%),
+      repeating-linear-gradient(90deg, transparent 0 28px, hsl(188 100% 62% / 0.1) 29px 30px);
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 78% / 0.18),
+      0 0 26px hsl(188 100% 62% / 0.14),
+      0 18px 38px hsl(204 80% 2% / 0.54);
+    clip-path: polygon(0 16px, 16px 0, calc(100% - 18px) 0, 100% 18px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px));
+  }
+
+  .cyber-lab :where(.rounded-3xl.border, .rounded-2xl.border):not(.cyber-hero-panel):not(.cyber-score-panel):not(.cyber-stat-card) {
+    position: relative;
+    border-color: hsl(188 100% 62% / 0.34);
+    background:
+      linear-gradient(90deg, transparent 0 68%, hsl(var(--cyber-cyan) / 0.08) 68.3% 69.2%, transparent 69.6%),
+      radial-gradient(circle at 0.9rem 0.9rem, hsl(205 18% 78% / 0.62) 0 0.08rem, hsl(205 38% 6% / 0.95) 0.1rem 0.21rem, transparent 0.24rem),
+      radial-gradient(circle at calc(100% - 0.9rem) calc(100% - 0.9rem), hsl(132 88% 76% / 0.38) 0 0.08rem, hsl(205 38% 6% / 0.95) 0.1rem 0.2rem, transparent 0.23rem),
+      linear-gradient(135deg, hsl(204 31% 16% / 0.92), hsl(202 45% 7% / 0.97)),
+      repeating-linear-gradient(90deg, transparent 0 26px, hsl(188 100% 62% / 0.07) 27px 28px),
+      repeating-linear-gradient(0deg, transparent 0 20px, hsl(132 88% 66% / 0.05) 21px 22px);
+    box-shadow:
+      inset 0 1px 0 hsl(188 100% 82% / 0.16),
+      inset 0 -1px 0 hsl(132 88% 66% / 0.11),
+      inset 0 -24px 42px hsl(205 80% 3% / 0.22),
+      0 12px 30px hsl(204 80% 2% / 0.38),
+      0 0 20px hsl(188 100% 62% / 0.08);
+    clip-path: polygon(0 12px, 12px 0, calc(100% - 14px) 0, 100% 14px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px));
+  }
+
+  .cyber-lab :where(.rounded-xl.border, .rounded-lg.border):not(button):not(a):not([role="button"]) {
+    position: relative;
+    border-color: hsl(188 100% 62% / 0.28);
+    background:
+      linear-gradient(135deg, hsl(204 38% 11% / 0.86), hsl(199 46% 7% / 0.9)),
+      repeating-linear-gradient(90deg, transparent 0 22px, hsl(188 100% 62% / 0.055) 23px 24px);
+    box-shadow:
+      inset 0 1px 0 hsl(188 100% 82% / 0.12),
+      inset 0 -1px 0 hsl(132 88% 66% / 0.08),
+      0 8px 22px hsl(204 80% 2% / 0.25);
+    clip-path: polygon(0 8px, 8px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px));
+  }
+
+  .cyber-lab :where(.rounded-xl.border, .rounded-lg.border):not(button):not(a):not([role="button"])::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(hsl(188 100% 72% / 0.34) 0 0) 0.62rem 0.62rem / 0.26rem 0.26rem no-repeat,
+      linear-gradient(hsl(132 88% 66% / 0.28) 0 0) calc(100% - 0.88rem) 0.62rem / 0.26rem 0.26rem no-repeat,
+      linear-gradient(180deg, hsl(188 100% 62% / 0.1), transparent 42%);
+    opacity: 0.7;
+  }
+
+  .cyber-lab :where(.rounded-3xl.border, .rounded-2xl.border):not(.cyber-hero-panel):not(.cyber-score-panel):not(.cyber-stat-card)::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(hsl(188 100% 72% / 0.52) 0 0) 1rem 0.55rem / 4rem 0.12rem no-repeat,
+      linear-gradient(hsl(132 88% 66% / 0.42) 0 0) calc(100% - 5rem) calc(100% - 0.7rem) / 4rem 0.12rem no-repeat,
+      linear-gradient(180deg, hsl(188 100% 62% / 0.24), hsl(132 88% 66% / 0.22)) 0.62rem 1rem / 0.12rem calc(100% - 2rem) no-repeat,
+      linear-gradient(180deg, hsl(132 88% 66% / 0.22), hsl(188 100% 62% / 0.24)) calc(100% - 0.72rem) 1rem / 0.12rem calc(100% - 2rem) no-repeat,
+      linear-gradient(90deg, transparent 0 10%, hsl(188 100% 62% / 0.2) 10.4% 11.1%, transparent 11.5% 88%, hsl(132 88% 66% / 0.16) 88.4% 89%, transparent 89.4%),
+      linear-gradient(180deg, hsl(188 100% 62% / 0.12), transparent 24%, transparent 78%, hsl(132 88% 66% / 0.09));
+    opacity: 0.5;
+  }
+
+  .cyber-lab :where(.rounded-3xl.border, .rounded-2xl.border):not(.cyber-hero-panel):not(.cyber-score-panel):not(.cyber-stat-card)::after {
+    content: "";
+    position: absolute;
+    inset: auto 1rem 0.45rem 1rem;
+    height: 0.12rem;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, hsl(188 100% 62% / 0.58), hsl(132 88% 66% / 0.42), transparent);
+    box-shadow:
+      0 0 10px hsl(188 100% 62% / 0.32),
+      -0.2rem -0.2rem 0 -0.05rem hsl(188 100% 80% / 0.36),
+      calc(100% - 0.2rem) -0.2rem 0 -0.05rem hsl(132 88% 76% / 0.3);
+  }
+
+  .cyber-lab :where(.rounded-3xl.border, .rounded-2xl.border) > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .cyber-lab :where(.rounded-xl.border, .rounded-lg.border) > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .cyber-lab :where([role="tablist"], [cmdk-list], [data-radix-scroll-area-viewport]) {
+    border-color: hsl(188 100% 62% / 0.24);
+    background:
+      linear-gradient(135deg, hsl(204 42% 10% / 0.84), hsl(198 48% 7% / 0.74)),
+      repeating-linear-gradient(90deg, transparent 0 24px, hsl(188 100% 62% / 0.06) 25px 26px);
+    box-shadow: inset 0 0 18px hsl(188 100% 62% / 0.06);
+  }
+
+  .cyber-lab :where([role="tab"], [data-state="active"]) {
+    text-shadow: 0 0 10px hsl(188 100% 62% / 0.24);
+  }
+
+  .cyber-lab :where([role="tab"][data-state="active"], button[data-state="active"], [aria-selected="true"]) {
+    border-color: hsl(132 88% 66% / 0.5);
+    background:
+      linear-gradient(135deg, hsl(188 100% 50% / 0.22), hsl(132 88% 66% / 0.18)),
+      linear-gradient(180deg, hsl(204 44% 12% / 0.86), hsl(198 48% 7% / 0.88));
+    color: hsl(184 100% 90%);
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 82% / 0.14),
+      0 0 16px hsl(132 88% 66% / 0.18);
+  }
+
+  .cyber-lab :where([data-state="open"]) {
+    border-color: hsl(188 100% 62% / 0.32);
+  }
+
+  .cyber-lab :where(.animate-pulse, .bg-muted, .bg-secondary\/60) {
+    background:
+      linear-gradient(90deg, hsl(204 44% 10% / 0.84), hsl(188 100% 62% / 0.12), hsl(204 44% 10% / 0.84));
+    background-size: 220% 100%;
+  }
+
+  .cyber-lab .settings-section {
+    border: 1px solid hsl(188 100% 62% / 0.22);
+    background:
+      linear-gradient(135deg, hsl(204 42% 10% / 0.58), hsl(198 46% 7% / 0.34)),
+      repeating-linear-gradient(90deg, transparent 0 32px, hsl(188 100% 62% / 0.045) 33px 34px);
+    border-radius: 0.75rem;
+    box-shadow: inset 0 0 22px hsl(188 100% 62% / 0.045);
+    padding: 0.25rem 0.45rem 0.6rem;
+  }
+
+  .cyber-lab .settings-section [id^="settings-"] {
+    color: hsl(188 100% 78%);
+  }
+
+  .cyber-lab [data-setting-label] {
+    border-color: hsl(188 100% 62% / 0.16);
+    background:
+      linear-gradient(90deg, hsl(204 44% 9% / 0.68), transparent 58%),
+      linear-gradient(180deg, hsl(188 100% 62% / 0.04), transparent);
+    border-radius: 0.65rem;
+    margin-block: 0.18rem;
+  }
+
+  .cyber-lab [data-setting-label]:hover {
+    border-color: hsl(188 100% 62% / 0.34);
+    background-color: hsl(188 100% 62% / 0.06);
+  }
+
+  .cyber-lab [data-setting-label] :where(.w-8.h-8, .h-8.w-8) {
+    border: 1px solid hsl(188 100% 62% / 0.24);
+    background:
+      linear-gradient(135deg, hsl(188 100% 62% / 0.22), hsl(204 44% 10% / 0.94)),
+      repeating-linear-gradient(90deg, transparent 0 5px, hsl(188 100% 72% / 0.14) 6px 7px);
+    box-shadow: inset 0 0 12px hsl(188 100% 62% / 0.16);
+  }
+
+  .cyber-lab :where(.bg-background\/50, .bg-secondary\/50, .bg-secondary\/35, .bg-secondary\/30, .bg-secondary\/70) {
+    border-color: hsl(188 100% 62% / 0.22);
+    background:
+      linear-gradient(135deg, hsl(204 44% 10% / 0.82), hsl(198 50% 7% / 0.9)),
+      repeating-linear-gradient(90deg, transparent 0 18px, hsl(188 100% 62% / 0.06) 19px 20px),
+      repeating-linear-gradient(0deg, transparent 0 16px, hsl(132 88% 66% / 0.045) 17px 18px);
+    box-shadow:
+      inset 0 1px 0 hsl(188 100% 82% / 0.1),
+      inset 0 -1px 0 hsl(132 88% 66% / 0.07);
+  }
+
+  .cyber-lab :where(input[type="checkbox"], input[type="radio"], [role="switch"]) {
+    border-color: hsl(188 100% 62% / 0.4);
+    box-shadow:
+      inset 0 0 10px hsl(188 100% 62% / 0.1),
+      0 0 12px hsl(188 100% 62% / 0.12);
+  }
+
+  .cyber-lab :where([role="switch"][data-state="checked"], input[type="checkbox"]:checked, input[type="radio"]:checked) {
+    border-color: hsl(132 88% 66% / 0.66);
+    background-color: hsl(132 88% 34% / 0.82);
+    box-shadow:
+      inset 0 0 12px hsl(132 88% 66% / 0.22),
+      0 0 16px hsl(132 88% 66% / 0.26);
+  }
+
+  .cyber-lab :where(.text-muted-foreground) {
+    color: hsl(186 44% 72%);
+  }
+
+  .cyber-lab :where(.text-primary) {
+    color: hsl(188 100% 70%);
+  }
+
+  .cyber-lab :where(.text-emerald-500, .text-green-500, .text-lime-500) {
+    color: hsl(132 88% 70%);
+  }
+
+  .cyber-lab .cyber-page-skeleton :where(.animate-pulse, [class*="bg-muted"]) {
+    border: 1px solid hsl(188 100% 62% / 0.2);
+    background:
+      linear-gradient(90deg, hsl(204 44% 9% / 0.9), hsl(188 100% 62% / 0.16), hsl(204 44% 9% / 0.9)),
+      repeating-linear-gradient(90deg, transparent 0 22px, hsl(132 88% 66% / 0.06) 23px 24px);
+    background-size: 220% 100%, auto;
+    clip-path: polygon(0 0.45rem, 0.45rem 0, calc(100% - 0.55rem) 0, 100% 0.55rem, 100% calc(100% - 0.45rem), calc(100% - 0.45rem) 100%, 0.45rem 100%, 0 calc(100% - 0.45rem));
+    box-shadow: inset 0 0 18px hsl(188 100% 62% / 0.06);
+  }
+
+  .cyber-lab :where(.border-dashed) {
+    border-style: solid;
+    border-color: hsl(188 100% 62% / 0.34);
+    background:
+      linear-gradient(135deg, hsl(204 44% 10% / 0.82), hsl(198 50% 7% / 0.9)),
+      repeating-linear-gradient(135deg, transparent 0 14px, hsl(188 100% 62% / 0.07) 15px 16px);
+    clip-path: polygon(0 0.85rem, 0.85rem 0, calc(100% - 1rem) 0, 100% 1rem, 100% calc(100% - 0.85rem), calc(100% - 0.85rem) 100%, 0.85rem 100%, 0 calc(100% - 0.85rem));
+  }
+
+  .cyber-lab :where(section, article):has(> h1, > h2, > h3) {
+    position: relative;
+  }
+
+  .cyber-lab :where(section, article):has(> h1, > h2, > h3)::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -0.35rem;
+    height: 1px;
+    pointer-events: none;
+    background: linear-gradient(90deg, hsl(188 100% 62% / 0.26), transparent 42%, hsl(132 88% 66% / 0.16), transparent);
+    opacity: 0.62;
+  }
+
+  .cyber-lab :where(.map-container, .leaflet-container, canvas) {
+    border-color: hsl(188 100% 62% / 0.36);
+    box-shadow:
+      0 0 0 1px hsl(188 100% 62% / 0.22),
+      0 0 26px hsl(188 100% 62% / 0.16);
+  }
+
+  .cyber-lab :where(table, [role="table"]) {
+    border-color: hsl(188 100% 62% / 0.28);
+    background-color: hsl(204 40% 8% / 0.72);
+  }
+
+  .cyber-lab :where(.rounded-full.border, [class*="rounded-full"][class*="border"]) {
+    border-color: hsl(188 100% 62% / 0.34);
+    background:
+      linear-gradient(180deg, hsl(204 44% 12% / 0.88), hsl(198 48% 7% / 0.9));
+    box-shadow: inset 0 0 12px hsl(188 100% 62% / 0.08);
+  }
+
+  .cyber-lab :where([data-radix-popper-content-wrapper], [role="dialog"]) {
+    filter: drop-shadow(0 0 22px hsl(188 100% 62% / 0.18));
+  }
+
+  .cyber-lab ::selection {
+    background: hsl(188 100% 62% / 0.32);
+    color: hsl(184 100% 92%);
   }
 
   .animate-pulse-subtle {
@@ -295,6 +1570,707 @@
 
   .speed-limit-vertex-handle:active {
     cursor: grabbing;
+  }
+
+  /* Final cyber reference pass: keep normal light/dark untouched, but make Cyber Lab read like the supplied armored console. */
+  html.cyber-lab {
+    --background: 205 58% 4%;
+    --foreground: 184 100% 88%;
+    --card: 205 41% 10%;
+    --card-foreground: 184 100% 88%;
+    --border: 188 100% 34%;
+    --muted: 204 38% 12%;
+    --muted-foreground: 184 58% 74%;
+    --primary: 188 100% 62%;
+    --accent: 132 88% 66%;
+    background:
+      radial-gradient(circle at 50% -8rem, hsl(188 100% 62% / 0.18), transparent 18rem),
+      linear-gradient(180deg, hsl(206 52% 8%), hsl(205 70% 3%) 58%, hsl(194 64% 5%));
+  }
+
+  .cyber-lab body {
+    background-color: hsl(205 58% 4%);
+    background-image:
+      linear-gradient(90deg, transparent 0 5.2rem, hsl(31 54% 50% / 0.2) 5.25rem 5.35rem, transparent 5.4rem 11.2rem, hsl(188 100% 62% / 0.1) 11.25rem 11.35rem, transparent 11.4rem),
+      linear-gradient(0deg, transparent 0 5.5rem, hsl(31 54% 50% / 0.18) 5.55rem 5.65rem, transparent 5.7rem 10.8rem, hsl(132 88% 66% / 0.085) 10.85rem 10.95rem, transparent 11rem),
+      repeating-linear-gradient(90deg, hsl(188 100% 62% / 0.035) 0 1px, transparent 1px 2.05rem),
+      repeating-linear-gradient(0deg, hsl(132 88% 66% / 0.026) 0 1px, transparent 1px 1.75rem),
+      radial-gradient(circle at 8% 22%, hsl(188 100% 62% / 0.07), transparent 13rem),
+      radial-gradient(circle at 92% 34%, hsl(132 88% 66% / 0.06), transparent 12rem),
+      linear-gradient(180deg, hsl(205 54% 6%), hsl(205 82% 2%));
+    background-attachment: fixed;
+  }
+
+  .cyber-lab body::before {
+    background:
+      linear-gradient(90deg, hsl(188 100% 62% / 0.22), transparent 2.2rem, transparent calc(100% - 2.2rem), hsl(188 100% 62% / 0.2)),
+      linear-gradient(180deg, hsl(132 88% 66% / 0.12), transparent 8rem, transparent calc(100% - 8rem), hsl(188 100% 62% / 0.1)),
+      repeating-linear-gradient(0deg, transparent 0 13px, hsl(188 100% 62% / 0.022) 14px 15px);
+    opacity: 0.38;
+  }
+
+  .cyber-lab body::after {
+    opacity: 0.27;
+  }
+
+  .cyber-lab .cyber-app-shell {
+    background:
+      linear-gradient(90deg, hsl(188 100% 62% / 0.16), transparent 0.55rem, transparent calc(100% - 0.55rem), hsl(188 100% 62% / 0.14)),
+      linear-gradient(180deg, hsl(188 100% 62% / 0.07), transparent 8rem, transparent);
+  }
+
+  .cyber-lab .cyber-main-content {
+    padding-inline: clamp(0.9rem, 3vw, 1.45rem);
+  }
+
+  .cyber-lab .cyber-top-frame {
+    min-height: 5.5rem;
+    border-bottom-width: 1px;
+    background:
+      radial-gradient(circle at 1.1rem 1rem, hsl(205 16% 74% / 0.75) 0 0.1rem, hsl(205 44% 5% / 0.98) 0.12rem 0.28rem, transparent 0.3rem),
+      radial-gradient(circle at calc(100% - 1.1rem) 1rem, hsl(205 16% 74% / 0.75) 0 0.1rem, hsl(205 44% 5% / 0.98) 0.12rem 0.28rem, transparent 0.3rem),
+      linear-gradient(hsl(188 100% 62% / 0.72) 0 0) 1.2rem calc(100% - 0.24rem) / calc(100% - 2.4rem) 0.14rem no-repeat,
+      linear-gradient(90deg, transparent 0 6%, hsl(206 20% 33%) 6.2% 21%, transparent 21.3% 39%, hsl(205 28% 19%) 39.2% 61%, transparent 61.4% 79%, hsl(206 20% 33%) 79.2% 94%, transparent 94.3%),
+      linear-gradient(180deg, hsl(207 22% 25% / 0.98), hsl(204 48% 9% / 0.99) 44%, hsl(205 78% 4% / 0.98)),
+      repeating-linear-gradient(90deg, transparent 0 1.25rem, hsl(188 100% 62% / 0.14) 1.3rem 1.36rem);
+    box-shadow:
+      inset 0 -1px 0 hsl(132 88% 66% / 0.42),
+      inset 0 -18px 32px hsl(205 80% 3% / 0.58),
+      0 0 34px hsl(188 100% 62% / 0.2);
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 0.8rem), calc(100% - 1.4rem) 100%, 1.4rem 100%, 0 calc(100% - 0.8rem));
+  }
+
+  .cyber-lab .cyber-header-inner {
+    height: 5rem;
+  }
+
+  .cyber-lab .cyber-brand-mark {
+    height: 3.65rem;
+    width: 3.65rem;
+  }
+
+  .cyber-lab .cyber-brand-mark svg {
+    height: 1.65rem;
+    width: 1.65rem;
+    filter: drop-shadow(0 0 8px hsl(188 100% 82% / 0.85));
+  }
+
+  .cyber-lab .cyber-brand-copy span:first-child {
+    font-size: clamp(1.45rem, 6vw, 2rem);
+  }
+
+  .cyber-lab :where(.cyber-hero-panel, .cyber-active-trip, .cyber-score-panel, .cyber-trip-card, .cyber-stat-card, main .rounded-3xl.border, main .rounded-2xl.border) {
+    border-width: 1px;
+    border-color: hsl(188 100% 62% / 0.48);
+    border-radius: 0;
+    backdrop-filter: blur(7px);
+  }
+
+  .cyber-lab .cyber-hero-panel {
+    min-height: 18.5rem;
+    padding: clamp(1.35rem, 4vw, 2rem);
+    background:
+      linear-gradient(hsl(132 88% 66% / 0.9) 0 0) 38% 0.9rem / 8.6rem 0.32rem no-repeat,
+      radial-gradient(circle at 78% 32%, hsl(188 100% 62% / 0.28), transparent 7.6rem),
+      linear-gradient(90deg, transparent 0 62%, hsl(188 100% 62% / 0.14) 62.3% 63%, transparent 63.4%),
+      radial-gradient(circle at 1.08rem 1.08rem, hsl(205 18% 78% / 0.82) 0 0.1rem, hsl(205 44% 5% / 0.96) 0.12rem 0.25rem, transparent 0.27rem),
+      radial-gradient(circle at calc(100% - 1.08rem) 1.08rem, hsl(205 18% 78% / 0.72) 0 0.1rem, hsl(205 44% 5% / 0.96) 0.12rem 0.25rem, transparent 0.27rem),
+      radial-gradient(circle at 1.08rem calc(100% - 1.08rem), hsl(205 18% 78% / 0.68) 0 0.1rem, hsl(205 44% 5% / 0.96) 0.12rem 0.25rem, transparent 0.27rem),
+      linear-gradient(135deg, hsl(197 32% 25% / 0.96), hsl(205 42% 11% / 0.98) 48%, hsl(184 45% 12% / 0.94)),
+      repeating-linear-gradient(90deg, transparent 0 2.15rem, hsl(188 100% 62% / 0.08) 2.2rem 2.28rem),
+      repeating-linear-gradient(0deg, transparent 0 1.15rem, hsl(132 88% 66% / 0.06) 1.2rem 1.27rem);
+    clip-path: polygon(0 1.7rem, 1.7rem 0, calc(100% - 2.4rem) 0, 100% 2.4rem, 100% calc(100% - 1.7rem), calc(100% - 1.7rem) 100%, 1.7rem 100%, 0 calc(100% - 1.7rem));
+  }
+
+  .cyber-lab .cyber-hero-panel .text-sm {
+    font-size: clamp(1.18rem, 4.5vw, 1.6rem);
+  }
+
+  .cyber-lab .cyber-hero-panel .text-xs {
+    font-size: clamp(0.95rem, 3.5vw, 1.2rem);
+  }
+
+  .cyber-lab .cyber-start-button {
+    width: clamp(4.6rem, 18vw, 5.9rem);
+    height: clamp(4.6rem, 18vw, 5.9rem);
+    border-radius: 0.35rem;
+    clip-path: polygon(0 22%, 22% 0, 78% 0, 100% 22%, 100% 78%, 78% 100%, 22% 100%, 0 78%);
+  }
+
+  .cyber-lab .cyber-private-trip {
+    margin-top: 1.25rem;
+    min-height: 7.4rem;
+    padding: 1rem 1.15rem;
+    background:
+      linear-gradient(90deg, hsl(205 80% 4% / 0.56), transparent 5.4rem),
+      linear-gradient(135deg, hsl(207 24% 24% / 0.98), hsl(204 43% 10% / 0.98) 58%, hsl(194 34% 12% / 0.96)),
+      repeating-linear-gradient(90deg, transparent 0 1.4rem, hsl(188 100% 62% / 0.085) 1.45rem 1.52rem);
+  }
+
+  .cyber-lab .cyber-private-trip .text-sm {
+    color: hsl(184 100% 86%);
+    font-size: clamp(1.05rem, 4vw, 1.35rem);
+  }
+
+  .cyber-lab .cyber-private-trip .text-xs {
+    color: hsl(184 100% 84% / 0.9);
+    font-size: clamp(0.92rem, 3.5vw, 1.08rem);
+    line-height: 1.35;
+  }
+
+  .cyber-lab .cyber-stat-card {
+    min-height: clamp(9rem, 31vw, 12rem);
+    padding: 1.35rem;
+    clip-path: polygon(0 1.35rem, 1.35rem 0, calc(100% - 1.65rem) 0, 100% 1.65rem, 100% calc(100% - 1.35rem), calc(100% - 1.35rem) 100%, 1.35rem 100%, 0 calc(100% - 1.35rem));
+  }
+
+  .cyber-lab .cyber-stat-card .font-grotesk {
+    font-size: clamp(2.45rem, 10vw, 3.45rem);
+  }
+
+  .cyber-lab .cyber-stat-icon {
+    width: 3rem;
+    height: 3rem;
+    display: grid;
+    place-items: center;
+  }
+
+  .cyber-lab main :where(.rounded-3xl.border, .rounded-2xl.border):not(.cyber-hero-panel):not(.cyber-stat-card):not(.cyber-active-trip):not(.cyber-score-panel) {
+    background:
+      linear-gradient(hsl(188 100% 62% / 0.78) 0 0) 50% 0.8rem / 7.8rem 0.22rem no-repeat,
+      radial-gradient(circle at 1.08rem 1.08rem, hsl(205 18% 78% / 0.72) 0 0.09rem, hsl(205 44% 5% / 0.96) 0.11rem 0.23rem, transparent 0.25rem),
+      radial-gradient(circle at calc(100% - 1.08rem) calc(100% - 1.08rem), hsl(132 88% 76% / 0.48) 0 0.08rem, hsl(205 44% 5% / 0.96) 0.1rem 0.21rem, transparent 0.24rem),
+      linear-gradient(135deg, hsl(205 26% 20% / 0.96), hsl(204 44% 9% / 0.98) 58%, hsl(192 36% 10% / 0.94)),
+      repeating-linear-gradient(90deg, transparent 0 1.85rem, hsl(188 100% 62% / 0.07) 1.9rem 1.98rem),
+      repeating-linear-gradient(0deg, transparent 0 1.25rem, hsl(132 88% 66% / 0.045) 1.3rem 1.36rem);
+    clip-path: polygon(0 1.15rem, 1.15rem 0, calc(100% - 1.45rem) 0, 100% 1.45rem, 100% calc(100% - 1.15rem), calc(100% - 1.15rem) 100%, 1.15rem 100%, 0 calc(100% - 1.15rem));
+    box-shadow:
+      inset 0 0 0 1px hsl(188 100% 84% / 0.14),
+      inset 0 -28px 48px hsl(205 82% 3% / 0.36),
+      0 16px 34px hsl(204 80% 2% / 0.52),
+      0 0 26px hsl(188 100% 62% / 0.1);
+  }
+
+  .cyber-lab main :where(h1, h2, h3, .font-semibold) {
+    color: hsl(184 100% 84%);
+    text-shadow: 0 0 12px hsl(188 100% 62% / 0.22);
+  }
+
+  .cyber-lab main :where(.text-muted-foreground) {
+    color: hsl(184 68% 78% / 0.86);
+  }
+
+  .cyber-lab main :where(.rounded-xl, .rounded-lg) {
+    border-radius: 0;
+  }
+
+  .cyber-lab main :where(.bg-secondary\/50, .bg-secondary\/35, .bg-background\/50, .bg-background\/60) {
+    border: 1px solid hsl(188 100% 62% / 0.2);
+    background:
+      linear-gradient(135deg, hsl(204 48% 8% / 0.86), hsl(190 50% 7% / 0.78)),
+      repeating-linear-gradient(90deg, transparent 0 1.2rem, hsl(188 100% 62% / 0.07) 1.25rem 1.32rem);
+  }
+
+  .cyber-lab footer {
+    border-top-color: hsl(188 100% 62% / 0.32);
+  }
+
+  /* Reference-grade Cyber Lab pass: armored mobile console inspired by the supplied image. */
+  html.cyber-lab {
+    --cyber-panel: 204 22% 17%;
+    --cyber-panel-hi: 198 17% 30%;
+    --cyber-panel-low: 205 58% 4%;
+    --cyber-ink: 183 100% 86%;
+    --cyber-glow-blue: 190 100% 64%;
+    --cyber-glow-green: 133 94% 67%;
+    --cyber-alert: 42 100% 68%;
+    background:
+      radial-gradient(circle at 50% -5rem, hsl(var(--cyber-glow-blue) / 0.2), transparent 17rem),
+      linear-gradient(180deg, hsl(205 52% 7%), hsl(205 76% 3%) 58%, hsl(197 60% 5%));
+  }
+
+  .cyber-lab body {
+    background-color: hsl(205 64% 3%);
+    background-image:
+      radial-gradient(circle at 12% 17%, hsl(var(--cyber-glow-blue) / 0.13), transparent 12rem),
+      radial-gradient(circle at 89% 35%, hsl(var(--cyber-glow-green) / 0.11), transparent 11rem),
+      linear-gradient(90deg, transparent 0 3.8rem, hsl(24 40% 52% / 0.2) 3.86rem 3.98rem, transparent 4.04rem 9.3rem, hsl(var(--cyber-glow-blue) / 0.11) 9.36rem 9.46rem, transparent 9.52rem),
+      linear-gradient(0deg, transparent 0 4.8rem, hsl(24 40% 52% / 0.18) 4.86rem 4.98rem, transparent 5.04rem 10.4rem, hsl(var(--cyber-glow-green) / 0.09) 10.46rem 10.56rem, transparent 10.62rem),
+      repeating-linear-gradient(90deg, hsl(var(--cyber-glow-blue) / 0.045) 0 1px, transparent 1px 1.7rem),
+      repeating-linear-gradient(0deg, hsl(var(--cyber-glow-green) / 0.035) 0 1px, transparent 1px 1.45rem),
+      linear-gradient(180deg, hsl(204 44% 6%), hsl(205 78% 2%));
+    background-size: auto, auto, 13rem 13rem, 12rem 12rem, auto, auto, auto;
+  }
+
+  .cyber-lab body::before {
+    background:
+      linear-gradient(90deg, hsl(var(--cyber-glow-blue) / 0.7), transparent 0.55rem, transparent calc(100% - 0.55rem), hsl(var(--cyber-glow-blue) / 0.64)),
+      linear-gradient(180deg, transparent 0 15%, hsl(var(--cyber-glow-blue) / 0.1) 15.2% 15.55%, transparent 15.8% 55%, hsl(var(--cyber-glow-green) / 0.1) 55.2% 55.55%, transparent 55.8%);
+    box-shadow:
+      inset 0.35rem 0 1.2rem hsl(var(--cyber-glow-blue) / 0.2),
+      inset -0.35rem 0 1.2rem hsl(var(--cyber-glow-blue) / 0.18);
+    opacity: 0.34;
+  }
+
+  .cyber-lab .cyber-app-shell {
+    background:
+      linear-gradient(90deg, hsl(25 32% 42% / 0.22), transparent 1.1rem, transparent calc(100% - 1.1rem), hsl(25 32% 42% / 0.2)),
+      linear-gradient(180deg, hsl(var(--cyber-glow-blue) / 0.09), transparent 11rem);
+  }
+
+  .cyber-lab .cyber-main-content {
+    width: min(100%, 46rem);
+    padding: 1.2rem clamp(1rem, 3vw, 1.45rem) 1.6rem;
+  }
+
+  .cyber-lab .cyber-dashboard {
+    position: relative;
+    isolation: isolate;
+    max-width: 43rem;
+    margin-inline: auto;
+    padding-inline: clamp(0.2rem, 1.5vw, 0.5rem);
+  }
+
+  .cyber-lab .cyber-dashboard::before {
+    inset: 1rem -0.9rem auto -0.9rem;
+    height: calc(100% - 2rem);
+    content: "";
+    position: absolute;
+    z-index: -1;
+    pointer-events: none;
+    border-inline: 1px solid hsl(var(--cyber-glow-blue) / 0.22);
+    background:
+      linear-gradient(90deg, transparent, hsl(var(--cyber-glow-blue) / 0.08) 0.18rem, transparent 0.45rem, transparent calc(100% - 0.45rem), hsl(var(--cyber-glow-blue) / 0.08) calc(100% - 0.18rem), transparent),
+      repeating-linear-gradient(180deg, transparent 0 4.2rem, hsl(25 34% 47% / 0.16) 4.25rem 4.35rem, transparent 4.4rem 8rem);
+  }
+
+  .cyber-lab .cyber-top-frame {
+    min-height: 6.1rem;
+    padding-inline: clamp(0.55rem, 2vw, 1rem);
+    border-bottom: 1px solid hsl(var(--cyber-glow-blue) / 0.48);
+    background:
+      radial-gradient(circle at 1.05rem 1.15rem, hsl(203 13% 78% / 0.8) 0 0.11rem, hsl(205 38% 4%) 0.13rem 0.31rem, transparent 0.33rem),
+      radial-gradient(circle at calc(100% - 1.05rem) 1.15rem, hsl(203 13% 78% / 0.75) 0 0.11rem, hsl(205 38% 4%) 0.13rem 0.31rem, transparent 0.33rem),
+      linear-gradient(hsl(var(--cyber-glow-blue) / 0.72) 0 0) 1.5rem calc(100% - 0.52rem) / calc(100% - 3rem) 0.13rem no-repeat,
+      linear-gradient(hsl(var(--cyber-glow-green) / 0.5) 0 0) 31% calc(100% - 0.86rem) / 38% 0.18rem no-repeat,
+      linear-gradient(90deg, transparent 0 6%, hsl(205 16% 33%) 6.2% 20%, transparent 20.3% 39%, hsl(204 24% 18%) 39.2% 62%, transparent 62.3% 80%, hsl(205 16% 33%) 80.2% 94%, transparent 94.3%),
+      linear-gradient(180deg, hsl(205 17% 28%), hsl(204 45% 9%) 48%, hsl(205 72% 4%));
+    box-shadow:
+      inset 0 -1px 0 hsl(var(--cyber-glow-green) / 0.46),
+      inset 0 -1.35rem 2.4rem hsl(205 84% 2% / 0.6),
+      0 0 2.2rem hsl(var(--cyber-glow-blue) / 0.22);
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 1rem), calc(100% - 1.55rem) 100%, 1.55rem 100%, 0 calc(100% - 1rem));
+  }
+
+  .cyber-lab .cyber-top-frame::before {
+    content: "";
+    position: absolute;
+    left: 28%;
+    right: 28%;
+    top: 0.7rem;
+    height: 1.15rem;
+    pointer-events: none;
+    border: 1px solid hsl(204 12% 52% / 0.34);
+    background:
+      linear-gradient(180deg, hsl(207 28% 9% / 0.96), hsl(205 50% 3% / 0.96)),
+      repeating-linear-gradient(90deg, transparent 0 1rem, hsl(var(--cyber-glow-blue) / 0.08) 1.05rem 1.12rem);
+    clip-path: polygon(0.7rem 0, calc(100% - 0.7rem) 0, 100% 100%, 0 100%);
+    box-shadow: inset 0 0 1rem hsl(205 80% 1% / 0.72);
+  }
+
+  .cyber-lab .cyber-header-inner {
+    height: 5.45rem;
+  }
+
+  .cyber-lab .cyber-brand-mark {
+    height: 4rem;
+    width: 4rem;
+    border: 1px solid hsl(var(--cyber-glow-blue) / 0.76);
+    background:
+      radial-gradient(circle at 68% 70%, hsl(var(--cyber-glow-green) / 0.92) 0 0.24rem, transparent 0.26rem),
+      linear-gradient(135deg, hsl(188 100% 28% / 0.9), hsl(203 80% 9% / 0.98) 52%, hsl(134 80% 18% / 0.9)),
+      repeating-linear-gradient(90deg, transparent 0 0.42rem, hsl(var(--cyber-glow-blue) / 0.15) 0.46rem 0.5rem);
+    clip-path: polygon(0 0.75rem, 0.75rem 0, calc(100% - 0.85rem) 0, 100% 0.85rem, 100% calc(100% - 0.75rem), calc(100% - 0.75rem) 100%, 0.75rem 100%, 0 calc(100% - 0.75rem));
+    box-shadow:
+      inset 0 0 0 1px hsl(184 100% 92% / 0.16),
+      inset 0 0 1.2rem hsl(var(--cyber-glow-blue) / 0.2),
+      0 0 1.6rem hsl(var(--cyber-glow-blue) / 0.34);
+  }
+
+  .cyber-lab .cyber-brand-copy span:first-child {
+    color: hsl(var(--cyber-glow-blue));
+    font-size: clamp(1.7rem, 7vw, 2.35rem);
+    letter-spacing: 0;
+    text-shadow:
+      0 0 0.7rem hsl(var(--cyber-glow-blue) / 0.65),
+      0 0 1.7rem hsl(var(--cyber-glow-blue) / 0.28);
+  }
+
+  .cyber-lab .cyber-status-strip {
+    display: flex;
+    margin-left: auto;
+  }
+
+  .cyber-lab .cyber-status-cell {
+    height: 3.35rem;
+    width: 3.35rem;
+    border-color: hsl(var(--cyber-glow-green) / 0.46);
+    background:
+      linear-gradient(135deg, hsl(204 52% 8% / 0.96), hsl(161 68% 13% / 0.82)),
+      repeating-linear-gradient(90deg, transparent 0 0.75rem, hsl(var(--cyber-glow-blue) / 0.12) 0.8rem 0.86rem);
+    color: hsl(var(--cyber-glow-green));
+  }
+
+  .cyber-lab .cyber-hero-panel,
+  .cyber-lab .cyber-active-trip,
+  .cyber-lab .cyber-baseline-panel,
+  .cyber-lab .cyber-score-panel {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid hsl(var(--cyber-glow-blue) / 0.5);
+    border-radius: 0;
+    background:
+      radial-gradient(circle at calc(100% - 1.3rem) 1.25rem, hsl(202 15% 78% / 0.76) 0 0.11rem, hsl(205 36% 5% / 0.96) 0.13rem 0.31rem, transparent 0.33rem),
+      radial-gradient(circle at 1.28rem calc(100% - 1.2rem), hsl(202 15% 78% / 0.62) 0 0.1rem, hsl(205 36% 5% / 0.96) 0.12rem 0.29rem, transparent 0.31rem),
+      linear-gradient(hsl(var(--cyber-glow-green) / 0.8) 0 0) 35% 1rem / 32% 0.22rem no-repeat,
+      linear-gradient(hsl(var(--cyber-glow-blue) / 0.55) 0 0) 1.1rem calc(100% - 0.8rem) / calc(100% - 2.2rem) 0.1rem no-repeat,
+      linear-gradient(135deg, hsl(var(--cyber-panel-hi) / 0.98), hsl(var(--cyber-panel) / 0.98) 42%, hsl(var(--cyber-panel-low) / 0.99)),
+      repeating-linear-gradient(90deg, transparent 0 1.65rem, hsl(var(--cyber-glow-blue) / 0.08) 1.7rem 1.78rem),
+      repeating-linear-gradient(0deg, transparent 0 1.2rem, hsl(var(--cyber-glow-green) / 0.052) 1.25rem 1.32rem);
+    box-shadow:
+      inset 0 0 0 1px hsl(184 100% 92% / 0.14),
+      inset 0 -2.2rem 3.1rem hsl(205 88% 2% / 0.46),
+      0 1rem 2.1rem hsl(205 90% 1% / 0.62),
+      0 0 2rem hsl(var(--cyber-glow-blue) / 0.14);
+    clip-path: polygon(0 1.8rem, 1.8rem 0, calc(100% - 2.5rem) 0, 100% 2.5rem, 100% calc(100% - 1.8rem), calc(100% - 1.8rem) 100%, 1.8rem 100%, 0 calc(100% - 1.8rem));
+  }
+
+  .cyber-lab .cyber-hero-panel {
+    min-height: clamp(18.8rem, 48vw, 25.5rem);
+    padding: clamp(1.45rem, 4vw, 2.05rem);
+  }
+
+  .cyber-lab .cyber-hero-panel::before,
+  .cyber-lab .cyber-active-trip::before,
+  .cyber-lab .cyber-baseline-panel::before,
+  .cyber-lab .cyber-score-panel::before {
+    content: "";
+    position: absolute;
+    inset: 0.75rem;
+    pointer-events: none;
+    z-index: 0;
+    border: 1px solid hsl(var(--cyber-glow-blue) / 0.22);
+    background:
+      linear-gradient(90deg, hsl(var(--cyber-glow-blue) / 0.25), transparent 5rem, transparent calc(100% - 5rem), hsl(var(--cyber-glow-green) / 0.2)),
+      linear-gradient(180deg, transparent 0 62%, hsl(var(--cyber-glow-blue) / 0.12) 62.3% 62.8%, transparent 63.2%),
+      repeating-linear-gradient(90deg, transparent 0 0.58rem, hsl(var(--cyber-glow-blue) / 0.05) 0.62rem 0.66rem);
+    clip-path: polygon(0 1rem, 1rem 0, calc(100% - 1.2rem) 0, 100% 1.2rem, 100% calc(100% - 1rem), calc(100% - 1rem) 100%, 1rem 100%, 0 calc(100% - 1rem));
+    opacity: 0.8;
+  }
+
+  .cyber-lab .cyber-hero-panel::after,
+  .cyber-lab .cyber-active-trip::after,
+  .cyber-lab .cyber-baseline-panel::after,
+  .cyber-lab .cyber-score-panel::after {
+    content: "";
+    position: absolute;
+    left: 12%;
+    right: 12%;
+    bottom: 0.78rem;
+    height: 0.36rem;
+    pointer-events: none;
+    z-index: 1;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, hsl(var(--cyber-glow-green) / 0.95), hsl(var(--cyber-glow-blue) / 0.98), transparent);
+    box-shadow:
+      0 0 1rem hsl(var(--cyber-glow-blue) / 0.7),
+      0 -0.05rem 0.7rem hsl(var(--cyber-glow-green) / 0.55);
+  }
+
+  .cyber-lab .cyber-hero-panel > *,
+  .cyber-lab .cyber-active-trip > *,
+  .cyber-lab .cyber-baseline-panel > *,
+  .cyber-lab .cyber-score-panel > * {
+    position: relative;
+    z-index: 2;
+  }
+
+  .cyber-lab .cyber-hero-panel .text-muted-foreground {
+    color: hsl(var(--cyber-ink) / 0.88);
+  }
+
+  .cyber-lab .cyber-hero-panel .font-grotesk {
+    color: hsl(176 100% 80%);
+    font-size: clamp(2.05rem, 8vw, 3.35rem);
+    line-height: 1.02;
+    text-shadow:
+      0 0 0.85rem hsl(var(--cyber-glow-blue) / 0.55),
+      0 0 2.4rem hsl(var(--cyber-glow-green) / 0.22);
+  }
+
+  .cyber-lab .cyber-start-button {
+    position: relative;
+    width: clamp(5.7rem, 22vw, 8rem);
+    height: clamp(5.7rem, 22vw, 8rem);
+    border: 1px solid hsl(var(--cyber-glow-blue) / 0.7);
+    background:
+      radial-gradient(circle at 65% 28%, hsl(184 100% 88% / 0.92), transparent 1.25rem),
+      linear-gradient(135deg, hsl(178 100% 58%), hsl(215 100% 55%) 52%, hsl(272 100% 68%));
+    box-shadow:
+      inset 0 0 0 0.38rem hsl(205 42% 8% / 0.74),
+      inset 0 0 1.5rem hsl(184 100% 90% / 0.34),
+      0 0 1.7rem hsl(var(--cyber-glow-blue) / 0.56),
+      0 0 2.4rem hsl(268 100% 68% / 0.28);
+    clip-path: polygon(0 24%, 24% 0, 76% 0, 100% 24%, 100% 76%, 76% 100%, 24% 100%, 0 76%);
+  }
+
+  .cyber-lab .cyber-start-button::before {
+    content: "";
+    position: absolute;
+    inset: -0.75rem;
+    pointer-events: none;
+    border: 0.34rem solid hsl(205 18% 24%);
+    background:
+      linear-gradient(135deg, hsl(203 20% 34%), hsl(205 40% 8%));
+    clip-path: polygon(0 24%, 24% 0, 76% 0, 100% 24%, 100% 76%, 76% 100%, 24% 100%, 0 76%);
+    z-index: -1;
+    box-shadow:
+      inset 0 0 0 1px hsl(184 100% 88% / 0.18),
+      0 0 1rem hsl(205 90% 1% / 0.8);
+  }
+
+  .cyber-lab .cyber-start-button svg {
+    height: 3.2rem;
+    width: 3.2rem;
+    color: hsl(184 100% 90%);
+    filter:
+      drop-shadow(0 0 0.55rem hsl(184 100% 88% / 0.95))
+      drop-shadow(0 0 1rem hsl(265 100% 72% / 0.65));
+  }
+
+  .cyber-lab .cyber-private-trip {
+    width: min(100%, 34rem);
+    min-height: clamp(8.2rem, 25vw, 10.5rem);
+    margin-top: clamp(1.25rem, 4vw, 2rem);
+    margin-inline: auto;
+    padding: 1.25rem clamp(1rem, 4vw, 1.5rem);
+    border-color: hsl(var(--cyber-glow-blue) / 0.42);
+    color: hsl(var(--cyber-ink));
+    background:
+      radial-gradient(circle at 12% 50%, hsl(214 100% 66% / 0.22), transparent 4.5rem),
+      linear-gradient(90deg, hsl(205 78% 4% / 0.48), transparent 6rem),
+      linear-gradient(135deg, hsl(207 21% 30% / 0.98), hsl(204 40% 12% / 0.99) 58%, hsl(194 32% 13% / 0.96)),
+      repeating-linear-gradient(90deg, transparent 0 1.25rem, hsl(var(--cyber-glow-blue) / 0.085) 1.3rem 1.37rem);
+    box-shadow:
+      inset 0 0 0 1px hsl(184 100% 92% / 0.11),
+      inset 0 -1.4rem 2.4rem hsl(205 90% 2% / 0.42),
+      0 0.6rem 1.4rem hsl(205 90% 1% / 0.58);
+    clip-path: polygon(0 1.05rem, 1.05rem 0, calc(100% - 1.45rem) 0, 100% 1.45rem, 100% calc(100% - 1.05rem), calc(100% - 1.05rem) 100%, 1.05rem 100%, 0 calc(100% - 1.05rem));
+  }
+
+  .cyber-lab .cyber-private-trip > div:first-child {
+    min-width: 4.1rem;
+    min-height: 4.1rem;
+    border-color: hsl(214 100% 68% / 0.52);
+    background:
+      radial-gradient(circle at 50% 42%, hsl(212 100% 62% / 0.38), transparent 2rem),
+      linear-gradient(135deg, hsl(207 22% 35%), hsl(207 46% 8%));
+    box-shadow:
+      inset 0 0 0 1px hsl(184 100% 90% / 0.12),
+      0 0 1rem hsl(214 100% 60% / 0.28);
+  }
+
+  .cyber-lab .cyber-stat-card {
+    min-height: clamp(12rem, 40vw, 16rem);
+    padding: clamp(1.2rem, 4vw, 1.65rem);
+    border: 1px solid hsl(var(--cyber-glow-blue) / 0.46);
+    border-radius: 0;
+    color: hsl(var(--cyber-glow-green));
+    background:
+      radial-gradient(circle at 70% 32%, hsl(var(--cyber-glow-green) / 0.2), transparent 4.8rem),
+      linear-gradient(hsl(var(--cyber-glow-blue) / 0.5) 0 0) 50% 0.7rem / 44% 0.13rem no-repeat,
+      linear-gradient(135deg, hsl(210 70% 12% / 0.96), hsl(210 84% 5% / 0.98)),
+      repeating-linear-gradient(90deg, transparent 0 1.1rem, hsl(var(--cyber-glow-blue) / 0.075) 1.16rem 1.22rem);
+    clip-path: polygon(0 1.55rem, 1.55rem 0, calc(100% - 2rem) 0, 100% 2rem, 100% calc(100% - 1.55rem), calc(100% - 1.55rem) 100%, 1.55rem 100%, 0 calc(100% - 1.55rem));
+    box-shadow:
+      inset 0 0 0 1px hsl(184 100% 92% / 0.1),
+      inset 0 -1.8rem 2.8rem hsl(205 90% 2% / 0.5),
+      0 0.85rem 1.8rem hsl(205 90% 1% / 0.62),
+      0 0 1.3rem hsl(var(--cyber-glow-blue) / 0.14);
+  }
+
+  .cyber-lab .cyber-stat-card-blue {
+    border-color: hsl(216 100% 64% / 0.56);
+    background:
+      radial-gradient(circle at 74% 35%, hsl(205 100% 60% / 0.17), transparent 5.1rem),
+      linear-gradient(hsl(var(--cyber-glow-blue) / 0.66) 0 0) 50% 0.7rem / 44% 0.13rem no-repeat,
+      linear-gradient(135deg, hsl(215 88% 14% / 0.97), hsl(212 88% 5% / 0.99)),
+      repeating-linear-gradient(90deg, transparent 0 1.1rem, hsl(var(--cyber-glow-blue) / 0.08) 1.16rem 1.22rem);
+  }
+
+  .cyber-lab .cyber-stat-card-green {
+    border-color: hsl(var(--cyber-glow-green) / 0.55);
+    background:
+      radial-gradient(circle at 76% 32%, hsl(var(--cyber-glow-green) / 0.22), transparent 5.2rem),
+      linear-gradient(hsl(var(--cyber-glow-green) / 0.62) 0 0) 50% 0.7rem / 44% 0.13rem no-repeat,
+      linear-gradient(135deg, hsl(144 78% 13% / 0.97), hsl(148 88% 5% / 0.99)),
+      repeating-linear-gradient(90deg, transparent 0 1.1rem, hsl(var(--cyber-glow-green) / 0.08) 1.16rem 1.22rem);
+  }
+
+  .cyber-lab .cyber-stat-card .cyber-stat-schematic {
+    opacity: 0.34;
+    height: clamp(4.8rem, 15vw, 6.8rem);
+    width: clamp(4.8rem, 15vw, 6.8rem);
+    color: hsl(var(--cyber-glow-green) / 0.85);
+    right: 1.2rem;
+    top: 1.05rem;
+    stroke-width: 1.15;
+  }
+
+  .cyber-lab .cyber-stat-card .font-grotesk {
+    color: hsl(var(--cyber-glow-green));
+    font-size: clamp(2.9rem, 12vw, 4.2rem);
+    text-shadow:
+      0 0 0.75rem hsl(var(--cyber-glow-green) / 0.62),
+      0 0 1.8rem hsl(var(--cyber-glow-green) / 0.24);
+  }
+
+  .cyber-lab .cyber-stat-card .text-white\/80 {
+    color: hsl(var(--cyber-glow-green) / 0.88);
+    font-size: clamp(1.05rem, 4vw, 1.55rem);
+  }
+
+  .cyber-lab .cyber-stat-icon {
+    width: 4rem;
+    height: 4rem;
+    border: 1px solid hsl(var(--cyber-glow-green) / 0.5);
+    border-radius: 999px;
+    background:
+      radial-gradient(circle, hsl(var(--cyber-glow-green) / 0.18), transparent 62%),
+      linear-gradient(135deg, hsl(145 75% 12% / 0.84), hsl(205 76% 4% / 0.92));
+  }
+
+  .cyber-lab .cyber-baseline-panel {
+    padding: clamp(1.5rem, 4vw, 2.2rem);
+  }
+
+  .cyber-lab .cyber-baseline-panel h2 {
+    color: hsl(var(--cyber-ink));
+    font-size: clamp(1.85rem, 7vw, 2.7rem);
+    line-height: 1.05;
+  }
+
+  .cyber-lab .cyber-baseline-panel > div:first-child > div:last-child {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    border: 1px solid hsl(var(--cyber-glow-blue) / 0.42);
+    padding: 0.45rem 0.75rem;
+    color: hsl(var(--cyber-ink));
+    background:
+      linear-gradient(135deg, hsl(194 62% 13% / 0.92), hsl(205 66% 4% / 0.94));
+    clip-path: polygon(0 0.45rem, 0.45rem 0, calc(100% - 0.55rem) 0, 100% 0.55rem, 100% calc(100% - 0.45rem), calc(100% - 0.45rem) 100%, 0.45rem 100%, 0 calc(100% - 0.45rem));
+  }
+
+  .cyber-lab .cyber-baseline-tile {
+    min-height: 8.2rem;
+    padding: 1.05rem;
+    border-color: hsl(var(--cyber-glow-blue) / 0.34);
+    background:
+      linear-gradient(hsl(var(--cyber-glow-blue) / 0.32) 0 0) calc(100% - 0.75rem) 0.7rem / 0.13rem calc(100% - 1.4rem) no-repeat,
+      linear-gradient(135deg, hsl(190 72% 11% / 0.88), hsl(205 80% 4% / 0.95)),
+      repeating-linear-gradient(90deg, transparent 0 1rem, hsl(var(--cyber-glow-blue) / 0.06) 1.05rem 1.1rem);
+    clip-path: polygon(0 0.8rem, 0.8rem 0, calc(100% - 1rem) 0, 100% 1rem, 100% calc(100% - 0.8rem), calc(100% - 0.8rem) 100%, 0.8rem 100%, 0 calc(100% - 0.8rem));
+    box-shadow:
+      inset 0 0 0 1px hsl(184 100% 92% / 0.09),
+      0 0 1rem hsl(var(--cyber-glow-blue) / 0.09);
+  }
+
+  .cyber-lab .cyber-baseline-tile .font-grotesk {
+    color: hsl(var(--cyber-ink));
+    font-size: clamp(2rem, 7vw, 3.15rem);
+    line-height: 1.02;
+  }
+
+  .cyber-lab .cyber-baseline-stress {
+    border-color: hsl(var(--cyber-alert) / 0.48);
+    background:
+      linear-gradient(hsl(var(--cyber-alert) / 0.32) 0 0) calc(100% - 0.75rem) 0.7rem / 0.13rem calc(100% - 1.4rem) no-repeat,
+      linear-gradient(135deg, hsl(42 88% 10% / 0.92), hsl(205 80% 4% / 0.96));
+  }
+
+  .cyber-lab .cyber-baseline-stress .font-grotesk,
+  .cyber-lab .cyber-baseline-stress svg {
+    color: hsl(var(--cyber-alert));
+    filter: drop-shadow(0 0 0.65rem hsl(var(--cyber-alert) / 0.5));
+  }
+
+  .cyber-lab .cyber-score-panel {
+    min-height: 12rem;
+  }
+
+  @media (max-width: 480px) {
+    .cyber-lab .cyber-header-inner {
+      gap: 0.55rem;
+      padding-inline: 0.25rem;
+    }
+
+    .cyber-lab .cyber-brand-mark {
+      height: 3.15rem;
+      width: 3.15rem;
+    }
+
+    .cyber-lab .cyber-brand-copy {
+      min-width: 8.4rem;
+      flex: 1 1 auto;
+    }
+
+    .cyber-lab .cyber-brand-copy span:first-child {
+      font-size: clamp(1.45rem, 6vw, 1.75rem);
+    }
+
+    .cyber-lab .cyber-status-strip {
+      flex: 0 0 auto;
+      gap: 0.32rem;
+      margin-left: 0.25rem;
+    }
+
+    .cyber-lab .cyber-status-cell {
+      height: 2.55rem;
+      width: 2.55rem;
+    }
+
+    .cyber-lab .cyber-status-cell:nth-child(2) {
+      display: none;
+    }
+
+    .cyber-lab .cyber-menu-button {
+      min-height: 2.75rem;
+      min-width: 2.75rem;
+    }
+
+    .cyber-lab .cyber-start-button {
+      width: clamp(4.75rem, 19vw, 5.15rem);
+      height: clamp(4.75rem, 19vw, 5.15rem);
+      background:
+        radial-gradient(circle at 60% 28%, hsl(184 100% 92% / 0.98) 0 0.95rem, transparent 1.65rem),
+        linear-gradient(135deg, hsl(176 100% 62%), hsl(205 100% 58%) 44%, hsl(268 100% 70%) 74%, hsl(188 100% 58%));
+      box-shadow:
+        inset 0 0 0 0.34rem hsl(205 42% 8% / 0.62),
+        inset 0 0 1.7rem hsl(184 100% 90% / 0.5),
+        0 0 1.9rem hsl(var(--cyber-glow-blue) / 0.76),
+        0 0 2.8rem hsl(268 100% 68% / 0.42);
+    }
+
+    .cyber-lab .cyber-hero-panel .font-grotesk {
+      font-size: clamp(1.75rem, 7vw, 2.15rem);
+      white-space: nowrap;
+    }
+
+    .cyber-lab .cyber-start-button svg {
+      height: 2.65rem;
+      width: 2.65rem;
+    }
   }
 
   /* Custom scrollbar */

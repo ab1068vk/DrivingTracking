@@ -16,6 +16,7 @@ import {
   calculateEcoDrivingScore,
   calculateLaneChangingScore,
   buildDrivingThresholds,
+  classifyRoadTypesByPoint,
   calculateTireWearUnits,
   calculateBrakeOnsetSmoothness,
   scoreBrakeOnsetSmoothness,
@@ -23,6 +24,7 @@ import {
   computeGpsRoadClass,
   computeSegmentP85,
   cleanRoutePoints,
+  createZoneLookup,
   computeSmoothedAccelerations,
   detectDrivingEvents,
   detectSpeedCreepWithThresholds,
@@ -167,6 +169,21 @@ describe('tripEngine', () => {
     const resolved = resolveEffectiveSpeedLimitForIndex(points, 5, DEFAULT_THRESHOLDS, { inferredZones: zones });
     expect(zoneForLatePoint.inferredZoneKmh).toBe(50);
     expect(resolved.inferredZone.inferredZoneKmh).toBe(50);
+  });
+
+  it('keeps the precomputed speed-limit lookup path equivalent for detail summaries', () => {
+    const points = Array.from({ length: 12 }, (_, index) => point(43.6532 + index * 0.0001, -79.3832, index * 10, index < 6 ? 96 : 44));
+    const zones = inferSpeedZones(points, DEFAULT_THRESHOLDS);
+    const direct = resolveEffectiveSpeedLimitForIndex(points, 8, DEFAULT_THRESHOLDS, { inferredZones: zones });
+    const precomputed = resolveEffectiveSpeedLimitForIndex(points, 8, DEFAULT_THRESHOLDS, {
+      inferredZones: zones,
+      zoneForIndex: createZoneLookup(zones),
+      roadTypesByPoint: classifyRoadTypesByPoint(points),
+    });
+
+    expect(precomputed.inferredZone?.inferredZoneKmh).toBe(direct.inferredZone?.inferredZoneKmh);
+    expect(precomputed.effectiveLimitKmh).toBe(direct.effectiveLimitKmh);
+    expect(precomputed.limitSource).toBe(direct.limitSource);
   });
 
   it('derives speed-zone inference from coordinate movement when reported GPS speed is zero', () => {

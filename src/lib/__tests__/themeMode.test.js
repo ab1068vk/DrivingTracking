@@ -64,8 +64,26 @@ describe('theme mode', () => {
     applyThemeMode('light');
 
     expect(documentElement.classList.contains('dark')).toBe(false);
+    expect(documentElement.classList.contains('cyber-lab')).toBe(false);
     expect(documentElement.dataset.themeMode).toBe('light');
     expect(mediaQueryList.removeEventListener).toHaveBeenCalledWith('change', expect.any(Function));
+  });
+
+  it('applies cyber lab as an app-wide dark theme without following system changes', () => {
+    applyThemeMode('cyber_lab');
+
+    expect(documentElement.classList.contains('dark')).toBe(true);
+    expect(documentElement.classList.contains('cyber-lab')).toBe(true);
+    expect(documentElement.dataset.themeMode).toBe('cyber_lab');
+    expect(documentElement.dataset.resolvedTheme).toBe('cyber_lab');
+    expect(documentElement.style.colorScheme).toBe('dark');
+    expect(mediaQueryList.addEventListener).not.toHaveBeenCalled();
+
+    applyThemeMode('light');
+
+    expect(documentElement.classList.contains('dark')).toBe(false);
+    expect(documentElement.classList.contains('cyber-lab')).toBe(false);
+    expect(documentElement.dataset.themeMode).toBe('light');
   });
 
   it('lets Android and touch CSS follow the resolved theme without mobile selection blanks', () => {
@@ -79,5 +97,17 @@ describe('theme mode', () => {
     expect(css).toContain('@media (hover: none) and (pointer: coarse)');
     expect(css).toContain('-webkit-user-select: none;');
     expect(css).toContain('@media (hover: hover) and (pointer: fine)');
+  });
+
+  it('keeps cyber lab trip cards tappable without changing theme resolution', () => {
+    const css = readFileSync(new URL('../../index.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.cyber-lab .cyber-trip-card .cyber-trip-open-target');
+    expect(css).toContain('position: absolute;');
+    expect(css).toContain('z-index: 2;');
+    expect(css).toContain('.cyber-lab .cyber-trip-card .cyber-trip-open-target::after');
+    expect(css).toContain('content: none;');
+    expect(css).toContain('.cyber-lab .cyber-trip-content');
+    expect(css).toContain('z-index: 3;');
   });
 });

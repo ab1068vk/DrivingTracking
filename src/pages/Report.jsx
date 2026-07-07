@@ -644,7 +644,7 @@ export default function Reports() {
               { icon: Gauge, label: 'Avg Moving Speed', value: formatSpeed(avgMovingSpeedKmh || 0, units), gradient: 'bg-gradient-to-br from-sky-500 to-blue-700' },
               // FIX: Display Avg Moving Speed in the report instead of an overall average including stops.
               { icon: Fuel, label: 'Estimated Fuel Cost', value: formatCurrencyAmount(economics.cost, settings), gradient: 'bg-gradient-to-br from-cyan-500 to-blue-600' },
-              { icon: Leaf, label: 'Estimated Fuel Saved', value: economics.savedTripCount > 0 ? `${economics.saved.toFixed(2)} L` : 'Unavailable', gradient: 'bg-gradient-to-br from-lime-500 to-emerald-700' },
+              { icon: Leaf, label: 'Estimated Fuel Saved', value: economics.savedTripCount > 0 ? `${economics.saved.toFixed(2)} L` : 'Unavailable', evidence: economics.savedTripCount > 0 ? 'assigned vehicle estimate' : 'Assign vehicles to trips to unlock CO2 savings estimates.', gradient: 'bg-gradient-to-br from-lime-500 to-emerald-700' },
               { icon: Leaf, label: 'CO2', value: `${economics.co2.toFixed(1)} kg`, gradient: 'bg-gradient-to-br from-emerald-500 to-teal-700' },
             ].map(({ icon: Icon, label, value, gradient, evidence }, i) => (
               <motion.div
