@@ -148,6 +148,7 @@ import {
   invalidateSelfTestCache,
   selfTestPrivacyZoneProtection,
 } from '@/lib/controlSelfTests';
+import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
 
 // CHANGES (session):
 // - Added province/state picker and Phase 2 estimated speed guidance settings.
@@ -1458,7 +1459,7 @@ export default function Settings() {
     saveOsrmEndpoint(endpoint, true);
   };
 
-  const updateExternalContextAutoFetch = (enabled) => {
+  const updateExternalContextAutoFetch = async (enabled) => {
     if (!enabled) {
       updateCfg({
         external_context_auto_fetch_enabled: false,
@@ -1470,9 +1471,11 @@ export default function Settings() {
       cfg.speed_limit_lookup_enabled !== false ? 'OpenStreetMap speed-limit' : null,
       cfg.weather_context_enabled !== false ? 'Open-Meteo weather' : null,
     ].filter(Boolean).join(' and ') || 'enabled road-data';
-    const ok = typeof window === 'undefined' || window.confirm(
-      `Automatic road data queues ${enabledLookups} lookups with randomized privacy delays whenever a trip is saved. OSRM route snapping still stays manual. Continue?`
-    );
+    const ok = await requestAppConfirm({
+      title: 'Enable automatic road data?',
+      message: `Automatic road data queues ${enabledLookups} lookups with randomized privacy delays whenever a trip is saved. OSRM route snapping still stays manual.`,
+      confirmLabel: 'Enable lookups',
+    });
     if (!ok) return;
     updateCfg({
       external_context_auto_fetch_enabled: true,
@@ -1609,7 +1612,13 @@ export default function Settings() {
   };
 
   const clearCalibrationLabels = async () => {
-    if (typeof window !== 'undefined' && !window.confirm('Delete all local survey labels and answered-trip markers?')) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Delete survey labels?',
+      message: 'This deletes all local survey labels and answered-trip markers.',
+      confirmLabel: 'Delete labels',
+      destructive: true,
+    });
+    if (!confirmed) return;
     try {
       const deletedLabels = calibrationLabels.length;
       const deletedMarkers = Object.keys(calibrationMarkers).length;
@@ -1673,9 +1682,12 @@ export default function Settings() {
       return;
     }
 
-    const confirmed = typeof window === 'undefined' || window.confirm(
-      'Turn on heightened privacy mode? Existing raw GPS inside every configured privacy zone will be permanently erased. Scores, distance, duration, and summaries will remain.'
-    );
+    const confirmed = await requestAppConfirm({
+      title: 'Turn on heightened privacy?',
+      message: 'Existing raw GPS inside every configured privacy zone will be permanently erased. Scores, distance, duration, and summaries will remain.',
+      confirmLabel: 'Enable privacy mode',
+      destructive: true,
+    });
     if (!confirmed) return;
 
     updateCfg({ heightened_privacy_mode: true });
@@ -1791,9 +1803,15 @@ export default function Settings() {
     const currentDays = Number(cfg.data_retention_days || 0);
     if (days === currentDays) return;
     const periodLabel = days === 0 ? 'forever' : days === 365 ? '1 year' : `${days} days`;
-    if (days > 0 && typeof window !== 'undefined' && !window.confirm(
-      `Keep complete trips for ${periodLabel}? Trips older than ${periodLabel} will be permanently deleted from this device as soon as this setting is saved. Existing backup files are not changed.`
-    )) return;
+    if (days > 0) {
+      const confirmed = await requestAppConfirm({
+        title: `Keep trips for ${periodLabel}?`,
+        message: `Trips older than ${periodLabel} will be permanently deleted from this device as soon as this setting is saved. Existing backup files are not changed.`,
+        confirmLabel: 'Save retention',
+        destructive: true,
+      });
+      if (!confirmed) return;
+    }
 
     updateCfg({ data_retention_days: days });
     await settingsPersistenceQueueRef.current;
@@ -1843,13 +1861,16 @@ export default function Settings() {
     const currentDays = Number(cfg.raw_gps_retention_days || 0);
     if (days === currentDays) return;
 
-    if (days > 0 && typeof window !== 'undefined') {
+    if (days > 0) {
       const periodLabel = days >= 365 && days % 365 === 0
         ? `${days / 365} year${days === 365 ? '' : 's'}`
         : `${days} days`;
-      const confirmed = window.confirm(
-        `Set raw GPS retention to ${periodLabel}? On the next cleanup, trips older than ${periodLabel} will permanently lose their route line on the map and playback. Scores, distance, duration, and summaries will remain. Existing backup files are not changed.`
-      );
+      const confirmed = await requestAppConfirm({
+        title: `Set raw GPS retention to ${periodLabel}?`,
+        message: `On the next cleanup, trips older than ${periodLabel} will permanently lose their route line on the map and playback. Scores, distance, duration, and summaries will remain. Existing backup files are not changed.`,
+        confirmLabel: 'Save retention',
+        destructive: true,
+      });
       if (!confirmed) return;
     }
 
@@ -1873,9 +1894,13 @@ export default function Settings() {
     const periodLabel = retentionDays >= 365 && retentionDays % 365 === 0
       ? `${retentionDays / 365} year${retentionDays === 365 ? '' : 's'}`
       : `${retentionDays} days`;
-    if (typeof window !== 'undefined' && !window.confirm(
-      `Remove route coordinates from trips older than ${periodLabel} now? Their route line on the map and playback will be permanently unavailable on this device. Scores, distance, duration, and summaries will remain.`
-    )) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Remove old route coordinates?',
+      message: `Remove route coordinates from trips older than ${periodLabel} now? Their route line on the map and playback will be permanently unavailable on this device. Scores, distance, duration, and summaries will remain.`,
+      confirmLabel: 'Remove routes',
+      destructive: true,
+    });
+    if (!confirmed) return;
 
     setRawGpsLifecycleBusy(true);
     try {
@@ -2553,7 +2578,13 @@ export default function Settings() {
   };
 
   const handleDeleteAllTrips = async () => {
-    if (!confirm('Delete ALL trips? This cannot be undone.')) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Delete all trips?',
+      message: 'This cannot be undone. Trip records, saved filters, trip calibration labels, and trip-derived caches will be removed from this device.',
+      confirmLabel: 'Delete all trips',
+      destructive: true,
+    });
+    if (!confirmed) return;
     const trips = await getSettingsTrips();
     for (const t of trips) {
       await tripService.delete(t.id);
@@ -2649,10 +2680,16 @@ export default function Settings() {
 
   const handleEraseAllLocalData = async () => {
     if (erasureBusy) return;
-    const confirmation = typeof window === 'undefined'
-      ? ''
-      : window.prompt('This erases trips, settings, privacy logs, zones, and local keys from this device. Type ERASE ROAD SAGE to continue.');
-    if (confirmation !== 'ERASE ROAD SAGE') return;
+    const confirmed = await requestAppConfirm({
+      title: 'Erase all local Road Sage data?',
+      message: 'This erases trips, settings, privacy logs, zones, and local keys from this device.',
+      confirmLabel: 'Erase data',
+      cancelLabel: 'Cancel',
+      destructive: true,
+      requiredText: 'ERASE ROAD SAGE',
+      inputLabel: 'Type ERASE ROAD SAGE to continue.',
+    });
+    if (!confirmed) return;
     setErasureBusy(true);
     recordSystemEvent('local_data_erasure_confirmed', {}, {
       category: 'storage',
@@ -2663,12 +2700,18 @@ export default function Settings() {
     try {
       const result = await eraseAllLocalDataAndDownloadReceipt();
       if (typeof window !== 'undefined') {
-        window.alert(`${result.filename} was exported. Road Sage will now reload so erased in-memory data is not reused.`);
+        await requestAppAlert({
+          title: 'Erasure receipt saved',
+          message: `${result.filename} was exported. Road Sage will now reload so erased in-memory data is not reused.`,
+        });
         window.location.reload();
       }
     } catch (error) {
       if (error?.dataErased === true && typeof window !== 'undefined') {
-        window.alert('All local Road Sage data was erased, but the erasure receipt could not be saved. Road Sage will reload now.');
+        await requestAppAlert({
+          title: 'Local data erased',
+          message: 'All local Road Sage data was erased, but the erasure receipt could not be saved. Road Sage will reload now.',
+        });
         window.location.reload();
         return;
       }
@@ -2768,7 +2811,13 @@ export default function Settings() {
     });
     if (result.requiresAcknowledgement) {
       const affected = result.truncatedNoteTripCount;
-      if (!confirm(`This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`)) return null;
+      const confirmed = await requestAppConfirm({
+        title: 'Truncate long notes?',
+        message: `This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}.`,
+        confirmLabel: 'Continue import',
+        destructive: true,
+      });
+      if (!confirmed) return null;
       result = await importDriveSenseBackup(file, {
         passphrase,
         acknowledgeTruncation: true,
@@ -2830,7 +2879,12 @@ export default function Settings() {
         return;
       }
       if (error?.code === BACKUP_SIGNATURE_INVALID_CODE) {
-        const recover = confirm('This backup was readable, but its signature could not be verified. This can happen after reinstalling the app because the old verification key was deleted. Import trips and vehicles anyway? Settings will not be imported.');
+        const recover = await requestAppConfirm({
+          title: 'Import unverified backup?',
+          message: 'This backup was readable, but its signature could not be verified. This can happen after reinstalling the app because the old verification key was deleted. Import trips and vehicles anyway? Settings will not be imported.',
+          confirmLabel: 'Import trips',
+          destructive: true,
+        });
         if (recover) {
           await finishImportBackup(pendingBackupImportFile, {
             passphrase: backupImportPassphrase,
@@ -2869,7 +2923,12 @@ export default function Settings() {
       });
       return;
     }
-    if (!confirm('Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.')) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Import backup?',
+      message: 'Trips and vehicles with matching IDs will be updated, and new ones will be added.',
+      confirmLabel: 'Import backup',
+    });
+    if (!confirmed) return;
 
     try {
       await finishImportBackup(file);
@@ -2892,7 +2951,12 @@ export default function Settings() {
         return;
       }
       if (error?.code === BACKUP_SIGNATURE_INVALID_CODE) {
-        const recover = confirm('This backup was readable, but its signature could not be verified. This can happen after reinstalling the app because the old verification key was deleted. Import trips and vehicles anyway? Settings will not be imported.');
+        const recover = await requestAppConfirm({
+          title: 'Import unverified backup?',
+          message: 'This backup was readable, but its signature could not be verified. This can happen after reinstalling the app because the old verification key was deleted. Import trips and vehicles anyway? Settings will not be imported.',
+          confirmLabel: 'Import trips',
+          destructive: true,
+        });
         if (recover) {
           await finishImportBackup(file, { allowUnverifiedSignedBackup: true });
         }

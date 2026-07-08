@@ -50,6 +50,7 @@ import { logSystemFailure } from '@/lib/systemLog';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/use-toast';
+import { requestAppConfirm } from '@/lib/appDialog';
 
 const sourceLabel = (source) => speedLimitSourceLabel(source, { short: true });
 const correctionKey = (correction = {}) => correction?.id || correction?.ruleId || correction?.sectionKey || correction?.geohash;
@@ -126,6 +127,67 @@ const mapDraftSourceForSection = (section = {}) => {
     ? 'user_confirmed_posted_sign'
     : 'user_entered_estimate';
 };
+
+const DEFAULT_MAP_DRAFT = Object.freeze({
+  limitKmh: '',
+  source: 'user_confirmed_posted_sign',
+  note: '',
+  roadName: '',
+  directionMode: 'both',
+  timeRuleMode: 'always',
+  startTime: '07:00',
+  endTime: '17:00',
+  expiresAtDate: '',
+});
+
+const createDefaultMapDraft = () => ({ ...DEFAULT_MAP_DRAFT });
+
+const mapDraftForSection = (section = {}) => ({
+  limitKmh: mapDraftLimitForSection(section),
+  source: mapDraftSourceForSection(section),
+  note: section.note || '',
+  roadName: section.roadName || '',
+  directionMode: section.directionMode || 'both',
+  timeRuleMode: timeRuleModeForRow(section),
+  startTime: timeString(section.timeRule?.startMinutes),
+  endTime: timeString(section.timeRule?.endMinutes, '17:00'),
+  expiresAtDate: dateInputValue(section.expiresAt),
+});
+
+const normalizeMapDraftForSnapshot = (draft = {}) => ({
+  limitKmh: String(draft.limitKmh ?? ''),
+  source: draft.source || 'user_confirmed_posted_sign',
+  note: String(draft.note ?? ''),
+  roadName: String(draft.roadName ?? ''),
+  directionMode: draft.directionMode || 'both',
+  timeRuleMode: draft.timeRuleMode || 'always',
+  startTime: draft.startTime || '07:00',
+  endTime: draft.endTime || '17:00',
+  expiresAtDate: draft.expiresAtDate || '',
+});
+
+const normalizeSectionPointsForSnapshot = (points = []) => (Array.isArray(points) ? points : [])
+  .map((point) => ({
+    lat: Number(point?.lat),
+    lng: Number(point?.lng),
+  }))
+  .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng))
+  .map((point) => ({
+    lat: Number(point.lat.toFixed(7)),
+    lng: Number(point.lng.toFixed(7)),
+  }));
+
+const createMapEditorSnapshot = ({
+  section = null,
+  draft = DEFAULT_MAP_DRAFT,
+  addMode = false,
+  addPath = [],
+} = {}) => JSON.stringify({
+  key: addMode ? 'new-road-speed' : correctionKey(section),
+  saved: section?.saved === true,
+  draft: normalizeMapDraftForSnapshot(draft),
+  sectionPoints: normalizeSectionPointsForSnapshot(section?.sectionPoints || (addMode ? addPath : [])),
+});
 
 const formatDate = (value) => {
   if (value == null || value === '') return 'Unknown time';
@@ -625,17 +687,8 @@ export default function SpeedLimits() {
   const mapModelCancelRef = useRef(null);
   const savedRowsListRef = useRef(null);
   const lastStatusToastRef = useRef('');
-  const [mapDraft, setMapDraft] = useState({
-    limitKmh: '',
-    source: 'user_confirmed_posted_sign',
-    note: '',
-    roadName: '',
-    directionMode: 'both',
-    timeRuleMode: 'always',
-    startTime: '07:00',
-    endTime: '17:00',
-    expiresAtDate: '',
-  });
+  const mapEditorBaselineRef = useRef(null);
+  const [mapDraft, setMapDraft] = useState(createDefaultMapDraft);
   const settings = useLocalSettings();
   const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
   const mapModelActive = MAP_MODEL_WORKSPACES.has(activeWorkspace);
@@ -916,6 +969,61 @@ export default function SpeedLimits() {
     mapTrips.filter((trip) => trip?.status === 'completed' && tripCrossesCorrection(trip, correction))
   ), [mapTrips]);
 
+  const setMapEditorBaseline = (
+    section = selectedSection,
+    draft = mapDraft,
+    options = {}
+  ) => {
+    mapEditorBaselineRef.current = createMapEditorSnapshot({
+      section,
+      draft,
+      addMode: options.addMode ?? addMode,
+      addPath: options.addPath ?? addPath,
+    });
+  };
+
+  const clearMapEditorBaseline = () => {
+    mapEditorBaselineRef.current = null;
+  };
+
+  const hasUnsavedMapEditorChanges = () => {
+    if (!mapEditorBaselineRef.current) return false;
+    if (!selectedSection && !addMode) return false;
+    const currentSnapshot = createMapEditorSnapshot({
+      section: selectedSection,
+      draft: mapDraft,
+      addMode,
+      addPath,
+    });
+    return currentSnapshot !== mapEditorBaselineRef.current;
+  };
+
+  const confirmDiscardMapEditorChanges = async () => {
+    if (!hasUnsavedMapEditorChanges()) return true;
+    const confirmed = await requestAppConfirm({
+      title: 'Discard unsaved road speed edits?',
+      message: 'You have changed this road section but have not clicked Update road speed yet. Keep editing to preserve the dragged trace, or discard edits to switch sections.',
+      confirmLabel: 'Discard edits',
+      cancelLabel: 'Keep editing',
+      destructive: true,
+    });
+    if (!confirmed) {
+      setStatus('Kept the unsaved road speed edits open. Click Update road speed to save the trace.');
+    }
+    return confirmed;
+  };
+
+  const clearSelectedMapSection = async (message = '') => {
+    const confirmed = await confirmDiscardMapEditorChanges();
+    if (!confirmed) return false;
+    setSelectedSection(null);
+    setAddPath([]);
+    setAddMode(false);
+    clearMapEditorBaseline();
+    if (message) setStatus(message);
+    return true;
+  };
+
   const removeSavedRowsFromView = useCallback((removedRows = []) => {
     const removedIds = new Set(
       removedRows
@@ -1109,7 +1217,10 @@ export default function SpeedLimits() {
       correctionKey(row) === selectedKey ||
       (!selectedKey && row.geohash === selectedSection.geohash)
     ));
-    if (!stillSaved) setSelectedSection(null);
+    if (!stillSaved) {
+      setSelectedSection(null);
+      clearMapEditorBaseline();
+    }
   }, [rows, selectedSection]);
 
   useEffect(() => {
@@ -1118,6 +1229,7 @@ export default function SpeedLimits() {
       setSelectedSection(null);
       setAddPath([]);
       setAddMode(false);
+      clearMapEditorBaseline();
     }
   }, [ignoredUnsetSectionKeySet, selectedSection]);
 
@@ -1127,6 +1239,7 @@ export default function SpeedLimits() {
       setSelectedSection(null);
       setAddPath([]);
       setAddMode(false);
+      clearMapEditorBaseline();
     }
   }, [excludedSpeedSectionKeySet, selectedSection]);
 
@@ -1251,7 +1364,13 @@ export default function SpeedLimits() {
   };
 
   const removeRow = async (row) => {
-    if (typeof window !== 'undefined' && !window.confirm('Delete this saved road speed?')) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Delete saved road speed?',
+      message: 'Matching trips will be recalculated using remaining speed data and fallbacks.',
+      confirmLabel: 'Delete speed',
+      destructive: true,
+    });
+    if (!confirmed) return;
     const key = correctionKey(row);
     setBusyGeohash(key);
     const beforeKnowledge = await knowledge.exportData().catch(() => null);
@@ -1367,6 +1486,25 @@ export default function SpeedLimits() {
       },
     }));
     if (correctionKey(selectedSection) === key) {
+      const nextSelectedSection = {
+        ...selectedSection,
+        ...nextCorrection,
+        conflict: null,
+        conflictResolution: keepSaved ? {
+          savedLimitKmh: conflict.savedLimitKmh,
+          observedLimitKmh: conflict.observedLimitKmh,
+          deltaKmh: conflict.deltaKmh,
+          action: 'kept_saved_limit',
+          resolvedAt: new Date().toISOString(),
+        } : null,
+      };
+      const nextDraft = {
+        ...mapDraft,
+        limitKmh: String(nextCorrection.limitKmh),
+        source: nextCorrection.source,
+        note: nextCorrection.note,
+        roadName: nextCorrection.roadName,
+      };
       setSelectedSection((current) => current ? {
         ...current,
         ...nextCorrection,
@@ -1379,13 +1517,8 @@ export default function SpeedLimits() {
           resolvedAt: new Date().toISOString(),
         } : null,
       } : current);
-      setMapDraft((current) => ({
-        ...current,
-        limitKmh: String(nextCorrection.limitKmh),
-        source: nextCorrection.source,
-        note: nextCorrection.note,
-        roadName: nextCorrection.roadName,
-      }));
+      setMapDraft(nextDraft);
+      setMapEditorBaseline(nextSelectedSection, nextDraft, { addMode: false, addPath: [] });
     }
     setBusyGeohash(null);
 
@@ -1429,25 +1562,23 @@ export default function SpeedLimits() {
     })();
   };
 
-  const selectMapSection = (section) => {
+  const selectMapSection = async (section) => {
     if (!section) {
       setStatus('Select a saved or observed road section before editing.');
-      return;
+      return false;
     }
+    const nextKey = correctionKey(section);
+    const currentKey = correctionKey(selectedSection);
+    if (selectedSection && nextKey === currentKey) return true;
+    const confirmed = await confirmDiscardMapEditorChanges();
+    if (!confirmed) return false;
+    const nextDraft = mapDraftForSection(section);
     setSelectedSection(section);
-    setMapDraft({
-      limitKmh: mapDraftLimitForSection(section),
-      source: mapDraftSourceForSection(section),
-      note: section.note || '',
-      roadName: section.roadName || '',
-      directionMode: section.directionMode || 'both',
-      timeRuleMode: timeRuleModeForRow(section),
-      startTime: timeString(section.timeRule?.startMinutes),
-      endTime: timeString(section.timeRule?.endMinutes, '17:00'),
-      expiresAtDate: dateInputValue(section.expiresAt),
-    });
+    setMapDraft(nextDraft);
     setAddMode(false);
     setAddPath([]);
+    setMapEditorBaseline(section, nextDraft, { addMode: false, addPath: [] });
+    return true;
   };
 
   const ignoreUnsetMapSection = () => {
@@ -1466,6 +1597,7 @@ export default function SpeedLimits() {
     setSelectedSection(null);
     setAddPath([]);
     setAddMode(false);
+    clearMapEditorBaseline();
     setStatus('Hidden this unset road section from the map and review list on this device.');
   };
 
@@ -1496,11 +1628,14 @@ export default function SpeedLimits() {
       setStatus('Could not mark this section ignored because it has no stable geometry key.');
       return;
     }
-    const confirmed = typeof window === 'undefined' || window.confirm(
-      selectedSection.saved
-        ? 'Mark this as parking/private and remove the saved speed for this section?'
-        : 'Mark this section as parking/private so it stops appearing in speed review?'
-    );
+    const confirmed = await requestAppConfirm({
+      title: selectedSection.saved ? 'Remove and ignore section?' : 'Ignore this section?',
+      message: selectedSection.saved
+        ? 'This marks the section as parking/private and removes the saved speed for it.'
+        : 'This marks the section as parking/private so it stops appearing in speed review.',
+      confirmLabel: selectedSection.saved ? 'Remove and ignore' : 'Ignore section',
+      destructive: selectedSection.saved === true,
+    });
     if (!confirmed) return;
 
     const selectedKey = correctionKey(selectedSection);
@@ -1514,6 +1649,7 @@ export default function SpeedLimits() {
       setSelectedSection(null);
       setAddPath([]);
       setAddMode(false);
+      clearMapEditorBaseline();
       setStatus('Marked this section as parking/private. Road Sage will hide it from saved-speed cleanup prompts on this device.');
       return;
     }
@@ -1533,6 +1669,7 @@ export default function SpeedLimits() {
     setSelectedSection(null);
     setAddPath([]);
     setAddMode(false);
+    clearMapEditorBaseline();
     const afterKnowledge = await knowledge.exportData().catch(() => null);
     const updatedTrips = await withRecalculation(() => (
       beforeKnowledge && afterKnowledge
@@ -1550,21 +1687,15 @@ export default function SpeedLimits() {
     await refreshRowsAndMap();
   };
 
-  const startAddingSection = () => {
+  const startAddingSection = async () => {
+    const confirmed = await confirmDiscardMapEditorChanges();
+    if (!confirmed) return;
+    const nextDraft = createDefaultMapDraft();
     setSelectedSection(null);
     setAddPath([]);
     setAddMode(true);
-    setMapDraft({
-      limitKmh: '',
-      source: 'user_confirmed_posted_sign',
-      note: '',
-      roadName: '',
-      directionMode: 'both',
-      timeRuleMode: 'always',
-      startTime: '07:00',
-      endTime: '17:00',
-      expiresAtDate: '',
-    });
+    setMapDraft(nextDraft);
+    setMapEditorBaseline(null, nextDraft, { addMode: true, addPath: [] });
     setStatus(autoSnapTrace
       ? 'Adding road section started. Tap the start and end of the road segment; Auto snap will fill the recorded route shape when possible.'
       : 'Adding road section started. Tap points around bends, then enter the speed and save.');
@@ -1699,10 +1830,11 @@ export default function SpeedLimits() {
     }
   };
 
-  const focusAttentionItem = (item) => {
+  const focusAttentionItem = async (item) => {
     if (!item?.section) return;
     setActiveWorkspace('map');
-    selectMapSection(item.section);
+    const selected = await selectMapSection(item.section);
+    if (!selected) return;
     setMapLayers((current) => ({
       ...current,
       conflicts: true,
@@ -1878,6 +2010,8 @@ export default function SpeedLimits() {
     setRows((current) => current.map((row) => (
       correctionKey(row) === selectedKey ? { ...row, ...updatedSection } : row
     )));
+    setSelectedSection(updatedSection);
+    setMapEditorBaseline(updatedSection, mapDraft, { addMode: false, addPath: [] });
     setStatus(withUndo(`Saved snapped route geometry (${snapSummary}). Matching trip scores are updating in the background.`));
     void (async () => {
       const afterKnowledge = await knowledge.exportData().catch(() => null);
@@ -2049,6 +2183,7 @@ export default function SpeedLimits() {
       setSelectedSection(nextRow);
       setAddMode(false);
       setAddPath([]);
+      setMapEditorBaseline(nextRow, mapDraft, { addMode: false, addPath: [] });
       setBusyGeohash(null);
       loadMapModel({ force: true });
       setStatus(withUndo(`Saved ${Math.round(limitKmh)} km/h for this road section${linkedGeometryLabel}${voiceMarkerLabel}. Matching trip scores are updating in the background.`));
@@ -2138,6 +2273,7 @@ export default function SpeedLimits() {
       correctionKey(row) === selectedKey ? { ...row, ...updatedSection, appliedAt: new Date().toISOString() } : row
     )));
     setSelectedSection(updatedSection);
+    setMapEditorBaseline(updatedSection, mapDraft, { addMode: false, addPath: [] });
     revealSavedSpeedMapLayer(updatedSection.source);
     const beforeTrips = [
       ...new Map([
@@ -2167,9 +2303,16 @@ export default function SpeedLimits() {
       setStatus('Select a saved road section before removing it.');
       return;
     }
-    if (typeof window !== 'undefined' && !window.confirm('Remove the saved speed from this road section?')) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Remove saved speed?',
+      message: 'This road section will fall back to remaining local, map, or regional speed data.',
+      confirmLabel: 'Remove speed',
+      destructive: true,
+    });
+    if (!confirmed) return;
     await removeRow(selectedSection);
     setSelectedSection(null);
+    clearMapEditorBaseline();
   };
 
   const splitMapSection = async () => {
@@ -2192,7 +2335,12 @@ export default function SpeedLimits() {
       setStatus('This road section needs at least two valid trace points before it can be split.');
       return;
     }
-    if (typeof window !== 'undefined' && !window.confirm('Split this saved speed into two editable road sections?')) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Split saved speed?',
+      message: 'This replaces one saved speed with two editable road sections and recalculates matching trips.',
+      confirmLabel: 'Split section',
+    });
+    if (!confirmed) return;
 
     const selectedKey = correctionKey(originalSection);
     setBusyGeohash(selectedKey);
@@ -2261,9 +2409,13 @@ export default function SpeedLimits() {
         ...current.filter((row) => !matchesOriginal(row)),
         ...splitCorrections,
       ]);
-      setSelectedSection(splitCorrections[0]);
+      const nextSelectedSplit = splitCorrections[0];
+      const nextSplitDraft = mapDraftForSection(nextSelectedSplit);
+      setSelectedSection(nextSelectedSplit);
+      setMapDraft(nextSplitDraft);
       setAddMode(false);
       setAddPath([]);
+      setMapEditorBaseline(nextSelectedSplit, nextSplitDraft, { addMode: false, addPath: [] });
       revealSavedSpeedMapLayer(source);
       const updatedTrips = await withRecalculation(() => (
         refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, nextKnowledge).catch(() => null)
@@ -2301,7 +2453,12 @@ export default function SpeedLimits() {
   };
 
   const exportSpeedKnowledge = async () => {
-    if (typeof window !== 'undefined' && !window.confirm(SPEED_RULE_EXPORT_PRIVACY_WARNING)) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Export saved road speeds?',
+      message: SPEED_RULE_EXPORT_PRIVACY_WARNING,
+      confirmLabel: 'Export speeds',
+    });
+    if (!confirmed) return;
     const data = await knowledge.exportData();
     const filename = `road-sage-speed-rules-${new Date().toISOString().slice(0, 10)}.json`;
     const payload = {
@@ -2362,10 +2519,13 @@ export default function SpeedLimits() {
       : `Repair removed ${removed} stale or duplicate saved rule${removed === 1 ? '' : 's'}. Matching trips could not be recalculated right now.`));
   };
 
-  const cancelAddSection = () => {
+  const cancelAddSection = async () => {
+    const confirmed = await confirmDiscardMapEditorChanges();
+    if (!confirmed) return;
     setAddMode(false);
     setAddPath([]);
     setSelectedSection(null);
+    clearMapEditorBaseline();
     setStatus('Add road section cancelled.');
   };
 
@@ -2471,7 +2631,13 @@ export default function SpeedLimits() {
       setStatus('Select at least one saved road-speed rule before deleting.');
       return;
     }
-    if (!window.confirm(`Delete ${selected.length} selected saved road-speed rule${selected.length === 1 ? '' : 's'}?`)) return;
+    const confirmed = await requestAppConfirm({
+      title: `Delete ${selected.length} saved road-speed rule${selected.length === 1 ? '' : 's'}?`,
+      message: 'Matching trips will be recalculated using remaining speed data and fallbacks.',
+      confirmLabel: 'Delete selected',
+      destructive: true,
+    });
+    if (!confirmed) return;
     const historyGroup = `bulk-delete-${Date.now()}`;
     setBusyGeohash('bulk');
     const beforeKnowledge = await knowledge.exportData().catch(() => null);
@@ -3065,11 +3231,7 @@ export default function SpeedLimits() {
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedSection(null);
-                  setAddPath([]);
-                  setAddMode(false);
-                }}
+                onClick={() => clearSelectedMapSection()}
                 className="rounded-lg p-2 text-muted-foreground hover:bg-secondary"
                 aria-label="Close road speed editor"
               >

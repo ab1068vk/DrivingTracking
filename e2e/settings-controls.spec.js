@@ -93,5 +93,6 @@ test('settings controls persist real settings instead of only moving UI state', 
   await page.locator('[data-setting-label="Heightened privacy mode"]').getByRole('switch').click();
   await expectSetting(page, 'heightened_privacy_mode', false);
   await page.locator('[data-setting-label="Data Retention"] select').selectOption('90');
+  await page.getByRole('button', { name: 'Save retention' }).click();
   await expectSetting(page, 'data_retention_days', 90);
 });

@@ -153,6 +153,7 @@ import {
 } from '@/lib/privacyZones';
 import { prepareScoreInputsForPrivacy } from '@/lib/scoreInputPrivacy';
 import { appendPrivacyEvent } from '@/lib/hashChainLog';
+import { requestAppConfirm } from '@/lib/appDialog';
 import {
   PRIVATE_TRIP_MODE,
   buildPrivateTripRecord,
@@ -181,6 +182,15 @@ const DANGER_ZONE_WATCH_LIMIT = 3;
 const LOCAL_SPEED_PLANNER_LIMIT = 3;
 const LOCAL_SPEED_NEARBY_RADIUS_M = 750;
 const LOCAL_SPEED_EXPIRING_SOON_MS = 14 * 24 * 60 * 60 * 1000;
+
+const scheduleDashboardIdleWork = (callback) => {
+  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+    const id = window.requestIdleCallback(callback, { timeout: 3000 });
+    return () => window.cancelIdleCallback?.(id);
+  }
+  const id = window.setTimeout(callback, 500);
+  return () => window.clearTimeout(id);
+};
 
 function tripElapsedSeconds(trip, nowValue = Date.now()) {
   const startMs = new Date(trip?.start_time || 0).getTime();
@@ -643,6 +653,7 @@ export default function Dashboard() {
   const [dismissedSpeedLimitReviewFingerprint, setDismissedSpeedLimitReviewFingerprint] = useState('');
   const [speedLimitReviewDismissalLoaded, setSpeedLimitReviewDismissalLoaded] = useState(false);
   const [speedKnowledgeRevision, setSpeedKnowledgeRevision] = useState(0);
+  const [fullHistoryEnabled, setFullHistoryEnabled] = useState(false);
   const [parkedLocation, setParkedLocation] = useState(null);
   const [dangerZones, setDangerZones] = useState([]);
   const [trackingStatusContext, setTrackingStatusContext] = useState({
@@ -798,9 +809,14 @@ export default function Dashboard() {
     refetch: refetchFullHistory,
   } = useQuery({
     ...tripSummaryQueryOptions(),
-    enabled: recentTripsLoaded,
+    enabled: fullHistoryEnabled,
     select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
+
+  useEffect(() => {
+    if (!recentTripsLoaded || fullHistoryEnabled) return undefined;
+    return scheduleDashboardIdleWork(() => setFullHistoryEnabled(true));
+  }, [fullHistoryEnabled, recentTripsLoaded]);
 
   const { data: vehicles = [] } = useQuery({
     queryKey: ['vehicles'],
@@ -2014,7 +2030,13 @@ export default function Dashboard() {
   const handleDiscardPrivateTrip = async () => {
     const trip = activeTripRef.current || activeTrip;
     if (!isPrivateTrip(trip)) return;
-    if (typeof window !== 'undefined' && !window.confirm('Discard this private trip? No trip summary will be saved.')) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Discard private trip?',
+      message: 'No trip summary will be saved.',
+      confirmLabel: 'Discard trip',
+      destructive: true,
+    });
+    if (!confirmed) return;
 
     const cfg = localSettings.get();
     endingTripRef.current = true;

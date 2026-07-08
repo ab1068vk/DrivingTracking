@@ -387,6 +387,7 @@ function SpeedLimitEditorMapContent({
     const keys = new Set();
     prioritized
       .filter((section) => section.saved || section.conflict)
+      .slice(0, permanentLabelLimit)
       .forEach((section) => keys.add(sectionKey(section)));
     return keys;
   }, [permanentLabelLimit, sections]);

@@ -29,6 +29,7 @@ import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LegalNoticeDialog from '@/components/LegalNoticeDialog';
 import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
 import { LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
+import { AppDialogHost } from '@/lib/appDialog';
 
 async function syncNativeCompletedTripsToLocalStore() {
   if (!isAndroid()) return;
@@ -564,6 +565,7 @@ function App() {
           <RouteLogger />
           <AuthenticatedApp />
         </Router>
+        <AppDialogHost />
         <Toaster />
       </QueryClientProvider>
     </AuthProvider>

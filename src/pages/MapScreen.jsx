@@ -29,6 +29,7 @@ import { MAX_VISIBLE_DANGER_ZONES } from '@/lib/appConstants';
 import { pinnedFetch } from '@/lib/pinnedFetch';
 import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
 import { TRIAGE_DISABLE_MAPS } from '@/lib/performanceTriage';
 import InlineLoadError from '@/components/InlineLoadError';
 
@@ -347,16 +348,22 @@ export default function MapScreen() {
   const tripPageEnd = tripPageStart + visibleTripCards.length;
   const mapOverviewHiddenCount = selectedTripId ? 0 : Math.max(0, completed.length - overviewTripsForMap.length);
 
-  const confirmAndFetchRoadContext = () => {
+  const confirmAndFetchRoadContext = async () => {
     if (!selectedTrip || !hasPlayableRouteGps(selectedTrip)) return;
     const latestSettings = localSettings.get();
     if (!isRoadDataLookupConfigured(latestSettings)) {
-      if (typeof window !== 'undefined') window.alert(buildRoadDataDisabledMessage(latestSettings));
+      await requestAppAlert({
+        title: 'Road data is off',
+        message: buildRoadDataDisabledMessage(latestSettings),
+      });
       return;
     }
-    if (typeof window !== 'undefined' && !window.confirm(buildRoadContextPrivacyMessage(latestSettings))) {
-      return;
-    }
+    const confirmed = await requestAppConfirm({
+      title: 'Get road data?',
+      message: buildRoadContextPrivacyMessage(latestSettings),
+      confirmLabel: 'Get road data',
+    });
+    if (!confirmed) return;
     contextMutation.mutate();
   };
 

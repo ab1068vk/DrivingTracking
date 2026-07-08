@@ -1,30 +1,55 @@
 // @ts-check
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { Activity, Brain, Car, ClipboardList, Gauge, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route, Cuboid } from 'lucide-react';
+import { Activity, Brain, Car, ClipboardList, Gauge, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route, Cuboid, MoreHorizontal, Trophy, ShieldCheck } from 'lucide-react';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
 import { LEGAL_DISCLAIMER_SHORT } from '@/lib/legalDisclaimers';
 import { activeTripStore } from '@/lib/trackingStore';
 import { cn } from '@/lib/utils';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
-const navItems = [
+const AppDropdownMenu = /** @type {any} */ (DropdownMenu);
+const AppDropdownMenuContent = /** @type {any} */ (DropdownMenuContent);
+const AppDropdownMenuItem = /** @type {any} */ (DropdownMenuItem);
+const AppDropdownMenuLabel = /** @type {any} */ (DropdownMenuLabel);
+const AppDropdownMenuSeparator = /** @type {any} */ (DropdownMenuSeparator);
+const AppDropdownMenuTrigger = /** @type {any} */ (DropdownMenuTrigger);
+
+const settingsNavItem = { path: '/settings', label: 'Settings', icon: Settings };
+
+const primaryNavItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/trips', label: 'Trips', icon: History },
-  { path: '/3d-replay', label: '3D Replay', icon: Cuboid },
   { path: '/map', label: 'Map', icon: Map },
   { path: '/coach', label: 'Coach', icon: Brain },
   { path: '/insights', label: 'Insights', icon: TrendingUp },
   { path: '/reports', label: 'Reports', icon: BarChart3 },
   { path: '/speed-limits', label: 'Speeds', icon: Gauge },
+  settingsNavItem,
+];
+
+const moreNavItems = [
+  { path: '/3d-replay', label: '3D Replay', icon: Cuboid },
+  { path: '/achievements', label: 'Milestones', icon: Trophy },
+  { path: '/privacy-intelligence', label: 'Privacy', icon: ShieldCheck },
   { path: '/diagnostics', label: 'Diagnostics', icon: Activity },
   { path: '/system-logs', label: 'Logs', icon: ClipboardList },
   { path: '/vehicles', label: 'Vehicles', icon: Car },
-  { path: '/settings', label: 'Settings', icon: Settings },
 ];
 
+const navItems = [...primaryNavItems, ...moreNavItems];
+
 const navSections = [
-  { label: 'Drive', items: navItems.slice(0, 8) },
-  { label: 'Manage', items: navItems.slice(8) },
+  { label: 'Drive', items: primaryNavItems.filter((item) => item.path !== '/settings') },
+  { label: 'Explore', items: moreNavItems.slice(0, 3) },
+  { label: 'Manage', items: [...moreNavItems.slice(3), settingsNavItem] },
 ];
 
 function BrandMark({ className = '' }) {
@@ -76,13 +101,88 @@ function NavItemLink({ item, variant = 'desktop' }) {
           >
             <Icon className={isMobile ? 'h-[18px] w-[18px]' : 'h-4 w-4'} />
           </span>
-          <span className={cn('truncate', !isMobile && 'hidden min-[1380px]:inline')}>{item.label}</span>
+          <span className="truncate">{item.label}</span>
           {!isMobile && isActive && (
             <span className="absolute inset-x-4 -bottom-1 h-0.5 rounded-full bg-primary" />
           )}
         </>
       )}
     </NavLink>
+  );
+}
+
+function navItemMatches(pathname, item) {
+  return item.path === '/' ? pathname === '/' : pathname.startsWith(item.path);
+}
+
+function DesktopMoreMenu({ pathname }) {
+  const active = moreNavItems.some((item) => navItemMatches(pathname, item));
+
+  return (
+    <AppDropdownMenu>
+      <AppDropdownMenuTrigger
+        className={cn(
+          'group relative flex h-10 items-center gap-2 rounded-full px-3 text-sm font-medium transition-all duration-200',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+          active
+            ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+            : 'text-muted-foreground hover:bg-card/70 hover:text-foreground',
+        )}
+        aria-label="Open more navigation"
+      >
+        <span className={cn(
+          'grid h-7 w-7 shrink-0 place-items-center rounded-full transition-colors',
+          active
+            ? 'bg-primary text-primary-foreground'
+            : 'bg-secondary text-muted-foreground group-hover:text-foreground',
+        )}>
+          <MoreHorizontal className="h-4 w-4" />
+        </span>
+        <span>More</span>
+        {active && <span className="absolute inset-x-4 -bottom-1 h-0.5 rounded-full bg-primary" />}
+      </AppDropdownMenuTrigger>
+      <AppDropdownMenuContent align="end" className="w-56">
+        <AppDropdownMenuLabel>Explore</AppDropdownMenuLabel>
+        {moreNavItems.slice(0, 3).map((item) => {
+          const Icon = item.icon;
+          const itemActive = navItemMatches(pathname, item);
+          return (
+            <AppDropdownMenuItem key={item.path} asChild>
+              <NavLink
+                to={item.path}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm',
+                  itemActive && 'bg-accent text-accent-foreground',
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                <span>{item.label}</span>
+              </NavLink>
+            </AppDropdownMenuItem>
+          );
+        })}
+        <AppDropdownMenuSeparator />
+        <AppDropdownMenuLabel>Manage</AppDropdownMenuLabel>
+        {moreNavItems.slice(3).map((item) => {
+          const Icon = item.icon;
+          const itemActive = navItemMatches(pathname, item);
+          return (
+            <AppDropdownMenuItem key={item.path} asChild>
+              <NavLink
+                to={item.path}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm',
+                  itemActive && 'bg-accent text-accent-foreground',
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                <span>{item.label}</span>
+              </NavLink>
+            </AppDropdownMenuItem>
+          );
+        })}
+      </AppDropdownMenuContent>
+    </AppDropdownMenu>
   );
 }
 
@@ -179,7 +279,8 @@ export default function Layout() {
             aria-label="Primary navigation"
             className="cyber-nav-rack hidden min-w-0 items-center gap-1 rounded-full border border-border/70 bg-secondary/70 p-1 shadow-inner shadow-white/30 xl:flex dark:shadow-black/10"
           >
-            {navItems.map(item => <NavItemLink key={item.path} item={item} />)}
+            {primaryNavItems.map(item => <NavItemLink key={item.path} item={item} />)}
+            <DesktopMoreMenu pathname={location.pathname} />
           </nav>
 
           {/* Mobile menu toggle */}

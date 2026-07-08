@@ -16,8 +16,18 @@ import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
 import { getTripComponentScore } from '@/lib/tripEngine';
 import { METRIC_REGISTRY } from '@/lib/metricRegistry';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { requestAppConfirm } from '@/lib/appDialog';
 
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
+
+const scheduleVehiclesIdleWork = (callback) => {
+  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+    const id = window.requestIdleCallback(callback, { timeout: 3000 });
+    return () => window.cancelIdleCallback?.(id);
+  }
+  const id = window.setTimeout(callback, 500);
+  return () => window.clearTimeout(id);
+};
 let odometerSyncFailureCount = 0;
 let odometerSyncFailureToastShown = false;
 export const MAX_FUEL_PRICE_PER_UNIT = 100;
@@ -297,6 +307,7 @@ export default function Vehicles() {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [tripStatsEnabled, setTripStatsEnabled] = useState(false);
   const settings = useLocalSettings();
   const currencySymbol = normalizeCurrencySymbol(settings.currencySymbol);
 
@@ -307,8 +318,14 @@ export default function Vehicles() {
 
   const { data: trips = [] } = useQuery({
     ...tripSummaryQueryOptions(),
+    enabled: tripStatsEnabled,
     select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
+
+  useEffect(() => {
+    if (tripStatsEnabled) return undefined;
+    return scheduleVehiclesIdleWork(() => setTripStatsEnabled(true));
+  }, [tripStatsEnabled]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['vehicles'] });
   const invalidateTrips = () => {
@@ -390,8 +407,14 @@ export default function Vehicles() {
     },
   });
 
-  const handleDeleteVehicle = (vehicle) => {
-    if (!confirm(`Delete ${vehicle.name || 'this vehicle'}? Existing trips will stay in history, but this vehicle profile will be removed.`)) return;
+  const handleDeleteVehicle = async (vehicle) => {
+    const confirmed = await requestAppConfirm({
+      title: 'Delete vehicle?',
+      message: `${vehicle.name || 'This vehicle'} will be removed. Existing trips will stay in history.`,
+      confirmLabel: 'Delete vehicle',
+      destructive: true,
+    });
+    if (!confirmed) return;
     deleteMut.mutate(vehicle.id);
   };
 

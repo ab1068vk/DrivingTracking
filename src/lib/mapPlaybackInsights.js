@@ -550,6 +550,16 @@ export function routeDistanceAtPlaybackPosition(timeline = {}, playbackPosition 
   return baseDistanceKm + (segment?.distanceKm || 0) * (playbackPosition.ratio ?? 0);
 }
 
+export function advancePlaybackElapsed(elapsedSeconds = 0, deltaSeconds = 0, playbackMultiplier = 1, durationSeconds = Infinity) {
+  const elapsed = Math.max(0, Number(elapsedSeconds) || 0);
+  const delta = Math.max(0, Number(deltaSeconds) || 0);
+  const multiplier = Math.max(0, Number(playbackMultiplier) || 0);
+  const duration = Number.isFinite(Number(durationSeconds))
+    ? Math.max(0, Number(durationSeconds))
+    : Infinity;
+  return Math.min(duration, elapsed + delta * multiplier);
+}
+
 export function buildRouteComparison(currentTrip = {}, secondaryTrip = {}) {
   if (!secondaryTrip) return { rows: [], notes: [] };
   const currentEvents = currentTrip.driving_events?.length || 0;

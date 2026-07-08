@@ -100,6 +100,7 @@ import { tripScoreDeltaSummary } from '@/lib/speedLimitDisplay';
 import { summarizeTripSpeedLimitIntelligence } from '@/lib/speedLimitIntelligence';
 import { recordSystemEvent } from '@/lib/systemLog';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
 
 // CHANGES (session):
 // - Added stronger posted-sign override wording for regional default and road-type estimates.
@@ -762,15 +763,21 @@ export default function TripDetail() {
   });
   const [dismissedTags, setDismissedTags] = useState([]);
 
-  const confirmAndFetchRoadContext = () => {
+  const confirmAndFetchRoadContext = async () => {
     const latestSettings = localSettings.get();
     if (!isRoadDataLookupConfigured(latestSettings)) {
-      if (typeof window !== 'undefined') window.alert(buildRoadDataDisabledMessage(latestSettings));
+      await requestAppAlert({
+        title: 'Road data is off',
+        message: buildRoadDataDisabledMessage(latestSettings),
+      });
       return;
     }
-    if (typeof window !== 'undefined' && !window.confirm(buildRoadContextPrivacyMessage(latestSettings))) {
-      return;
-    }
+    const confirmed = await requestAppConfirm({
+      title: 'Get road data?',
+      message: buildRoadContextPrivacyMessage(latestSettings),
+      confirmLabel: 'Get road data',
+    });
+    if (!confirmed) return;
     contextMutation.mutate();
   };
   const stops = useMemo(() => (
@@ -1414,8 +1421,14 @@ export default function TripDetail() {
               type="button"
               aria-label="Delete trip"
               title="Delete trip"
-              onClick={() => {
-                if (confirm('Delete this trip? This cannot be undone.')) deleteMutation.mutate();
+              onClick={async () => {
+                const confirmed = await requestAppConfirm({
+                  title: 'Delete trip?',
+                  message: 'This cannot be undone.',
+                  confirmLabel: 'Delete trip',
+                  destructive: true,
+                });
+                if (confirmed) deleteMutation.mutate();
               }}
               className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/50"
             >
