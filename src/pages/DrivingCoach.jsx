@@ -1,10 +1,8 @@
 // @ts-check
-import { motion } from 'framer-motion';
 import { useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, AlertTriangle, CheckCircle2, Gauge, MapPinned, ShieldCheck, Target, TrendingUp } from 'lucide-react';
-import { Bar, BarChart, CartesianGrid, PolarAngleAxis, PolarGrid, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { tripSummaryQueryOptions } from '@/api/trips';
+import { limitedTripSummaryQueryOptions, tripSummaryQueryOptions } from '@/api/trips';
 import { formatDistance, formatSpeed } from '@/lib/tripEngine';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import {
@@ -19,6 +17,8 @@ import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly'
 import { logError } from '@/lib/errorReporting';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
+import DeferredRecharts from '@/components/DeferredRecharts';
+import { PageEmptyState, PageHeader } from '@/components/PageChrome';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const focusLabels = {
@@ -63,10 +63,25 @@ function MiniMetric({ value, label, detail = null, className = '' }) {
 export default function DrivingCoach() {
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
-  const { data: completed = [], isLoading, isFetching } = useQuery({
-    ...tripSummaryQueryOptions(),
+  const {
+    data: recentCompleted = [],
+    isLoading,
+    isFetching: recentFetching,
+    isSuccess: recentTripsLoaded,
+  } = useQuery({
+    ...limitedTripSummaryQueryOptions(50),
     select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
+  const {
+    data: fullHistoryCompleted = [],
+    isFetching: fullHistoryFetching,
+  } = useQuery({
+    ...tripSummaryQueryOptions(),
+    enabled: recentTripsLoaded,
+    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
+  });
+  const completed = fullHistoryCompleted.length > 0 ? fullHistoryCompleted : recentCompleted;
+  const isFetching = recentFetching || fullHistoryFetching;
 
   const coach = buildDrivingCoachInsights(completed, settings);
   const coachBrief = coach.coach_brief;
@@ -125,16 +140,12 @@ export default function DrivingCoach() {
 
   return (
     <div className="space-y-6 pb-4">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-grotesk font-bold">Driving Coach</h1>
-          <p className="text-muted-foreground text-sm mt-1">Actionable driving patterns from your trip history</p>
-        </div>
-        <div className="w-11 h-11 rounded-2xl bg-primary/10 flex items-center justify-center">
-          <Target className="w-5 h-5 text-primary" />
-        </div>
-      </motion.div>
-      <InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing coaching" />
+      <PageHeader
+        title="Driving Coach"
+        description="Actionable driving patterns from your trip history"
+        icon={Target}
+        status={<InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing coaching" />}
+      />
 
       {isLoading ? (
         <div className="space-y-3">
@@ -143,11 +154,11 @@ export default function DrivingCoach() {
           ))}
         </div>
       ) : completed.length === 0 ? (
-        <div className="flex flex-col items-center py-16 text-center">
-          <Target className="w-12 h-12 text-muted-foreground mb-3" />
-          <div className="font-semibold">No coaching data yet</div>
-          <div className="text-muted-foreground text-sm mt-1">Complete trips to unlock driving insights</div>
-        </div>
+        <PageEmptyState
+          icon={Target}
+          title="No coaching data yet"
+          description="Complete trips to unlock driving insights."
+        />
       ) : (
         <>
           {increasingAggressionShift && (
@@ -420,37 +431,45 @@ export default function DrivingCoach() {
                   <p className="text-xs text-muted-foreground mb-4">
                     Average score by trip start time. Best-window coaching needs at least {coach.best_window_min_trips} trips in a bucket.
                   </p>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <BarChart data={timeOfDay} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                      <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                      <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                      <Tooltip
-                        contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                        formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
-                      />
-                      <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Avg score" />
-                      <Bar dataKey="events" fill="#f97316" radius={[4, 4, 0, 0]} name="Risk events" />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <DeferredRecharts height={180}>
+                    {({ ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip }) => (
+                      <ResponsiveContainer width="100%" height={180}>
+                        <BarChart data={timeOfDay} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                          <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                          <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                          <Tooltip
+                            contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                            formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
+                          />
+                          <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Avg score" />
+                          <Bar dataKey="events" fill="#f97316" radius={[4, 4, 0, 0]} name="Risk events" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </DeferredRecharts>
                 </div>
 
                 <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
                   <h2 className="font-semibold mb-1">Day Pattern</h2>
                   <p className="text-xs text-muted-foreground mb-4">Risk events and score across the week</p>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <BarChart data={dayOfWeek} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                      <XAxis dataKey="day" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                      <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                      <Tooltip
-                        contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                        formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
-                      />
-                      <Bar dataKey="events" fill="#ef4444" radius={[4, 4, 0, 0]} name="Risk events" />
-                      <Bar dataKey="avgScore" fill="#22c55e" radius={[4, 4, 0, 0]} name="Avg score" />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <DeferredRecharts height={180}>
+                    {({ ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip }) => (
+                      <ResponsiveContainer width="100%" height={180}>
+                        <BarChart data={dayOfWeek} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                          <XAxis dataKey="day" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                          <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                          <Tooltip
+                            contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                            formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
+                          />
+                          <Bar dataKey="events" fill="#ef4444" radius={[4, 4, 0, 0]} name="Risk events" />
+                          <Bar dataKey="avgScore" fill="#22c55e" radius={[4, 4, 0, 0]} name="Avg score" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </DeferredRecharts>
                 </div>
               </div>
             </TabsContent>
@@ -469,14 +488,18 @@ export default function DrivingCoach() {
                       </p>
                     </div>
                   </div>
-                  <ResponsiveContainer width="100%" height={220}>
-                    <RadarChart data={signatureChartData} outerRadius={76}>
-                      <PolarGrid />
-                      <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 10 }} />
-                      <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.22} />
-                      <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
-                    </RadarChart>
-                  </ResponsiveContainer>
+                  <DeferredRecharts height={220}>
+                    {({ ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar, Tooltip }) => (
+                      <ResponsiveContainer width="100%" height={220}>
+                        <RadarChart data={signatureChartData} outerRadius={76}>
+                          <PolarGrid />
+                          <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 10 }} />
+                          <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.22} />
+                          <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                        </RadarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </DeferredRecharts>
                   <div className="mb-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
                     <span className="font-semibold text-foreground">Braking signature: </span>
                     <span>{brakingStyle == null ? '-' : `${Math.round(brakingStyle * 100)}%`}</span>

@@ -1,7 +1,6 @@
 // @ts-check
 import { memo, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
@@ -19,6 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/components/ui/use-toast';
+import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
 import { applyThemeMode, getLastParkedLocation, localSettings, validateSettingsPatch } from '@/lib/trackingStore';
 import { NIGHT_END_TIME, NIGHT_START_TIME, SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
@@ -47,30 +47,16 @@ import {
 } from '@/lib/permissions';
 import { isAndroid } from '@/lib/nativePlatform';
 import {
-  getAndroidBatteryOptimizationStatus,
-  openAndroidUsageAccessSettings,
-  getNativeAutoTrackingStatus,
-  openAndroidBatteryOptimizationSettings,
-  clearNativeCompletedTrips,
-  startNativeAutoTracking,
-  stopNativeAutoTracking,
-  testVoiceSpeedMarkerRecognition,
-} from '@/lib/activityRecognition';
-import { syncReminderNotifications } from '@/lib/notificationService';
-import {
-  BACKUP_PASSWORD_REQUIRED_CODE,
   BACKUP_SIGNATURE_INVALID_CODE,
   BACKUP_TOO_LARGE_MESSAGE,
-  BACKUP_WRONG_PASSWORD_CODE,
-  exportDriveSenseBackup,
-  importDriveSenseBackup,
   MAX_BACKUP_BYTES,
-} from '@/lib/dataBackup';
+} from '@/lib/dataBackupConstants';
 import {
-  eraseAllLocalDataAndDownloadReceipt,
-  exportDataPortabilityBundle,
-} from '@/lib/dataRights';
-import { BACKUP_PASSPHRASE_MIN_LENGTH, ENCRYPTED_BACKUP_MIME_TYPE } from '@/lib/backupEnvelopeEncryption';
+  BACKUP_PASSPHRASE_MIN_LENGTH,
+  BACKUP_PASSWORD_REQUIRED_CODE,
+  BACKUP_WRONG_PASSWORD_CODE,
+  ENCRYPTED_BACKUP_MIME_TYPE,
+} from '@/lib/backupEnvelopeEncryption';
 import { COMMUTE_MATCH_RADIUS_M } from '@/lib/mediumInsights';
 import { isExternalContextAutoFetchEnabled } from '@/lib/openSourceTripContext';
 import {
@@ -142,6 +128,7 @@ import {
 import { checkIntegrity, integrityStatusFromSettings } from '@/lib/rasp';
 import { searchSettingsSections } from '@/lib/settingsSearch';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
+import { PageHeader } from '@/components/PageChrome';
 import { HEIGHTENED_PRIVACY_MODE_EFFECTS } from '@/lib/privacyMode';
 import PrivacyZoneProtectionCheck from '@/components/PrivacyZoneProtectionCheck';
 import {
@@ -238,6 +225,45 @@ const runAfterVisiblePaint = (callback) => {
     setTimeout(callback, 0);
   }
 };
+
+const getNativeAutoTrackingStatusFromSettings = () => import('@/lib/activityRecognition')
+  .then(({ getNativeAutoTrackingStatus }) => getNativeAutoTrackingStatus());
+
+const getAndroidBatteryOptimizationStatusFromSettings = () => import('@/lib/activityRecognition')
+  .then(({ getAndroidBatteryOptimizationStatus }) => getAndroidBatteryOptimizationStatus());
+
+const openAndroidUsageAccessSettingsFromSettings = () => import('@/lib/activityRecognition')
+  .then(({ openAndroidUsageAccessSettings }) => openAndroidUsageAccessSettings());
+
+const openAndroidBatteryOptimizationSettingsFromSettings = () => import('@/lib/activityRecognition')
+  .then(({ openAndroidBatteryOptimizationSettings }) => openAndroidBatteryOptimizationSettings());
+
+const clearNativeCompletedTripsFromSettings = () => import('@/lib/activityRecognition')
+  .then(({ clearNativeCompletedTrips }) => clearNativeCompletedTrips());
+
+const startNativeAutoTrackingFromSettings = () => import('@/lib/activityRecognition')
+  .then(({ startNativeAutoTracking }) => startNativeAutoTracking());
+
+const stopNativeAutoTrackingFromSettings = () => import('@/lib/activityRecognition')
+  .then(({ stopNativeAutoTracking }) => stopNativeAutoTracking());
+
+const testVoiceSpeedMarkerRecognitionFromSettings = (options) => import('@/lib/activityRecognition')
+  .then(({ testVoiceSpeedMarkerRecognition }) => testVoiceSpeedMarkerRecognition(options));
+
+const syncReminderNotificationsFromSettings = (...args) => import('@/lib/notificationService')
+  .then(({ syncReminderNotifications }) => syncReminderNotifications(...args));
+
+const exportDriveSenseBackupFromSettings = (...args) => import('@/lib/dataBackup')
+  .then(({ exportDriveSenseBackup }) => exportDriveSenseBackup(...args));
+
+const importDriveSenseBackupFromSettings = (...args) => import('@/lib/dataBackup')
+  .then(({ importDriveSenseBackup }) => importDriveSenseBackup(...args));
+
+const exportDataPortabilityBundleFromSettings = (...args) => import('@/lib/dataRights')
+  .then(({ exportDataPortabilityBundle }) => exportDataPortabilityBundle.apply(null, args));
+
+const eraseAllLocalDataAndDownloadReceiptFromSettings = (...args) => import('@/lib/dataRights')
+  .then(({ eraseAllLocalDataAndDownloadReceipt }) => eraseAllLocalDataAndDownloadReceipt.apply(null, args));
 
 function Toggle({ value, onChange, disabled = false }) {
   const [optimisticValue, setOptimisticValue] = useState(Boolean(value));
@@ -1458,7 +1484,7 @@ export default function Settings() {
     saveOsrmEndpoint(endpoint, true);
   };
 
-  const updateExternalContextAutoFetch = (enabled) => {
+  const updateExternalContextAutoFetch = async (enabled) => {
     if (!enabled) {
       updateCfg({
         external_context_auto_fetch_enabled: false,
@@ -1470,9 +1496,11 @@ export default function Settings() {
       cfg.speed_limit_lookup_enabled !== false ? 'OpenStreetMap speed-limit' : null,
       cfg.weather_context_enabled !== false ? 'Open-Meteo weather' : null,
     ].filter(Boolean).join(' and ') || 'enabled road-data';
-    const ok = typeof window === 'undefined' || window.confirm(
-      `Automatic road data queues ${enabledLookups} lookups with randomized privacy delays whenever a trip is saved. OSRM route snapping still stays manual. Continue?`
-    );
+    const ok = await requestAppConfirm({
+      title: 'Enable automatic road data?',
+      message: `Automatic road data queues ${enabledLookups} lookups with randomized privacy delays whenever a trip is saved. OSRM route snapping still stays manual. Continue?`,
+      confirmLabel: 'Enable',
+    });
     if (!ok) return;
     updateCfg({
       external_context_auto_fetch_enabled: true,
@@ -1531,7 +1559,7 @@ export default function Settings() {
         setVoiceSpeedMarkerTestStatus('Microphone permission is needed to test voice speed markers.');
         return;
       }
-      const result = await testVoiceSpeedMarkerRecognition({ timeoutMs: 10000 });
+      const result = await testVoiceSpeedMarkerRecognitionFromSettings({ timeoutMs: 10000 });
       if (result.recognized) {
         setVoiceSpeedMarkerTestStatus(
           `Heard ${result.limitKmh} km/h${result.posted ? ' as a posted sign' : ' as an estimate'}${result.transcript ? ` from "${result.transcript}"` : ''}.`
@@ -1609,7 +1637,13 @@ export default function Settings() {
   };
 
   const clearCalibrationLabels = async () => {
-    if (typeof window !== 'undefined' && !window.confirm('Delete all local survey labels and answered-trip markers?')) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Delete survey labels?',
+      message: 'Delete all local survey labels and answered-trip markers?',
+      confirmLabel: 'Delete labels',
+      destructive: true,
+    });
+    if (!confirmed) return;
     try {
       const deletedLabels = calibrationLabels.length;
       const deletedMarkers = Object.keys(calibrationMarkers).length;
@@ -1673,9 +1707,12 @@ export default function Settings() {
       return;
     }
 
-    const confirmed = typeof window === 'undefined' || window.confirm(
-      'Turn on heightened privacy mode? Existing raw GPS inside every configured privacy zone will be permanently erased. Scores, distance, duration, and summaries will remain.'
-    );
+    const confirmed = await requestAppConfirm({
+      title: 'Turn on heightened privacy?',
+      message: 'Turn on heightened privacy mode? Existing raw GPS inside every configured privacy zone will be permanently erased. Scores, distance, duration, and summaries will remain.',
+      confirmLabel: 'Turn on',
+      destructive: true,
+    });
     if (!confirmed) return;
 
     updateCfg({ heightened_privacy_mode: true });
@@ -1783,7 +1820,7 @@ export default function Settings() {
     }
 
     const updated = updateCfg(patch);
-    await syncReminderNotifications(updated);
+    await syncReminderNotificationsFromSettings(updated);
     await refreshPermissions();
   };
 
@@ -1791,9 +1828,15 @@ export default function Settings() {
     const currentDays = Number(cfg.data_retention_days || 0);
     if (days === currentDays) return;
     const periodLabel = days === 0 ? 'forever' : days === 365 ? '1 year' : `${days} days`;
-    if (days > 0 && typeof window !== 'undefined' && !window.confirm(
-      `Keep complete trips for ${periodLabel}? Trips older than ${periodLabel} will be permanently deleted from this device as soon as this setting is saved. Existing backup files are not changed.`
-    )) return;
+    if (days > 0) {
+      const confirmed = await requestAppConfirm({
+        title: 'Change trip retention?',
+        message: `Keep complete trips for ${periodLabel}? Trips older than ${periodLabel} will be permanently deleted from this device as soon as this setting is saved. Existing backup files are not changed.`,
+        confirmLabel: 'Save retention',
+        destructive: true,
+      });
+      if (!confirmed) return;
+    }
 
     updateCfg({ data_retention_days: days });
     await settingsPersistenceQueueRef.current;
@@ -1843,13 +1886,16 @@ export default function Settings() {
     const currentDays = Number(cfg.raw_gps_retention_days || 0);
     if (days === currentDays) return;
 
-    if (days > 0 && typeof window !== 'undefined') {
+    if (days > 0) {
       const periodLabel = days >= 365 && days % 365 === 0
         ? `${days / 365} year${days === 365 ? '' : 's'}`
         : `${days} days`;
-      const confirmed = window.confirm(
-        `Set raw GPS retention to ${periodLabel}? On the next cleanup, trips older than ${periodLabel} will permanently lose their route line on the map and playback. Scores, distance, duration, and summaries will remain. Existing backup files are not changed.`
-      );
+      const confirmed = await requestAppConfirm({
+        title: 'Change raw GPS retention?',
+        message: `Set raw GPS retention to ${periodLabel}? On the next cleanup, trips older than ${periodLabel} will permanently lose their route line on the map and playback. Scores, distance, duration, and summaries will remain. Existing backup files are not changed.`,
+        confirmLabel: 'Save retention',
+        destructive: true,
+      });
       if (!confirmed) return;
     }
 
@@ -1873,9 +1919,13 @@ export default function Settings() {
     const periodLabel = retentionDays >= 365 && retentionDays % 365 === 0
       ? `${retentionDays / 365} year${retentionDays === 365 ? '' : 's'}`
       : `${retentionDays} days`;
-    if (typeof window !== 'undefined' && !window.confirm(
-      `Remove route coordinates from trips older than ${periodLabel} now? Their route line on the map and playback will be permanently unavailable on this device. Scores, distance, duration, and summaries will remain.`
-    )) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Remove old route coordinates?',
+      message: `Remove route coordinates from trips older than ${periodLabel} now? Their route line on the map and playback will be permanently unavailable on this device. Scores, distance, duration, and summaries will remain.`,
+      confirmLabel: 'Remove GPS',
+      destructive: true,
+    });
+    if (!confirmed) return;
 
     setRawGpsLifecycleBusy(true);
     try {
@@ -1938,7 +1988,7 @@ export default function Settings() {
     if (!isAndroid()) return true;
 
     try {
-      const stopped = await stopNativeAutoTracking();
+      const stopped = await stopNativeAutoTrackingFromSettings();
       await refreshPermissions();
       if (stopped !== true) {
         throw new Error('Android did not confirm that native auto tracking stopped.');
@@ -1967,7 +2017,7 @@ export default function Settings() {
 
     if (updated.tracking_mode === 'background_auto') {
       try {
-        await startNativeAutoTracking();
+        await startNativeAutoTrackingFromSettings();
         await refreshPermissions();
       } catch (error) {
         updateCfg({ tracking_paused: true });
@@ -2045,7 +2095,7 @@ export default function Settings() {
 
       if (isAndroid()) {
         try {
-          await startNativeAutoTracking();
+          await startNativeAutoTrackingFromSettings();
         } catch (error) {
           toast({
             title: 'Background tracking could not start',
@@ -2077,10 +2127,10 @@ export default function Settings() {
 
     if (isAndroid()) {
       try {
-        setNativeTrackingStatus(await getNativeAutoTrackingStatus());
+        setNativeTrackingStatus(await getNativeAutoTrackingStatusFromSettings());
       } catch {}
       try {
-        setBatteryStatus(await getAndroidBatteryOptimizationStatus());
+        setBatteryStatus(await getAndroidBatteryOptimizationStatusFromSettings());
       } catch {}
     }
   };
@@ -2094,8 +2144,8 @@ export default function Settings() {
 
     if (restartIfReady && isAndroid() && latest.tracking_mode === 'background_auto' && !latest.tracking_paused) {
       try {
-        await startNativeAutoTracking();
-        setNativeTrackingStatus(await getNativeAutoTrackingStatus());
+        await startNativeAutoTrackingFromSettings();
+        setNativeTrackingStatus(await getNativeAutoTrackingStatusFromSettings());
       } catch {}
     }
     return latest;
@@ -2513,7 +2563,7 @@ export default function Settings() {
 
   const handleBatteryOptimization = async () => {
     try {
-      await openAndroidBatteryOptimizationSettings();
+      await openAndroidBatteryOptimizationSettingsFromSettings();
       await refreshPermissions();
     } catch {
       logSystemFailure('settings_battery_optimization_open', new Error('Battery optimization settings could not be opened.'));
@@ -2553,7 +2603,13 @@ export default function Settings() {
   };
 
   const handleDeleteAllTrips = async () => {
-    if (!confirm('Delete ALL trips? This cannot be undone.')) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Delete all trips?',
+      message: 'Delete ALL trips? This cannot be undone.',
+      confirmLabel: 'Delete trips',
+      destructive: true,
+    });
+    if (!confirmed) return;
     const trips = await getSettingsTrips();
     for (const t of trips) {
       await tripService.delete(t.id);
@@ -2567,7 +2623,7 @@ export default function Settings() {
       clearMapMatchingCache(),
       clearOsmSpeedLimitCache(),
       clearWeatherContextCache(),
-      isAndroid() ? clearNativeCompletedTrips() : Promise.resolve(),
+      isAndroid() ? clearNativeCompletedTripsFromSettings() : Promise.resolve(),
     ]);
     setCalibrationLabels([]);
     setCalibrationMarkers({});
@@ -2621,7 +2677,7 @@ export default function Settings() {
     if (portabilityExportBusy) return;
     setPortabilityExportBusy(true);
     try {
-      const result = await exportDataPortabilityBundle();
+      const result = await exportDataPortabilityBundleFromSettings();
       recordSystemEvent('data_portability_export_completed', {
         trip_count: result.bundle?.trips?.length || 0,
         vehicle_count: result.bundle?.vehicles?.length || 0,
@@ -2649,10 +2705,15 @@ export default function Settings() {
 
   const handleEraseAllLocalData = async () => {
     if (erasureBusy) return;
-    const confirmation = typeof window === 'undefined'
-      ? ''
-      : window.prompt('This erases trips, settings, privacy logs, zones, and local keys from this device. Type ERASE ROAD SAGE to continue.');
-    if (confirmation !== 'ERASE ROAD SAGE') return;
+    const confirmed = await requestAppConfirm({
+      title: 'Erase all local data?',
+      message: 'This erases trips, settings, privacy logs, zones, and local keys from this device.',
+      confirmLabel: 'Erase local data',
+      destructive: true,
+      requiredText: 'ERASE ROAD SAGE',
+      inputLabel: 'Type ERASE ROAD SAGE to continue.',
+    });
+    if (!confirmed) return;
     setErasureBusy(true);
     recordSystemEvent('local_data_erasure_confirmed', {}, {
       category: 'storage',
@@ -2661,14 +2722,14 @@ export default function Settings() {
       message: 'This entry is removed with the rest of local data if erasure succeeds.',
     });
     try {
-      const result = await eraseAllLocalDataAndDownloadReceipt();
+      const result = await eraseAllLocalDataAndDownloadReceiptFromSettings();
       if (typeof window !== 'undefined') {
-        window.alert(`${result.filename} was exported. Road Sage will now reload so erased in-memory data is not reused.`);
+        await requestAppAlert(`${result.filename} was exported. Road Sage will now reload so erased in-memory data is not reused.`);
         window.location.reload();
       }
     } catch (error) {
       if (error?.dataErased === true && typeof window !== 'undefined') {
-        window.alert('All local Road Sage data was erased, but the erasure receipt could not be saved. Road Sage will reload now.');
+        await requestAppAlert('All local Road Sage data was erased, but the erasure receipt could not be saved. Road Sage will reload now.');
         window.location.reload();
         return;
       }
@@ -2735,7 +2796,7 @@ export default function Settings() {
         getSettingsTrips(),
         getSettingsVehicles(),
       ]);
-      const result = await exportDriveSenseBackup({
+      const result = await exportDriveSenseBackupFromSettings({
         trips,
         vehicles,
         settings: cfg,
@@ -2761,15 +2822,20 @@ export default function Settings() {
     file,
     { passphrase = null, acknowledgeTruncation = false, allowUnverifiedSignedBackup = false } = {}
   ) => {
-    let result = await importDriveSenseBackup(file, {
+    let result = await importDriveSenseBackupFromSettings(file, {
       passphrase,
       acknowledgeTruncation,
       allowUnverifiedSignedBackup,
     });
     if (result.requiresAcknowledgement) {
       const affected = result.truncatedNoteTripCount;
-      if (!confirm(`This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`)) return null;
-      result = await importDriveSenseBackup(file, {
+      const confirmed = await requestAppConfirm({
+        title: 'Import with truncated notes?',
+        message: `This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`,
+        confirmLabel: 'Continue import',
+      });
+      if (!confirmed) return null;
+      result = await importDriveSenseBackupFromSettings(file, {
         passphrase,
         acknowledgeTruncation: true,
         allowUnverifiedSignedBackup,
@@ -2830,7 +2896,11 @@ export default function Settings() {
         return;
       }
       if (error?.code === BACKUP_SIGNATURE_INVALID_CODE) {
-        const recover = confirm('This backup was readable, but its signature could not be verified. This can happen after reinstalling the app because the old verification key was deleted. Import trips and vehicles anyway? Settings will not be imported.');
+        const recover = await requestAppConfirm({
+          title: 'Import unverified backup?',
+          message: 'This backup was readable, but its signature could not be verified. This can happen after reinstalling the app because the old verification key was deleted. Import trips and vehicles anyway? Settings will not be imported.',
+          confirmLabel: 'Import trips',
+        });
         if (recover) {
           await finishImportBackup(pendingBackupImportFile, {
             passphrase: backupImportPassphrase,
@@ -2869,7 +2939,12 @@ export default function Settings() {
       });
       return;
     }
-    if (!confirm('Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.')) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Import backup?',
+      message: 'Import this Road Sage backup? Trips and vehicles with matching IDs will be updated, and new ones will be added.',
+      confirmLabel: 'Import backup',
+    });
+    if (!confirmed) return;
 
     try {
       await finishImportBackup(file);
@@ -2892,7 +2967,11 @@ export default function Settings() {
         return;
       }
       if (error?.code === BACKUP_SIGNATURE_INVALID_CODE) {
-        const recover = confirm('This backup was readable, but its signature could not be verified. This can happen after reinstalling the app because the old verification key was deleted. Import trips and vehicles anyway? Settings will not be imported.');
+        const recover = await requestAppConfirm({
+          title: 'Import unverified backup?',
+          message: 'This backup was readable, but its signature could not be verified. This can happen after reinstalling the app because the old verification key was deleted. Import trips and vehicles anyway? Settings will not be imported.',
+          confirmLabel: 'Import trips',
+        });
         if (recover) {
           await finishImportBackup(file, { allowUnverifiedSignedBackup: true });
         }
@@ -2977,24 +3056,16 @@ export default function Settings() {
 
   return (
     <div className="space-y-4 pb-6">
-      {/* Header */}
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-grotesk font-bold">Settings</h1>
-          <p className="text-muted-foreground text-sm mt-1">Customize your Road Sage experience</p>
-        </div>
-        {saved && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0 }}
-            className="flex items-center gap-1.5 text-xs text-green-600 font-medium bg-green-50 dark:bg-green-950/30 px-2.5 py-1.5 rounded-full"
-          >
-            <Check className="w-3.5 h-3.5" />
+      <PageHeader
+        title="Settings"
+        description="Customize your Road Sage experience"
+        status={saved ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-1.5 text-xs font-medium text-green-600 dark:bg-green-950/30">
+            <Check className="h-3.5 w-3.5" />
             Saved
-          </motion.div>
-        )}
-      </motion.div>
+          </span>
+        ) : null}
+      />
 
       {privacyRescoreActive && (
         <div className="rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">
@@ -3262,7 +3333,7 @@ export default function Settings() {
             ...(isAndroid() ? [{ key: 'microphone', label: 'Microphone', sub: getPermissionExplanation('microphone'), action: requestMicrophonePermission }] : []),
             { key: 'motionSensors', label: 'Motion Sensors', sub: getPermissionExplanation('motionSensors'), action: handleMotionPermission },
             { key: 'bluetooth', label: 'Bluetooth / Nearby Devices', sub: getPermissionExplanation('bluetooth'), action: handleObdPairing },
-            ...(isAndroid() ? [{ key: 'phoneUsageAccess', label: 'Phone Usage Access', sub: getPermissionExplanation('phoneUsageAccess'), action: openAndroidUsageAccessSettings }] : []),
+            ...(isAndroid() ? [{ key: 'phoneUsageAccess', label: 'Phone Usage Access', sub: getPermissionExplanation('phoneUsageAccess'), action: openAndroidUsageAccessSettingsFromSettings }] : []),
           ].map(({ key, label, sub, action }) => (
             <SettingRow key={key} icon={Info} label={label} sublabel={sub}>
               <div className="flex items-center gap-2">
@@ -4319,7 +4390,7 @@ export default function Settings() {
                   className="text-xs font-semibold text-primary"
                   onClick={async e => {
                     e.stopPropagation();
-                    await openAndroidUsageAccessSettings();
+                    await openAndroidUsageAccessSettingsFromSettings();
                     await refreshPermissions();
                   }}
                 >

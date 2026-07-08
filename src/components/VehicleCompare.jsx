@@ -1,9 +1,9 @@
 // @ts-check
 import { useMemo } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Gauge, Navigation, Activity } from 'lucide-react';
 import { getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import DeferredRecharts from '@/components/DeferredRecharts';
 
 function ScoreBar({ label, value, max, color, evidence = null }) {
   const pct = max > 0 ? (value / max) * 100 : 0;
@@ -85,19 +85,23 @@ export default function VehicleCompare({ vehicles, trips }) {
           <Gauge className="w-4 h-4 text-primary" />
           <span className="font-semibold text-sm">Average Driving Score</span>
         </div>
-        <ResponsiveContainer width="100%" height={180}>
-          <BarChart data={scoredStats} barSize={32} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-            <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-            <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-            <Tooltip
-              formatter={(v) => [formatEstimatedScore(v), 'Avg Score']}
-              contentStyle={{ borderRadius: 12, border: '1px solid hsl(var(--border))', fontSize: 12 }}
-            />
-            <Bar dataKey="avgScore" radius={[6, 6, 0, 0]}>
-              {scoredStats.map((s) => <Cell key={s.id} fill={s.color} />)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+        <DeferredRecharts height={180}>
+          {({ ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell }) => (
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={scoredStats} barSize={32} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Tooltip
+                  formatter={(v) => [formatEstimatedScore(v), 'Avg Score']}
+                  contentStyle={{ borderRadius: 12, border: '1px solid hsl(var(--border))', fontSize: 12 }}
+                />
+                <Bar dataKey="avgScore" radius={[6, 6, 0, 0]}>
+                  {scoredStats.map((s) => <Cell key={s.id} fill={s.color} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </DeferredRecharts>
       </div>
 
       {/* Distance comparison */}

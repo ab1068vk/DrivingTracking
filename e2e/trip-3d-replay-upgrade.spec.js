@@ -9,10 +9,11 @@ const onboardedSettings = {
   tracking_mode: 'manual',
   dark_mode: 'system',
   units: 'metric',
+  raw_gps_retention_days: 365,
 };
 
 const buildSyntheticTrip = () => {
-  const startMs = Date.UTC(2026, 5, 7, 12, 0, 0);
+  const startMs = Date.now() - 20 * 60_000;
   const routePoints = Array.from({ length: 48 }, (_, index) => {
     const timestamp = new Date(startMs + index * 15_000).toISOString();
     return {

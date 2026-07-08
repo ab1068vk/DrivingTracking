@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
+import { limitedTripSummaryQueryOptions, tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle, Zap, ClipboardCheck, Route, CalendarClock, TrendingUp, Sparkles } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
@@ -16,8 +16,20 @@ import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
 import { getTripComponentScore } from '@/lib/tripEngine';
 import { METRIC_REGISTRY } from '@/lib/metricRegistry';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { PageEmptyState, PageHeader } from '@/components/PageChrome';
+import { requestAppConfirm } from '@/lib/appDialog';
 
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
+
+const scheduleVehiclesIdleWork = (callback) => {
+  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+    const id = window.requestIdleCallback(callback, { timeout: 3000 });
+    return () => window.cancelIdleCallback?.(id);
+  }
+  const id = window.setTimeout(callback, 500);
+  return () => window.clearTimeout(id);
+};
+
 let odometerSyncFailureCount = 0;
 let odometerSyncFailureToastShown = false;
 export const MAX_FUEL_PRICE_PER_UNIT = 100;
@@ -297,6 +309,7 @@ export default function Vehicles() {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [tripStatsEnabled, setTripStatsEnabled] = useState(false);
   const settings = useLocalSettings();
   const currencySymbol = normalizeCurrencySymbol(settings.currencySymbol);
 
@@ -305,10 +318,23 @@ export default function Vehicles() {
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 50 }),
   });
 
-  const { data: trips = [] } = useQuery({
-    ...tripSummaryQueryOptions(),
+  const {
+    data: recentTrips = [],
+    isSuccess: recentTripsLoaded,
+  } = useQuery({
+    ...limitedTripSummaryQueryOptions(100),
     select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
+  const { data: fullHistoryTrips = [] } = useQuery({
+    ...tripSummaryQueryOptions(),
+    enabled: recentTripsLoaded && tripStatsEnabled,
+    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
+  });
+  useEffect(() => {
+    if (!recentTripsLoaded || tripStatsEnabled) return undefined;
+    return scheduleVehiclesIdleWork(() => setTripStatsEnabled(true));
+  }, [recentTripsLoaded, tripStatsEnabled]);
+  const trips = fullHistoryTrips.length > 0 ? fullHistoryTrips : recentTrips;
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['vehicles'] });
   const invalidateTrips = () => {
@@ -390,8 +416,14 @@ export default function Vehicles() {
     },
   });
 
-  const handleDeleteVehicle = (vehicle) => {
-    if (!confirm(`Delete ${vehicle.name || 'this vehicle'}? Existing trips will stay in history, but this vehicle profile will be removed.`)) return;
+  const handleDeleteVehicle = async (vehicle) => {
+    const confirmed = await requestAppConfirm({
+      title: 'Delete vehicle?',
+      message: `Delete ${vehicle.name || 'this vehicle'}? Existing trips will stay in history, but this vehicle profile will be removed.`,
+      confirmLabel: 'Delete vehicle',
+      destructive: true,
+    });
+    if (!confirmed) return;
     deleteMut.mutate(vehicle.id);
   };
 
@@ -468,18 +500,21 @@ export default function Vehicles() {
 
   return (
     <div className="space-y-5 pb-6">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-grotesk font-bold">My Vehicles</h1>
-          <p className="text-muted-foreground text-sm mt-1">Vehicle intelligence, ownership cost, and trip assignment</p>
-        </div>
-        <button
-          onClick={() => setShowAdd(v => !v)}
-          className="flex items-center gap-1.5 px-3 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:opacity-90 transition-opacity"
-        >
-          <Plus className="w-4 h-4" /> Add
-        </button>
-      </motion.div>
+      <PageHeader
+        title="My Vehicles"
+        description="Vehicle intelligence, ownership cost, and trip assignment"
+        icon={Car}
+        actions={(
+          <button
+            type="button"
+            onClick={() => setShowAdd(v => !v)}
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          >
+            <Plus className="h-4 w-4" />
+            Add
+          </button>
+        )}
+      />
 
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="grid gap-3 md:grid-cols-4">
         <div className="rounded-2xl border border-border bg-card p-4">
@@ -719,20 +754,19 @@ export default function Vehicles() {
       )}
 
       {!isLoading && vehicles.length === 0 && !showAdd && (
-        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card py-16 px-4 text-center">
-          <div className="w-16 h-16 bg-secondary rounded-3xl flex items-center justify-center mb-4">
-            <Car className="w-8 h-8 text-muted-foreground" />
-          </div>
-          <div className="font-semibold mb-1">No vehicles yet</div>
-          <div className="max-w-xs text-muted-foreground text-sm">Add your first vehicle to connect trips with fuel cost, maintenance, odometer, and per-car scores.</div>
+        <PageEmptyState
+          icon={Car}
+          title="No vehicles yet"
+          description="Add your first vehicle to connect trips with fuel cost, maintenance, odometer, and per-car scores."
+        >
           <button
             onClick={() => setShowAdd(true)}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
           >
             <Plus className="h-4 w-4" />
             Add vehicle
           </button>
-        </div>
+        </PageEmptyState>
       )}
 
       {vehicles.length >= 2 && (

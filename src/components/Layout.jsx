@@ -1,30 +1,137 @@
 // @ts-check
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { Activity, Brain, Car, ClipboardList, Gauge, LayoutDashboard, History, Map, BarChart3, Settings, Menu, X, TrendingUp, Route, Cuboid } from 'lucide-react';
+import {
+  Activity,
+  Award,
+  Brain,
+  Car,
+  ClipboardList,
+  Gauge,
+  LayoutDashboard,
+  History,
+  Map,
+  BarChart3,
+  Settings,
+  Menu,
+  X,
+  TrendingUp,
+  Route,
+  Cuboid,
+  Search,
+  ShieldCheck,
+  Wrench,
+} from 'lucide-react';
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+  CommandShortcut,
+} from '@/components/ui/command';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
 import { LEGAL_DISCLAIMER_SHORT } from '@/lib/legalDisclaimers';
 import { activeTripStore } from '@/lib/trackingStore';
 import { cn } from '@/lib/utils';
 
-const navItems = [
-  { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/trips', label: 'Trips', icon: History },
-  { path: '/3d-replay', label: '3D Replay', icon: Cuboid },
-  { path: '/map', label: 'Map', icon: Map },
-  { path: '/coach', label: 'Coach', icon: Brain },
-  { path: '/insights', label: 'Insights', icon: TrendingUp },
-  { path: '/reports', label: 'Reports', icon: BarChart3 },
-  { path: '/speed-limits', label: 'Speeds', icon: Gauge },
-  { path: '/diagnostics', label: 'Diagnostics', icon: Activity },
-  { path: '/system-logs', label: 'Logs', icon: ClipboardList },
-  { path: '/vehicles', label: 'Vehicles', icon: Car },
-  { path: '/settings', label: 'Settings', icon: Settings },
-];
+const AppCommandDialog = /** @type {any} */ (CommandDialog);
+const AppCommandEmpty = /** @type {any} */ (CommandEmpty);
+const AppCommandGroup = /** @type {any} */ (CommandGroup);
+const AppCommandInput = /** @type {any} */ (CommandInput);
+const AppCommandItem = /** @type {any} */ (CommandItem);
+const AppCommandList = /** @type {any} */ (CommandList);
+const AppCommandSeparator = /** @type {any} */ (CommandSeparator);
+const AppCommandShortcut = /** @type {any} */ (CommandShortcut);
+const AppDropdownMenuContent = /** @type {any} */ (DropdownMenuContent);
+const AppDropdownMenuItem = /** @type {any} */ (DropdownMenuItem);
+const AppDropdownMenuLabel = /** @type {any} */ (DropdownMenuLabel);
 
 const navSections = [
-  { label: 'Drive', items: navItems.slice(0, 8) },
-  { label: 'Manage', items: navItems.slice(8) },
+  {
+    label: 'Today',
+    description: 'Start here and see what needs attention now.',
+    defaultPath: '/',
+    icon: LayoutDashboard,
+    items: [
+      { path: '/', label: 'Dashboard', icon: LayoutDashboard },
+      { path: '/map', label: 'Map', icon: Map },
+    ],
+  },
+  {
+    label: 'Drive',
+    description: 'Record, coach, vehicles, and saved speed rules.',
+    defaultPath: '/trips',
+    icon: Route,
+    items: [
+      { path: '/trips', label: 'Trips', icon: History },
+      { path: '/coach', label: 'Coach', icon: Brain },
+      { path: '/speed-limits', label: 'Speed rules', icon: Gauge },
+      { path: '/vehicles', label: 'Vehicles', icon: Car },
+    ],
+  },
+  {
+    label: 'Review',
+    description: 'Analyze progress, reports, milestones, and replays.',
+    defaultPath: '/insights',
+    icon: TrendingUp,
+    items: [
+      { path: '/insights', label: 'Insights', icon: TrendingUp },
+      { path: '/reports', label: 'Reports', icon: BarChart3 },
+      { path: '/achievements', label: 'Milestones', icon: Award },
+      { path: '/3d-replay', label: '3D Replay', icon: Cuboid },
+    ],
+  },
+  {
+    label: 'Settings',
+    description: 'Privacy, diagnostics, logs, and app setup.',
+    defaultPath: '/settings',
+    icon: Settings,
+    items: [
+      { path: '/settings', label: 'Settings', icon: Settings },
+      { path: '/privacy-intelligence', label: 'Privacy', icon: ShieldCheck },
+      { path: '/diagnostics', label: 'Diagnostics', icon: Activity },
+      { path: '/system-logs', label: 'Logs', icon: ClipboardList },
+    ],
+  },
+];
+
+function isPathActive(pathname, path) {
+  if (path === '/') return pathname === '/';
+  return pathname === path || pathname.startsWith(`${path}/`);
+}
+
+const commandGroups = [
+  {
+    label: 'Go to',
+    items: [
+      { path: '/', label: 'Dashboard', hint: 'Today', icon: LayoutDashboard, keywords: ['home', 'today', 'start'] },
+      { path: '/trips', label: 'Trips', hint: 'History', icon: History, keywords: ['drive history', 'trip log', 'recent drives'] },
+      { path: '/reports', label: 'Reports', hint: 'Review', icon: BarChart3, keywords: ['exports', 'summary', 'review'] },
+      { path: '/settings', label: 'Settings', hint: 'Setup', icon: Settings, keywords: ['preferences', 'options', 'configure'] },
+      { path: '/vehicles', label: 'Vehicles', hint: 'Fleet', icon: Car, keywords: ['car', 'maintenance', 'fleet'] },
+      { path: '/speed-limits', label: 'Speed rules', hint: 'Road data', icon: Gauge, keywords: ['speeds', 'saved roads', 'limits'] },
+    ],
+  },
+  {
+    label: 'Explore',
+    items: [
+      { path: '/coach', label: 'Coach', hint: 'Drive', icon: Brain, keywords: ['coaching', 'habits', 'feedback'] },
+      { path: '/insights', label: 'Insights', hint: 'Review', icon: TrendingUp, keywords: ['trends', 'analytics', 'patterns'] },
+      { path: '/privacy-intelligence', label: 'Privacy', hint: 'Settings', icon: ShieldCheck, keywords: ['zones', 'private', 'data'] },
+      { path: '/diagnostics', label: 'Diagnostics', hint: 'Tools', icon: Wrench, keywords: ['debug', 'health', 'status'] },
+    ],
+  },
 ];
 
 function BrandMark({ className = '' }) {
@@ -88,6 +195,7 @@ function NavItemLink({ item, variant = 'desktop' }) {
 
 export default function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
   const [trackingActive, setTrackingActive] = useState(false);
   const [rescoreProgress, setRescoreProgress] = useState(null);
   const location = useLocation();
@@ -119,6 +227,17 @@ export default function Layout() {
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [location]);
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setCommandOpen((open) => !open);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   useEffect(() => {
     let clearTimer = null;
@@ -179,21 +298,47 @@ export default function Layout() {
             aria-label="Primary navigation"
             className="cyber-nav-rack hidden min-w-0 items-center gap-1 rounded-full border border-border/70 bg-secondary/70 p-1 shadow-inner shadow-white/30 xl:flex dark:shadow-black/10"
           >
-            {navItems.map(item => <NavItemLink key={item.path} item={item} />)}
+            {navSections.map(section => (
+              <DesktopNavGroup key={section.label} section={section} pathname={location.pathname} />
+            ))}
           </nav>
 
-          {/* Mobile menu toggle */}
           <button
-            className="cyber-menu-button grid min-h-11 min-w-11 shrink-0 place-items-center rounded-full border border-border/70 bg-card text-foreground shadow-sm transition-colors hover:bg-secondary xl:hidden"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
-            aria-expanded={mobileMenuOpen}
-            aria-controls="mobile-navigation"
+            type="button"
+            className="hidden h-11 shrink-0 items-center gap-2 rounded-full border border-border/70 bg-card px-3 text-sm font-medium text-muted-foreground shadow-sm transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:flex"
+            onClick={() => setCommandOpen(true)}
+            aria-label="Search app"
           >
-            {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            <Search className="h-4 w-4" />
+            <span className="hidden min-[1120px]:inline">Search app</span>
+            <kbd className="hidden rounded border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground min-[1180px]:inline">
+              Ctrl K
+            </kbd>
           </button>
+
+          {/* Mobile menu toggle */}
+          <div className="flex shrink-0 items-center gap-2 xl:hidden">
+            <button
+              type="button"
+              className="grid min-h-11 min-w-11 place-items-center rounded-full border border-border/70 bg-card text-foreground shadow-sm transition-colors hover:bg-secondary sm:hidden"
+              onClick={() => setCommandOpen(true)}
+              aria-label="Search app"
+            >
+              <Search className="h-5 w-5" />
+            </button>
+            <button
+              className="cyber-menu-button grid min-h-11 min-w-11 place-items-center rounded-full border border-border/70 bg-card text-foreground shadow-sm transition-colors hover:bg-secondary"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-navigation"
+            >
+              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
+          </div>
         </div>
       </header>
+      <AppCommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
 
       {/* Mobile Menu Drawer */}
       {mobileMenuOpen && (
@@ -258,5 +403,115 @@ export default function Layout() {
         {LEGAL_DISCLAIMER_SHORT} Obey posted signs and local laws.
       </footer>
     </div>
+  );
+}
+
+function DesktopNavGroup({ section, pathname }) {
+  const Icon = section.icon;
+  const activeItem = section.items.find((item) => isPathActive(pathname, item.path));
+  const isActive = Boolean(activeItem);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            'group flex h-11 min-w-[8.75rem] items-center gap-2 rounded-full px-3 text-left text-sm font-semibold transition-colors',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            isActive
+              ? 'bg-card text-foreground shadow-sm ring-1 ring-border/70'
+              : 'text-muted-foreground hover:bg-card/70 hover:text-foreground',
+          )}
+          aria-label={`${section.label} navigation`}
+        >
+          <span
+            className={cn(
+              'grid h-8 w-8 shrink-0 place-items-center rounded-full transition-colors',
+              isActive
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-secondary text-muted-foreground group-hover:text-foreground',
+            )}
+          >
+            <Icon className="h-4 w-4" />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate">{section.label}</span>
+            <span className="block max-w-[7rem] truncate text-[11px] font-medium text-muted-foreground">
+              {activeItem?.label || section.description}
+            </span>
+          </span>
+        </button>
+      </DropdownMenuTrigger>
+      <AppDropdownMenuContent align="center" className="w-64 rounded-xl p-2">
+        <AppDropdownMenuLabel className="px-2">
+          <span className="block text-sm">{section.label}</span>
+          <span className="block text-xs font-normal text-muted-foreground">{section.description}</span>
+        </AppDropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {section.items.map((item) => {
+          const ItemIcon = item.icon;
+          return (
+            <AppDropdownMenuItem key={item.path} asChild className="rounded-lg p-0">
+              <NavLink
+                to={item.path}
+                end={item.path === '/'}
+                className={({ isActive: itemActive }) =>
+                  cn(
+                    'flex w-full items-center gap-3 rounded-lg px-2 py-2 text-sm',
+                    itemActive ? 'bg-primary/10 text-foreground' : 'text-muted-foreground',
+                  )
+                }
+              >
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-secondary">
+                  <ItemIcon className="h-4 w-4" />
+                </span>
+                <span className="font-medium">{item.label}</span>
+              </NavLink>
+            </AppDropdownMenuItem>
+          );
+        })}
+      </AppDropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function AppCommandPalette({ open, onOpenChange }) {
+  const navigate = useNavigate();
+
+  const openItem = (path) => {
+    onOpenChange(false);
+    navigate(path);
+  };
+
+  return (
+    <AppCommandDialog open={open} onOpenChange={onOpenChange}>
+      <AppCommandInput placeholder="Search trips, reports, settings, vehicles, speed rules..." />
+      <AppCommandList>
+        <AppCommandEmpty>No matching app shortcut found.</AppCommandEmpty>
+        {commandGroups.map((group, groupIndex) => (
+          <div key={group.label}>
+            {groupIndex > 0 && <AppCommandSeparator />}
+            <AppCommandGroup heading={group.label}>
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <AppCommandItem
+                    key={item.path}
+                    value={`${item.label} ${item.hint}`}
+                    keywords={item.keywords}
+                    onSelect={() => openItem(item.path)}
+                  >
+                    <Icon className="h-4 w-4" />
+                    <span>{item.label}</span>
+                    <AppCommandShortcut>{item.hint}</AppCommandShortcut>
+                  </AppCommandItem>
+                );
+              })}
+            </AppCommandGroup>
+          </div>
+        ))}
+      </AppCommandList>
+    </AppCommandDialog>
   );
 }

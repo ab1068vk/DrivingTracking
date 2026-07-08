@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { tripDetailQueryOptions, tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
+import { limitedTripSummaryQueryOptions, tripDetailQueryOptions, tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { Search, Filter, Car, Tag, Star, CalendarDays, TrendingUp } from 'lucide-react';
 import TripCard from '@/components/TripCard';
@@ -12,7 +12,6 @@ import { useLocalSettingSelector } from '@/hooks/useLocalSettings';
 import { formatDistance, formatDuration, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
-import { Line, LineChart, ResponsiveContainer } from 'recharts';
 import {
   TRIP_TAG_OPTIONS,
   buildTripSearchText,
@@ -21,7 +20,9 @@ import {
   normalizeTripTags,
 } from '@/lib/tripMetadata';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
+import DeferredRecharts from '@/components/DeferredRecharts';
 import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
+import { PageHeader } from '@/components/PageChrome';
 
 const SORT_OPTIONS = [
   { id: 'date_desc', label: 'Newest First' },
@@ -154,10 +155,25 @@ export default function TripHistory() {
   const qc = useQueryClient();
   const reviewSpeedLimitConflicts = new URLSearchParams(location.search || '').get('review') === 'speed-limit-conflicts';
 
-  const { data: completed = [], isLoading, isFetching } = useQuery({
-    ...tripSummaryQueryOptions(),
+  const {
+    data: recentCompleted = [],
+    isLoading,
+    isFetching: recentFetching,
+    isSuccess: recentTripsLoaded,
+  } = useQuery({
+    ...limitedTripSummaryQueryOptions(100),
     select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
+  const {
+    data: fullHistoryCompleted = [],
+    isFetching: fullHistoryFetching,
+  } = useQuery({
+    ...tripSummaryQueryOptions(),
+    enabled: recentTripsLoaded,
+    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
+  });
+  const completed = fullHistoryCompleted.length > 0 ? fullHistoryCompleted : recentCompleted;
+  const isFetching = recentFetching || fullHistoryFetching;
 
   const { data: vehicles = [] } = useQuery({
     queryKey: ['vehicles'],
@@ -321,16 +337,16 @@ export default function TripHistory() {
 
   return (
     <div className="space-y-5 pb-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-grotesk font-bold">Trip History</h1>
-          <p className="text-muted-foreground text-sm mt-1">{sorted.length} of {completed.length} completed trips</p>
-        </div>
-        <div className="flex flex-col items-end gap-1">
+      <PageHeader
+        title="Trip History"
+        description={`${sorted.length} of ${completed.length} completed trips`}
+        status={(
+          <>
           <InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing trip history" />
           <InlineRefreshBadge visible={isFilterPending} label="Updating filters" />
-        </div>
-      </div>
+          </>
+        )}
+      />
 
       {reviewSpeedLimitConflicts && (
         <SpeedLimitConflictReview reviewMode />
@@ -412,11 +428,15 @@ export default function TripHistory() {
                   <div className="text-[10px] text-muted-foreground">last 5 trips</div>
                 </div>
                 <div className="h-8 w-20">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={sparklineData}>
-                      <Line type="monotone" dataKey={score.key} stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
+                  <DeferredRecharts height={32}>
+                    {({ ResponsiveContainer, LineChart, Line }) => (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={sparklineData}>
+                          <Line type="monotone" dataKey={score.key} stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
+                  </DeferredRecharts>
                 </div>
               </div>
             );

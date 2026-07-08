@@ -1,13 +1,12 @@
 // @ts-check
 import { AlertTriangle, ExternalLink } from 'lucide-react';
-import { openAndroidUsageAccessSettings } from '@/lib/activityRecognition';
 import { METRIC_REGISTRY } from '@/lib/metricRegistry';
 
 const phoneUseMetric = METRIC_REGISTRY.phone_use_score;
+const openNativeSettings = () => import('@/lib/activityRecognition')
+  .then(({ openAndroidUsageAccessSettings }) => openAndroidUsageAccessSettings());
 
 export default function PhoneUsePermissionBanner({ className = '' }) {
-  const openNativeSettings = openAndroidUsageAccessSettings;
-
   return (
     <div
       role="note"

@@ -13,14 +13,11 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { activeTripStore, applyThemeMode, localSettings, SETTINGS_CHANGED_EVENT } from '@/lib/trackingStore';
 import { loadPrivacyZonesFromStorage, sweepExpiredPrivacyZones } from '@/lib/privacyZones';
 import { isAndroid } from '@/lib/nativePlatform';
-import { startNativeAutoTracking } from '@/lib/activityRecognition';
-import { tripQueryKeys } from '@/api/trips';
 import { openExportLocation } from '@/lib/nativeDownloads';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { setScreenCaptureAllowed } from '@/lib/screenSecurity';
 import { APP_LOCK_SETTING_EVENT, authenticateDevice } from '@/lib/biometricGate';
 import { checkIntegrity } from '@/lib/rasp';
-import { checkAndRotateEncryptionKey } from '@/lib/keyRotationManager';
 import { Lock, Route as RouteIcon } from 'lucide-react';
 import { beginMeasure, measureAsync, measureSync } from '@/lib/performanceTriage';
 
@@ -28,7 +25,16 @@ import Layout from '@/components/Layout';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LegalNoticeDialog from '@/components/LegalNoticeDialog';
 import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
+import { AppDialogHost } from '@/lib/appDialog';
 import { LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
+
+const TRIP_SUMMARIES_QUERY_KEY = ['trip-summaries'];
+
+const startNativeAutoTrackingFromApp = () => import('@/lib/activityRecognition')
+  .then(({ startNativeAutoTracking }) => startNativeAutoTracking());
+
+const checkAndRotateEncryptionKeyFromApp = () => import('@/lib/keyRotationManager')
+  .then(({ checkAndRotateEncryptionKey }) => checkAndRotateEncryptionKey());
 
 async function syncNativeCompletedTripsToLocalStore() {
   if (!isAndroid()) return;
@@ -37,7 +43,7 @@ async function syncNativeCompletedTripsToLocalStore() {
     return syncNativeCompletedTrips();
   });
   if (result.importedTrips.length) {
-    queryClientInstance.invalidateQueries({ queryKey: tripQueryKeys.summaries }).catch(() => {});
+    queryClientInstance.invalidateQueries({ queryKey: TRIP_SUMMARIES_QUERY_KEY }).catch(() => {});
   }
   recordSystemEvent('native_completed_trips_synced', {
     trip_count: result.importedTrips.length,
@@ -195,7 +201,7 @@ const AuthenticatedApp = () => {
         .then(({ syncReminderNotifications }) => syncReminderNotifications(settings, { requestPermission: false }))
         .catch((error) => logSystemFailure('reminder_notifications_sync', error));
       if (isAndroid() && settings.tracking_mode === 'background_auto' && !settings.tracking_paused) {
-        startNativeAutoTracking()
+        startNativeAutoTrackingFromApp()
           .catch((error) => logSystemFailure('app_boot_native_auto_tracking_start', error));
       }
 
@@ -203,7 +209,7 @@ const AuthenticatedApp = () => {
         await measureAsync('app.bootstrap.tripRepositoryMaintenance', () => import('@/lib/localTripRepository')
           .then(({ runTripRepositoryMaintenance }) => runTripRepositoryMaintenance()))
           .catch((error) => logSystemFailure('trip_repository_maintenance', error));
-        await measureAsync('app.bootstrap.keyRotation', () => checkAndRotateEncryptionKey())
+        await measureAsync('app.bootstrap.keyRotation', () => checkAndRotateEncryptionKeyFromApp())
           .catch((error) => logSystemFailure('encryption_key_rotation_check', error));
         measureAsync('app.bootstrap.roadContextQueue', () => import('@/lib/roadContextQueue')
           .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs()))
@@ -275,7 +281,7 @@ const AuthenticatedApp = () => {
           .catch((error) => logSystemFailure('app_resume_privacy_zone_expiry', error));
         measureAsync('app.resume.nativeTripSync', () => syncNativeCompletedTripsToLocalStore(), { source: 'appStateChange' })
           .catch((error) => logSystemFailure('app_resume_native_completed_trips_sync', error));
-        measureAsync('app.resume.keyRotation', () => checkAndRotateEncryptionKey(), { source: 'appStateChange' })
+        measureAsync('app.resume.keyRotation', () => checkAndRotateEncryptionKeyFromApp(), { source: 'appStateChange' })
           .catch((error) => logSystemFailure('app_resume_key_rotation_check', error));
         scheduleIdleResumeTask('roadContextQueue', () => import('@/lib/roadContextQueue')
           .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs()), 'appStateChange');
@@ -307,7 +313,7 @@ const AuthenticatedApp = () => {
         applyThemeMode(localSettings.get().dark_mode);
         measureAsync('app.resume.privacyZoneSweep', () => sweepExpiredZonesOnForeground(), { source: 'visibilitychange' })
           .catch((error) => logSystemFailure('visibility_privacy_zone_expiry', error));
-        measureAsync('app.resume.keyRotation', () => checkAndRotateEncryptionKey(), { source: 'visibilitychange' })
+        measureAsync('app.resume.keyRotation', () => checkAndRotateEncryptionKeyFromApp(), { source: 'visibilitychange' })
           .catch((error) => logSystemFailure('visibility_key_rotation_check', error));
         scheduleIdleResumeTask('roadContextQueue', () => import('@/lib/roadContextQueue')
           .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs()), 'visibilitychange');
@@ -564,6 +570,7 @@ function App() {
           <RouteLogger />
           <AuthenticatedApp />
         </Router>
+        <AppDialogHost />
         <Toaster />
       </QueryClientProvider>
     </AuthProvider>

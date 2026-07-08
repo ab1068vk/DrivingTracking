@@ -12,21 +12,8 @@ import {
   TrendingDown,
   Zap,
 } from 'lucide-react';
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
 import { tripDetailQueryOptions } from '@/api/trips';
+import DeferredRecharts from '@/components/DeferredRecharts';
 import {
   calculateSegmentMetrics,
   formatDateTime,
@@ -553,22 +540,26 @@ export default function SpeedAnalysis() {
             </span>
           </div>
           <div className="mt-4 h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={analytics.speedSeries} margin={{ top: 8, right: 10, left: -18, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                <Tooltip
-                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                  formatter={(value, name, item) => {
-                    const label = item?.dataKey === 'limit' ? 'Speed limit' : 'Actual speed';
-                    return [`${Math.round(Number(value) || 0)} km/h`, label];
-                  }}
-                />
-                <Line type="monotone" dataKey="speed" stroke="#2563eb" strokeWidth={2.5} dot={false} name="Actual speed" />
-                <Line type="stepAfter" dataKey="limit" stroke="#ef4444" strokeDasharray="5 5" strokeWidth={2} dot={false} name="Speed limit" connectNulls />
-              </LineChart>
-            </ResponsiveContainer>
+            <DeferredRecharts height={256}>
+              {({ ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip }) => (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={analytics.speedSeries} margin={{ top: 8, right: 10, left: -18, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                    <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                    <Tooltip
+                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                      formatter={(value, name, item) => {
+                        const label = item?.dataKey === 'limit' ? 'Speed limit' : 'Actual speed';
+                        return [`${Math.round(Number(value) || 0)} km/h`, label];
+                      }}
+                    />
+                    <Line type="monotone" dataKey="speed" stroke="#2563eb" strokeWidth={2.5} dot={false} name="Actual speed" />
+                    <Line type="stepAfter" dataKey="limit" stroke="#ef4444" strokeDasharray="5 5" strokeWidth={2} dot={false} name="Speed limit" connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </DeferredRecharts>
           </div>
         </section>
 
@@ -595,20 +586,24 @@ export default function SpeedAnalysis() {
           <h2 className="font-semibold">Speed Bands</h2>
           <p className="mt-1 text-xs text-muted-foreground">How much of the trip happened in each speed range</p>
           <div className="mt-4 h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={analytics.bandRows} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                <Tooltip
-                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                  formatter={(value) => [formatDistance(value, units), 'Distance']}
-                />
-                <Bar dataKey="distanceKm" radius={[5, 5, 0, 0]}>
-                  {analytics.bandRows.map((row) => <Cell key={row.id} fill={row.color} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            <DeferredRecharts height={224}>
+              {({ ResponsiveContainer, BarChart, Bar, Cell, CartesianGrid, XAxis, YAxis, Tooltip }) => (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={analytics.bandRows} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                    <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                    <Tooltip
+                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                      formatter={(value) => [formatDistance(value, units), 'Distance']}
+                    />
+                    <Bar dataKey="distanceKm" radius={[5, 5, 0, 0]}>
+                      {analytics.bandRows.map((row) => <Cell key={row.id} fill={row.color} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </DeferredRecharts>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {analytics.bandRows.map((row) => (
@@ -630,15 +625,19 @@ export default function SpeedAnalysis() {
           <h2 className="font-semibold">Speed Events</h2>
           <p className="mt-1 text-xs text-muted-foreground">Events connected to speed changes and compliance</p>
           <div className="mt-4 h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={analytics.eventRows} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
-                <Area type="monotone" dataKey="count" stroke="#f97316" fill="#f97316" fillOpacity={0.18} strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
+            <DeferredRecharts height={224}>
+              {({ ResponsiveContainer, AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip }) => (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={analytics.eventRows} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                    <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                    <Area type="monotone" dataKey="count" stroke="#f97316" fill="#f97316" fillOpacity={0.18} strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </DeferredRecharts>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {analytics.eventRows.length > 0 ? analytics.eventRows.map((row) => (

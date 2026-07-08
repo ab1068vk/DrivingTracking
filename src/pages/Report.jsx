@@ -9,11 +9,6 @@ import {
   Download, Car, Clock, Navigation, Fuel, Leaf, Gauge, Award, FileText,
   Activity, CalendarDays, Route, ShieldCheck, Target
 } from 'lucide-react';
-import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, CartesianGrid, LineChart, Line, PieChart, Pie, Cell,
-  RadarChart, Radar, PolarGrid, PolarAngleAxis
-} from 'recharts';
 import { generateReportSummary, formatDistance, formatDuration, formatDate, formatSpeed, getScoreColor, getTripComponentScore, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import ScoreRing from '@/components/ScoreRing';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
@@ -26,7 +21,6 @@ import {
 } from '@/lib/scoreDisplay';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatCurrencyAmount } from '@/lib/currency';
-import { exportMonthlyReportPDF, exportUBIReportPDF } from '@/lib/pdfExport';
 import { computeUBIReport } from '@/lib/ubiReport';
 import { notifyExportSaved } from '@/lib/notificationService';
 import { toast } from '@/components/ui/use-toast';
@@ -44,6 +38,7 @@ import {
 } from '@/lib/tripInsights';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import DeferredRecharts from '@/components/DeferredRecharts';
 
 const PERIODS = [
   { id: 'week', label: 'This Week', days: 7 },
@@ -375,6 +370,7 @@ export default function Reports() {
   const handlePdfExport = async () => {
     setPdfLoading(true);
     try {
+      const { exportMonthlyReportPDF } = await import('@/lib/pdfExport');
       const result = await exportMonthlyReportPDF(trips, period, settings);
       toast({
         title: 'PDF saved',
@@ -398,6 +394,7 @@ export default function Reports() {
   const handleUbiExport = async () => {
     setUbiLoading(true);
     try {
+      const { exportUBIReportPDF } = await import('@/lib/pdfExport');
       const result = await exportUBIReportPDF(ubiReport, settings);
       toast({
         title: 'Score card saved',
@@ -767,17 +764,21 @@ export default function Reports() {
                 </p>
               )}
               {!ubiReport.insufficientData && (
-                <ResponsiveContainer width="100%" height={220}>
-                  <RadarChart data={ubiRadarData} outerRadius={78}>
-                    <PolarGrid />
-                    <PolarAngleAxis dataKey="category" tick={{ fontSize: 10 }} />
-                    <Radar dataKey="score" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.28} />
-                    <Tooltip
-                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                      formatter={(v) => [formatEstimatedScore(v), 'Score']}
-                    />
-                  </RadarChart>
-                </ResponsiveContainer>
+                <DeferredRecharts height={220}>
+                  {({ ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar, Tooltip }) => (
+                    <ResponsiveContainer width="100%" height={220}>
+                      <RadarChart data={ubiRadarData} outerRadius={78}>
+                        <PolarGrid />
+                        <PolarAngleAxis dataKey="category" tick={{ fontSize: 10 }} />
+                        <Radar dataKey="score" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.28} />
+                        <Tooltip
+                          contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                          formatter={(v) => [formatEstimatedScore(v), 'Score']}
+                        />
+                      </RadarChart>
+                    </ResponsiveContainer>
+                  )}
+                </DeferredRecharts>
               )}
             </div>
             <h2 className="font-semibold mb-1">Vs. Your Baseline</h2>
@@ -812,16 +813,20 @@ export default function Reports() {
             >
               <h2 className="font-semibold mb-1">Road Type Breakdown</h2>
               <p className="text-xs text-muted-foreground mb-4">Trip classification from speed distribution</p>
-              <ResponsiveContainer width="100%" height={180}>
-                <PieChart>
-                  <Pie data={roadTypeData} dataKey="value" nameKey="name" innerRadius={42} outerRadius={72} paddingAngle={2}>
-                    {roadTypeData.map((entry, index) => (
-                      <Cell key={entry.name} fill={roadColors[index % roadColors.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
-                </PieChart>
-              </ResponsiveContainer>
+              <DeferredRecharts height={180}>
+                {({ ResponsiveContainer, PieChart, Pie, Cell, Tooltip }) => (
+                  <ResponsiveContainer width="100%" height={180}>
+                    <PieChart>
+                      <Pie data={roadTypeData} dataKey="value" nameKey="name" innerRadius={42} outerRadius={72} paddingAngle={2}>
+                        {roadTypeData.map((entry, index) => (
+                          <Cell key={entry.name} fill={roadColors[index % roadColors.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </DeferredRecharts>
               <div className="grid grid-cols-2 gap-2">
                 {roadTypeData.map((item, index) => (
                   <div key={item.name} className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -842,15 +847,19 @@ export default function Reports() {
             >
               <h2 className="font-semibold mb-1">Compliance</h2>
               <p className="text-xs text-muted-foreground mb-4">Average speed-limit compliance by road type</p>
-              <ResponsiveContainer width="100%" height={180}>
-                <BarChart data={complianceChartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} formatter={(v) => [`${v}%`, 'Compliance']} />
-                  <Bar dataKey="rate" fill="#22c55e" radius={[4, 4, 0, 0]} name="Compliance" />
-                </BarChart>
-              </ResponsiveContainer>
+              <DeferredRecharts height={180}>
+                {({ ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip }) => (
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={complianceChartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                      <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                      <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} formatter={(v) => [`${v}%`, 'Compliance']} />
+                      <Bar dataKey="rate" fill="#22c55e" radius={[4, 4, 0, 0]} name="Compliance" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </DeferredRecharts>
             </motion.div>
           )}
 
@@ -859,20 +868,24 @@ export default function Reports() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.187 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
-          >
-            <h2 className="font-semibold mb-1">Drive Efficiency Bands</h2>
-            <p className="text-xs text-muted-foreground mb-4">Average moving time by speed band</p>
-            <ResponsiveContainer width="100%" height={130}>
-              <BarChart data={efficiencyBandsData} layout="vertical" margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
-                <XAxis type="number" domain={[0, 100]} hide />
-                <YAxis type="category" dataKey="name" hide />
-                <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} formatter={(v) => [`${v}%`, 'Share']} />
-                <Bar dataKey="cityCrawl" stackId="a" fill="#ef4444" name="City crawl" />
-                <Bar dataKey="city" stackId="a" fill="#f97316" name="City" />
-                <Bar dataKey="cruise" stackId="a" fill="#22c55e" name="Cruise band" />
-                <Bar dataKey="highSpeed" stackId="a" fill="#dc2626" name="High speed" />
-              </BarChart>
-            </ResponsiveContainer>
+            >
+              <h2 className="font-semibold mb-1">Drive Efficiency Bands</h2>
+              <p className="text-xs text-muted-foreground mb-4">Average moving time by speed band</p>
+            <DeferredRecharts height={130}>
+              {({ ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip }) => (
+                <ResponsiveContainer width="100%" height={130}>
+                  <BarChart data={efficiencyBandsData} layout="vertical" margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
+                    <XAxis type="number" domain={[0, 100]} hide />
+                    <YAxis type="category" dataKey="name" hide />
+                    <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} formatter={(v) => [`${v}%`, 'Share']} />
+                    <Bar dataKey="cityCrawl" stackId="a" fill="#ef4444" name="City crawl" />
+                    <Bar dataKey="city" stackId="a" fill="#f97316" name="City" />
+                    <Bar dataKey="cruise" stackId="a" fill="#22c55e" name="Cruise band" />
+                    <Bar dataKey="highSpeed" stackId="a" fill="#dc2626" name="High speed" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </DeferredRecharts>
           </motion.div>
 
           <motion.div
@@ -987,22 +1000,26 @@ export default function Reports() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.197 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
-          >
+            >
             <h2 className="font-semibold mb-1">Time of Day</h2>
             <p className="text-xs text-muted-foreground mb-4">Average score and risky events by trip start time</p>
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={timeOfDayData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                <Tooltip
-                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                  formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
-                />
-                <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Avg score" />
-                <Bar dataKey="events" fill="#f97316" radius={[4, 4, 0, 0]} name="Risk events" />
-              </BarChart>
-            </ResponsiveContainer>
+            <DeferredRecharts height={180}>
+              {({ ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip }) => (
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={timeOfDayData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                    <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                    <Tooltip
+                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                      formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
+                    />
+                    <Bar dataKey="avgScore" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Avg score" />
+                    <Bar dataKey="events" fill="#f97316" radius={[4, 4, 0, 0]} name="Risk events" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </DeferredRecharts>
           </motion.div>
 
           <motion.div
@@ -1016,15 +1033,19 @@ export default function Reports() {
             {peakHourStress.insufficient_data && (
               <p className="mb-3 text-xs text-muted-foreground">Not enough eligible trip distance yet. Trips under 0.5 km are excluded.</p>
             )}
-            <ResponsiveContainer width="100%" height={150}>
-              <BarChart data={peakComparisonData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
-                <Bar dataKey="rate" fill="#f97316" radius={[4, 4, 0, 0]} name="Events/km" />
-              </BarChart>
-            </ResponsiveContainer>
+            <DeferredRecharts height={150}>
+              {({ ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip }) => (
+                <ResponsiveContainer width="100%" height={150}>
+                  <BarChart data={peakComparisonData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                    <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                    <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                    <Bar dataKey="rate" fill="#f97316" radius={[4, 4, 0, 0]} name="Events/km" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </DeferredRecharts>
           </motion.div>
 
           <motion.div
@@ -1032,22 +1053,26 @@ export default function Reports() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.198 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
-          >
+            >
             <h2 className="font-semibold mb-1">Day of Week</h2>
             <p className="text-xs text-muted-foreground mb-4">Which days produce the safest drives</p>
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={dayOfWeekData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                <XAxis dataKey="day" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                <Tooltip
-                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                  formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
-                />
-                <Bar dataKey="avgScore" fill="#22c55e" radius={[4, 4, 0, 0]} name="Avg score" />
-                <Bar dataKey="events" fill="#ef4444" radius={[4, 4, 0, 0]} name="Risk events" />
-              </BarChart>
-            </ResponsiveContainer>
+            <DeferredRecharts height={180}>
+              {({ ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip }) => (
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={dayOfWeekData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                    <XAxis dataKey="day" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                    <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                    <Tooltip
+                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                      formatter={(v, name) => [name === 'Avg score' ? formatEstimatedScore(v) : v, name]}
+                    />
+                    <Bar dataKey="avgScore" fill="#22c55e" radius={[4, 4, 0, 0]} name="Avg score" />
+                    <Bar dataKey="events" fill="#ef4444" radius={[4, 4, 0, 0]} name="Risk events" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </DeferredRecharts>
           </motion.div>
 
           {/* Score trend chart */}
@@ -1056,27 +1081,31 @@ export default function Reports() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
-          >
+            >
             <h2 className="font-semibold mb-1">Daily Distance</h2>
             <p className="text-xs text-muted-foreground mb-4">{units === 'imperial' ? 'Miles' : 'Kilometers'} driven per day</p>
-            <ResponsiveContainer width="100%" height={160}>
-              <AreaChart data={dailyData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="distGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                <XAxis dataKey="date" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                <Tooltip
-                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                  formatter={(v) => [v, units === 'imperial' ? 'mi' : 'km']}
-                />
-                <Area type="monotone" dataKey="distance" stroke="hsl(var(--primary))" fill="url(#distGrad)" strokeWidth={2} dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
+            <DeferredRecharts height={160}>
+              {({ ResponsiveContainer, AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip }) => (
+                <ResponsiveContainer width="100%" height={160}>
+                  <AreaChart data={dailyData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="distGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                    <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                    <Tooltip
+                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                      formatter={(v) => [v, units === 'imperial' ? 'mi' : 'km']}
+                    />
+                    <Area type="monotone" dataKey="distance" stroke="hsl(var(--primary))" fill="url(#distGrad)" strokeWidth={2} dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </DeferredRecharts>
           </motion.div>
 
           {/* Score trend */}
@@ -1085,22 +1114,26 @@ export default function Reports() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.25 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
-          >
+            >
             <h2 className="font-semibold mb-1">Score Trend</h2>
             <p className="text-xs text-muted-foreground mb-4">Average daily driving score</p>
-            <ResponsiveContainer width="100%" height={140}>
-              <LineChart data={dailyData.filter(d => d.avgScore !== null)} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                <XAxis dataKey="date" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
-                <Tooltip
-                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                  formatter={(v, name) => [name === 'Speed Smoothness' ? formatEstimatedScore(v) : formatEstimatedScore(v), name === 'Speed Smoothness' ? name : 'Score']}
-                />
-                <Line type="monotone" dataKey="avgScore" stroke="hsl(var(--accent))" strokeWidth={2.5} dot={{ fill: 'hsl(var(--accent))', r: 3 }} />
-                <Line type="monotone" dataKey="avgSviScore" stroke="#14b8a6" strokeWidth={2} dot={false} name="Speed Smoothness" />
-              </LineChart>
-            </ResponsiveContainer>
+            <DeferredRecharts height={140}>
+              {({ ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip }) => (
+                <ResponsiveContainer width="100%" height={140}>
+                  <LineChart data={dailyData.filter(d => d.avgScore !== null)} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
+                    <Tooltip
+                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                      formatter={(v, name) => [name === 'Speed Smoothness' ? formatEstimatedScore(v) : formatEstimatedScore(v), name === 'Speed Smoothness' ? name : 'Score']}
+                    />
+                    <Line type="monotone" dataKey="avgScore" stroke="hsl(var(--accent))" strokeWidth={2.5} dot={{ fill: 'hsl(var(--accent))', r: 3 }} />
+                    <Line type="monotone" dataKey="avgSviScore" stroke="#14b8a6" strokeWidth={2} dot={false} name="Speed Smoothness" />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </DeferredRecharts>
           </motion.div>
 
           {/* 6-month event trend */}
@@ -1109,22 +1142,26 @@ export default function Reports() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.28 }}
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
-          >
+            >
             <h2 className="font-semibold mb-1">Event Trends - Last 6 Months</h2>
             <p className="text-xs text-muted-foreground mb-4">Harsh braking vs rapid acceleration per month</p>
-            <ResponsiveContainer width="100%" height={170}>
-              <BarChart data={eventTrendData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }} barGap={2}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
-                <XAxis dataKey="month" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
-                <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                  formatter={(v, name) => [v, name === 'harshBrakes' ? 'Harsh Brakes' : 'Rapid Accels']}
-                />
-                <Bar dataKey="harshBrakes" fill="#ef4444" radius={[4, 4, 0, 0]} name="harshBrakes" />
-                <Bar dataKey="rapidAccels" fill="#f59e0b" radius={[4, 4, 0, 0]} name="rapidAccels" />
-              </BarChart>
-            </ResponsiveContainer>
+            <DeferredRecharts height={170}>
+              {({ ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip }) => (
+                <ResponsiveContainer width="100%" height={170}>
+                  <BarChart data={eventTrendData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }} barGap={2}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                    <XAxis dataKey="month" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
+                    <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} allowDecimals={false} />
+                    <Tooltip
+                      contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
+                      formatter={(v, name) => [v, name === 'harshBrakes' ? 'Harsh Brakes' : 'Rapid Accels']}
+                    />
+                    <Bar dataKey="harshBrakes" fill="#ef4444" radius={[4, 4, 0, 0]} name="harshBrakes" />
+                    <Bar dataKey="rapidAccels" fill="#f59e0b" radius={[4, 4, 0, 0]} name="rapidAccels" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </DeferredRecharts>
             <div className="flex gap-4 mt-2 justify-center text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block" />Harsh Braking</span>
               <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-yellow-500 inline-block" />Rapid Acceleration</span>

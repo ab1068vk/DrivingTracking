@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { Award, CheckCircle2, Lock, Target, Trophy } from 'lucide-react';
-import { tripSummaryQueryOptions } from '@/api/trips';
+import { limitedTripSummaryQueryOptions, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import {
@@ -15,6 +15,7 @@ import {
 } from '@/lib/tripInsights';
 import { syncAchievementNotifications } from '@/lib/notificationService';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
+import { PageEmptyState, PageHeader } from '@/components/PageChrome';
 
 const filterLabel = (filter) => {
   if (filter === 'all') return 'All';
@@ -83,10 +84,25 @@ function MilestoneCard({ badge, index, featured = false }) {
 export default function Achievements() {
   const [activeFilter, setActiveFilter] = useState('all');
   const settings = useLocalSettings();
-  const { data: completed = [], isLoading, isFetching } = useQuery({
-    ...tripSummaryQueryOptions(),
+  const {
+    data: recentCompleted = [],
+    isLoading,
+    isFetching: recentFetching,
+    isSuccess: recentTripsLoaded,
+  } = useQuery({
+    ...limitedTripSummaryQueryOptions(50),
     select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
+  const {
+    data: fullHistoryCompleted = [],
+    isFetching: fullHistoryFetching,
+  } = useQuery({
+    ...tripSummaryQueryOptions(),
+    enabled: recentTripsLoaded,
+    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
+  });
+  const completed = fullHistoryCompleted.length > 0 ? fullHistoryCompleted : recentCompleted;
+  const isFetching = recentFetching || fullHistoryFetching;
   const { data: vehicles = [] } = useQuery({
     queryKey: ['achievement-vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
@@ -126,17 +142,14 @@ export default function Achievements() {
 
   return (
     <div className="space-y-6 pb-4">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <a href="/" className="text-xs font-semibold text-primary hover:underline">Back to dashboard</a>
-          <h1 className="mt-2 text-2xl font-grotesk font-bold">Milestones</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Useful progress markers from your completed trip history</p>
-        </div>
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10">
-          <Trophy className="h-5 w-5 text-primary" />
-        </div>
-      </motion.div>
-      <InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing milestones" />
+      <PageHeader
+        title="Milestones"
+        description="Useful progress markers from your completed trip history"
+        icon={Trophy}
+        backTo="/"
+        backLabel="Back to dashboard"
+        status={<InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing milestones" />}
+      />
 
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-2xl border border-border bg-card p-4">
@@ -187,13 +200,11 @@ export default function Achievements() {
           ))}
         </div>
       ) : completed.length === 0 ? (
-        <div className="flex flex-col items-center rounded-3xl border border-dashed border-border bg-card px-4 py-16 text-center">
-          <Trophy className="mb-3 h-12 w-12 text-muted-foreground" />
-          <div className="font-semibold">No milestones yet</div>
-          <div className="mt-1 max-w-xs text-sm text-muted-foreground">
-            Finish your first tracked trip and Road Sage will start showing progress on the dashboard.
-          </div>
-        </div>
+        <PageEmptyState
+          icon={Trophy}
+          title="No milestones yet"
+          description="Finish your first tracked trip and Road Sage will start showing progress on the dashboard."
+        />
       ) : (
         <>
           <div className="flex gap-2 overflow-x-auto pb-1">

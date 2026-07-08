@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { LEGAL_NOTICE_ACK_VERSION } from '../src/lib/legalDisclaimers.js';
 
+test.skip(({ isMobile }) => isMobile, 'Detailed settings control interactions are covered on desktop; mobile layout is covered separately.');
+
 const onboardedSettings = {
   onboarding_completed: true,
   legal_notice_ack_version: LEGAL_NOTICE_ACK_VERSION,
@@ -93,5 +95,6 @@ test('settings controls persist real settings instead of only moving UI state', 
   await page.locator('[data-setting-label="Heightened privacy mode"]').getByRole('switch').click();
   await expectSetting(page, 'heightened_privacy_mode', false);
   await page.locator('[data-setting-label="Data Retention"] select').selectOption('90');
+  await page.getByRole('button', { name: 'Save retention' }).click();
   await expectSetting(page, 'data_retention_days', 90);
 });

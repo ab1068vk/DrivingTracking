@@ -18,7 +18,6 @@ import {
   notifySpeedingAlert,
 } from '@/lib/notificationService';
 import { isAndroid } from '@/lib/nativePlatform';
-import { getAndroidPhoneUsageSummary } from '@/lib/activityRecognition';
 import { buildPhoneUseFromAndroidUsage, mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
 import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
 import { alertMarginForConfidence, shouldWarnForSpeed, VOICE_COOLDOWNS_BY_TIER } from '@/lib/speedLimitSource';
@@ -38,6 +37,8 @@ const RECENT_WINDOW_MS = 120000;
 const CHECK_INTERVAL_MS = 15000;
 const DISPLAY_MS = 8000;
 const PHONE_DISPLAY_MS = 15000;
+const getAndroidPhoneUsageSummaryForOverlay = (...args) => import('@/lib/activityRecognition')
+  .then(({ getAndroidPhoneUsageSummary }) => getAndroidPhoneUsageSummary(...args));
 const VOICE_COOLDOWNS_MS = {
   phone_use: 120000,
   close_proximity: 120000,
@@ -238,7 +239,7 @@ export default function LiveCoachOverlay({
         : mergePhoneUseSignals(gpsPhoneUse, {}, stats.duration_seconds);
       const tripStartMs = new Date(tripStartTime).getTime();
       if (settings.phone_use_detection_enabled !== false && isAndroid() && Number.isFinite(tripStartMs)) {
-        const usageSummary = await getAndroidPhoneUsageSummary(tripStartMs, now).catch(() => null);
+        const usageSummary = await getAndroidPhoneUsageSummaryForOverlay(tripStartMs, now).catch(() => null);
         const usagePhoneUse = buildPhoneUseFromAndroidUsage(usageSummary || {}, currentRoutePoints, stats.duration_seconds);
         phoneUse = mergePhoneUseSignals(gpsPhoneUse, usagePhoneUse, stats.duration_seconds);
       }

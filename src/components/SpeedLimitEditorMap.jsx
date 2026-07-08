@@ -320,7 +320,6 @@ function SpeedLimitEditorMapContent({
   const editLayerRef = useRef(null);
   const tileLayerRef = useRef(null);
   const initialFitDoneRef = useRef(false);
-  const lastFilterFitKeyRef = useRef('');
   const lastSelectedFitKeyRef = useRef('');
   const visibleBoundsRef = useRef(null);
   const addModeRef = useRef(addMode);
@@ -343,14 +342,6 @@ function SpeedLimitEditorMapContent({
     query: mapQuery,
     layers,
   }), [layers, mapQuery, rawSections]);
-  const visibleSectionsKey = useMemo(
-    () => sections.map(sectionKey).join('|'),
-    [sections]
-  );
-  const filterFitKey = useMemo(
-    () => JSON.stringify({ mapQuery, layers, visibleSectionsKey }),
-    [layers, mapQuery, visibleSectionsKey]
-  );
   const stats = useMemo(() => summarizeSpeedMapSections(rawSections), [rawSections]);
   const visibleStats = useMemo(() => summarizeSpeedMapSections(sections), [sections]);
   const center = sections.length
@@ -387,6 +378,7 @@ function SpeedLimitEditorMapContent({
     const keys = new Set();
     prioritized
       .filter((section) => section.saved || section.conflict)
+      .slice(0, permanentLabelLimit)
       .forEach((section) => keys.add(sectionKey(section)));
     return keys;
   }, [permanentLabelLimit, sections]);
@@ -599,29 +591,6 @@ function SpeedLimitEditorMapContent({
     }
     safeMapFitBounds(map, L.latLngBounds(points), { padding: [28, 28], maxZoom: 16 });
   }, [center, mapReady, sections]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!mapReady || !isUsableLeafletMap(map)) return;
-    if (!initialFitDoneRef.current) {
-      lastFilterFitKeyRef.current = filterFitKey;
-      return;
-    }
-    if (lastFilterFitKeyRef.current === filterFitKey) return;
-    lastFilterFitKeyRef.current = filterFitKey;
-    if (selectedGeohash) return;
-    const points = sections.flatMap(sectionPositions);
-    visibleBoundsRef.current = points.length > 1 ? L.latLngBounds(points) : null;
-    if (points.length === 0) {
-      safeMapSetView(map, center, 13);
-      return;
-    }
-    if (points.length === 1) {
-      safeMapSetView(map, points[0], 15);
-      return;
-    }
-    safeMapFitBounds(map, L.latLngBounds(points), { padding: [28, 28], maxZoom: 16 });
-  }, [center, filterFitKey, mapReady, sections, selectedGeohash]);
 
   useEffect(() => {
     const map = mapRef.current;

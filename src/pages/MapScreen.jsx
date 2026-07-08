@@ -31,6 +31,7 @@ import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { TRIAGE_DISABLE_MAPS } from '@/lib/performanceTriage';
 import InlineLoadError from '@/components/InlineLoadError';
+import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -347,14 +348,22 @@ export default function MapScreen() {
   const tripPageEnd = tripPageStart + visibleTripCards.length;
   const mapOverviewHiddenCount = selectedTripId ? 0 : Math.max(0, completed.length - overviewTripsForMap.length);
 
-  const confirmAndFetchRoadContext = () => {
+  const confirmAndFetchRoadContext = async () => {
     if (!selectedTrip || !hasPlayableRouteGps(selectedTrip)) return;
     const latestSettings = localSettings.get();
     if (!isRoadDataLookupConfigured(latestSettings)) {
-      if (typeof window !== 'undefined') window.alert(buildRoadDataDisabledMessage(latestSettings));
+      await requestAppAlert({
+        title: 'Road data is off',
+        message: buildRoadDataDisabledMessage(latestSettings),
+      });
       return;
     }
-    if (typeof window !== 'undefined' && !window.confirm(buildRoadContextPrivacyMessage(latestSettings))) {
+    const confirmed = await requestAppConfirm({
+      title: 'Fetch road data?',
+      message: buildRoadContextPrivacyMessage(latestSettings),
+      confirmLabel: 'Fetch road data',
+    });
+    if (!confirmed) {
       return;
     }
     contextMutation.mutate();

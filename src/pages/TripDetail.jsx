@@ -13,9 +13,9 @@ import {
   ParkingSquare, Droplets, GitBranch, Route, Smartphone, Pencil, Save, Star, Info, Mic,
   StickyNote, X
 } from 'lucide-react';
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import ScoreRing from '@/components/ScoreRing';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
+import DeferredRecharts from '@/components/DeferredRecharts';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import PhoneUsePermissionBanner from '@/components/PhoneUsePermissionBanner';
 import SpeedLimitConflictReview from '@/components/SpeedLimitConflictReview';
@@ -88,6 +88,7 @@ import { DISMISSED_TAG_SUGGESTIONS_KEY, MAX_ROUTE_RISK_SEGMENTS_SHOWN } from '@/
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 import { getAndroidUsageAccessStatus } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
+import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
 import {
   SCORE_REVIEW_ISSUE_OPTIONS,
   SCORE_ACCURACY_OPTIONS,
@@ -762,13 +763,21 @@ export default function TripDetail() {
   });
   const [dismissedTags, setDismissedTags] = useState([]);
 
-  const confirmAndFetchRoadContext = () => {
+  const confirmAndFetchRoadContext = async () => {
     const latestSettings = localSettings.get();
     if (!isRoadDataLookupConfigured(latestSettings)) {
-      if (typeof window !== 'undefined') window.alert(buildRoadDataDisabledMessage(latestSettings));
+      await requestAppAlert({
+        title: 'Road data is off',
+        message: buildRoadDataDisabledMessage(latestSettings),
+      });
       return;
     }
-    if (typeof window !== 'undefined' && !window.confirm(buildRoadContextPrivacyMessage(latestSettings))) {
+    const confirmed = await requestAppConfirm({
+      title: 'Fetch road data?',
+      message: buildRoadContextPrivacyMessage(latestSettings),
+      confirmLabel: 'Fetch road data',
+    });
+    if (!confirmed) {
       return;
     }
     contextMutation.mutate();
@@ -1414,8 +1423,14 @@ export default function TripDetail() {
               type="button"
               aria-label="Delete trip"
               title="Delete trip"
-              onClick={() => {
-                if (confirm('Delete this trip? This cannot be undone.')) deleteMutation.mutate();
+              onClick={async () => {
+                const confirmed = await requestAppConfirm({
+                  title: 'Delete trip?',
+                  message: 'Delete this trip? This cannot be undone.',
+                  confirmLabel: 'Delete trip',
+                  destructive: true,
+                });
+                if (confirmed) deleteMutation.mutate();
               }}
               className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/50"
             >
@@ -2628,33 +2643,37 @@ export default function TripDetail() {
               <div className="text-sm font-medium">Fatigue exposure progression</div>
               <span className="text-xs text-muted-foreground">fatigue level 0-100</span>
             </div>
-            <ResponsiveContainer width="100%" height={140}>
-              <AreaChart data={fatigueHeatmapData} margin={{ top: 5, right: 0, bottom: 0, left: -28 }}>
-                <defs>
-                  <linearGradient id="fatigueLevelFill" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#ef4444" stopOpacity={0.25} />
-                    <stop offset="55%" stopColor="#f97316" stopOpacity={0.18} />
-                    <stop offset="100%" stopColor="#22c55e" stopOpacity={0.10} />
-                  </linearGradient>
-                </defs>
-                <XAxis dataKey="minuteOffset" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
-                <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
-                <Area
-                  type="monotone"
-                  dataKey="fatigueLevel"
-                  stroke="#f97316"
-                  fill="url(#fatigueLevelFill)"
-                  strokeWidth={2}
-                  dot={(props) => {
-                    const { cx, cy, payload } = props;
-                    return payload.fatigueLevel >= CRITICAL_FATIGUE_CHART_LEVEL
-                      ? <circle cx={cx} cy={cy} r={4} fill="#ef4444" stroke="white" strokeWidth={1.5} />
-                      : null;
-                  }}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+            <DeferredRecharts height={140}>
+              {({ ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip }) => (
+                <ResponsiveContainer width="100%" height={140}>
+                  <AreaChart data={fatigueHeatmapData} margin={{ top: 5, right: 0, bottom: 0, left: -28 }}>
+                    <defs>
+                      <linearGradient id="fatigueLevelFill" x1="0" x2="0" y1="0" y2="1">
+                        <stop offset="0%" stopColor="#ef4444" stopOpacity={0.25} />
+                        <stop offset="55%" stopColor="#f97316" stopOpacity={0.18} />
+                        <stop offset="100%" stopColor="#22c55e" stopOpacity={0.10} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="minuteOffset" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                    <Area
+                      type="monotone"
+                      dataKey="fatigueLevel"
+                      stroke="#f97316"
+                      fill="url(#fatigueLevelFill)"
+                      strokeWidth={2}
+                      dot={(props) => {
+                        const { cx, cy, payload } = props;
+                        return payload.fatigueLevel >= CRITICAL_FATIGUE_CHART_LEVEL
+                          ? <circle cx={cx} cy={cy} r={4} fill="#ef4444" stroke="white" strokeWidth={1.5} />
+                          : null;
+                      }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </DeferredRecharts>
           </div>
         ) : fatigueChartData.length === 3 && (
           <div className="mb-4 bg-secondary/50 rounded-xl p-3">
@@ -2662,14 +2681,18 @@ export default function TripDetail() {
               <div className="text-sm font-medium">Driving quality over trip</div>
               <span className="text-xs text-muted-foreground">{fatigueText[fatigueProgressionLevel] || fatigueProgressionLevel}</span>
             </div>
-            <ResponsiveContainer width="100%" height={120}>
-              <AreaChart data={fatigueChartData} margin={{ top: 5, right: 0, bottom: 0, left: -28 }}>
-                <XAxis dataKey="label" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
-                <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
-                <Area type="monotone" dataKey="score" stroke={fatigueColor} fill={fatigueColor} fillOpacity={0.18} strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
+            <DeferredRecharts height={120}>
+              {({ ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip }) => (
+                <ResponsiveContainer width="100%" height={120}>
+                  <AreaChart data={fatigueChartData} margin={{ top: 5, right: 0, bottom: 0, left: -28 }}>
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                    <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                    <Area type="monotone" dataKey="score" stroke={fatigueColor} fill={fatigueColor} fillOpacity={0.18} strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </DeferredRecharts>
           </div>
         )}
 

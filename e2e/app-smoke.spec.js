@@ -24,7 +24,15 @@ test('navigates the core dashboard and settings flow', async ({ page }) => {
   await expect(page.getByText(/Tracking is ready|tracking setup/i)).toBeVisible();
   await expect(page.getByText('Why tracking did or did not start')).toBeVisible();
 
-  await page.getByRole('link', { name: /Settings/ }).click();
+  const settingsLink = page.getByRole('link', { name: /Settings/ });
+  if (await settingsLink.first().isVisible()) {
+    await settingsLink.first().click();
+  } else {
+    await page.getByRole('button', { name: 'Open navigation menu' }).click();
+    await page.getByRole('dialog', { name: 'Navigation menu' })
+      .getByRole('link', { name: /Settings/ })
+      .click();
+  }
   await expect(page).toHaveURL(/\/settings$/);
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
 

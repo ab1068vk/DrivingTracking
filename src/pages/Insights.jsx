@@ -1,10 +1,9 @@
 // @ts-check
 import { useMemo, useState } from 'react';
-import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Award, CalendarDays, CheckCircle2, Clock, ExternalLink, Flag, ListChecks, MapPinned, Route, ShieldAlert, Smartphone, Target, TrendingUp } from 'lucide-react';
-import { tripSummaryQueryOptions } from '@/api/trips';
+import { limitedTripSummaryQueryOptions, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDistance, getScoreColor } from '@/lib/tripEngine';
@@ -28,6 +27,7 @@ import {
   buildWeeklyDriverSummary,
 } from '@/lib/mediumInsights';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
+import { PageEmptyState, PageHeader } from '@/components/PageChrome';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const dayInitials = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -69,10 +69,25 @@ export default function Insights() {
     return date;
   }, [monthOffset]);
 
-  const { data: completed = [], isLoading, isFetching } = useQuery({
-    ...tripSummaryQueryOptions(),
+  const {
+    data: recentCompleted = [],
+    isLoading,
+    isFetching: recentFetching,
+    isSuccess: recentTripsLoaded,
+  } = useQuery({
+    ...limitedTripSummaryQueryOptions(50),
     select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
+  const {
+    data: fullHistoryCompleted = [],
+    isFetching: fullHistoryFetching,
+  } = useQuery({
+    ...tripSummaryQueryOptions(),
+    enabled: recentTripsLoaded,
+    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
+  });
+  const completed = fullHistoryCompleted.length > 0 ? fullHistoryCompleted : recentCompleted;
+  const isFetching = recentFetching || fullHistoryFetching;
   const { data: vehicles = [] } = useQuery({
     queryKey: ['insights-achievement-vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
@@ -105,31 +120,31 @@ export default function Insights() {
 
   return (
     <div className="space-y-6 pb-6">
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-2xl font-grotesk font-bold">Driving Insights</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Routes, calendar patterns, weekly summary, and custom goals</p>
-      </motion.div>
-      <InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing insights" />
+      <PageHeader
+        title="Driving Insights"
+        description="Routes, calendar patterns, weekly summary, and custom goals"
+        icon={TrendingUp}
+        status={<InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing insights" />}
+      />
 
       {isLoading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((item) => <div key={item} className="h-32 rounded-2xl bg-secondary/50 animate-pulse" />)}
         </div>
       ) : completed.length === 0 ? (
-        <div className="flex flex-col items-center rounded-3xl border border-dashed border-border bg-card px-4 py-12 text-center">
-          <TrendingUp className="mb-3 h-12 w-12 text-muted-foreground" />
-          <div className="font-semibold">No insights yet</div>
-          <div className="mt-1 max-w-xs text-sm text-muted-foreground">
-            Complete a few trips to compare repeated routes, build a monthly calendar, and summarize weekly driving.
-          </div>
-          <div className="mt-6 grid w-full max-w-lg grid-cols-2 gap-2 text-left text-xs md:grid-cols-3">
+        <PageEmptyState
+          icon={TrendingUp}
+          title="No insights yet"
+          description="Complete a few trips to compare repeated routes, build a monthly calendar, and summarize weekly driving."
+        >
+          <div className="grid w-full max-w-lg grid-cols-2 gap-2 text-left text-xs md:grid-cols-3">
             {['Weekly Driver Summary', 'Trip Calendar', 'Route Comparison', 'Commute Detection', 'Custom Goals', 'Road Type Breakdown'].map((label) => (
               <div key={label} className="rounded-xl bg-secondary/50 px-3 py-2 font-medium text-muted-foreground">
                 {label}
               </div>
             ))}
           </div>
-        </div>
+        </PageEmptyState>
       ) : (
         <>
           <InsightBriefPanel insightBrief={insightBrief} navigate={navigate} units={units} />

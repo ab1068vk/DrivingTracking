@@ -50,7 +50,6 @@ import {
   clearSettingsMemoryForErasure,
   localSettings,
 } from '@/lib/trackingStore';
-import { clearNativeCompletedTrips } from '@/lib/activityRecognition';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { logSystemFailure } from '@/lib/systemLog';
 import { TRANSMISSION_LOG_KEY } from '@/lib/transmissionLog';
@@ -61,6 +60,8 @@ export const DATA_PORTABILITY_FORMAT = 'road-sage-data-portability';
 export const DATA_PORTABILITY_VERSION = 1;
 
 const AuditAnchor = registerPlugin('AuditAnchor');
+const clearNativeCompletedTripsForErasure = () => import('@/lib/activityRecognition')
+  .then(({ clearNativeCompletedTrips }) => clearNativeCompletedTrips());
 
 const extraErasureKeys = Object.freeze([
   TRIPS_KEY,
@@ -317,7 +318,7 @@ export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now() } = {}
       wipedKeys.push(await overwriteThenRemoveKey(item.key));
     }
     const nativeCompletedTripsCleared = isAndroid()
-      ? await clearNativeCompletedTrips().then(() => true).catch((error) => {
+      ? await clearNativeCompletedTripsForErasure().then(() => true).catch((error) => {
         logSystemFailure('data_erasure_native_trip_clear_failed', error, {});
         return false;
       })

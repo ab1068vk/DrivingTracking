@@ -28,6 +28,11 @@ import {
   verifyAndUnwrapExport,
 } from '@/lib/exportIntegrity';
 import { logTransmission } from '@/lib/transmissionLog';
+import {
+  BACKUP_SIGNATURE_INVALID_CODE,
+  BACKUP_TOO_LARGE_MESSAGE,
+  MAX_BACKUP_BYTES,
+} from '@/lib/dataBackupConstants';
 
 // CHANGES (session):
 // - Added speed knowledge backup support and trip_speed_summary_v1 backup field support.
@@ -49,9 +54,6 @@ import { logTransmission } from '@/lib/transmissionLog';
  * merged. Coordinates omitted for privacy zones are intentionally not restored.
  */
 export const BACKUP_VERSION = 10;
-export const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
-export const BACKUP_TOO_LARGE_MESSAGE = 'Backup file is too large. Please choose a Road Sage backup that is 50 MB or smaller.';
-export const BACKUP_SIGNATURE_INVALID_CODE = 'BACKUP_SIGNATURE_INVALID';
 export const MAX_IMPORTED_TRIP_ROUTE_POINTS = 5000;
 export const MAX_IMPORTED_TRIP_DRIVING_EVENTS = 500;
 export const MAX_IMPORTED_STRING_LENGTH = 5000;
@@ -63,7 +65,13 @@ export const MAX_IMPORTED_SPEED_KNOWLEDGE_CORRECTIONS = 5000;
 export const MAX_IMPORTED_SPEED_KNOWLEDGE_SECTION_POINTS = 24;
 export const MAX_IMPORTED_SPEED_KNOWLEDGE_EDIT_HISTORY = 10;
 export const MAX_IMPORTED_SPEED_KNOWLEDGE_AUDIT_TRAIL = 25;
-export { BACKUP_PASSWORD_REQUIRED_CODE, BACKUP_WRONG_PASSWORD_CODE };
+export {
+  BACKUP_PASSWORD_REQUIRED_CODE,
+  BACKUP_SIGNATURE_INVALID_CODE,
+  BACKUP_TOO_LARGE_MESSAGE,
+  BACKUP_WRONG_PASSWORD_CODE,
+  MAX_BACKUP_BYTES,
+};
 
 const safeFilename = (filename) => filename.replace(/[\\/:*?"<>|]+/g, '-');
 const filterString = (value, fallback = '') => (

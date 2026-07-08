@@ -57,6 +57,10 @@ export default defineConfig({
           if (inNodeModule(moduleId, 'recharts')) return 'charts-vendor'
           if (inNodeModule(moduleId, 'html2canvas')) return 'html2canvas-vendor'
           if (inNodeModule(moduleId, 'jspdf')) return 'jspdf-vendor'
+          if (inNodeModule(moduleId, 'leaflet')) return 'leaflet-vendor'
+          if (inNodeModule(moduleId, 'three')) return 'three-vendor'
+          if (inNodeModule(moduleId, 'framer-motion')) return 'motion-vendor'
+          if (moduleId.includes('/node_modules/@radix-ui/')) return 'radix-vendor'
           if (moduleId.includes('/node_modules/@capacitor/')) return 'capacitor-vendor'
 
           return undefined
