@@ -6,6 +6,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { Camera, Film, Flag, Gauge, LocateFixed, Pause, Play, RotateCcw, Route, SkipBack, Zap } from 'lucide-react';
 import {
   SPEED_BANDS,
+  advancePlaybackElapsed,
   buildPlaybackPositionIndex,
   buildPlaybackTimeline,
   playbackPositionAtElapsed,
@@ -44,9 +45,6 @@ const ROAD_SHOULDER_WIDTH = 3.84;
 const ROAD_EDGE_OFFSET = ROAD_WIDTH * 0.48;
 const CAMERA_LOOKAHEAD_SECONDS = 2.2;
 const CAMERA_BASE_FOV = 48;
-const VISUAL_REFERENCE_SPEED_KMH = 35;
-const MIN_VISUAL_PLAYBACK_RATE = 0.22;
-const MAX_VISUAL_PLAYBACK_RATE = 3.1;
 const SPEED_TRAIL_MIN_KMH = 32;
 const SPEED_TRAIL_FULL_KMH = 95;
 const CAMERA_MODES = [
@@ -168,12 +166,6 @@ function speedKmhAtPlaybackPosition(timeline = {}, position = {}) {
   }
 
   return Math.max(0, reportedSpeed);
-}
-
-function visualPlaybackRateForSpeed(speedKmh = 0) {
-  const speed = Math.max(0, Number(speedKmh) || 0);
-  if (speed <= IDLE_SPEED_KMH) return MIN_VISUAL_PLAYBACK_RATE;
-  return clampNumber(speed / VISUAL_REFERENCE_SPEED_KMH, MIN_VISUAL_PLAYBACK_RATE, MAX_VISUAL_PLAYBACK_RATE);
 }
 
 function speedEffectStrength(speedKmh = 0) {
@@ -1208,10 +1200,12 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
     const animate = () => {
       const delta = Math.min(0.08, clock.getDelta());
       if (playingRef.current) {
-        const playbackPosition = playbackPositionAtElapsed(points, elapsedRef.current, positionIndex);
-        const speed = speedKmhAtPlaybackPosition(timeline, playbackPosition);
-        const visualRate = visualPlaybackRateForSpeed(speed);
-        const nextElapsed = Math.min(durationSeconds, elapsedRef.current + delta * speedMultiplierRef.current * visualRate);
+        const nextElapsed = advancePlaybackElapsed(
+          elapsedRef.current,
+          delta,
+          speedMultiplierRef.current,
+          durationSeconds
+        );
         elapsedRef.current = nextElapsed;
         if (nextElapsed >= durationSeconds) {
           playingRef.current = false;

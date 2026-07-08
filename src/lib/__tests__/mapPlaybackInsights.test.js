@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  advancePlaybackElapsed,
   buildPlaybackTimeline,
   buildPlaybackPositionIndex,
   buildRouteComparison,
@@ -134,6 +135,12 @@ describe('mapPlaybackInsights', () => {
 
     expect(routeDistanceAtPlaybackPosition(timeline, positionDuringStop, positionDuringStop.index))
       .toBeCloseTo(beforeStopDistanceKm, 6);
+  });
+
+  it('advances replay elapsed time by the selected playback multiplier', () => {
+    expect(advancePlaybackElapsed(12, 1, 1, 120)).toBe(13);
+    expect(advancePlaybackElapsed(12, 1, 4, 120)).toBe(16);
+    expect(advancePlaybackElapsed(119.5, 1, 2, 120)).toBe(120);
   });
 
   it('downsamples dense routes but preserves the first and last point', () => {
