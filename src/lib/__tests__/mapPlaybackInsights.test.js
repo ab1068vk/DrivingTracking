@@ -12,6 +12,7 @@ import {
   restoreOriginalRouteGeometry,
   routeDistanceAtPlaybackPosition,
   selectMapRoutePoints,
+  visualPlaybackRateForSpeed,
 } from '@/lib/mapPlaybackInsights';
 
 const point = (index, speed = 40, extra = {}) => ({
@@ -111,6 +112,20 @@ describe('mapPlaybackInsights', () => {
     expect(position.point.speed_kmh).toBeCloseTo(70, 0);
   });
 
+  it('can build a playback position index from already-clean points without re-filtering', () => {
+    const cleanPoints = [
+      point(0, 30, { timestamp: '2026-01-01T12:00:10.000Z' }),
+      point(1, 30, { timestamp: '2026-01-01T12:00:00.000Z' }),
+    ];
+    const index = buildPlaybackPositionIndex(cleanPoints, { alreadyClean: true });
+    const reCleanedIndex = buildPlaybackPositionIndex(cleanPoints);
+
+    expect(index.points).toBe(cleanPoints);
+    expect(index.points).toHaveLength(2);
+    expect(index.hasTimeline).toBe(false);
+    expect(reCleanedIndex.points).toHaveLength(1);
+  });
+
   it('uses elapsed time rather than point index for timeline progress', () => {
     const points = [
       point(0, 30, { timestamp: '2026-01-01T12:00:00.000Z' }),
@@ -141,6 +156,14 @@ describe('mapPlaybackInsights', () => {
     expect(advancePlaybackElapsed(12, 1, 1, 120)).toBe(13);
     expect(advancePlaybackElapsed(12, 1, 4, 120)).toBe(16);
     expect(advancePlaybackElapsed(119.5, 1, 2, 120)).toBe(120);
+  });
+
+  it('scales visual playback pacing from the current vehicle speed', () => {
+    expect(visualPlaybackRateForSpeed(0)).toBe(0.22);
+    expect(visualPlaybackRateForSpeed(5)).toBe(0.22);
+    expect(visualPlaybackRateForSpeed(35)).toBe(1);
+    expect(visualPlaybackRateForSpeed(70)).toBe(2);
+    expect(visualPlaybackRateForSpeed(180)).toBe(3.1);
   });
 
   it('downsamples dense routes but preserves the first and last point', () => {

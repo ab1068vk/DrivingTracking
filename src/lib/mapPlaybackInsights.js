@@ -10,6 +10,10 @@ const ROUTE_GAP_SECONDS = MAX_VISUAL_SEGMENT_GAP_SECONDS;
 const MAX_SMOOTHING_ACCURACY_M = 45;
 const DEFAULT_RENDER_POINTS = 700;
 
+export const VISUAL_REFERENCE_SPEED_KMH = 35;
+export const MIN_VISUAL_PLAYBACK_RATE = 0.22;
+export const MAX_VISUAL_PLAYBACK_RATE = 3.1;
+
 export const SPEED_BANDS = [
   { id: 'slow', label: 'Slow', min: 0, color: '#94a3b8' },
   { id: 'city', label: 'City', min: 15, color: '#3b82f6' },
@@ -122,6 +126,15 @@ const smoothRoutePoints = (points = []) => {
 export function speedBandForKmh(speedKmh = 0) {
   const speed = Number(speedKmh) || 0;
   return [...SPEED_BANDS].reverse().find((band) => speed >= band.min) || SPEED_BANDS[0];
+}
+
+export function visualPlaybackRateForSpeed(speedKmh = 0) {
+  const speed = Math.max(0, Number(speedKmh) || 0);
+  if (speed <= IDLE_SPEED_KMH) return MIN_VISUAL_PLAYBACK_RATE;
+  return Math.max(
+    MIN_VISUAL_PLAYBACK_RATE,
+    Math.min(MAX_VISUAL_PLAYBACK_RATE, speed / VISUAL_REFERENCE_SPEED_KMH)
+  );
 }
 
 const progressForIndex = (index, total) => (
@@ -452,8 +465,11 @@ export function buildPlaybackTimeline(points = [], events = []) {
   };
 }
 
-export function buildPlaybackPositionIndex(points = []) {
-  const clean = cleanRoutePoints(restoreOriginalRouteGeometry(points));
+export function buildPlaybackPositionIndex(points = [], options = {}) {
+  const { alreadyClean = false } = options;
+  const clean = alreadyClean
+    ? (Array.isArray(points) ? points : [])
+    : cleanRoutePoints(restoreOriginalRouteGeometry(points));
   const timesMs = clean.map(pointTimeMs);
   const hasTimeline = timesMs.length > 1 && timesMs.every((time, index) => (
     time != null && (index === 0 || time > timesMs[index - 1])

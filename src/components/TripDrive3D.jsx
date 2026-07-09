@@ -12,6 +12,7 @@ import {
   playbackPositionAtElapsed,
   prepareMapRoutePoints,
   routeDistanceAtPlaybackPosition,
+  visualPlaybackRateForSpeed,
 } from '@/lib/mapPlaybackInsights';
 import { formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { HEIGHTENED_PRIVACY_MODE_KEY } from '@/lib/privacyMode';
@@ -99,6 +100,7 @@ function buildProjection(points = []) {
     (maxLng - minLng) * lngMeters
   );
   const sceneScale = Math.min(1.1, MAX_SCENE_SPAN / spanMeters);
+  const objectScale = Math.max(0.4, Math.min(1.15, 0.4 + sceneScale * 0.6));
 
   const project = (point) => {
     const lat = finiteCoordinate(point?.lat);
@@ -114,6 +116,7 @@ function buildProjection(points = []) {
   return {
     project,
     scale: sceneScale,
+    objectScale,
     span: spanMeters * sceneScale,
   };
 }
@@ -258,9 +261,10 @@ function addSegmentBox(scene, {
   return mesh;
 }
 
-function addRoadLine(scene, from, to, offset, color, opacity = 0.86) {
+function addRoadLine(scene, from, to, offset, color, opacity = 0.86, objectScale = 1) {
   const length = from.distanceTo(to);
   if (length < 0.24) return null;
+  const scale = Math.max(0.01, Number(objectScale) || 1);
   const heading = vectorHeading(from, to);
   const right = new THREE.Vector3(Math.cos(heading), 0, -Math.sin(heading)).multiplyScalar(offset);
   const lineFrom = from.clone().add(right);
@@ -268,10 +272,10 @@ function addRoadLine(scene, from, to, offset, color, opacity = 0.86) {
   return addSegmentBox(scene, {
     from: lineFrom,
     to: lineTo,
-    width: Math.abs(offset) < 0.1 ? 0.08 : 0.055,
-    height: 0.035,
+    width: Math.abs(offset) < 0.1 * scale ? 0.08 * scale : 0.055 * scale,
+    height: 0.035 * scale,
     color,
-    y: 0.16,
+    y: 0.16 * scale,
     roughness: 0.42,
     opacity,
   });
@@ -357,7 +361,12 @@ function projectedRoadGroups(segments = [], projection) {
   return groups;
 }
 
-function addCurvedRoad(scene, groups = [], colorMode) {
+function addCurvedRoad(scene, groups = [], colorMode, objectScale = 1) {
+  const scale = Math.max(0.01, Number(objectScale) || 1);
+  const roadWidth = ROAD_WIDTH * scale;
+  const roadShoulderWidth = ROAD_SHOULDER_WIDTH * scale;
+  const roadEdgeOffset = ROAD_EDGE_OFFSET * scale;
+
   groups.forEach((group) => {
     const rawPoints = [group[0].from, ...group.map((item) => item.to)];
     const length = rawPoints.reduce((sum, point, index) => (
@@ -367,27 +376,27 @@ function addCurvedRoad(scene, groups = [], colorMode) {
     const centerline = smoothCenterline(rawPoints, sampleCount);
 
     addRouteRibbon(scene, centerline, {
-      width: ROAD_SHOULDER_WIDTH,
-      y: 0.025,
+      width: roadShoulderWidth,
+      y: 0.025 * scale,
       color: '#1f2937',
       roughness: 0.82,
     });
     addRouteRibbon(scene, centerline, {
-      width: ROAD_WIDTH,
-      y: 0.09,
+      width: roadWidth,
+      y: 0.09 * scale,
       color: '#263244',
       roughness: 0.72,
     });
-    addRouteRibbon(scene, offsetPolyline(centerline, -ROAD_EDGE_OFFSET), {
-      width: 0.055,
-      y: 0.15,
+    addRouteRibbon(scene, offsetPolyline(centerline, -roadEdgeOffset), {
+      width: 0.055 * scale,
+      y: 0.15 * scale,
       color: '#cbd5e1',
       opacity: 0.62,
       roughness: 0.42,
     });
-    addRouteRibbon(scene, offsetPolyline(centerline, ROAD_EDGE_OFFSET), {
-      width: 0.055,
-      y: 0.15,
+    addRouteRibbon(scene, offsetPolyline(centerline, roadEdgeOffset), {
+      width: 0.055 * scale,
+      y: 0.15 * scale,
       color: '#cbd5e1',
       opacity: 0.62,
       roughness: 0.42,
@@ -401,34 +410,34 @@ function addCurvedRoad(scene, groups = [], colorMode) {
       addSegmentBox(scene, {
         from,
         to,
-        width: ROAD_WIDTH * 0.84,
-        height: 0.026,
+        width: roadWidth * 0.84,
+        height: 0.026 * scale,
         color,
-        y: 0.145,
+        y: 0.145 * scale,
         roughness: 0.62,
         opacity: overLimit > 0 ? 0.76 : 0.45,
       });
 
-      if (overLimit > 10 && from.distanceTo(to) > 0.8) {
+      if (overLimit > 10 && from.distanceTo(to) > 0.8 * scale) {
         addSegmentBox(scene, {
           from,
           to,
-          width: ROAD_WIDTH + 0.3,
-          height: 0.02,
+          width: roadWidth + 0.3 * scale,
+          height: 0.02 * scale,
           color: '#ef4444',
-          y: 0.18,
+          y: 0.18 * scale,
           roughness: 0.48,
           opacity: 0.2,
         });
       }
 
-      if (index % 2 === 0 && from.distanceTo(to) > 1.2) {
+      if (index % 2 === 0 && from.distanceTo(to) > 1.2 * scale) {
         const heading = vectorHeading(from, to);
-        const dashLength = Math.min(2.1, Math.max(0.5, from.distanceTo(to) * 0.34));
+        const dashLength = Math.min(2.1 * scale, Math.max(0.5 * scale, from.distanceTo(to) * 0.34));
         const midpoint = from.clone().lerp(to, 0.5);
         const dashFrom = midpoint.clone().add(new THREE.Vector3(Math.sin(heading), 0, Math.cos(heading)).multiplyScalar(-dashLength / 2));
         const dashTo = midpoint.clone().add(new THREE.Vector3(Math.sin(heading), 0, Math.cos(heading)).multiplyScalar(dashLength / 2));
-        addRoadLine(scene, dashFrom, dashTo, 0, '#f8fafc', 0.9);
+        addRoadLine(scene, dashFrom, dashTo, 0, '#f8fafc', 0.9, scale);
       }
     });
   });
@@ -474,29 +483,30 @@ function addSmoothRouteGuide(scene, projection, points = []) {
   scene.add(line);
 }
 
-function addSpeedLimitSign(scene, from, to, limit, index) {
+function addSpeedLimitSign(scene, from, to, limit, index, objectScale = 1) {
   const texture = createSpeedLimitTexture(limit);
   if (!texture) return;
+  const scale = Math.max(0.01, Number(objectScale) || 1);
   const heading = vectorHeading(from, to);
   const right = new THREE.Vector3(Math.cos(heading), 0, -Math.sin(heading));
-  const base = from.clone().lerp(to, 0.62).add(right.multiplyScalar(index % 2 === 0 ? 2.15 : -2.15));
+  const base = from.clone().lerp(to, 0.62).add(right.multiplyScalar((index % 2 === 0 ? 2.15 : -2.15) * scale));
 
   const group = new THREE.Group();
   group.position.copy(base);
   group.rotation.y = heading + (index % 2 === 0 ? -0.18 : Math.PI + 0.18);
 
   const pole = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.035, 0.035, 1.35, 10),
+    new THREE.CylinderGeometry(0.035 * scale, 0.035 * scale, 1.35 * scale, 10),
     new THREE.MeshStandardMaterial({ color: '#94a3b8', roughness: 0.62 })
   );
-  pole.position.y = 0.72;
+  pole.position.y = 0.72 * scale;
   group.add(pole);
 
   const sign = new THREE.Sprite(
     new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false })
   );
-  sign.position.y = 1.55;
-  sign.scale.set(0.95, 0.95, 1);
+  sign.position.y = 1.55 * scale;
+  sign.scale.set(0.95 * scale, 0.95 * scale, 1);
   group.add(sign);
 
   scene.add(group);
@@ -576,14 +586,15 @@ function createSpeedTrail() {
   return group;
 }
 
-function updateSpeedTrail(trail, scenePoint, heading, speedStrength) {
+function updateSpeedTrail(trail, scenePoint, heading, speedStrength, objectScale = 1) {
   if (!trail) return;
   const strength = clampNumber(speedStrength, 0, 1);
+  const scale = Math.max(0.01, Number(objectScale) || 1);
   trail.visible = strength > 0.03;
   trail.position.copy(scenePoint);
-  trail.position.y = 0.15;
+  trail.position.y = 0.15 * scale;
   trail.rotation.set(0, heading, 0);
-  trail.scale.set(1 + strength * 0.28, 1, 1 + strength * 0.55);
+  trail.scale.set((1 + strength * 0.28) * scale, scale, (1 + strength * 0.55) * scale);
   trail.children.forEach((mesh, index) => {
     if (mesh.material) {
       const fade = Math.max(0, strength - index * 0.08);
@@ -593,7 +604,8 @@ function updateSpeedTrail(trail, scenePoint, heading, speedStrength) {
   });
 }
 
-function createCarModel() {
+function createCarModel(objectScale = 1) {
+  const scale = Math.max(0.01, Number(objectScale) || 1);
   const group = new THREE.Group();
   const bodyMaterial = new THREE.MeshStandardMaterial({
     color: '#1d4ed8',
@@ -684,8 +696,8 @@ function createCarModel() {
   headlightGlow.position.set(0, 0.8, 1.85);
   group.add(headlightGlow);
 
-  group.scale.setScalar(0.92);
-  group.position.y = 0.14;
+  group.scale.setScalar(0.92 * scale);
+  group.position.y = 0.14 * scale;
   group.userData.brakeLights = brakeLights;
   return group;
 }
@@ -694,35 +706,37 @@ function addEventMarker(scene, projection, event, index) {
   const position = projection.project(event);
   if (!position) return;
 
+  const objectScale = Math.max(0.01, Number(projection.objectScale) || 1);
   const color = colorForEvent(event);
   const severityScale = event.severity === 'high' || event.type === 'possible_crash' ? 1.5 : 1;
+  const sizeScale = objectScale * severityScale;
   const group = new THREE.Group();
   group.position.copy(position);
-  group.position.y = 0.12;
+  group.position.y = 0.12 * objectScale;
 
   const pole = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.035, 0.035, 1.65 * severityScale, 10),
+    new THREE.CylinderGeometry(0.035 * objectScale, 0.035 * objectScale, 1.65 * sizeScale, 10),
     new THREE.MeshStandardMaterial({ color: '#475569', roughness: 0.72 })
   );
-  pole.position.y = 0.82 * severityScale;
+  pole.position.y = 0.82 * sizeScale;
   group.add(pole);
 
   const marker = new THREE.Mesh(
-    new THREE.SphereGeometry(0.26 * severityScale, 18, 18),
+    new THREE.SphereGeometry(0.26 * sizeScale, 18, 18),
     new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.25, roughness: 0.35 })
   );
-  marker.position.y = 1.68 * severityScale;
+  marker.position.y = 1.68 * sizeScale;
   marker.userData.label = titleCase(event.type || 'event');
   marker.userData.isEventBeacon = true;
   marker.userData.baseScale = severityScale;
   group.add(marker);
 
   const halo = new THREE.Mesh(
-    new THREE.RingGeometry(0.34 * severityScale, 0.54 * severityScale, 28),
+    new THREE.RingGeometry(0.34 * sizeScale, 0.54 * sizeScale, 28),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.18, side: THREE.DoubleSide })
   );
   halo.rotation.x = Math.PI / 2;
-  halo.position.y = 0.05;
+  halo.position.y = 0.05 * objectScale;
   halo.userData.isEventHalo = true;
   halo.userData.baseOpacity = 0.18;
   group.add(halo);
@@ -735,12 +749,13 @@ function addEventMarker(scene, projection, event, index) {
 function addStopMarker(scene, projection, stop, index) {
   const position = projection.project(stop.point);
   if (!position) return;
+  const objectScale = Math.max(0.01, Number(projection.objectScale) || 1);
   const marker = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.5, 0.5, 0.16, 28),
+    new THREE.CylinderGeometry(0.5 * objectScale, 0.5 * objectScale, 0.16 * objectScale, 28),
     new THREE.MeshStandardMaterial({ color: index % 2 ? '#64748b' : '#334155', roughness: 0.7 })
   );
   marker.position.copy(position);
-  marker.position.y = 0.16;
+  marker.position.y = 0.16 * objectScale;
   marker.receiveShadow = true;
   scene.add(marker);
 }
@@ -838,6 +853,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
   const noRouteLoggedRef = useRef('');
   const completedLoggedRef = useRef('');
   const lastSeekLogRef = useRef(0);
+  const lastKnownSpeedRef = useRef(0);
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -846,6 +862,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
   const [cameraMode, setCameraMode] = useState('cinematic');
   const [qualityIdx, setQualityIdx] = useState(1);
   const [webglFailed, setWebglFailed] = useState(false);
+  const qualityIdxRef = useRef(qualityIdx);
 
   const settings = useLocalSettings();
   usePrivacyZonesRevision();
@@ -855,7 +872,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
     show_privacy_circles: settings.show_privacy_circles,
   }), [settings.privacy_zones, settings.show_privacy_circles]);
 
-  const points = useMemo(() => prepareMapRoutePoints(
+  const preparedPoints = useMemo(() => prepareMapRoutePoints(
     maskRoutePointsForPrivacy(trip?.route_points || [], privacySettings),
     { maxPoints: 720 }
   ).map(validLatLngPoint).filter(Boolean), [privacySettings, trip?.route_points]);
@@ -864,9 +881,10 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
     .map(validLatLngPoint)
     .filter(Boolean), [events, privacySettings]);
 
-  const timeline = useMemo(() => buildPlaybackTimeline(points, visibleEvents), [points, visibleEvents]);
+  const timeline = useMemo(() => buildPlaybackTimeline(preparedPoints, visibleEvents), [preparedPoints, visibleEvents]);
+  const points = timeline.points;
   const replayChapters = useMemo(() => buildReplayChapters(timeline), [timeline]);
-  const positionIndex = useMemo(() => buildPlaybackPositionIndex(points), [points]);
+  const positionIndex = useMemo(() => buildPlaybackPositionIndex(points, { alreadyClean: true }), [points]);
   const projection = useMemo(() => buildProjection(points), [points]);
   const durationSeconds = timeline.stats.durationSeconds || Math.max(1, points.length - 1);
   const playbackPosition = useMemo(
@@ -915,6 +933,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
     setCameraMode('cinematic');
     setWebglFailed(false);
     completedLoggedRef.current = '';
+    lastKnownSpeedRef.current = 0;
   }, [trip?.id]);
 
   useEffect(() => {
@@ -931,6 +950,14 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
       title: '3D drive unavailable',
     });
   }, [points.length, trip?.id, trip?.route_points]);
+
+  useEffect(() => {
+    qualityIdxRef.current = qualityIdx;
+    const renderer = rendererRef.current;
+    if (!renderer) return;
+    const quality = RENDER_QUALITIES[qualityIdx] || RENDER_QUALITIES[1];
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
+  }, [qualityIdx]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -952,7 +979,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
     }
 
     rendererRef.current = renderer;
-    const quality = RENDER_QUALITIES[qualityIdx] || RENDER_QUALITIES[1];
+    const quality = RENDER_QUALITIES[qualityIdxRef.current] || RENDER_QUALITIES[1];
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -963,14 +990,19 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
 
     const camera = new THREE.PerspectiveCamera(CAMERA_BASE_FOV, 1, 0.1, 320);
     const span = Math.max(28, projection.span);
-    camera.position.set(0, Math.min(42, span * 0.48), Math.max(30, span * 0.68));
+    const objectScale = projection.objectScale ?? 1;
+    camera.position.set(
+      0,
+      Math.min(42 * objectScale, span * 0.48),
+      Math.max(30 * objectScale, span * 0.68)
+    );
 
     const controls = new OrbitControls(camera, canvas);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.maxPolarAngle = Math.PI * 0.48;
-    controls.minDistance = 8;
-    controls.maxDistance = Math.max(44, span * 1.8);
+    controls.minDistance = 8 * objectScale;
+    controls.maxDistance = Math.max(44 * objectScale, span * 1.8);
     controls.target.set(0, 0, 0);
     controls.update();
     controlsRef.current = controls;
@@ -997,6 +1029,15 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
     sun.castShadow = true;
     sun.shadow.mapSize.width = 1024;
     sun.shadow.mapSize.height = 1024;
+    const shadowSpan = Math.max(50, span * 1.3);
+    sun.shadow.camera.left = -shadowSpan;
+    sun.shadow.camera.right = shadowSpan;
+    sun.shadow.camera.top = shadowSpan;
+    sun.shadow.camera.bottom = -shadowSpan;
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = shadowSpan * 4;
+    sun.shadow.bias = -0.0015;
+    sun.shadow.camera.updateProjectionMatrix();
     scene.add(sun);
 
     const ground = new THREE.Mesh(
@@ -1015,7 +1056,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
     addSmoothRouteGuide(scene, projection, points);
     const animatedEventMeshes = [];
     const roadGroups = projectedRoadGroups(timeline.segments, projection);
-    addCurvedRoad(scene, roadGroups, colorMode);
+    addCurvedRoad(scene, roadGroups, colorMode, objectScale);
     let lastSignLimit = null;
     let lastSignIndex = -Infinity;
     timeline.segments.forEach((segment, index) => {
@@ -1028,7 +1069,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
         limit > 0 &&
         (lastSignLimit !== Math.round(limit) || index - lastSignIndex > 18)
       ) {
-        addSpeedLimitSign(scene, from, to, limit, index);
+        addSpeedLimitSign(scene, from, to, limit, index, objectScale);
         lastSignLimit = Math.round(limit);
         lastSignIndex = index;
       }
@@ -1042,7 +1083,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
       });
     });
 
-    const car = createCarModel();
+    const car = createCarModel(objectScale);
     carRef.current = car;
     scene.add(car);
     const speedTrail = createSpeedTrail();
@@ -1103,7 +1144,8 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
       );
       const lookAheadPosition = playbackPositionAtElapsed(points, lookAheadElapsed, positionIndex);
       const lookAheadPoint = projection.project(lookAheadPosition.point);
-      const rawHeading = lookAheadPoint && lookAheadPoint.distanceTo(scenePoint) > 0.28
+      const headingLookaheadThreshold = Math.max(0.02, 0.28 * projection.scale);
+      const rawHeading = lookAheadPoint && lookAheadPoint.distanceTo(scenePoint) > headingLookaheadThreshold
         ? vectorHeading(scenePoint, lookAheadPoint)
         : vectorHeading(from, to);
       const headingAlpha = dampAlpha(playingRef.current ? 7.2 : 16, delta);
@@ -1112,7 +1154,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
         : lerpAngleRadians(smoothedHeading, rawHeading, headingAlpha);
 
       car.position.copy(scenePoint);
-      car.position.y = 0.24;
+      car.position.y = 0.24 * objectScale;
       car.rotation.y = smoothedHeading;
       const turnBank = clampNumber(-dynamics.turnDeltaDegrees / 260, -0.08, 0.08);
       const brakePitch = dynamics.braking ? -0.045 * Math.max(0.25, dynamics.intensity) : 0;
@@ -1137,7 +1179,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
           child.material.emissiveIntensity = active ? 1.9 : 0.12;
         }
       });
-      updateSpeedTrail(speedTrail, scenePoint, smoothedHeading, speedStrength);
+      updateSpeedTrail(speedTrail, scenePoint, smoothedHeading, speedStrength, objectScale);
       const targetFov = cameraModeRef.current === 'top'
         ? CAMERA_BASE_FOV
         : CAMERA_BASE_FOV + speedStrength * 5.5;
@@ -1160,39 +1202,45 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
         const lookTarget = lookAheadPoint && lookAheadPoint.distanceTo(smoothedCameraTarget) > 0.5
           ? smoothedCameraTarget.clone().lerp(lookAheadPoint, 0.38)
           : smoothedCameraTarget;
-        const cameraTarget = lookTarget.clone().add(new THREE.Vector3(0, 1.2, 0));
+        const cameraTarget = lookTarget.clone().add(new THREE.Vector3(0, 1.2 * objectScale, 0));
         const activeEvent = timeline.events.find((event) => (
           Math.abs((Number(event.offsetSeconds) || 0) - elapsedRef.current) <= 8
         ));
         const eventPoint = activeEvent ? projection.project(activeEvent) : null;
         const cinematicEventFocus = mode === 'cinematic' && eventPoint;
         const desiredTarget = (mode === 'event' || cinematicEventFocus) && eventPoint
-          ? eventPoint.clone().add(new THREE.Vector3(0, 1.4, 0))
+          ? eventPoint.clone().add(new THREE.Vector3(0, 1.4 * objectScale, 0))
           : cameraTarget;
-        const speedPullback = Math.min(4.5, speed / 28);
+        const speedPullback = Math.min(4.5, speed / 28) * objectScale;
         const cinematicSide = Math.sin(elapsedRef.current * 0.18) >= 0 ? 1 : -1;
         const desiredCamera = mode === 'top'
-          ? cameraTarget.clone().add(new THREE.Vector3(0, Math.max(24, projection.span * 0.62), 0.1))
+          ? cameraTarget.clone().add(new THREE.Vector3(0, Math.max(24 * objectScale, projection.span * 0.62), 0.1 * objectScale))
           : mode === 'side'
-            ? cameraTarget.clone().add(right.multiplyScalar(12 + speedPullback * 0.35)).add(new THREE.Vector3(0, 5.2 + speedPullback * 0.18, 0))
+            ? cameraTarget.clone()
+              .add(right.multiplyScalar(12 * objectScale + speedPullback * 0.35))
+              .add(new THREE.Vector3(0, 5.2 * objectScale + speedPullback * 0.18, 0))
             : mode === 'event' && eventPoint
-              ? cameraTarget.clone().add(forward.clone().multiplyScalar(-8 - speedPullback * 0.4)).add(right.multiplyScalar(7)).add(new THREE.Vector3(0, 6.5, 0))
+              ? cameraTarget.clone()
+                .add(forward.clone().multiplyScalar(-8 * objectScale - speedPullback * 0.4))
+                .add(right.multiplyScalar(7 * objectScale))
+                .add(new THREE.Vector3(0, 6.5 * objectScale, 0))
               : mode === 'cinematic' && eventPoint
                 ? cameraTarget.clone()
-                  .add(forward.clone().multiplyScalar(-8.4 - speedPullback * 0.45))
-                  .add(right.multiplyScalar(cinematicSide * (5.8 + dynamics.intensity * 2.4)))
-                  .add(new THREE.Vector3(0, 5.7 + dynamics.intensity * 1.6, 0))
+                  .add(forward.clone().multiplyScalar(-8.4 * objectScale - speedPullback * 0.45))
+                  .add(right.multiplyScalar(cinematicSide * ((5.8 + dynamics.intensity * 2.4) * objectScale)))
+                  .add(new THREE.Vector3(0, (5.7 + dynamics.intensity * 1.6) * objectScale, 0))
                 : mode === 'cinematic'
                   ? cameraTarget.clone()
-                    .add(forward.clone().multiplyScalar(-9.2 - speedPullback * 0.9))
-                    .add(right.multiplyScalar(cinematicSide * (2.8 + Math.min(2.2, Math.abs(dynamics.turnDeltaDegrees) / 16))))
-                    .add(new THREE.Vector3(0, 4.8 + speedPullback * 0.16 + dynamics.intensity * 0.7, 0))
+                    .add(forward.clone().multiplyScalar(-9.2 * objectScale - speedPullback * 0.9))
+                    .add(right.multiplyScalar(cinematicSide * ((2.8 + Math.min(2.2, Math.abs(dynamics.turnDeltaDegrees) / 16)) * objectScale)))
+                    .add(new THREE.Vector3(0, (4.8 + dynamics.intensity * 0.7) * objectScale + speedPullback * 0.16, 0))
               : cameraTarget.clone()
-                .add(forward.clone().multiplyScalar(-10.5 - speedPullback))
-                .add(new THREE.Vector3(0, 5.6 + speedPullback * 0.22, 0));
+                .add(forward.clone().multiplyScalar(-10.5 * objectScale - speedPullback))
+                .add(new THREE.Vector3(0, 5.6 * objectScale + speedPullback * 0.22, 0));
         camera.position.lerp(desiredCamera, dampAlpha(mode === 'event' || mode === 'cinematic' ? 5.8 : 4.4, delta));
         controls.target.lerp(desiredTarget, dampAlpha(mode === 'event' || mode === 'cinematic' ? 7.5 : 6, delta));
       }
+      lastKnownSpeedRef.current = speed;
     };
 
     const clock = new THREE.Clock();
@@ -1200,10 +1248,11 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
     const animate = () => {
       const delta = Math.min(0.08, clock.getDelta());
       if (playingRef.current) {
+        const visualRate = visualPlaybackRateForSpeed(lastKnownSpeedRef.current);
         const nextElapsed = advancePlaybackElapsed(
           elapsedRef.current,
           delta,
-          speedMultiplierRef.current,
+          speedMultiplierRef.current * visualRate,
           durationSeconds
         );
         elapsedRef.current = nextElapsed;
@@ -1262,7 +1311,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
       rendererRef.current = null;
       controlsRef.current = null;
     };
-  }, [colorMode, durationSeconds, points, positionIndex, projection, qualityIdx, timeline, trip?.id]);
+  }, [colorMode, durationSeconds, points, positionIndex, projection, timeline, trip?.id]);
 
   const seekToElapsed = (seconds, { log = true } = {}) => {
     const safeElapsed = Math.max(0, Math.min(durationSeconds, seconds));
