@@ -1942,6 +1942,21 @@ describe('tripEngine', () => {
     expect(detectCloseProximityManeuverAlerts(sustained)[0]).toMatchObject({ type: EVENT_TYPES.CLOSE_PROXIMITY, confidence: 'low' });
   });
 
+  it('can export compact trip summaries without embedding raw telemetry JSON', () => {
+    const csv = tripsToCSV([{
+      id: 'compact-trip',
+      route_points: [{ lat: 43.65, lng: -79.38 }],
+      driving_events: [{ type: 'harsh_brake', lat: 43.65, lng: -79.38 }],
+    }], { includeTelemetry: false });
+    const [headers, , row] = csv.split('\n');
+
+    expect(headers).toContain('"GPS Point Count"');
+    expect(headers).not.toContain('"Route Points JSON"');
+    expect(headers).not.toContain('"Driving Events JSON"');
+    expect(row).not.toContain('43.65');
+    expect(row).not.toContain('harsh_brake');
+  });
+
   it('exports proxy-safe score labels in CSV reports', () => {
     const csv = tripsToCSV([]);
     expect(csv).toContain('Brake Onset Smoothness Score');

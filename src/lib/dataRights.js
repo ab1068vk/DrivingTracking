@@ -229,7 +229,7 @@ export async function buildDataPortabilityExport({
     : await getHydratedPrivacyZones(resolvedSettings).catch(() => []);
   const sourceTrips = Array.isArray(trips)
     ? trips
-    : await tripService.listAll({ sort: '-start_time' });
+    : await (tripService.listAllForExport?.({ sort: '-start_time' }) ?? tripService.listAll({ sort: '-start_time' }));
   const privacyExportSalt = createPrivacyExportSalt();
   const privacySettings = {
     ...resolvedSettings,
@@ -265,7 +265,7 @@ export async function downloadJsonFile(
   mimeType = 'application/json',
   { logNativeFailure = true } = {}
 ) {
-  const data = `${JSON.stringify(payload, null, 2)}\n`;
+  const data = `${JSON.stringify(payload)}\n`;
   try {
     if (isNativePlatform()) {
       const result = await saveExportToDownloads({ filename, data, mimeType });
@@ -293,9 +293,9 @@ export async function downloadJsonFile(
   return { native: false, filename };
 }
 
-export async function exportDataPortabilityBundle() {
+export async function exportDataPortabilityBundle(options = {}) {
   try {
-    const bundle = await buildDataPortabilityExport();
+    const bundle = await buildDataPortabilityExport(options);
     const filename = `road-sage-data-portability-${new Date().toISOString().slice(0, 10)}.json`;
     return {
       bundle,

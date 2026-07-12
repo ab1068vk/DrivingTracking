@@ -829,6 +829,7 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
     });
     throw error;
   }
+  const plaintext = JSON.stringify(signedBackup);
   await logTransmission({
     service: 'export',
     type: encrypted ? 'Encrypted full backup' : 'Full backup',
@@ -845,12 +846,11 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
     sentCoords: '0 - zone coordinates and ranges excluded, boundary points committed',
     protections: ['local HMAC integrity', 'commitment scheme', 'no zone centers or ranges included'],
     offsetMeters: null,
-    bytesOut: JSON.stringify(signedBackup).length,
+    bytesOut: plaintext.length,
     status: 'safe',
     tripId: null,
     zonesSuppressed: privacyZoneExportPlaceholders(getPrivacyZones(settings)).map((zone) => zone.label),
   });
-  const plaintext = JSON.stringify(signedBackup, null, 2);
   let content = plaintext;
   if (encrypted) {
     recordSystemEvent('backup_export_encryption_started', {

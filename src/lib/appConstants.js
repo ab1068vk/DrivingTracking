@@ -1,5 +1,7 @@
 import { scoringValue } from './scoringConstants';
 
+export const APP_LOCK_SETTING_EVENT = 'roadsage-app-lock-setting-changed';
+
 export const NIGHT_START_HOUR = scoringValue('NIGHT_START_HOUR');
 export const NIGHT_END_HOUR = scoringValue('NIGHT_END_HOUR');
 export const MORNING_RUSH_START_HOUR = 7;

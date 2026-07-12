@@ -20,6 +20,7 @@ import { maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZo
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import usePrivacyZonesRevision from '@/hooks/usePrivacyZonesRevision';
+import usePlaybackScreenAwake from '@/hooks/usePlaybackScreenAwake';
 
 const SPEEDS = [1, 2, 4, 8];
 const EVENT_COLORS = {
@@ -857,6 +858,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [playing, setPlaying] = useState(false);
+  usePlaybackScreenAwake(playing);
   const [speedIdx, setSpeedIdx] = useState(0);
   const [followVehicle, setFollowVehicle] = useState(true);
   const [cameraMode, setCameraMode] = useState('cinematic');

@@ -349,7 +349,7 @@ export default function Reports() {
   };
 
   const handleExport = async () => {
-    const csv = tripsToCSV(trips);
+    const csv = tripsToCSV(trips, { includeTelemetry: false });
     const result = await downloadCSV(csv, `road-sage-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
     toast({
       title: 'Export saved',

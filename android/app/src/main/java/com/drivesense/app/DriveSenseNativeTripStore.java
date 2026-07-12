@@ -16,10 +16,12 @@ class DriveSenseNativeTripStore {
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
     private static final String KEY_COMPLETED_TRIPS = "completed_trips";
     private static final String KEY_SERVICE_ENABLED = "service_enabled";
+    private static final String KEY_ACTIVE_TRIP_STATUS = "active_trip_status";
     private static final String KEY_DIAGNOSTIC_EVENTS = "diagnostic_events";
     private static final String KEY_LAST_PARKED = "last_parked_location";
     private static final String SHARED_LAST_PARKED_KEY = "drivesense_last_parked";
     private static final String COMPLETED_TRIPS_CONTEXT = "native:completed_trips";
+    private static final String ACTIVE_TRIP_STATUS_CONTEXT = "native:active_trip_status";
     private static final String LAST_PARKED_CONTEXT = "native:last_parked";
     private static final String SHARED_LAST_PARKED_CONTEXT = "storage:drivesense_last_parked";
     private static final int MAX_DIAGNOSTIC_EVENTS = 120;
@@ -34,6 +36,39 @@ class DriveSenseNativeTripStore {
 
     static void setServiceEnabled(Context context, boolean enabled) {
         prefs(context).edit().putBoolean(KEY_SERVICE_ENABLED, enabled).apply();
+    }
+
+    static JSONObject getActiveTripStatus(Context context) {
+        String stored = prefs(context).getString(KEY_ACTIVE_TRIP_STATUS, "");
+        if (stored == null || stored.trim().isEmpty()) return null;
+        try {
+            String raw = DriveSensePayloadCrypto.decryptStoredValue(stored, ACTIVE_TRIP_STATUS_CONTEXT);
+            JSONObject status = new JSONObject(raw);
+            if (!DriveSensePayloadCrypto.isEncryptedStoredValue(stored)) {
+                setActiveTripStatus(context, status);
+            }
+            return status;
+        } catch (Exception error) {
+            clearActiveTripStatus(context);
+            return null;
+        }
+    }
+
+    static void setActiveTripStatus(Context context, JSONObject status) {
+        if (status == null) {
+            clearActiveTripStatus(context);
+            return;
+        }
+        try {
+            String encrypted = DriveSensePayloadCrypto.encryptForStorage(status.toString(), ACTIVE_TRIP_STATUS_CONTEXT);
+            prefs(context).edit().putString(KEY_ACTIVE_TRIP_STATUS, encrypted).apply();
+        } catch (Exception ignored) {}
+    }
+
+    static void clearActiveTripStatus(Context context) {
+        if (!SecureDeleteHelper.overwriteAndRemovePreference(prefs(context), KEY_ACTIVE_TRIP_STATUS)) {
+            prefs(context).edit().remove(KEY_ACTIVE_TRIP_STATUS).apply();
+        }
     }
 
     static JSONArray getCompletedTrips(Context context) {

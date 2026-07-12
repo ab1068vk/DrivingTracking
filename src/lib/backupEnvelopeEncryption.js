@@ -2,6 +2,7 @@ export const ENCRYPTED_BACKUP_FORMAT = 'road-sage-encrypted-backup';
 export const ENCRYPTED_BACKUP_FORMAT_VERSION = 1;
 export const ENCRYPTED_BACKUP_KDF = 'PBKDF2-SHA-256';
 export const ENCRYPTED_BACKUP_CIPHER = 'AES-256-GCM';
+export const ENCRYPTED_BACKUP_COMPRESSION = 'gzip';
 export const ENCRYPTED_BACKUP_EXTENSION = '.drivesensebackup';
 export const ENCRYPTED_BACKUP_MIME_TYPE = 'application/vnd.road-sage.encrypted-backup+json';
 export const BACKUP_PASSPHRASE_MIN_LENGTH = 12;
@@ -84,6 +85,40 @@ async function deriveBackupKey(passphrase, salt, iterations) {
   );
 }
 
+const transformBackupBytes = async (bytes, mode) => {
+  const Transform = mode === 'compress'
+    ? globalThis.CompressionStream
+    : globalThis.DecompressionStream;
+  if (typeof Transform !== 'function') return null;
+  const stream = new Blob([bytes]).stream().pipeThrough(new Transform(ENCRYPTED_BACKUP_COMPRESSION));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+};
+
+const compressBackupBytes = async (bytes) => {
+  const compressed = await transformBackupBytes(bytes, 'compress').catch(() => null);
+  return compressed && compressed.length < bytes.length
+    ? { bytes: compressed, compression: ENCRYPTED_BACKUP_COMPRESSION }
+    : { bytes, compression: null };
+};
+
+const decompressBackupBytes = async (bytes, compression) => {
+  if (!compression) return bytes;
+  if (compression !== ENCRYPTED_BACKUP_COMPRESSION) {
+    throw makeBackupCryptoError(
+      'Encrypted backup compression is not supported.',
+      BACKUP_UNSUPPORTED_ENCRYPTION_CODE
+    );
+  }
+  const decompressed = await transformBackupBytes(bytes, 'decompress').catch(() => null);
+  if (!decompressed) {
+    throw makeBackupCryptoError(
+      'This device cannot decompress the encrypted backup.',
+      BACKUP_UNSUPPORTED_ENCRYPTION_CODE
+    );
+  }
+  return decompressed;
+};
+
 const validateEnvelope = (envelope) => {
   if (
     !envelope ||
@@ -99,6 +134,7 @@ const validateEnvelope = (envelope) => {
   if (
     envelope.kdf !== ENCRYPTED_BACKUP_KDF ||
     envelope.cipher !== ENCRYPTED_BACKUP_CIPHER ||
+    (envelope.compression != null && envelope.compression !== ENCRYPTED_BACKUP_COMPRESSION) ||
     !Number.isInteger(Number(envelope.iterations)) ||
     typeof envelope.salt !== 'string' ||
     typeof envelope.iv !== 'string' ||
@@ -126,11 +162,15 @@ export async function encryptBackupText(plaintext, passphrase, { exportedAt = ne
   const crypto = cryptoProvider();
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-  const key = await deriveBackupKey(passphrase, salt, BACKUP_KDF_ITERATIONS);
+  const plaintextBytes = new TextEncoder().encode(String(plaintext));
+  const [key, compressed] = await Promise.all([
+    deriveBackupKey(passphrase, salt, BACKUP_KDF_ITERATIONS),
+    compressBackupBytes(plaintextBytes),
+  ]);
   const ciphertext = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv },
     key,
-    new TextEncoder().encode(String(plaintext))
+    compressed.bytes
   );
 
   return JSON.stringify({
@@ -140,11 +180,12 @@ export async function encryptBackupText(plaintext, passphrase, { exportedAt = ne
     exported_at: exportedAt,
     kdf: ENCRYPTED_BACKUP_KDF,
     cipher: ENCRYPTED_BACKUP_CIPHER,
+    ...(compressed.compression ? { compression: compressed.compression } : {}),
     iterations: BACKUP_KDF_ITERATIONS,
     salt: bytesToBase64(salt),
     iv: bytesToBase64(iv),
     ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
-  }, null, 2);
+  });
 }
 
 export async function decryptBackupText(encryptedText, passphrase) {
@@ -171,7 +212,8 @@ export async function decryptBackupText(encryptedText, passphrase) {
       key,
       ciphertext
     );
-    return new TextDecoder().decode(plaintext);
+    const plaintextBytes = await decompressBackupBytes(new Uint8Array(plaintext), envelope.compression);
+    return new TextDecoder().decode(plaintextBytes);
   } catch (error) {
     if (
       error?.code === BACKUP_PASSWORD_REQUIRED_CODE ||

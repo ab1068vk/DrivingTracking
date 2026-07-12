@@ -114,6 +114,20 @@ describe('trip engine calculation coverage', () => {
     }).confirmed).toBe(true);
   });
 
+  it('counts frequent vehicle-speed samples below the GPS noise floor', () => {
+    const route = Array.from({ length: 11 }, (_, index) => point(index, {
+      lat: 43.65 + index * 0.000135,
+      speed_kmh: 54,
+      accuracy: 30,
+      timestamp: at(index),
+    }));
+
+    const stats = calculateTripStats(route, route[0].timestamp, route.at(-1).timestamp);
+
+    expect(stats.distance_km).toBeGreaterThan(0.14);
+    expect(stats.distance_km).toBeLessThan(0.17);
+  });
+
   it('excludes stale GPS jumps from distance and marks the route break', () => {
     const route = [
       point(0, { lat: 43.65, speed_kmh: 40, timestamp: at(0) }),

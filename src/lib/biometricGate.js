@@ -1,9 +1,10 @@
 import { registerPlugin } from '@capacitor/core';
 import { isAndroid } from '@/lib/nativePlatform';
+import { APP_LOCK_SETTING_EVENT } from '@/lib/appConstants';
 
 const BiometricAuth = registerPlugin('BiometricAuth');
 
-export const APP_LOCK_SETTING_EVENT = 'roadsage-app-lock-setting-changed';
+export { APP_LOCK_SETTING_EVENT };
 
 export async function getDeviceAuthenticationAvailability() {
   if (!isAndroid()) {

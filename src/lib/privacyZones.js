@@ -15,6 +15,10 @@ const EXPORT_NOISE_MAX_M = 35;
 const TIMESTAMP_FUZZ_RANGE_MS = 3 * 60 * 1000;
 const PRIVACY_CELL_SIZE_M = 50;
 const PRIVACY_CELL_SCHEMA = 'global_grid_v1';
+// The encrypted recovery region is deliberately coarse (about 6.4 km wide)
+// so maps can rediscover one-way cell hashes without storing the private center.
+const PRIVACY_DISPLAY_REGION_CELLS = 128;
+const PRIVACY_DISPLAY_REGION_SCHEMA = 'coarse_grid_v1';
 const EXPORT_PRIVACY_ZONE_ID = 'private_area';
 const EXPORT_PRIVACY_ZONE_LABEL = 'Private area';
 export const PRIVACY_RADIUS_MIN_M = 50;
@@ -535,6 +539,21 @@ const privacyMetadata = (zone, boundary = false) => ({
   ...(boundary ? { privacy_boundary: true } : {}),
 });
 
+const normalizePrivacyDisplayRegion = (zone = {}) => {
+  const y = Number(zone?.privacy_display_region_y);
+  const x = Number(zone?.privacy_display_region_x);
+  const span = Number(zone?.privacy_display_region_span);
+  if (!Number.isInteger(y) || !Number.isInteger(x)) return null;
+  return { privacy_display_region_schema: PRIVACY_DISPLAY_REGION_SCHEMA, privacy_display_region_y: y, privacy_display_region_x: x, privacy_display_region_span: Number.isInteger(span) && span >= 32 && span <= 512 ? span : PRIVACY_DISPLAY_REGION_CELLS };
+};
+const privacyDisplayRegionForPoint = (point = {}, cellSizeM = PRIVACY_CELL_SIZE_M) => {
+  const lat = finiteNumber(point?.lat); const lng = finiteNumber(point?.lng);
+  if (lat == null || lng == null) return {};
+  const size = Math.max(25, finiteNumber(cellSizeM) ?? PRIVACY_CELL_SIZE_M); const step = size / 111320;
+  const y = Math.floor((lat + 90) / step); const x = Math.floor((lng + 180) / step);
+  return { privacy_display_region_schema: PRIVACY_DISPLAY_REGION_SCHEMA, privacy_display_region_y: Math.floor(y / PRIVACY_DISPLAY_REGION_CELLS), privacy_display_region_x: Math.floor(x / PRIVACY_DISPLAY_REGION_CELLS), privacy_display_region_span: PRIVACY_DISPLAY_REGION_CELLS };
+};
+
 const normalizePrivacyCellHashes = (zone = {}) => (
   Array.isArray(zone.privacy_cell_hashes)
     ? Array.from(new Set(zone.privacy_cell_hashes
@@ -569,6 +588,7 @@ const normalizePrivacyZones = (zones = []) => (
           privacy_cell_schema: zone?.privacy_cell_schema || PRIVACY_CELL_SCHEMA,
           privacy_cell_size_m: Number(zone?.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M,
           privacy_cell_hashes: normalizePrivacyCellHashes(zone),
+          ...(normalizePrivacyDisplayRegion(zone) || {}),
           masked_for_privacy: zone?.masked_for_privacy === true,
         };
         const corridorWaypoints = type === 'corridor'
@@ -595,6 +615,7 @@ const normalizePrivacyZones = (zones = []) => (
             privacy_cell_schema: PRIVACY_CELL_SCHEMA,
             privacy_cell_size_m: PRIVACY_CELL_SIZE_M,
             privacy_cell_hashes: createPrivacyCellHashes(withGeometry),
+            ...(type === 'circle' ? privacyDisplayRegionForPoint(withGeometry) : {}),
             masked_for_privacy: false,
           };
         }
@@ -633,6 +654,7 @@ const cellOnlyPrivacyZones = (zones = []) => (
     privacy_cell_schema: zone.privacy_cell_schema || PRIVACY_CELL_SCHEMA,
     privacy_cell_size_m: Number(zone.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M,
     privacy_cell_hashes: normalizePrivacyCellHashes(zone),
+    ...(normalizePrivacyDisplayRegion(zone) || {}),
     masked_for_privacy: true,
   }))
 );
@@ -878,7 +900,16 @@ function recoverPrivacyZoneCenter(zone = {}, referencePoints = []) {
     if (seed) break;
   }
 
+  const savedRegion = normalizePrivacyDisplayRegion(zone);
+  if (!seed && savedRegion) {
+    const span = savedRegion.privacy_display_region_span; const startY = savedRegion.privacy_display_region_y * span; const startX = savedRegion.privacy_display_region_x * span;
+    for (let y = startY; y < startY + span && !seed; y++) for (let x = startX; x < startX + span; x++) if (hashes.has(privacyCellHash(y, x, cellSizeM))) { const latStep = cellSizeM / 111320; seed = { y, x, latStep, lngStep: latStep, cellSizeM }; break; }
+  }
   if (!seed) return null;
+  if (!savedRegion) {
+    const region = privacyDisplayRegionForPoint(cellCenterPoint(seed.y, seed.x, seed.latStep, seed.lngStep), seed.cellSizeM); Object.assign(zone, region);
+    if (Array.isArray(privacyZonesMemory)) { privacyZonesMemory = privacyZonesMemory.map((item) => item?.id === zone?.id ? { ...item, ...region } : item); void setEncryptedJson(PRIVACY_ZONES_SECURE_KEY, cellOnlyPrivacyZones(privacyZonesMemory)).catch((error) => logSystemFailure('privacy_zone_display_region_backfill', error, { zone_id: zone?.id })); }
+  }
 
   const queue = [{ y: seed.y, x: seed.x }];
   const matched = [];
@@ -1437,6 +1468,7 @@ export async function purgeGpsWithinPrivacyZone(trips = [], zone, updateTrip) {
   let pointsPurged = 0;
   let eventsPurged = 0;
   const tripIdsAffected = [];
+  const updates = [];
 
   for (const trip of Array.isArray(trips) ? trips : []) {
     const result = purgeTripGpsWithinPrivacyZone(trip, zone);
@@ -1447,7 +1479,7 @@ export async function purgeGpsWithinPrivacyZone(trips = [], zone, updateTrip) {
     eventsPurged += result.purgedEvents;
     tripIdsAffected.push(trip.id);
     if (typeof updateTrip === 'function') {
-      await updateTrip(trip.id, {
+      updates.push(() => updateTrip(trip.id, {
         route_points: result.trip.route_points,
         route_points_raw_count: result.trip.route_points_raw_count,
         route_points_map_count: result.trip.route_points_map_count,
@@ -1455,8 +1487,14 @@ export async function purgeGpsWithinPrivacyZone(trips = [], zone, updateTrip) {
         privacy_purged_zone_ids: result.trip.privacy_purged_zone_ids,
         privacy_purged_at: result.trip.privacy_purged_at,
         needs_rescore: result.trip.needs_rescore,
-      });
+      }));
     }
+  }
+
+  // Bound concurrent storage writes so cleanup is fast without overwhelming IndexedDB.
+  const concurrency = 6;
+  for (let index = 0; index < updates.length; index += concurrency) {
+    await Promise.all(updates.slice(index, index + concurrency).map((run) => run()));
   }
 
   if (tripsAffected > 0) {
@@ -1759,6 +1797,14 @@ export function maskTripForPrivacy(trip = {}, settings = localSettings.get()) {
 export function maskTripForPrivacyExport(trip = {}, settings = localSettings.get(), exportSalt = createPrivacyExportSalt()) {
   const zones = getPrivacyZones(settings);
   const rawRoutePoints = Array.isArray(trip.route_points) ? trip.route_points : [];
+  const hasStoredPrivacyMarkers = rawRoutePoints.some((point) => (
+    point?.masked_for_privacy === true ||
+    point?.privacy_boundary === true ||
+    point?.privacy_gap === true ||
+    Boolean(point?.privacy_zone_id)
+  ));
+  if (!zones.length && !hasStoredPrivacyMarkers) return trip;
+
   const startZone = privacyZoneForExportEndpoint(rawRoutePoints[0], zones);
   const endZone = privacyZoneForExportEndpoint(rawRoutePoints.at?.(-1), zones);
   const masked = /** @type {Record<string, any>} */ (maskTripForPrivacy(trip, settings));

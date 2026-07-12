@@ -499,7 +499,16 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     @PluginMethod
     public void nativeAutoTrackingStatus(PluginCall call) {
         JSObject payload = new JSObject();
-        payload.put("enabled", DriveSenseNativeTripStore.isServiceEnabled(getContext()));
+        boolean enabled = DriveSenseNativeTripStore.isServiceEnabled(getContext());
+        org.json.JSONObject activeTrip = DriveSenseNativeTripStore.getActiveTripStatus(getContext());
+        boolean recordingActive = enabled && activeTrip != null && activeTrip.optBoolean("active", false);
+        if (!enabled && activeTrip != null) {
+            DriveSenseNativeTripStore.clearActiveTripStatus(getContext());
+            activeTrip = null;
+        }
+        payload.put("enabled", enabled);
+        payload.put("recordingActive", recordingActive);
+        payload.put("activeTrip", recordingActive ? activeTrip : null);
         payload.put("completedTripsCount", DriveSenseNativeTripStore.getCompletedTrips(getContext()).length());
         payload.put("diagnosticEventsCount", DriveSenseNativeTripStore.getDiagnosticEvents(getContext()).length());
         call.resolve(payload);

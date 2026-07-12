@@ -27,6 +27,11 @@ test('navigates the core dashboard and settings flow', async ({ page }) => {
   const settingsLink = page.getByRole('link', { name: /Settings/ });
   if (await settingsLink.first().isVisible()) {
     await settingsLink.first().click();
+  } else if (await page.getByRole('button', { name: 'Settings navigation' }).isVisible()) {
+    await page.getByRole('button', { name: 'Settings navigation' }).click();
+    await page.getByRole('menu')
+      .getByRole('menuitem', { name: /^Settings$/ })
+      .click();
   } else {
     await page.getByRole('button', { name: 'Open navigation menu' }).click();
     await page.getByRole('dialog', { name: 'Navigation menu' })

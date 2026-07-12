@@ -9,6 +9,7 @@ let listening = false;
 
 const refreshSnapshot = (event) => {
   const next = event?.detail?.settings || localSettings.get();
+  if (next === settingsSnapshot) return;
   const serialized = JSON.stringify(next);
   if (serialized === settingsSerialized) return;
   settingsSnapshot = next;

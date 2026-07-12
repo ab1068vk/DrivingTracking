@@ -7,6 +7,7 @@ import {
   getVoiceAlertMessageTitle,
   listVoiceAlertMessageKeys,
   normalizeVoiceAlertMessageKey,
+  resolveVoiceAlertMessageStyle,
   TIER_EVENT_LABELS,
 } from '@/lib/voiceAlertMessages';
 
@@ -48,6 +49,35 @@ describe('voice alert message catalog', () => {
     })).toBe(
       'Speed warning. You are at 78 kilometers per hour in a posted 60 kilometers per hour zone. Ease off smoothly.'
     );
+  });
+
+  it('keeps coaching wording by default and resolves technical wording from tracking mode', () => {
+    expect(resolveVoiceAlertMessageStyle({ voice_alert_style: 'mode_default', experience_mode: 'coaching' })).toBe('coaching');
+    expect(resolveVoiceAlertMessageStyle({ voice_alert_style: 'mode_default', experience_mode: 'tracking' })).toBe('technical');
+    expect(resolveVoiceAlertMessageStyle({ voice_alert_style: 'coaching', experience_mode: 'tracking' })).toBe('coaching');
+    expect(resolveVoiceAlertMessageStyle({ voice_alert_style: 'technical', experience_mode: 'coaching' })).toBe('technical');
+
+    expect(buildVoiceAlertMessage('harsh_brake')).toBe(
+      'Hard braking detected. Open your following space and brake earlier.'
+    );
+    expect(buildVoiceAlertMessage('harsh_brake', {}, { settings: { experience_mode: 'tracking', voice_alert_style: 'mode_default' } })).toBe(
+      'Hard braking event recorded.'
+    );
+  });
+
+  it('builds neutral technical messages for tracking alert contexts', () => {
+    const settings = { experience_mode: 'tracking', voice_alert_style: 'mode_default' };
+    expect(buildVoiceAlertMessage('speeding', {
+      speedKmh: 74,
+      speedLimitKmh: 60,
+      speedLimitSource: 'openstreetmap',
+    }, { settings })).toBe('Speed threshold exceeded: 74 km/h in posted 60 km/h zone.');
+    expect(buildVoiceAlertMessage('phone_use', {
+      source: 'android_usage_access',
+    }, { settings })).toBe('Phone-use window detected from Android Usage Access.');
+    expect(buildVoiceAlertMessage('speeding', {
+      tier: 'GPS_INFERRED',
+    }, { settings })).toBe('Route speed source is estimated; check posted signs.');
   });
 
   it('supports alternate wording without changing alert behavior', () => {

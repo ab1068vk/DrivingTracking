@@ -19,6 +19,7 @@ public class MainActivity extends BridgeActivity {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
         registerPlugin(DriveSenseActivityRecognitionPlugin.class);
         registerPlugin(ScreenSecurityPlugin.class);
+        registerPlugin(ScreenAwakePlugin.class);
         registerPlugin(BiometricAuthPlugin.class);
         registerPlugin(SystemBarsPlugin.class);
         registerPlugin(RaspPlugin.class);

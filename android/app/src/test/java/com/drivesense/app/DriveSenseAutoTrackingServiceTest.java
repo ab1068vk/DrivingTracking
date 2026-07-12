@@ -133,6 +133,27 @@ public class DriveSenseAutoTrackingServiceTest {
     }
 
     @Test
+    public void nativeStatsCountFrequentVehicleSpeedSamplesBelowNoiseFloor() throws Exception {
+        JSONArray points = new JSONArray();
+        long startMs = Instant.parse("2026-01-01T12:00:00Z").toEpochMilli();
+        for (int index = 0; index <= 10; index++) {
+            JSONObject point = routePoint(
+                43.650 + index * 0.000135,
+                -79.380,
+                startMs + index * 1_000L,
+                54d
+            );
+            point.put("accuracy", 30d);
+            points.put(point);
+        }
+
+        Object stats = calculateStats(points, startMs, startMs + 10_000L);
+
+        assertTrue(doubleField(stats, "distanceKm") > 0.14d);
+        assertTrue(doubleField(stats, "distanceKm") < 0.17d);
+    }
+
+    @Test
     public void nativeStatsIgnoreLongGpsGapDistance() throws Exception {
         JSONArray points = new JSONArray();
         long startMs = Instant.parse("2026-01-01T12:00:00Z").toEpochMilli();

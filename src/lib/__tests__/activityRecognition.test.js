@@ -3,11 +3,41 @@ import {
   ACTIVITY_STATE_MAX_AGE_MS,
   ACTIVITY_TYPES,
   computeGpsPositionDrift,
+  normalizeNativeActiveTrip,
   shouldAutoStartTracking,
   shouldAutoStopTracking,
 } from '@/lib/activityRecognition';
 
 describe('activityRecognition auto-stop logic', () => {
+  it('normalizes privacy-safe native live recording status for Tracking Mode', () => {
+    expect(normalizeNativeActiveTrip({
+      recordingActive: true,
+      activeTrip: {
+        id: 'native-live',
+        state: 'recording',
+        start_time: '2026-07-10T18:00:00.000Z',
+        start_source: 'native_auto',
+        distance_km: 4.25,
+        duration_seconds: 615,
+        speed_kmh: 47,
+        route_point_count: 92,
+      },
+    })).toMatchObject({
+      id: 'native-live',
+      native_recording: true,
+      state: 'recording',
+      distance_km: 4.25,
+      duration_seconds: 615,
+      speed_kmh: 47,
+      route_point_count: 92,
+    });
+  });
+
+  it('does not report stale native status as an active recording', () => {
+    expect(normalizeNativeActiveTrip({ recordingActive: false, activeTrip: { active: true } })).toBeNull();
+    expect(normalizeNativeActiveTrip({ recordingActive: true, activeTrip: null })).toBeNull();
+  });
+
   it('keeps Android ON_BICYCLE distinct from the legacy CYCLING alias', () => {
     expect(ACTIVITY_TYPES.ON_BICYCLE).toBe('on_bicycle');
     expect(ACTIVITY_TYPES.CYCLING).toBe('cycling');

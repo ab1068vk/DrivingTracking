@@ -123,7 +123,7 @@ function buildTierAwareSpeedAlert(speed, resolved, settings = {}) {
       speedKmh: speed,
       speedLimitKmh: resolved.limitKmh,
       tier: resolved.tier,
-    })
+    }, null, { settings })
     : null;
   if (warning.voice && !voiceText) return null;
 
@@ -297,7 +297,9 @@ export default function LiveCoachOverlay({
           tone: 'danger',
           displayMs: PHONE_DISPLAY_MS,
           voiceKey: 'phone_use',
-          voiceText: buildVoiceAlertMessage('phone_use'),
+          voiceText: buildVoiceAlertMessage('phone_use', {
+            source: highestConfidence.source || highestConfidence.evidence_source,
+          }, { settings }),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.phone_use,
           voiceParams: { interrupt: true },
         };
@@ -311,14 +313,14 @@ export default function LiveCoachOverlay({
         nextMessage = {
           text: 'Estimated brake-turn manoeuvre alert. Review conditions when safe.',
           voiceKey: 'close_proximity',
-          voiceText: buildVoiceAlertMessage('close_proximity'),
+          voiceText: buildVoiceAlertMessage('close_proximity', {}, { settings }),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.close_proximity,
         };
       } else if (stats.heading_drift_beta_level === 'high') {
         nextMessage = {
           text: 'GPS heading variation pattern recorded. Take a break if you feel tired.',
           voiceKey: 'heading_drift_beta',
-          voiceText: buildVoiceAlertMessage('heading_drift_beta'),
+          voiceText: buildVoiceAlertMessage('heading_drift_beta', {}, { settings }),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.heading_drift_beta,
         };
       } else if (liveSpeedAlert) {
@@ -327,35 +329,35 @@ export default function LiveCoachOverlay({
         nextMessage = {
           text: 'Brake earlier and more gradually',
           voiceKey: 'harsh_brake',
-          voiceText: buildVoiceAlertMessage('harsh_brake'),
+          voiceText: buildVoiceAlertMessage('harsh_brake', {}, { settings }),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.harsh_brake,
         };
       } else if (stopStartPatternCount > previousCountsRef.current[EVENT_TYPES.STOP_START_PATTERN]) {
         nextMessage = {
           text: 'Repeated stop-start pattern recorded',
           voiceKey: 'stop_start_pattern',
-          voiceText: buildVoiceAlertMessage('stop_start_pattern'),
+          voiceText: buildVoiceAlertMessage('stop_start_pattern', {}, { settings }),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.stop_start_pattern,
         };
       } else if (rapidAccelCount > previousCountsRef.current[EVENT_TYPES.RAPID_ACCELERATION]) {
         nextMessage = {
           text: 'Accelerate more smoothly',
           voiceKey: 'rapid_accel',
-          voiceText: buildVoiceAlertMessage('rapid_accel'),
+          voiceText: buildVoiceAlertMessage('rapid_accel', {}, { settings }),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.rapid_accel,
         };
       } else if (durationMins >= (settings.threshold_long_drive_minutes ?? 120)) {
         nextMessage = {
           text: `Long drive reminder. You have been driving for ${Math.round(durationMins)} minutes.`,
           voiceKey: 'long_drive',
-          voiceText: buildVoiceAlertMessage('long_drive'),
+          voiceText: buildVoiceAlertMessage('long_drive', {}, { settings }),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.long_drive,
         };
       } else if ((stats.idle_time_seconds || 0) > 300) {
         nextMessage = {
           text: 'Extended idling recorded',
           voiceKey: 'idle',
-          voiceText: buildVoiceAlertMessage('idle'),
+          voiceText: buildVoiceAlertMessage('idle', {}, { settings }),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.idle,
         };
       }

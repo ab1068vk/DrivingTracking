@@ -1,5 +1,5 @@
 // @ts-check
-import { memo, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
@@ -19,7 +19,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/components/ui/use-toast';
 import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
-import { applyThemeMode, getLastParkedLocation, localSettings, validateSettingsPatch } from '@/lib/trackingStore';
+import { EXPERIENCE_MODES, applyThemeMode, getLastParkedLocation, localSettings, validateSettingsPatch } from '@/lib/trackingStore';
 import { NIGHT_END_TIME, NIGHT_START_TIME, SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
 import { buildDrivingThresholds, SCORING_VERSION } from '@/lib/tripEngine';
@@ -126,7 +126,7 @@ import {
   getDeviceAuthenticationAvailability,
 } from '@/lib/biometricGate';
 import { checkIntegrity, integrityStatusFromSettings } from '@/lib/rasp';
-import { searchSettingsSections } from '@/lib/settingsSearch';
+import { buildSettingsSearchIndex, searchSettingsIndex } from '@/lib/settingsSearch';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import { PageHeader } from '@/components/PageChrome';
 import { HEIGHTENED_PRIVACY_MODE_EFFECTS } from '@/lib/privacyMode';
@@ -347,6 +347,7 @@ function FeaturePermissionBadge({ value }) {
 }
 
 const SETTINGS_NAV_GROUPS = [
+  { id: 'app', label: 'App' },
   { id: 'driving-device', label: 'Driving & Device' },
   { id: 'preferences', label: 'Preferences' },
   { id: 'coaching-detection', label: 'Coaching & Detection' },
@@ -370,6 +371,17 @@ const regionDefaultOptions = (countryCode) => (
 );
 
 const SETTINGS_SECTIONS = [
+  {
+    id: 'settings-experience',
+    group: 'app',
+    title: 'App Experience',
+    icon: SlidersHorizontal,
+    detail: 'Switch between the coaching workspace and the advanced tracking console.',
+    keywords: 'app experience mode coaching advanced tracking telemetry workspace switch',
+    searchItems: [
+      { label: 'App experience', targetLabel: 'App Experience', keywords: 'coaching mode advanced tracking mode workspace switch' },
+    ],
+  },
   {
     id: 'settings-tracking',
     group: 'driving-device',
@@ -796,6 +808,7 @@ export default function Settings() {
   });
   const [privacyCorridorWaypoints, setPrivacyCorridorWaypoints] = useState([]);
   const [privacyProtectionCheck, setPrivacyProtectionCheck] = useState(null);
+  const [privacyProtectionSaving, setPrivacyProtectionSaving] = useState(false);
   const [privacyProtectionTest, setPrivacyProtectionTest] = useState(null);
   const [privacyProtectionTestBusy, setPrivacyProtectionTestBusy] = useState(false);
   const [suggestedPrivacyLocation, setSuggestedPrivacyLocation] = useState(null);
@@ -984,6 +997,8 @@ export default function Settings() {
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
     staleTime: SETTINGS_HEAVY_QUERY_STALE_MS,
   });
+
+  const getSettingsTripsForExport = () => tripService.listAllForExport({ sort: '-start_time' });
 
   const getSettingsVehicles = () => qc.fetchQuery({
     queryKey: ['settings-vehicles'],
@@ -2646,9 +2661,9 @@ export default function Settings() {
     if (tripExportBusy) return;
     setTripExportBusy(true);
     try {
-      const trips = await getSettingsTrips();
+      const trips = await getSettingsTripsForExport();
       const completed = trips.filter(t => t.status === 'completed');
-      const csv = tripsToCSV(completed);
+      const csv = tripsToCSV(completed, { includeTelemetry: false });
       const result = await downloadCSV(csv, `road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
       recordSystemEvent('all_trips_export_completed', {
         trip_count: completed.length,
@@ -2793,7 +2808,7 @@ export default function Settings() {
     try {
       await yieldToPaint();
       const [trips, vehicles] = await Promise.all([
-        getSettingsTrips(),
+        getSettingsTripsForExport(),
         getSettingsVehicles(),
       ]);
       const result = await exportDriveSenseBackupFromSettings({
@@ -2993,13 +3008,20 @@ export default function Settings() {
   const motionSupport = getMotionSensorSupport();
   const locationFeatureStatus = permissionStatus?.foregroundLocation === 'granted' ? 'granted' : permissionStatus?.foregroundLocation;
   const notificationFeatureStatus = permissionStatus?.notifications === 'granted' ? 'granted' : permissionStatus?.notifications;
-  const settingsSearchQuery = settingsSearch.trim().toLowerCase();
+  const deferredSettingsSearch = useDeferredValue(settingsSearch);
+  const settingsSearchQuery = deferredSettingsSearch.trim().toLowerCase();
   const settingsSections = SETTINGS_SECTIONS;
+  const settingsSearchIndex = useMemo(
+    () => buildSettingsSearchIndex(settingsSections),
+    [settingsSections]
+  );
   const activeSettingsSectionMeta = settingsSections.find((section) => section.id === activeSettingsSection);
   const settingSearchResults = useMemo(
-    () => searchSettingsSections(settingsSections, settingsSearchQuery),
-    [settingsSearchQuery]
+    () => searchSettingsIndex(settingsSearchIndex, settingsSearchQuery),
+    [settingsSearchIndex, settingsSearchQuery]
   );
+  const settingsSearchRefreshing = isSettingsSearchPending ||
+    settingsSearchInput.trim().toLowerCase() !== settingsSearchQuery;
   const showSettingsSection = (sectionId) => {
     setActiveSettingsSection(sectionId);
     clearSettingsSearch();
@@ -3122,7 +3144,7 @@ export default function Settings() {
               <span className="text-xs font-semibold text-foreground">
                 {settingSearchResults.length} result{settingSearchResults.length === 1 ? '' : 's'}
               </span>
-              <InlineRefreshBadge visible={isSettingsSearchPending} label="Updating search" />
+              <InlineRefreshBadge visible={settingsSearchRefreshing} label="Updating search" />
             </div>
             <div className="grid gap-2 md:grid-cols-2">
               {settingSearchResults.length > 0 ? settingSearchResults.map((item) => (
@@ -3240,6 +3262,42 @@ export default function Settings() {
             <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{activeSettingsSectionMeta?.detail}</div>
           </div>
         </div>
+
+        <SettingsSection id="settings-experience" activeId={activeSettingsSection}>{() => (<>
+        <SectionTitle id="settings-experience">App Experience</SectionTitle>
+        <div className="space-y-1">
+          <div>
+            <div className="text-sm font-medium mb-2 px-1">Experience Mode</div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {[
+                {
+                  id: EXPERIENCE_MODES.COACHING,
+                  label: 'Coaching Mode',
+                  sub: 'Keeps the current app experience.',
+                },
+                {
+                  id: EXPERIENCE_MODES.TRACKING,
+                  label: 'Advanced Tracking Mode',
+                  sub: 'Changes presentation to neutral telemetry views; tracking behavior stays the same.',
+                },
+              ].map(opt => (
+                <button
+                  key={opt.id}
+                  onClick={() => updateCfg({ experience_mode: opt.id })}
+                  className={`flex min-h-[5rem] flex-col rounded-xl border p-3 text-left transition-all ${
+                    cfg.experience_mode === opt.id ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted-foreground hover:border-primary/40'
+                  }`}
+                >
+                  <span className="text-sm font-semibold">{opt.label}</span>
+                  <span className="mt-1 text-xs leading-relaxed">{opt.sub}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+        </div>
+
+        </>)}</SettingsSection>
 
         <SettingsSection id="settings-tracking" activeId={activeSettingsSection}>{() => (<>
         {/* Tracking */}
@@ -5743,7 +5801,10 @@ export default function Settings() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(privacyProtectionCheck)} onOpenChange={(open) => { if (!open) setPrivacyProtectionCheck(null); }}>
+      <Dialog open={Boolean(privacyProtectionCheck)} onOpenChange={(open) => {
+        if (privacyProtectionSaving) return;
+        if (!open) setPrivacyProtectionCheck(null);
+      }}>
         <DialogContent className="grid max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-2xl grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-hidden rounded-2xl p-4 sm:max-h-[88dvh] sm:w-full sm:p-6">
           <DialogHeader className="pr-8">
             <DialogTitle>
@@ -5774,7 +5835,8 @@ export default function Settings() {
             <button
               type="button"
               onClick={() => setPrivacyProtectionCheck(null)}
-              className="rounded-xl border border-border px-4 py-2 text-sm font-semibold"
+              disabled={privacyProtectionSaving}
+              className="rounded-xl border border-border px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
             >
               Go back
             </button>
@@ -5782,17 +5844,24 @@ export default function Settings() {
               type="button"
               onClick={async () => {
                 const check = privacyProtectionCheck;
-                if (!check) return;
-                const savedZone = check.type === 'corridor'
-                  ? await savePrivacyZone(null, check.sourceLabel || 'Private route', check.radius_m)
-                  : await savePrivacyZone(check.location, check.sourceLabel || 'Private place', check.radius_m);
-                if (!savedZone) return;
-                if (check.clearSuggestionOnSave) setSuggestedPrivacyLocation(null);
-                setPrivacyProtectionCheck(null);
+                if (!check || privacyProtectionSaving) return;
+                setPrivacyProtectionSaving(true);
+                toast({ title: 'Activating privacy protection', description: 'The zone is being secured now. Checking and cleaning saved trips may take a moment.' });
+                try {
+                  const savedZone = check.type === 'corridor'
+                    ? await savePrivacyZone(null, check.sourceLabel || 'Private route', check.radius_m)
+                    : await savePrivacyZone(check.location, check.sourceLabel || 'Private place', check.radius_m);
+                  if (!savedZone) return;
+                  if (check.clearSuggestionOnSave) setSuggestedPrivacyLocation(null);
+                  setPrivacyProtectionCheck(null);
+                } finally {
+                  setPrivacyProtectionSaving(false);
+                }
               }}
-              className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
+              disabled={privacyProtectionSaving}
+              className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:cursor-wait disabled:opacity-70"
             >
-              Save protection
+              {privacyProtectionSaving ? 'Saving protection...' : 'Save protection'}
             </button>
           </DialogFooter>
         </DialogContent>

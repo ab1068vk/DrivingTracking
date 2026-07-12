@@ -133,6 +133,31 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  html.mobile-navigation-open,
+  body.mobile-navigation-open {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  body.mobile-navigation-open {
+    width: 100%;
+    touch-action: none;
+  }
+
+  .cyber-mobile-backdrop {
+    touch-action: none;
+  }
+
+  .cyber-mobile-drawer {
+    contain: layout paint;
+    touch-action: pan-y;
+  }
+
+  .mobile-navigation-scroll {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
   #root {
     background-color: hsl(var(--background));
     min-height: 100vh;
@@ -301,6 +326,76 @@
 
   .cyber-only {
     display: none;
+  }
+
+  .tracking-console-shell {
+    isolation: isolate;
+    background:
+      linear-gradient(180deg, hsl(var(--background)), hsl(var(--secondary) / 0.42));
+  }
+
+  .tracking-console-toolbar,
+  .tracking-console-rail,
+  .tracking-console-mobile-nav,
+  .tracking-console-footer {
+    color: hsl(var(--foreground));
+  }
+
+  .tracking-console-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 1.75rem;
+    max-width: min(18rem, 42vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-width: 1px;
+    border-radius: 999px;
+    padding: 0.25rem 0.65rem;
+    font-size: 0.75rem;
+    font-weight: 650;
+  }
+
+  .tracking-console-frame {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: clip;
+  }
+
+  .tracking-console-main {
+    width: 100%;
+    max-width: none;
+  }
+
+  .tracking-console-main > * {
+    min-width: 0;
+  }
+
+  .tracking-console-rail {
+    min-height: 0;
+  }
+
+  .tracking-console-nav-item {
+    width: 100%;
+  }
+
+  @media (min-width: 768px) {
+    .tracking-console-shell {
+      min-height: 100dvh;
+    }
+
+    .tracking-console-frame {
+      min-height: 0;
+    }
+  }
+
+  .tracking-console-mobile-nav {
+    overflow-x: clip;
+  }
+
+  .tracking-console-mobile-nav > div {
+    scrollbar-width: thin;
   }
 
   .cyber-lab .cyber-app-shell {

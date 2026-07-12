@@ -137,6 +137,27 @@ export default function DrivingCoach() {
     ? Math.round(sviValues.reduce((sum, value) => sum + value, 0) / sviValues.length * 10) / 10
     : null;
   const latestSviLabel = completed.find((trip) => trip.svi_score != null && trip.svi_label)?.svi_label || 'unknown';
+  const coachingProgress = [...completed].sort((a, b) => new Date(a.start_time || 0).getTime() - new Date(b.start_time || 0).getTime()).slice(-16).map((trip) => {
+    const distance = Number(trip.distance_km) || 0;
+    const events = Array.isArray(trip.driving_events)
+      ? trip.driving_events.length
+      : Number(trip.driving_events_count ?? trip.event_count ?? trip.harsh_brakes_count ?? 0) || 0;
+    const score = Number(trip.score_overall ?? trip.overall_score ?? trip.score);
+    return {
+      id: trip.id || trip.start_time,
+      label: new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(trip.start_time)),
+      score: Number.isFinite(score) ? score : null,
+      eventRate: distance > 0 ? Math.round(events / distance * 100) / 10 : null,
+    };
+  });
+  const progressHalves = [coachingProgress.slice(0, Math.floor(coachingProgress.length / 2)), coachingProgress.slice(Math.floor(coachingProgress.length / 2))];
+  const averageRate = (rows) => {
+    const values = rows.map((row) => row.eventRate).filter(Number.isFinite);
+    return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  };
+  const earlierRate = averageRate(progressHalves[0]);
+  const recentRate = averageRate(progressHalves[1]);
+  const rateChange = earlierRate && recentRate != null ? Math.round((recentRate - earlierRate) / earlierRate * 100) : null;
 
   return (
     <div className="space-y-6 pb-4">
@@ -337,6 +358,36 @@ export default function DrivingCoach() {
                   value={coach.risk_rate.totals.heading_deviations || 0}
                   label="heading events (beta)"
                 />
+              </div>
+
+              <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h2 className="font-semibold">Progress Across Recent Trips</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">Scores and event frequency are shown together so progress is not reduced to one number.</p>
+                  </div>
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${rateChange == null ? 'bg-secondary text-muted-foreground' : rateChange <= 0 ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
+                    {rateChange == null ? 'More trips needed' : rateChange === 0 ? 'Event rate steady' : `${Math.abs(rateChange)}% ${rateChange < 0 ? 'fewer' : 'more'} events / 10 km`}
+                  </span>
+                </div>
+                <div className="mt-4">
+                  <DeferredRecharts height={220}>
+                    {({ ResponsiveContainer, ComposedChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, Legend }) => (
+                      <ResponsiveContainer width="100%" height={220}>
+                        <ComposedChart data={coachingProgress} margin={{ top: 4, right: 0, left: -18, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
+                          <XAxis dataKey="label" tick={{ fontSize: 10 }} tickLine={false} minTickGap={24} />
+                          <YAxis yAxisId="score" domain={[0, 100]} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                          <YAxis yAxisId="events" orientation="right" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                          <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
+                          <Legend />
+                          <Line yAxisId="score" type="monotone" dataKey="score" name="Score estimate" stroke="#22c55e" strokeWidth={2} dot={false} connectNulls />
+                          <Line yAxisId="events" type="monotone" dataKey="eventRate" name="Events / 10 km" stroke="#f97316" strokeWidth={2} dot={false} connectNulls />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    )}
+                  </DeferredRecharts>
+                </div>
               </div>
 
               {(coach.risk_patterns || []).length > 0 && (

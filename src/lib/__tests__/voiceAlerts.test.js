@@ -254,6 +254,49 @@ describe('voice alert cooldowns', () => {
     });
   });
 
+  it('uses technical test-alert wording when tracking mode requests mode default', async () => {
+    mockState.isNative = true;
+    mockState.nativeSpeech.speakText = vi.fn().mockResolvedValue();
+
+    expect(await testVoiceAlert({
+      voice_alerts_enabled: true,
+      experience_mode: 'tracking',
+      voice_alert_style: 'mode_default',
+    })).toBe(true);
+    expect(mockState.nativeSpeech.speakText).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'Recording active. Voice alert delivery ready.',
+      interrupt: true,
+      queueMode: 'flush',
+    }));
+  });
+
+  it('lets an explicit coaching style override tracking mode test-alert wording', async () => {
+    mockState.isNative = true;
+    mockState.nativeSpeech.speakText = vi.fn().mockResolvedValue();
+
+    expect(await testVoiceAlert({
+      voice_alerts_enabled: true,
+      experience_mode: 'tracking',
+      voice_alert_style: 'coaching',
+    })).toBe(true);
+    expect(mockState.nativeSpeech.speakText).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'Road Sage voice alerts are ready. Coaching alerts will speak during active trips.',
+    }));
+  });
+
+  it('preserves Android native ownership while style settings change wording', () => {
+    expect(getVoiceAlertDeliveryStatus({
+      settings: {
+        voice_alerts_enabled: true,
+        experience_mode: 'tracking',
+        voice_alert_style: 'mode_default',
+      },
+      trip: { voice_alert_owner: 'native_android' },
+      isAndroidPlatform: true,
+      tracking: true,
+    })).toMatchObject({ status: 'native', label: 'Android native voice' });
+  });
+
   it('stops queued native and browser speech immediately', async () => {
     mockState.isNative = true;
     mockState.nativeSpeech.stopSpeech = vi.fn().mockResolvedValue();

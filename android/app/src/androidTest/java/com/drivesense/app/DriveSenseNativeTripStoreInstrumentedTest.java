@@ -70,6 +70,29 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     }
 
     @Test
+    public void activeTripStatusPersistsAndClearsWithoutCoordinates() throws Exception {
+        JSONObject status = new JSONObject();
+        status.put("active", true);
+        status.put("state", "recording");
+        status.put("distance_km", 2.5d);
+        status.put("route_point_count", 42);
+
+        DriveSenseNativeTripStore.setActiveTripStatus(context, status);
+
+        JSONObject restored = DriveSenseNativeTripStore.getActiveTripStatus(context);
+        assertNotNull(restored);
+        assertTrue(restored.getBoolean("active"));
+        assertEquals(2.5d, restored.getDouble("distance_km"), 0.001d);
+        String stored = DriveSenseNativeTripStore.prefs(context).getString("active_trip_status", "");
+        assertTrue(stored.startsWith("enc:v1:"));
+        assertFalse(stored.contains("distance_km"));
+        assertFalse(stored.contains("lat"));
+
+        DriveSenseNativeTripStore.clearActiveTripStatus(context);
+        assertNull(DriveSenseNativeTripStore.getActiveTripStatus(context));
+    }
+
+    @Test
     public void completedTripsRecoverFromMalformedStorage() throws Exception {
         SharedPreferences prefs = DriveSenseNativeTripStore.prefs(context);
         prefs.edit().putString("completed_trips", "{not-json").commit();

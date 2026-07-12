@@ -784,6 +784,37 @@ describe('privacyZones', () => {
     expect(display.lng).toBeCloseTo(zone.lng, 2);
   });
 
+  it('recovers a saved circle outline from its coarse encrypted region without nearby map points', () => {
+    const cellSizeM = 50;
+    const regionSpan = 128;
+    const step = cellSizeM / 111320;
+    const cellOnlyZone = {
+      id: 'home-cell-durable-display',
+      label: 'Home',
+      radius_m: 100,
+      privacy_cell_schema: 'global_grid_v1',
+      privacy_cell_size_m: cellSizeM,
+      privacy_cell_hashes: createPrivacyCellHashes(zone),
+      privacy_display_region_schema: 'coarse_grid_v1',
+      privacy_display_region_y: Math.floor(Math.floor((zone.lat + 90) / step) / regionSpan),
+      privacy_display_region_x: Math.floor(Math.floor((zone.lng + 180) / step) / regionSpan),
+      privacy_display_region_span: regionSpan,
+      masked_for_privacy: true,
+    };
+
+    const display = getPrivacyZoneDisplayCircle(cellOnlyZone);
+
+    expect(display).toMatchObject({
+      id: 'home-cell-durable-display',
+      source_radius_m: 100,
+      radius_m: 135,
+    });
+    expect(display.lat).toBeCloseTo(zone.lat, 2);
+    expect(display.lng).toBeCloseTo(zone.lng, 2);
+    expect(JSON.stringify(cellOnlyZone)).not.toContain('43.65');
+    expect(JSON.stringify(cellOnlyZone)).not.toContain('-79.38');
+  });
+
   it('chooses the zone where the point is deepest inside when zones overlap', () => {
     const shallow = { id: 'shallow', label: 'Shallow', lat: 43.65, lng: -79.38, radius_m: 100 };
     const deep = { id: 'deep', label: 'Deep', lat: 43.65, lng: -79.38, radius_m: 250 };

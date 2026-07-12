@@ -608,11 +608,15 @@ function TripMapContent({
   smoothRoute = true,
   height = '350px',
   className = '',
+  onEventSelect = null,
+  focusPoint = null,
 }) {
   const mapRef = useRef(null);
   const leafletMapRef = useRef(null);
   const layersRef = useRef(null);
   const tileLayerRef = useRef(null);
+  const onEventSelectRef = useRef(onEventSelect);
+  const focusLayerRef = useRef(null);
   const lastBoundsRef = useRef(null);
   const lastFitRouteKeyRef = useRef('');
   const tileErrorCountRef = useRef(0);
@@ -625,6 +629,32 @@ function TripMapContent({
   const settings = useTripMapSettings();
   const heightenedPrivacy = settings?.[HEIGHTENED_PRIVACY_MODE_KEY] === true;
   const privacyZonesRevision = usePrivacyZonesRevision();
+  onEventSelectRef.current = onEventSelect;
+
+  useEffect(() => {
+    const map = leafletMapRef.current;
+    if (!ready || !map) return undefined;
+    if (focusLayerRef.current) {
+      safeLeafletCall(() => focusLayerRef.current.remove());
+      focusLayerRef.current = null;
+    }
+    const point = validLatLngPoint(focusPoint);
+    if (!point || point.masked_for_privacy === true || point.privacy_gap === true || point.privacy_boundary === true) return undefined;
+    const layer = L.circleMarker([point.lat, point.lng], {
+      radius: 9,
+      color: '#1d4ed8',
+      fillColor: '#ffffff',
+      fillOpacity: 0.95,
+      weight: 3,
+      pane: 'markerPane',
+    }).addTo(map);
+    focusLayerRef.current = layer;
+    safeMapPanTo(map, [point.lat, point.lng]);
+    return () => {
+      safeLeafletCall(() => layer.remove());
+      if (focusLayerRef.current === layer) focusLayerRef.current = null;
+    };
+  }, [focusPoint, ready]);
 
   const resetTileFailureTracking = useCallback(() => {
     tileErrorCountRef.current = 0;
@@ -1162,6 +1192,14 @@ function TripMapContent({
         });
         window.L.marker([cluster.lat, cluster.lng], { icon })
           .bindPopup(isCluster ? clusterPopupHtml(cluster.events) : eventPopupHtml(evt))
+          .on('click', () => {
+            if (typeof onEventSelectRef.current === 'function') {
+              onEventSelectRef.current(isCluster ? cluster.events[0] : evt, {
+                clusterCount: cluster.count,
+                events: cluster.events,
+              });
+            }
+          })
           .addTo(layers);
       });
     }

@@ -2,6 +2,10 @@ import { isNativePlatform } from '@/lib/nativePlatform';
 import { localSettings, SETTINGS_CHANGED_EVENT } from '@/lib/trackingStore';
 import NativeSpeech from '@/lib/driveSenseNativePlugin';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
+import {
+  buildVoiceAlertMessage,
+  resolveVoiceAlertMessageStyle,
+} from '@/lib/voiceAlertMessages';
 
 const lastSpokenAtByKey = new Map();
 const DEFAULT_RATE = 0.92;
@@ -196,7 +200,10 @@ export function resetSafetyAlertCooldowns() {
 }
 
 export function testVoiceAlert(settings = localSettings.get()) {
-  return speakSafetyAlert('Road Sage voice alerts are ready. Coaching alerts will speak during active trips.', settings, {
+  const message = resolveVoiceAlertMessageStyle(settings) === 'technical'
+    ? buildVoiceAlertMessage('tracking_ready', {}, { settings })
+    : 'Road Sage voice alerts are ready. Coaching alerts will speak during active trips.';
+  return speakSafetyAlert(message, settings, {
     interrupt: true,
   });
 }

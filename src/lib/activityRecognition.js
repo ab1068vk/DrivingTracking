@@ -213,8 +213,35 @@ export async function stopNativeAutoTracking() {
   }
 }
 
+export function normalizeNativeActiveTrip(status) {
+  if (status?.recordingActive !== true || !status?.activeTrip || typeof status.activeTrip !== 'object') return null;
+  const trip = status.activeTrip;
+  const finiteOr = (value, fallback = 0) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+  };
+  return {
+    id: String(trip.id || 'native_active_trip'),
+    native_recording: true,
+    state: trip.state === 'candidate' ? 'candidate' : 'recording',
+    candidate: trip.candidate === true,
+    candidate_near_parked: trip.candidate_near_parked === true,
+    manual: trip.manual === true,
+    start_time: typeof trip.start_time === 'string' ? trip.start_time : null,
+    start_time_ms: Math.max(0, finiteOr(trip.start_time_ms)),
+    start_source: String(trip.start_source || 'native_auto'),
+    distance_km: Math.max(0, finiteOr(trip.distance_km)),
+    duration_seconds: Math.max(0, Math.round(finiteOr(trip.duration_seconds))),
+    speed_kmh: Math.max(0, finiteOr(trip.speed_kmh)),
+    route_point_count: Math.max(0, Math.round(finiteOr(trip.route_point_count))),
+    last_location_at: typeof trip.last_location_at === 'string' ? trip.last_location_at : null,
+    updated_at: typeof trip.updated_at === 'string' ? trip.updated_at : null,
+    permission_loss: trip.permission_loss === true,
+  };
+}
+
 export async function getNativeAutoTrackingStatus() {
-  if (!isAndroid()) return { enabled: false, completedTripsCount: 0 };
+  if (!isAndroid()) return { enabled: false, recordingActive: false, activeTrip: null, completedTripsCount: 0 };
   try {
     return await ActivityRecognition.nativeAutoTrackingStatus();
   } catch (error) {

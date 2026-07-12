@@ -58,7 +58,30 @@ const fuzzyWordDistance = (term, words) => {
   return bestDistance <= allowedDistance ? bestDistance : null;
 };
 
-const searchItemForSection = (section) => ({
+const prepareSearchItem = (item) => {
+  const label = normalizeSearchText(item.label);
+  const section = normalizeSearchText(item.section);
+  const detail = normalizeSearchText(item.detail);
+  const keywords = normalizeSearchText(item.keywords);
+  return {
+    ...item,
+    searchText: `${label} ${section} ${detail} ${keywords}`,
+    searchFields: {
+      label,
+      section,
+      detail,
+      keywords,
+    },
+    searchWords: {
+      label: searchWords(label),
+      section: searchWords(section),
+      detail: searchWords(detail),
+      keywords: searchWords(keywords),
+    },
+  };
+};
+
+const searchItemForSection = (section) => prepareSearchItem({
   kind: 'area',
   label: section.title,
   section: section.title,
@@ -69,7 +92,7 @@ const searchItemForSection = (section) => ({
 
 const searchItemsForSection = (section) => (section.searchItems || []).map((item) => {
   const normalizedItem = typeof item === 'string' ? { label: item } : item;
-  return {
+  return prepareSearchItem({
     kind: 'setting',
     label: normalizedItem.label,
     section: section.title,
@@ -77,23 +100,14 @@ const searchItemsForSection = (section) => (section.searchItems || []).map((item
     targetLabel: normalizedItem.targetLabel || normalizedItem.label,
     detail: normalizedItem.detail || section.detail,
     keywords: `${section.keywords || ''} ${normalizedItem.keywords || ''}`,
-  };
+  });
 });
 
 const scoreSearchItem = (item, query, terms) => {
-  const label = normalizeSearchText(item.label);
-  const section = normalizeSearchText(item.section);
-  const detail = normalizeSearchText(item.detail);
-  const keywords = normalizeSearchText(item.keywords);
-  const haystack = `${label} ${section} ${detail} ${keywords}`;
-  const fieldWords = {
-    label: searchWords(label),
-    section: searchWords(section),
-    detail: searchWords(detail),
-    keywords: searchWords(keywords),
-  };
+  const { label, section, detail, keywords } = item.searchFields;
+  const fieldWords = item.searchWords;
   const termMatches = terms.map((term) => {
-    if (haystack.includes(term)) return { exact: true, fuzzyScore: 0 };
+    if (item.searchText.includes(term)) return { exact: true, fuzzyScore: 0 };
 
     const fuzzyCandidates = [
       { distance: fuzzyWordDistance(term, fieldWords.label), weight: 22 },
@@ -143,19 +157,26 @@ const scoreSearchItem = (item, query, terms) => {
   return score;
 };
 
-export function searchSettingsSections(sections, rawQuery, limit = 8) {
+export function buildSettingsSearchIndex(sections) {
+  return sections.flatMap((section) => [
+    searchItemForSection(section),
+    ...searchItemsForSection(section),
+  ]);
+}
+
+export function searchSettingsIndex(index, rawQuery, limit = 8) {
   const query = normalizeSearchText(rawQuery);
   if (!query) return [];
 
   const terms = query.split(/\s+/).filter(Boolean);
-  const index = sections.flatMap((section) => [
-    searchItemForSection(section),
-    ...searchItemsForSection(section),
-  ]);
 
   return index
     .map((item) => ({ ...item, score: scoreSearchItem(item, query, terms) }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label))
     .slice(0, limit);
+}
+
+export function searchSettingsSections(sections, rawQuery, limit = 8) {
+  return searchSettingsIndex(buildSettingsSearchIndex(sections), rawQuery, limit);
 }

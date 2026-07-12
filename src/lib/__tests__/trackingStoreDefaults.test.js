@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_EXPERIENCE_MODE,
   DEFAULT_SETTINGS,
+  DEFAULT_VOICE_ALERT_STYLE,
+  EXPERIENCE_MODES,
   SETTINGS_CHANGED_EVENT,
+  VOICE_ALERT_STYLES,
+  isTrackingExperienceMode,
   localSettings,
   migrateDefaultSettings,
   sanitizeImportedSettings,
@@ -12,6 +17,86 @@ import {
 // - Added validation coverage for blank numeric setting drafts during input editing.
 
 describe('tracking store default settings', () => {
+  it('defaults to coaching experience mode and normalizes invalid saved values', () => {
+    expect(DEFAULT_EXPERIENCE_MODE).toBe(EXPERIENCE_MODES.COACHING);
+    expect(DEFAULT_SETTINGS.experience_mode).toBe(EXPERIENCE_MODES.COACHING);
+    expect(isTrackingExperienceMode(DEFAULT_SETTINGS)).toBe(false);
+    expect(isTrackingExperienceMode({ experience_mode: EXPERIENCE_MODES.TRACKING })).toBe(true);
+
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 16,
+    })).toMatchObject({
+      changed: true,
+      settings: {
+        settings_defaults_version: 18,
+        experience_mode: EXPERIENCE_MODES.COACHING,
+      },
+    });
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 17,
+      experience_mode: 'flight_deck',
+    })).toMatchObject({
+      changed: true,
+      settings: {
+        settings_defaults_version: 18,
+        experience_mode: EXPERIENCE_MODES.COACHING,
+      },
+    });
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 18,
+      experience_mode: EXPERIENCE_MODES.TRACKING,
+      voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
+    })).toMatchObject({
+      changed: false,
+      settings: {
+        experience_mode: EXPERIENCE_MODES.TRACKING,
+      },
+    });
+    expect(sanitizeImportedSettings({ experience_mode: EXPERIENCE_MODES.TRACKING })).toMatchObject({
+      experience_mode: EXPERIENCE_MODES.TRACKING,
+    });
+    expect(sanitizeImportedSettings({ experience_mode: 'invalid' })).not.toHaveProperty('experience_mode');
+    expect(validateSettingsPatch({ experience_mode: EXPERIENCE_MODES.TRACKING })).toEqual({ valid: true, errors: [] });
+    expect(validateSettingsPatch({ experience_mode: 'invalid' })).toMatchObject({ valid: false });
+
+    const previousMode = localSettings.get().experience_mode;
+    try {
+      localSettings.update({ experience_mode: EXPERIENCE_MODES.TRACKING });
+      expect(localSettings.get().experience_mode).toBe(EXPERIENCE_MODES.TRACKING);
+    } finally {
+      localSettings.update({ experience_mode: previousMode });
+    }
+  });
+
+  it('defaults voice alert style to mode default and validates overrides', () => {
+    expect(DEFAULT_VOICE_ALERT_STYLE).toBe(VOICE_ALERT_STYLES.MODE_DEFAULT);
+    expect(DEFAULT_SETTINGS.voice_alert_style).toBe(VOICE_ALERT_STYLES.MODE_DEFAULT);
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 17,
+    })).toMatchObject({
+      changed: true,
+      settings: {
+        settings_defaults_version: 18,
+        voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
+      },
+    });
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 18,
+      voice_alert_style: 'robot',
+    })).toMatchObject({
+      changed: true,
+      settings: {
+        voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
+      },
+    });
+    expect(sanitizeImportedSettings({ voice_alert_style: VOICE_ALERT_STYLES.TECHNICAL })).toMatchObject({
+      voice_alert_style: VOICE_ALERT_STYLES.TECHNICAL,
+    });
+    expect(sanitizeImportedSettings({ voice_alert_style: 'invalid' })).not.toHaveProperty('voice_alert_style');
+    expect(validateSettingsPatch({ voice_alert_style: VOICE_ALERT_STYLES.COACHING })).toEqual({ valid: true, errors: [] });
+    expect(validateSettingsPatch({ voice_alert_style: 'invalid' })).toMatchObject({ valid: false });
+  });
+
   it('keeps external context auto-fetch off until the user approves it', () => {
     expect(DEFAULT_SETTINGS.external_context_auto_fetch_enabled).toBe(false);
     expect(DEFAULT_SETTINGS.external_context_auto_fetch_consented_at).toBe('');
@@ -34,7 +119,7 @@ describe('tracking store default settings', () => {
     expect(migrateDefaultSettings({
       settings_defaults_version: 13,
     }).settings).toMatchObject({
-      settings_defaults_version: 16,
+      settings_defaults_version: 18,
       heightened_privacy_mode: true,
       weather_context_enabled: false,
       speed_limit_lookup_enabled: false,
@@ -280,7 +365,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(16);
+    expect(legacySunset.settings_defaults_version).toBe(18);
     expect(legacySunset.raw_gps_retention_days).toBe(30);
     expect(legacyCustom.night_end_time).toBe('06:00');
     expect(legacyCustom.raw_gps_retention_days).toBe(30);

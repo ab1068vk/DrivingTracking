@@ -52,7 +52,7 @@ export const DB_NAME_META_KEY = 'drivesense_indexeddb_name';
 export const DB_NAME = String(import.meta.env.VITE_DB_NAME || DEFAULT_DB_NAME).trim() || DEFAULT_DB_NAME;
 const TRIP_STORE = 'trips';
 const TRIP_SUMMARY_STORE = 'trip_summaries';
-export const TRIP_SCHEMA_VERSION = 23;
+export const TRIP_SCHEMA_VERSION = 24;
 export const TRIP_EVENT_MIGRATION_VERSION = 1;
 export const TRIP_EVENT_MIGRATION_KEY = 'drivesense_trip_event_migration_version';
 export const TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY = 'drivesense_heading_event_migration_note_dismissed';
@@ -1533,6 +1533,12 @@ export const localTripRepository = {
     const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
     const trips = await rescoreTripsIfNeeded(taggedTrips);
     return sortTrips(trips, sort).slice(0, limit);
+  },
+
+  async listAllForExport({ sort = '-start_time' } = {}) {
+    await importNativeCompletedTrips();
+    await enforceTripDataRetention();
+    return sortTrips(await getAllTrips(), sort);
   },
 
   async listAll({ sort = '-start_time' } = {}) {

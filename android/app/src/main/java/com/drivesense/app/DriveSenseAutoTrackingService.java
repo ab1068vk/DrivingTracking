@@ -943,6 +943,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private boolean updateForegroundNotification(String message, boolean includeMicrophone) {
+        persistActiveTripStatus(System.currentTimeMillis());
         Notification notification = buildNotification(message);
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             startForeground(NOTIF_ID_TRACKING_START, notification);
@@ -1510,7 +1511,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     private boolean isNoise(double distanceM, double impliedSpeedKmh, double reportedSpeedKmh, double previousAccuracy, double currentAccuracy) {
         double floor = noiseFloor(previousAccuracy, currentAccuracy);
-        boolean tinyMovement = distanceM < floor;
+        // Frequent samples can each be shorter than the accuracy-derived floor.
+        // Reported vehicle speed is independent evidence that the step is real.
+        boolean reportedShowsVehicleMovement = reportedSpeedKmh >= MIN_TRUSTED_SPEED_KMH;
+        boolean tinyMovement = distanceM < floor && !reportedShowsVehicleMovement;
         boolean displacementSaysStill = impliedSpeedKmh < STATIONARY_SPEED_KMH && distanceM < floor * 1.5d;
         boolean reportedDisagrees = reportedSpeedKmh < MIN_TRUSTED_SPEED_KMH && displacementSaysStill;
         return tinyMovement || reportedDisagrees;
@@ -1958,16 +1962,109 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (message.startsWith("Speed warning.")) return "posted_speed_warning";
         if (message.startsWith("Speed check.")) return "estimated_speed_check";
         if (message.startsWith("Long drive reminder.")) return "long_drive";
-        if (message.startsWith("Idling reminder.")) return "idle";
-        if (message.startsWith("Close manoeuvre detected.")) return "close_manoeuvre";
-        if (message.startsWith("Repeated stop-start pattern")) return "stop_start_pattern";
-        if (message.startsWith("Hard braking detected.")) return "harsh_brake";
-        if (message.startsWith("Rapid acceleration detected.")) return "rapid_accel";
-        if (message.startsWith("Sharp cornering detected.")) return "sharp_cornering";
+        if (message.startsWith("Idling reminder.") || message.startsWith("Idle duration threshold")) return "idle";
+        if (message.startsWith("Close manoeuvre detected.") || message.startsWith("Brake-turn manoeuvre")) return "close_manoeuvre";
+        if (message.startsWith("Repeated stop-start pattern") || message.startsWith("Stop-start pattern")) return "stop_start_pattern";
+        if (message.startsWith("Hard braking detected.") || message.startsWith("Hard braking event")) return "harsh_brake";
+        if (message.startsWith("Rapid acceleration detected.") || message.startsWith("Acceleration threshold")) return "rapid_accel";
+        if (message.startsWith("Sharp cornering detected.") || message.startsWith("Cornering threshold")) return "sharp_cornering";
         if (message.startsWith("Attention pattern recorded.")) return "heading_drift";
-        if (message.startsWith("Phone use detected.")) return "phone_use";
+        if (message.startsWith("GPS heading pattern")) return "heading_drift";
+        if (message.startsWith("Phone use detected.") || message.startsWith("Phone-use window")) return "phone_use";
         if (message.startsWith("Possible incident signal recorded.")) return "possible_incident";
         return "native_voice_alert";
+    }
+
+    private boolean isTechnicalVoiceAlertStyle() {
+        String style = getSettingString("voice_alert_style", "mode_default");
+        if ("technical".equals(style)) return true;
+        if ("coaching".equals(style)) return false;
+        return "tracking".equals(getSettingString("experience_mode", "coaching"));
+    }
+
+    private String nativeAlertMessage(String key) {
+        boolean technical = isTechnicalVoiceAlertStyle();
+        switch (key) {
+            case "tracking_ready":
+                return technical
+                    ? "Recording active. Voice alert delivery ready."
+                    : "Road Sage is tracking and voice alerts are ready.";
+            case "fatigue":
+                return technical
+                    ? "Drive duration threshold exceeded."
+                    : "Long drive reminder. Plan a break soon when it is safe.";
+            case "idle":
+                return technical
+                    ? "Idle duration threshold exceeded."
+                    : "Idling reminder. Keep the trip moving when conditions allow.";
+            case "close_manoeuvre":
+                return technical
+                    ? "Brake-turn manoeuvre pattern recorded."
+                    : "Close manoeuvre detected. Create space, then review conditions when safe.";
+            case "stop_start_pattern":
+                return technical
+                    ? "Stop-start pattern recorded."
+                    : "Repeated stop-start pattern recorded. Add space ahead and keep inputs smooth.";
+            case "harsh_brake":
+                return technical
+                    ? "Hard braking event recorded."
+                    : "Hard braking detected. Open your following space and brake earlier.";
+            case "rapid_accel":
+                return technical
+                    ? "Acceleration threshold exceeded."
+                    : "Rapid acceleration detected. Ease into the throttle.";
+            case "sharp_cornering":
+                return technical
+                    ? "Cornering threshold exceeded."
+                    : "Sharp cornering detected. Slow before the turn and steer smoothly.";
+            case "heading_drift":
+                return technical
+                    ? "GPS heading pattern recorded."
+                    : "Attention pattern recorded. Keep your eyes up and plan a break if you feel tired.";
+            case "phone_use":
+                return technical
+                    ? "Phone-use window detected from Android Usage Access."
+                    : "Phone use detected. Keep your eyes up. Handle the phone only when parked.";
+            default:
+                return technical ? "Telemetry alert recorded." : "Safety alert. Check Road Sage when it is safe to do so.";
+        }
+    }
+
+    private String nativeSpeedAlertMessage(double speedKmh, double speedLimitKmh, boolean postedLimit, boolean estimatedLimit) {
+        boolean technical = isTechnicalVoiceAlertStyle();
+        if (technical) {
+            if (postedLimit || estimatedLimit) {
+                return String.format(
+                    Locale.US,
+                    "Speed threshold exceeded: %d km/h in %s %d km/h zone.",
+                    Math.round(speedKmh),
+                    postedLimit ? "posted" : "estimated",
+                    Math.round(speedLimitKmh)
+                );
+            }
+            return String.format(Locale.US, "Speed threshold exceeded: %d km/h.", Math.round(speedKmh));
+        }
+        if (postedLimit) {
+            return String.format(
+                Locale.US,
+                "Speed warning. You are at %d in a posted %d kilometer per hour zone. Ease off smoothly.",
+                Math.round(speedKmh),
+                Math.round(speedLimitKmh)
+            );
+        }
+        if (estimatedLimit) {
+            return String.format(
+                Locale.US,
+                "Speed check. You are at %d in an estimated %d kilometer per hour zone. Check posted signs.",
+                Math.round(speedKmh),
+                Math.round(speedLimitKmh)
+            );
+        }
+        return String.format(
+            Locale.US,
+            "Speed check. You are driving %d kilometers per hour. Ease off and check posted signs.",
+            Math.round(speedKmh)
+        );
     }
 
     private void speakTrackingReadyOnce() {
@@ -1977,7 +2074,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         trackingReadyAlertPending = true;
         lastTrackingReadyAlertAttemptMs = now;
         speakNativeAlert(
-            "Road Sage is tracking and voice alerts are ready.",
+            nativeAlertMessage("tracking_ready"),
             true,
             () -> {
                 trackingReadyAlertSpoken = true;
@@ -2042,25 +2139,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                     : SPEED_ALERT_INFERRED_COOLDOWN_MS;
             if (now - speedingSinceMs >= SPEED_ALERT_SUSTAINED_MS &&
                 now - lastSpeedAlertMs >= speedAlertCooldownMs) {
-                String message = postedLimit
-                    ? String.format(
-                        Locale.US,
-                        "Speed warning. You are at %d in a posted %d kilometer per hour zone. Ease off smoothly.",
-                        Math.round(speedKmh),
-                        Math.round(speedLimitKmh)
-                    )
-                    : estimatedLimit
-                        ? String.format(
-                            Locale.US,
-                            "Speed check. You are at %d in an estimated %d kilometer per hour zone. Check posted signs.",
-                            Math.round(speedKmh),
-                            Math.round(speedLimitKmh)
-                        )
-                        : String.format(
-                            Locale.US,
-                            "Speed check. You are driving %d kilometers per hour. Ease off and check posted signs.",
-                            Math.round(speedKmh)
-                        );
+                String message = nativeSpeedAlertMessage(speedKmh, speedLimitKmh, postedLimit, estimatedLimit);
                 speakNativeAlert(
                     message,
                     true,
@@ -2078,7 +2157,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (activeStartMs > 0L && now - activeStartMs >= fatigueThresholdMs &&
             now - lastFatigueAlertMs >= FATIGUE_ALERT_COOLDOWN_MS) {
             speakNativeAlert(
-                "Long drive reminder. Plan a break soon when it is safe.",
+                nativeAlertMessage("fatigue"),
                 false,
                 () -> lastFatigueAlertMs = now
             );
@@ -2087,7 +2166,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (stillSinceMs > 0L && now - stillSinceMs >= 5 * 60_000L &&
             now - lastIdleAlertMs >= IDLE_ALERT_COOLDOWN_MS) {
             speakNativeAlert(
-                "Idling reminder. Keep the trip moving when conditions allow.",
+                nativeAlertMessage("idle"),
                 false,
                 () -> lastIdleAlertMs = now
             );
@@ -2117,7 +2196,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             headingRateDegS >= manoeuvreTurnThreshold &&
             now - lastCloseManoeuvreAlertMs >= CLOSE_MANOEUVRE_ALERT_COOLDOWN_MS) {
             speakNativeAlert(
-                "Close manoeuvre detected. Create space, then review conditions when safe.",
+                nativeAlertMessage("close_manoeuvre"),
                 false,
                 () -> lastCloseManoeuvreAlertMs = now
             );
@@ -2126,7 +2205,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (recordStopStartCycle(now, priorSpeedKmh, speedKmh, accelerationMs2) &&
             now - lastStopStartAlertMs >= STOP_START_ALERT_COOLDOWN_MS) {
             speakNativeAlert(
-                "Repeated stop-start pattern recorded. Add space ahead and keep inputs smooth.",
+                nativeAlertMessage("stop_start_pattern"),
                 false,
                 () -> lastStopStartAlertMs = now
             );
@@ -2138,7 +2217,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             priorSpeedKmh >= LIVE_EVENT_MIN_SPEED_KMH &&
             now - lastHarshBrakeAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
             speakNativeAlert(
-                "Hard braking detected. Open your following space and brake earlier.",
+                nativeAlertMessage("harsh_brake"),
                 false,
                 () -> lastHarshBrakeAlertMs = now
             );
@@ -2148,7 +2227,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             speedKmh >= LIVE_EVENT_MIN_SPEED_KMH &&
             now - lastRapidAccelAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
             speakNativeAlert(
-                "Rapid acceleration detected. Ease into the throttle.",
+                nativeAlertMessage("rapid_accel"),
                 false,
                 () -> lastRapidAccelAlertMs = now
             );
@@ -2162,7 +2241,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             lateralG >= sharpTurnThreshold &&
             now - lastCorneringAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
             speakNativeAlert(
-                "Sharp cornering detected. Slow before the turn and steer smoothly.",
+                nativeAlertMessage("sharp_cornering"),
                 false,
                 () -> lastCorneringAlertMs = now
             );
@@ -2173,7 +2252,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (shouldAlertHeadingDrift(headingDriftThreshold) &&
             now - lastHeadingDriftAlertMs >= HEADING_DRIFT_ALERT_COOLDOWN_MS) {
             speakNativeAlert(
-                "Attention pattern recorded. Keep your eyes up and plan a break if you feel tired.",
+                nativeAlertMessage("heading_drift"),
                 false,
                 () -> lastHeadingDriftAlertMs = now
             );
@@ -2804,7 +2883,36 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         return builder.build();
     }
 
+    private void persistActiveTripStatus(long nowMs) {
+        if (!isTripActive()) {
+            DriveSenseNativeTripStore.clearActiveTripStatus(this);
+            return;
+        }
+        TripStats stats = calculateStats(activePoints, activeStartMs, nowMs);
+        JSONObject status = new JSONObject();
+        try {
+            status.put("active", true);
+            status.put("state", candidateTrip ? "candidate" : "recording");
+            status.put("candidate", candidateTrip);
+            status.put("candidate_near_parked", candidateNearParked);
+            status.put("manual", nativeManualTrip);
+            status.put("id", nativeManualTripId.isEmpty() ? "native_active_trip" : nativeManualTripId);
+            status.put("start_time", iso(activeStartMs));
+            status.put("start_time_ms", activeStartMs);
+            status.put("start_source", nativeTripStartSource);
+            status.put("distance_km", round(stats.distanceKm, 3));
+            status.put("duration_seconds", stats.durationSeconds);
+            status.put("speed_kmh", Math.round(lastKnownSpeedKmh));
+            status.put("route_point_count", activePoints.length());
+            status.put("last_location_at", lastLocationMs > 0L ? iso(lastLocationMs) : JSONObject.NULL);
+            status.put("updated_at", iso(nowMs));
+            status.put("permission_loss", hasPermissionLoss);
+            DriveSenseNativeTripStore.setActiveTripStatus(this, status);
+        } catch (JSONException ignored) {}
+    }
+
     private void updateNotification(String text) {
+        persistActiveTripStatus(System.currentTimeMillis());
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         manager.notify(NOTIF_ID_TRACKING_START, buildNotification(text));
     }
@@ -2843,7 +2951,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (nowMs - lastPhoneUseNotifyMs > PHONE_NOTIFY_COOLDOWN_MS) {
             sendPhoneUseWarningNotification();
             if (isSettingEnabled("voice_alerts_enabled", true)) {
-                speakNativeAlert("Phone use detected. Keep your eyes up. Handle the phone only when parked.", true);
+                speakNativeAlert(nativeAlertMessage("phone_use"), true);
             }
             lastPhoneUseNotifyMs = nowMs;
         }
@@ -2869,6 +2977,19 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             if (!settings.has(key) || settings.isNull(key)) return defaultValue;
             double value = settings.optDouble(key, defaultValue);
             return Double.isFinite(value) ? value : defaultValue;
+        } catch (Exception ignored) {
+            return defaultValue;
+        }
+    }
+
+    private String getSettingString(String key, String defaultValue) {
+        try {
+            String raw = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE).getString(SETTINGS_KEY, null);
+            if (raw == null || raw.trim().isEmpty()) return defaultValue;
+            JSONObject settings = new JSONObject(raw);
+            if (!settings.has(key) || settings.isNull(key)) return defaultValue;
+            String value = settings.optString(key, defaultValue);
+            return value == null || value.trim().isEmpty() ? defaultValue : value.trim();
         } catch (Exception ignored) {
             return defaultValue;
         }

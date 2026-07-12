@@ -11,6 +11,8 @@ const queryData = new Map();
 const setTripSummaries = (trips) => {
   queryData.set(JSON.stringify(['trip-summaries']), trips);
   queryData.set(JSON.stringify(['trip-summaries', 'limited', 50]), trips);
+  queryData.set(JSON.stringify(['trip-summaries', 'limited', 12]), trips);
+  queryData.set(JSON.stringify(['trip-summaries', 'limited', 100]), trips);
 };
 const settings = {
   onboarding_completed: true,
@@ -163,6 +165,10 @@ vi.mock('@/components/TripPlayback', () => ({
   default: () => <div>Trip playback placeholder</div>,
 }));
 
+vi.mock('@/components/TripDrive3D', () => ({
+  default: () => <div>Trip drive 3D placeholder</div>,
+}));
+
 vi.mock('@/components/TripCard', () => ({
   default: ({ trip }) => <article>{trip.id}</article>,
 }));
@@ -202,8 +208,10 @@ vi.mock('@/components/ui/use-toast', () => ({
 
 vi.mock('@/lib/trackingStore', () => ({
   ACTIVE_TRIP_KEY: 'drivesense_active_trip',
+  ACTIVE_TRIP_CHANGED_EVENT: 'roadsage-active-trip-changed',
   LAST_PARKED_KEY: 'drivesense_last_parked',
   SETTINGS_KEY: 'drivesense_settings',
+  VOICE_ALERT_STYLE_VALUES: ['mode_default', 'coaching', 'technical'],
   activeTripStore: {
     get: vi.fn(() => null),
     set: vi.fn(),
@@ -232,7 +240,9 @@ vi.mock('@/lib/activityRecognition', () => ({
   getAndroidBatteryOptimizationStatus: vi.fn(async () => ({ batteryOptimizationIgnored: true })),
   getAndroidPhoneUsageSummary: vi.fn(async () => ({})),
   getAndroidUsageAccessStatus: vi.fn(async () => ({ usageAccessGranted: false })),
-  getNativeAutoTrackingStatus: vi.fn(async () => ({ enabled: false })),
+  getNativeAutoTrackingStatus: vi.fn(async () => ({ enabled: false, recordingActive: false, activeTrip: null })),
+  normalizeNativeActiveTrip: vi.fn((status) => status?.recordingActive ? status.activeTrip : null),
+  endNativeActiveTrip: vi.fn(async () => true),
   getNativeDiagnostics: vi.fn(async () => ({ enabled: false, events: [] })),
   openAndroidBatteryOptimizationSettings: vi.fn(),
   openAndroidUsageAccessSettings: vi.fn(),
@@ -284,15 +294,43 @@ vi.mock('@/lib/sensorFusionModel', () => ({
 }));
 
 describe('core page component renders', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    const { activeTripStore } = await import('@/lib/trackingStore');
+    activeTripStore.get.mockReturnValue(null);
     queryData.clear();
     delete settings.advanced_safety_detection_enabled;
+    settings.experience_mode = 'coaching';
+    settings.voice_alert_style = 'mode_default';
     settings.predictive_route_risk_enabled = true;
     setTripSummaries([sampleTrip]);
     queryData.set(JSON.stringify(['vehicles']), [{ id: 'vehicle-1', name: 'Commuter', fuel_type: 'gasoline' }]);
     queryData.set(JSON.stringify(['trip', 'trip-1']), sampleTrip);
     queryData.set(JSON.stringify(['settings-trips']), [sampleTrip]);
     queryData.set(JSON.stringify(['settings-vehicles']), [{ id: 'vehicle-1', name: 'Commuter' }]);
+    queryData.set(JSON.stringify(['tracking-speed-console-trips']), [sampleTrip]);
+    queryData.set(JSON.stringify(['tracking-speed-console-knowledge']), { cells: {}, corrections: [] });
+    queryData.set(JSON.stringify(['tracking-reports-trips']), [sampleTrip]);
+    queryData.set(JSON.stringify(['tracking-reports-speed-knowledge']), { cells: {}, corrections: [] });
+    queryData.set(JSON.stringify(['tracking-reports-system-logs']), []);
+    queryData.set(JSON.stringify(['tracking-reports-native-diagnostics']), { events: [] });
+    queryData.set(JSON.stringify(['tracking-replay-pro-trips']), [
+      { ...sampleTrip, id: 'trip-1', route_replay_available: true },
+      {
+        ...sampleTrip,
+        id: 'trip-2',
+        start_time: '2026-01-02T12:00:00.000Z',
+        distance_km: 8.6,
+        avg_speed_kmh: 45,
+        route_replay_available: true,
+        route_points: sampleTrip.route_points.map((point, index) => ({
+          ...point,
+          lat: point.lat + 0.00005,
+          lng: point.lng + 0.00005,
+          timestamp: new Date(Date.parse(point.timestamp) + index * 1000).toISOString(),
+        })),
+        driving_events: [{ type: 'speeding', timestamp: '2026-01-02T12:06:00.000Z', speed_kmh: 72, speed_limit_kmh: 60 }],
+      },
+    ]);
   });
 
   it('renders Dashboard readiness and recent-trip surfaces', async () => {
@@ -306,6 +344,271 @@ describe('core page component renders', () => {
     expect(html).toContain('data-evidence="low"');
     expect(html).toContain('approximate');
   }, 10_000);
+
+  it('renders TrackingOverview empty state without trips', async () => {
+    const { activeTripStore } = await import('@/lib/trackingStore');
+    activeTripStore.get.mockReturnValue(null);
+    setTripSummaries([]);
+    const { default: TrackingOverview } = await import('@/pages/TrackingOverview');
+    const html = renderToStaticMarkup(<TrackingOverview />);
+
+    expect(html).toContain('Tracking Overview');
+    expect(html).toContain('No completed trips');
+    expect(html).toContain('No route data available');
+    expect(html).toContain('GPS permission');
+  });
+
+  it('renders TrackingOverview loaded and active-trip state', async () => {
+    const { activeTripStore } = await import('@/lib/trackingStore');
+    activeTripStore.get.mockReturnValue({
+      ...sampleTrip,
+      id: 'active-trip',
+      end_time: null,
+      start_source: 'manual',
+      route_points: sampleTrip.route_points,
+      driving_events: sampleTrip.driving_events,
+    });
+    setTripSummaries([sampleTrip]);
+    const { default: TrackingOverview } = await import('@/pages/TrackingOverview');
+    const html = renderToStaticMarkup(<TrackingOverview />);
+
+    expect(html).toContain('Recording active');
+    expect(html).toContain('Route points retained');
+    expect(html).toContain('Score estimate');
+    expect(html).toContain('trip-1');
+  });
+
+  it('renders linked TrackingTripDetail analytics and comparison controls', async () => {
+    settings.experience_mode = 'tracking';
+    const { default: TrackingTripDetail } = await import('@/pages/TrackingTripDetail');
+    const html = renderToStaticMarkup(<TrackingTripDetail />);
+
+    expect(html).toContain('Neutral trip record');
+    expect(html).toContain('Compare speed profile');
+    expect(html).toContain('Linked telemetry analysis');
+    expect(html).toContain('Speed and recorded limit');
+    expect(html).toContain('Acquisition quality');
+    expect(html).toContain('Observation timeline');
+  });
+
+  it('renders TrackingMapWorkspace empty state without trips', async () => {
+    setTripSummaries([]);
+    const { default: TrackingMapWorkspace } = await import('@/pages/TrackingMapWorkspace');
+    const html = renderToStaticMarkup(<TrackingMapWorkspace />);
+
+    expect(html).toContain('Map Workspace');
+    expect(html).toContain('No completed trips match');
+    expect(html).toContain('No route selected');
+    expect(html).toContain('Timeline tracks');
+  });
+
+  it('renders TrackingMapWorkspace privacy-masked event details without raw coordinates', async () => {
+    const privateTrip = {
+      ...sampleTrip,
+      route_points: [
+        ...sampleTrip.route_points,
+        {
+          timestamp: '2026-01-01T12:08:00.000Z',
+          lat: null,
+          lng: null,
+          privacy_gap: true,
+          masked_for_privacy: true,
+          privacy_zone_label: 'Home',
+        },
+      ],
+      driving_events: [{
+        type: 'speeding',
+        timestamp: '2026-01-01T12:04:00.000Z',
+        speed_kmh: 72,
+        speed_limit_kmh: 50,
+        source: 'gps',
+        lat: null,
+        lng: null,
+        privacy_event_redacted: true,
+        masked_for_privacy: true,
+        privacy_zone_label: 'Home',
+      }],
+    };
+    setTripSummaries([privateTrip]);
+    queryData.set(JSON.stringify(['trip', 'trip-1']), privateTrip);
+    const { default: TrackingMapWorkspace } = await import('@/pages/TrackingMapWorkspace');
+    const html = renderToStaticMarkup(<TrackingMapWorkspace />);
+
+    expect(html).toContain('Map Workspace');
+    expect(html).toContain('Trip map placeholder');
+    expect(html).toContain('Speeding');
+    expect(html).toContain('privacy masked');
+    expect(html).toContain('Raw coordinates are not shown');
+    expect(html).not.toContain('43.65');
+  });
+
+  it('renders TrackingEvents empty state without trip events', async () => {
+    const quietTrip = {
+      ...sampleTrip,
+      driving_events: [],
+      phone_use_events: [],
+      route_points: [
+        { lat: 43.65, lng: -79.38, speed_kmh: 42, timestamp: '2026-01-01T12:00:00.000Z' },
+        { lat: 43.651, lng: -79.381, speed_kmh: 46, timestamp: '2026-01-01T12:00:30.000Z' },
+        { lat: 43.652, lng: -79.382, speed_kmh: 40, timestamp: '2026-01-01T12:01:00.000Z' },
+      ],
+    };
+    setTripSummaries([quietTrip]);
+    queryData.set(JSON.stringify(['trip', 'trip-1']), quietTrip);
+    const { default: TrackingEvents } = await import('@/pages/TrackingEvents');
+    const html = renderToStaticMarkup(<TrackingEvents />);
+
+    expect(html).toContain('Event Timeline');
+    expect(html).toContain('Technical Log');
+    expect(html).toContain('No events recorded for the selected filters.');
+  });
+
+  it('renders TrackingEvents loaded telemetry rows and inspector labels', async () => {
+    const eventTrip = {
+      ...sampleTrip,
+      driving_events: [
+        ...sampleTrip.driving_events,
+        {
+          type: 'phone_use',
+          source: 'gps_proxy',
+          diagnostic_only: true,
+          timestamp: '2026-01-01T12:06:00.000Z',
+          durationS: 15,
+          confidence: 0.7,
+        },
+      ],
+      voice_speed_limit_markers: [{
+        timestamp: '2026-01-01T12:08:00.000Z',
+        limit_kmh: 50,
+      }],
+    };
+    setTripSummaries([eventTrip]);
+    queryData.set(JSON.stringify(['trip', 'trip-1']), eventTrip);
+    const { default: TrackingEvents } = await import('@/pages/TrackingEvents');
+    const html = renderToStaticMarkup(<TrackingEvents />);
+
+    expect(html).toContain('Event Timeline');
+    expect(html).toContain('Hard braking event');
+    expect(html).toContain('Phone-use window detected');
+    expect(html).toContain('GPS diagnostic proxy');
+    expect(html).toContain('diagnostic / not scored');
+    expect(html).toContain('Voice speed marker recorded');
+    expect(html).toContain('Why Detected');
+  });
+
+  it('renders TrackingSpeedConsole source confidence and edit-flow links', async () => {
+    const speedTrip = {
+      ...sampleTrip,
+      route_points: [
+        { lat: 43.65, lng: -79.38, speed_kmh: 42, speed_limit_kmh: 50, speed_limit_source: 'openstreetmap' },
+        { lat: 43.651, lng: -79.381, speed_kmh: 72, speed_limit_kmh: 60, speed_limit_source: 'region_default_estimate' },
+      ],
+      voice_speed_limit_markers: [{
+        id: 'voice-1',
+        limit_kmh: 50,
+        source: 'voice_user_estimate',
+      }],
+    };
+    queryData.set(JSON.stringify(['tracking-speed-console-trips']), [speedTrip]);
+    queryData.set(JSON.stringify(['tracking-speed-console-knowledge']), {
+      cells: {
+        dpz83f: { limitKmh: 50, source: 'trip_consensus', confidence: 0.55 },
+      },
+      corrections: [{
+        id: 'posted-rule',
+        roadName: 'King Street',
+        limitKmh: 40,
+        source: 'user_confirmed_posted_sign',
+      }],
+    });
+    const { default: TrackingSpeedConsole } = await import('@/pages/TrackingSpeedConsole');
+    const html = renderToStaticMarkup(<TrackingSpeedConsole />);
+
+    expect(html).toContain('Speed Intelligence');
+    expect(html).toContain('Posted signs override app estimates');
+    expect(html).toContain('Your confirmed posted sign');
+    expect(html).toContain('Local learned estimate');
+    expect(html).toContain('Voice marker estimate');
+    expect(html).toContain('/speed-limits?view=review');
+    expect(html).toContain('/trips/trip-1/speed');
+    expect(html).toContain('threshold exceeded');
+    expect(html).not.toMatch(/speeding bad/i);
+  });
+
+  it('renders TrackingPrivacyConsole authentication gate without exposing privacy details', async () => {
+    const { default: TrackingPrivacyConsole } = await import('@/pages/TrackingPrivacyConsole');
+    const html = renderToStaticMarkup(<TrackingPrivacyConsole />);
+
+    expect(html).toContain('Privacy Tracking Console');
+    expect(html).toContain('local device authentication');
+    expect(html).not.toContain('43.65');
+    expect(html).not.toContain('Outbound Road Data');
+  });
+
+  it('renders TrackingAlertsLab shared voice alert controls', async () => {
+    settings.experience_mode = 'tracking';
+    settings.voice_alert_style = 'mode_default';
+    const { default: TrackingAlertsLab } = await import('@/pages/TrackingAlertsLab');
+    const html = renderToStaticMarkup(<TrackingAlertsLab />);
+
+    expect(html).toContain('Voice Alert Lab');
+    expect(html).toContain('Speed Tier Cooldowns');
+    expect(html).toContain('Ownership Rules');
+    expect(html).toContain('Hard braking event recorded.');
+    expect(html).toContain('Speed threshold exceeded: 74 km/h in posted 60 km/h zone.');
+  });
+
+  it('renders TrackingEvidenceConsole data quality rows', async () => {
+    settings.experience_mode = 'tracking';
+    queryData.set(JSON.stringify(['trip', 'trip-1']), {
+      ...sampleTrip,
+      route_points_raw_count: 4,
+      route_points_map_count: 3,
+      obd_powertrain_sample_count: 0,
+      phone_use_score_status: 'android_usage_access',
+      phone_use_window_count: 2,
+    });
+    const { default: TrackingEvidenceConsole } = await import('@/pages/TrackingEvidenceConsole');
+    const html = renderToStaticMarkup(<TrackingEvidenceConsole />);
+
+    expect(html).toContain('Data Quality');
+    expect(html).toContain('Evidence Rows');
+    expect(html).toContain('GPS route samples');
+    expect(html).toContain('Scoring version');
+    expect(html).toContain('provisional notes visible');
+    expect(html).toContain('What data exists and how reliable it is');
+  });
+
+  it('renders TrackingReportsLab technical export options', async () => {
+    settings.experience_mode = 'tracking';
+    const { default: TrackingReportsLab } = await import('@/pages/TrackingReportsLab');
+    const html = renderToStaticMarkup(<TrackingReportsLab />);
+
+    expect(html).toContain('Reports and Export Lab');
+    expect(html).toContain('Trip event CSV');
+    expect(html).toContain('Route point quality summary');
+    expect(html).toContain('Speed-source audit CSV');
+    expect(html).toContain('Privacy-safe technical PDF');
+    expect(html).toContain('Signed technical manifest');
+    expect(html).toContain('Private coords');
+    expect(html).toContain('not exported');
+  });
+
+  it('renders TrackingReplayPro compare and chapter surfaces', async () => {
+    settings.experience_mode = 'tracking';
+    const { default: TrackingReplayPro } = await import('@/pages/TrackingReplayPro');
+    const html = renderToStaticMarkup(<TrackingReplayPro />);
+
+    expect(html).toContain('Compare Replay Pro');
+    expect(html).toContain('Primary trip');
+    expect(html).toContain('Comparison trip');
+    expect(html).toContain('Speed timeline overlay');
+    expect(html).toContain('Event timeline overlay');
+    expect(html).toContain('Route gap comparison');
+    expect(html).toContain('Privacy gap indicators');
+    expect(html).toContain('3D Replay Event Chapters');
+    expect(html).toContain('Trip playback placeholder');
+  });
 
   it('labels historical context as estimated and shows its signal breakdown', async () => {
     setTripSummaries(Array.from({ length: 5 }, (_, index) => ({

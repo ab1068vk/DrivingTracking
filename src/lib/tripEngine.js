@@ -888,7 +888,11 @@ export function calculateSegmentMetrics(previousPoint, point, thresholds = DEFAU
   const stationarySpeed = thresholds.STATIONARY_SPEED_KMH ?? 5;
   const trustedSpeed = thresholds.MIN_TRUSTED_SPEED_KMH ?? 18;
 
-  const tinyMovement = distanceM < noiseFloorM;
+  // Frequent Android samples can each be shorter than the accuracy-derived
+  // floor. A vehicle-speed reading is independent movement evidence, so those
+  // short steps must not be discarded as jitter.
+  const reportedShowsVehicleMovement = reportedSpeedKmh != null && reportedSpeedKmh >= trustedSpeed;
+  const tinyMovement = distanceM < noiseFloorM && !reportedShowsVehicleMovement;
   const displacementSaysStill = impliedSpeedKmh < stationarySpeed && distanceM < noiseFloorM * 1.5;
   const reportedDisagreesWithDisplacement = reportedSpeedKmh != null &&
     reportedSpeedKmh < trustedSpeed &&
@@ -7238,8 +7242,8 @@ const csvSpeedLimitDefaultCountries = (trip = {}) => {
   return [...countries].sort().join(';');
 };
 
-export function tripsToCSV(trips) {
-  const headers = [
+export function tripsToCSV(trips, { includeTelemetry = true } = {}) {
+  const summaryHeaders = [
     'ID', 'Start Time', 'End Time', 'Duration (min)', 'Distance (km)',
     'Avg Speed (km/h)', 'Avg Moving Speed (km/h)', 'Max Speed (km/h)', 'Score', 'Safety', 'Smoothness',
     // FIX: Add exported moving-speed column immediately after the legacy overall average speed.
@@ -7258,8 +7262,11 @@ export function tripsToCSV(trips) {
     'Road Type', 'Harsh Brakes', 'Rapid Accels', 'Sharp Turns', 'Speeding Events',
     'Heading Deviation Events (Beta)', 'Heading Events (Legacy)', 'Stop-Start Patterns', 'Erratic Speed Events', 'Brake-Turn Manoeuvre Alerts', 'Overtake Patterns (Beta Diagnostic)', 'Night Driving',
     'Event Feedback Accurate', 'Event Feedback Wrong', 'Event Feedback JSON',
-    'GPS Point Count', 'Route Points JSON', 'Driving Events JSON',
+    'GPS Point Count',
   ];
+  const headers = includeTelemetry
+    ? [...summaryHeaders, 'Route Points JSON', 'Driving Events JSON']
+    : summaryHeaders;
   const metricMetadata = headers.map((header, index) => {
     if (index === 0) return 'Metric Metadata';
     const metricKey = CSV_METRIC_COLUMNS[header];
@@ -7278,7 +7285,7 @@ export function tripsToCSV(trips) {
     const feedbackItems = Object.values(t.event_feedback || {});
     const accurateFeedback = feedbackItems.filter((item) => item?.verdict === 'accurate').length;
     const wrongFeedback = feedbackItems.filter((item) => item?.verdict === 'wrong').length;
-    return [
+    const summaryRow = [
     t.id,
     t.start_time,
     t.end_time,
@@ -7354,9 +7361,10 @@ export function tripsToCSV(trips) {
     wrongFeedback,
     JSON.stringify(t.event_feedback || {}),
     t.route_points?.length || 0,
-    JSON.stringify(t.route_points || []),
-    JSON.stringify(t.driving_events || []),
     ];
+    return includeTelemetry
+      ? [...summaryRow, JSON.stringify(t.route_points || []), JSON.stringify(t.driving_events || [])]
+      : summaryRow;
   });
 
   const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;

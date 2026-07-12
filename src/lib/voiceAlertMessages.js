@@ -1,4 +1,9 @@
 const UNKNOWN_ALERT_KEY = 'general';
+export const VOICE_ALERT_MESSAGE_STYLES = Object.freeze({
+  MODE_DEFAULT: 'mode_default',
+  COACHING: 'coaching',
+  TECHNICAL: 'technical',
+});
 
 // CHANGES (session):
 // - Added VOICE_COOLDOWNS_BY_TIER and TIER_EVENT_LABELS.
@@ -134,6 +139,114 @@ const VOICE_ALERT_MESSAGE_CATALOG = Object.freeze({
   }),
 });
 
+const TECHNICAL_VOICE_ALERT_MESSAGE_CATALOG = Object.freeze({
+  general: Object.freeze({
+    title: 'Telemetry alert',
+    messages: Object.freeze([
+      () => 'Telemetry alert recorded. Check Road Sage when available.',
+      () => 'Telemetry alert recorded. Review the drive status when available.',
+    ]),
+  }),
+  speeding: Object.freeze({
+    title: 'Speed threshold',
+    messages: Object.freeze([
+      (context) => buildSpeedingMessage(context, 'Speed threshold exceeded.', { style: 'technical' }),
+      (context) => buildSpeedingMessage(context, 'Speed threshold exceeded. Verify posted signs.', { style: 'technical' }),
+    ]),
+  }),
+  harsh_brake: Object.freeze({
+    title: 'Hard braking event',
+    messages: Object.freeze([
+      () => 'Hard braking event recorded.',
+      () => 'Hard braking threshold exceeded.',
+    ]),
+  }),
+  rapid_accel: Object.freeze({
+    title: 'Acceleration event',
+    messages: Object.freeze([
+      () => 'Acceleration threshold exceeded.',
+      () => 'Rapid acceleration event recorded.',
+    ]),
+  }),
+  cornering: Object.freeze({
+    title: 'Cornering event',
+    messages: Object.freeze([
+      () => 'Cornering threshold exceeded.',
+      () => 'Lateral movement event recorded.',
+    ]),
+  }),
+  phone_use: Object.freeze({
+    title: 'Phone-use window',
+    messages: Object.freeze([
+      (context) => buildPhoneUseTechnicalMessage(context),
+      () => 'Phone-use window detected.',
+    ]),
+  }),
+  close_proximity: Object.freeze({
+    title: 'Brake-turn event',
+    messages: Object.freeze([
+      () => 'Brake-turn manoeuvre pattern recorded.',
+      () => 'Close manoeuvre telemetry recorded.',
+    ]),
+  }),
+  heading_drift_beta: Object.freeze({
+    title: 'Heading pattern',
+    messages: Object.freeze([
+      () => 'GPS heading pattern recorded.',
+      () => 'Heading variation threshold exceeded.',
+    ]),
+  }),
+  stop_start_pattern: Object.freeze({
+    title: 'Stop-start pattern',
+    messages: Object.freeze([
+      () => 'Stop-start pattern recorded.',
+      () => 'Repeated stop-start threshold exceeded.',
+    ]),
+  }),
+  idle: Object.freeze({
+    title: 'Idle event',
+    messages: Object.freeze([
+      () => 'Idle duration threshold exceeded.',
+      () => 'Extended idle event recorded.',
+    ]),
+  }),
+  fatigue: Object.freeze({
+    title: 'Drive duration',
+    messages: Object.freeze([
+      () => 'Drive duration threshold exceeded.',
+      () => 'Long-drive threshold recorded.',
+    ]),
+  }),
+  repeated_event_area: Object.freeze({
+    title: 'Repeated event area',
+    messages: Object.freeze([
+      (context) => buildRepeatedEventAreaTechnicalMessage(context),
+      () => 'Repeated event area recorded ahead.',
+    ]),
+  }),
+  possible_incident: Object.freeze({
+    title: 'Possible incident signal',
+    messages: Object.freeze([
+      (context) => buildPossibleIncidentTechnicalMessage(context),
+      () => 'Possible incident signal recorded.',
+    ]),
+  }),
+  tracking_ready: Object.freeze({
+    title: 'Tracking ready',
+    messages: Object.freeze([
+      () => 'Recording active. Voice alert delivery ready.',
+      () => 'Tracking active. Voice alert channel ready.',
+    ]),
+  }),
+  tracking_blocked: Object.freeze({
+    title: 'Tracking unavailable',
+    messages: Object.freeze([
+      (context) => buildTrackingBlockedTechnicalMessage(context),
+      () => 'Tracking unavailable. Source unavailable.',
+    ]),
+  }),
+});
+
 const ALERT_KEY_ALIASES = Object.freeze({
   speed: 'speeding',
   speed_limit: 'speeding',
@@ -191,12 +304,53 @@ function formatKmh(value) {
   return number === null ? null : `${Math.round(number)} kilometers per hour`;
 }
 
+function formatShortKmh(value) {
+  const number = finiteNumber(value);
+  return number === null ? null : `${Math.round(number)} km/h`;
+}
+
 function humanizeEventType(value) {
   const label = normalizeSpaces(String(value || '').replace(/_/g, ' '));
   return label || 'risk event';
 }
 
-export function buildSpeedingMessage(context = {}, fallback = null) {
+function resolveRequestedStyle(settingsOrOptions = {}, options = {}) {
+  const settings = options.settings || settingsOrOptions.settings || settingsOrOptions;
+  const explicit = options.style || settingsOrOptions.style || settings?.voice_alert_style;
+  if (explicit === VOICE_ALERT_MESSAGE_STYLES.COACHING) return VOICE_ALERT_MESSAGE_STYLES.COACHING;
+  if (explicit === VOICE_ALERT_MESSAGE_STYLES.TECHNICAL) return VOICE_ALERT_MESSAGE_STYLES.TECHNICAL;
+  const mode = settings?.experience_mode || settingsOrOptions.experience_mode;
+  return mode === 'tracking'
+    ? VOICE_ALERT_MESSAGE_STYLES.TECHNICAL
+    : VOICE_ALERT_MESSAGE_STYLES.COACHING;
+}
+
+export function resolveVoiceAlertMessageStyle(settings = {}, options = {}) {
+  return resolveRequestedStyle(settings, options);
+}
+
+function buildTechnicalSpeedingMessage(context = {}, fallback = null) {
+  const speed = formatShortKmh(context.speedKmh);
+  const limit = formatShortKmh(context.speedLimitKmh);
+  const overLimit = formatShortKmh(context.overLimitKmh);
+  if (speed && limit) {
+    const source = context.tier === 'POSTED' ||
+      context.speedLimitSource === 'openstreetmap' ||
+      context.speedLimitSource === 'user_confirmed_posted_sign'
+      ? 'posted'
+      : 'estimated';
+    return `Speed threshold exceeded: ${speed} in ${source} ${limit} zone.`;
+  }
+  if (overLimit) return `Speed threshold exceeded: ${overLimit} over threshold.`;
+  if (context.tier && context.tier !== 'POSTED') return 'Route speed source is estimated; check posted signs.';
+  return fallback;
+}
+
+export function buildSpeedingMessage(context = {}, fallback = null, options = {}) {
+  if (resolveRequestedStyle(context, options) === VOICE_ALERT_MESSAGE_STYLES.TECHNICAL) {
+    return buildTechnicalSpeedingMessage(context, fallback);
+  }
+
   if (context.tier) {
     const speed = `${Math.round(Number(context.speedKmh) || 0)} km/h`;
     const limit = context.speedLimitKmh ? `${Math.round(Number(context.speedLimitKmh))} km/h` : null;
@@ -258,6 +412,15 @@ function buildRepeatedEventAreaMessage(context) {
   return `Repeated ${eventType} area ahead. Stay alert and keep extra space.`;
 }
 
+function buildRepeatedEventAreaTechnicalMessage(context) {
+  const eventType = humanizeEventType(context.eventType || context.type || context.dominantType);
+  const distance = finiteNumber(context.distanceM);
+  if (distance !== null && distance > 0) {
+    return `Repeated ${eventType} area recorded about ${Math.round(distance)} meters ahead.`;
+  }
+  return `Repeated ${eventType} area recorded ahead.`;
+}
+
 function buildPossibleIncidentMessage(context) {
   if (context.emergencyWorkflow) {
     return 'Possible incident signal recorded. Emergency check-in is active until you review the trip.';
@@ -265,10 +428,34 @@ function buildPossibleIncidentMessage(context) {
   return 'Possible incident signal recorded. Check in now if you can.';
 }
 
+function buildPossibleIncidentTechnicalMessage(context) {
+  if (context.emergencyWorkflow) {
+    return 'Possible incident signal recorded. Emergency workflow active.';
+  }
+  return 'Possible incident signal recorded.';
+}
+
 function buildTrackingBlockedMessage(context) {
   const reason = normalizeSpaces(context.reason);
   if (reason) return `Tracking did not start. ${reason}`;
   return 'Tracking did not start. Check permissions and tracking mode.';
+}
+
+function buildTrackingBlockedTechnicalMessage(context) {
+  const reason = normalizeSpaces(context.reason);
+  if (reason) return `Tracking unavailable. ${reason}`;
+  return 'Tracking unavailable. Source unavailable.';
+}
+
+function buildPhoneUseTechnicalMessage(context) {
+  const source = context.source || context.evidenceSource || context.phoneUseSource;
+  if (source === 'android_usage_access' || source === 'usage_access') {
+    return 'Phone-use window detected from Android Usage Access.';
+  }
+  if (source === 'gps_proxy') {
+    return 'Phone-use window detected from GPS diagnostic proxy.';
+  }
+  return 'Phone-use window detected.';
 }
 
 function clampMessageIndex(index, messageCount) {
@@ -297,7 +484,11 @@ export function getVoiceAlertMessageTitle(key) {
 
 export function buildVoiceAlertMessage(key, context = {}, options = {}) {
   const normalizedKey = normalizeVoiceAlertMessageKey(key);
-  const entry = VOICE_ALERT_MESSAGE_CATALOG[normalizedKey];
+  const style = resolveRequestedStyle(options.settings || context.settings || context, options);
+  const catalog = style === VOICE_ALERT_MESSAGE_STYLES.TECHNICAL
+    ? TECHNICAL_VOICE_ALERT_MESSAGE_CATALOG
+    : VOICE_ALERT_MESSAGE_CATALOG;
+  const entry = catalog[normalizedKey] || catalog[UNKNOWN_ALERT_KEY];
   const messageIndex = clampMessageIndex(
     options.messageIndex ?? options.escalationLevel ?? context.escalationLevel,
     entry.messages.length

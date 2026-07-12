@@ -1,5 +1,5 @@
 // @ts-check
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { AlertTriangle, ArrowLeft, Ban, CheckSquare2, Download, Gauge, GitMerge, HeartPulse, Info, Layers, Magnet, Map as MapIcon, MapPin, Pencil, Plus, RefreshCw, Scissors, Search, ShieldCheck, SlidersHorizontal, Trash2, Undo2, Upload, X } from 'lucide-react';
@@ -669,10 +669,13 @@ export default function SpeedLimits() {
   const [ignoredUnsetSectionKeys, setIgnoredUnsetSectionKeys] = useState(readIgnoredUnsetSectionKeys);
   const [excludedSpeedSectionKeys, setExcludedSpeedSectionKeys] = useState(readExcludedSpeedSectionKeys);
   const [rowQueryInput, setRowQueryInput] = useState('');
-  const [rowQuery, setRowQuery] = useState('');
-  const [isRowQueryPending, startRowQueryTransition] = useTransition();
   const [rowFilter, setRowFilter] = useState('all');
   const [rowSort, setRowSort] = useState('updated');
+  const deferredRowQuery = useDeferredValue(rowQueryInput);
+  const deferredRowFilter = useDeferredValue(rowFilter);
+  const deferredRowSort = useDeferredValue(rowSort);
+  const isRowQueryPending = deferredRowQuery !== rowQueryInput ||
+    deferredRowFilter !== rowFilter || deferredRowSort !== rowSort;
   const [selectedRows, setSelectedRows] = useState(() => new Set());
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false, undoLabel: '', redoLabel: '' });
   const [health, setHealth] = useState(null);
@@ -717,21 +720,16 @@ export default function SpeedLimits() {
       .map((section) => [correctionKey(section), section.conflict])
   ), [mapSections]);
   const filteredRows = useMemo(() => {
-    const query = rowQuery.trim().toLowerCase();
+    const query = deferredRowQuery.trim().toLowerCase();
     const items = rows
       .map((row) => ({ row, conflict: conflictsByGeohash.get(correctionKey(row)) || null }))
-      .filter(({ row, conflict }) => matchesRowFilter(row, conflict, rowFilter))
+      .filter(({ row, conflict }) => matchesRowFilter(row, conflict, deferredRowFilter))
       .filter(({ row, conflict }) => !query || rowSearchText(row, conflict).includes(query));
-    return sortRows(items, rowSort).map(({ row }) => row);
-  }, [conflictsByGeohash, rowFilter, rowQuery, rowSort, rows]);
-  const updateRowQuery = (value) => {
-    setRowQueryInput(value);
-    startRowQueryTransition(() => {
-      setRowQuery(value);
-    });
-  };
-  const updateRowFilter = (value) => startRowQueryTransition(() => setRowFilter(value));
-  const updateRowSort = (value) => startRowQueryTransition(() => setRowSort(value));
+    return sortRows(items, deferredRowSort).map(({ row }) => row);
+  }, [conflictsByGeohash, deferredRowFilter, deferredRowQuery, deferredRowSort, rows]);
+  const updateRowQuery = (value) => setRowQueryInput(value);
+  const updateRowFilter = (value) => setRowFilter(value);
+  const updateRowSort = (value) => setRowSort(value);
   const revealSavedSpeedMapLayer = useCallback((source = 'user_entered_estimate') => {
     const posted = source === 'user_confirmed_posted_sign';
     setMapLayers((current) => ({
@@ -1180,7 +1178,7 @@ export default function SpeedLimits() {
 
   useEffect(() => {
     savedRowsVirtualizer.scrollToIndex(0, { align: 'start' });
-  }, [rowFilter, rowQuery, rowSort, savedRowsVirtualizer]);
+  }, [deferredRowFilter, deferredRowQuery, deferredRowSort, savedRowsVirtualizer]);
 
   useEffect(() => {
     let cancelled = false;

@@ -2,7 +2,7 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { useLocation } from 'react-router-dom';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { App as CapacitorApp } from '@capacitor/app';
@@ -10,14 +10,11 @@ import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { activeTripStore, applyThemeMode, localSettings, SETTINGS_CHANGED_EVENT } from '@/lib/trackingStore';
+import { activeTripStore, applyThemeMode, isTrackingExperienceMode, localSettings, SETTINGS_CHANGED_EVENT } from '@/lib/trackingStore';
 import { loadPrivacyZonesFromStorage, sweepExpiredPrivacyZones } from '@/lib/privacyZones';
 import { isAndroid } from '@/lib/nativePlatform';
-import { openExportLocation } from '@/lib/nativeDownloads';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
-import { setScreenCaptureAllowed } from '@/lib/screenSecurity';
-import { APP_LOCK_SETTING_EVENT, authenticateDevice } from '@/lib/biometricGate';
-import { checkIntegrity } from '@/lib/rasp';
+import { APP_LOCK_SETTING_EVENT } from '@/lib/appConstants';
 import { Lock, Route as RouteIcon } from 'lucide-react';
 import { beginMeasure, measureAsync, measureSync } from '@/lib/performanceTriage';
 
@@ -27,6 +24,7 @@ import LegalNoticeDialog from '@/components/LegalNoticeDialog';
 import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
 import { AppDialogHost } from '@/lib/appDialog';
 import { LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
+import { useLocalSettingSelector } from '@/hooks/useLocalSettings';
 
 const TRIP_SUMMARIES_QUERY_KEY = ['trip-summaries'];
 
@@ -35,6 +33,18 @@ const startNativeAutoTrackingFromApp = () => import('@/lib/activityRecognition')
 
 const checkAndRotateEncryptionKeyFromApp = () => import('@/lib/keyRotationManager')
   .then(({ checkAndRotateEncryptionKey }) => checkAndRotateEncryptionKey());
+
+const setScreenCaptureAllowedFromApp = (allowed) => import('@/lib/screenSecurity')
+  .then(({ setScreenCaptureAllowed }) => setScreenCaptureAllowed(allowed));
+
+const checkIntegrityFromApp = () => import('@/lib/rasp')
+  .then(({ checkIntegrity }) => checkIntegrity());
+
+const authenticateDeviceFromApp = (reason) => import('@/lib/biometricGate')
+  .then(({ authenticateDevice }) => authenticateDevice(reason));
+
+const openExportLocationFromApp = (options) => import('@/lib/nativeDownloads')
+  .then(({ openExportLocation }) => openExportLocation(options));
 
 async function syncNativeCompletedTripsToLocalStore() {
   if (!isAndroid()) return;
@@ -83,10 +93,21 @@ const sweepExpiredZonesOnForeground = () => {
 
 const showDebugRoutes = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEBUG_ROUTES === 'true';
 const Onboarding = lazy(() => import('@/pages/Onboarding'));
+const TrackingOverview = lazy(() => import('@/pages/TrackingOverview'));
+const TrackingMapWorkspace = lazy(() => import('@/pages/TrackingMapWorkspace'));
+const TrackingEvents = lazy(() => import('@/pages/TrackingEvents'));
+const TrackingSpeedConsole = lazy(() => import('@/pages/TrackingSpeedConsole'));
+const TrackingPrivacyConsole = lazy(() => import('@/pages/TrackingPrivacyConsole'));
+const TrackingAlertsLab = lazy(() => import('@/pages/TrackingAlertsLab'));
+const TrackingEvidenceConsole = lazy(() => import('@/pages/TrackingEvidenceConsole'));
+const TrackingReportsLab = lazy(() => import('@/pages/TrackingReportsLab'));
+const TrackingReplayPro = lazy(() => import('@/pages/TrackingReplayPro'));
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const TripHistory = lazy(() => import('@/pages/TripHistory'));
+const TrackingTripHistory = lazy(() => import('@/pages/TrackingTripHistory'));
 const Trip3DReplay = lazy(() => import('@/pages/Trip3DReplay'));
 const TripDetail = lazy(() => import('@/pages/TripDetail'));
+const TrackingTripDetail = lazy(() => import('@/pages/TrackingTripDetail'));
 const TripDrive3DPage = lazy(() => import('@/pages/TripDrive3DPage'));
 const SpeedAnalysis = lazy(() => import('@/pages/SpeedAnalysis'));
 const MapScreen = lazy(() => import('@/pages/MapScreen'));
@@ -110,6 +131,26 @@ function AppRouteBoundary({ context, title = 'Page unavailable', message = 'Some
       </SectionErrorBoundary>
     </Suspense>
   );
+}
+
+function HomeRoute() {
+  const trackingExperienceMode = useLocalSettingSelector(isTrackingExperienceMode);
+  if (trackingExperienceMode) return <Navigate to="/tracking" replace />;
+  return (
+    <AppRouteBoundary context="dashboard_page" title="Dashboard unavailable">
+      <Dashboard />
+    </AppRouteBoundary>
+  );
+}
+
+function TripHistoryRoute() {
+  const trackingExperienceMode = useLocalSettingSelector(isTrackingExperienceMode);
+  return trackingExperienceMode ? <TrackingTripHistory /> : <TripHistory />;
+}
+
+function TripDetailRoute() {
+  const trackingExperienceMode = useLocalSettingSelector(isTrackingExperienceMode);
+  return trackingExperienceMode ? <TrackingTripDetail /> : <TripDetail />;
 }
 
 function PageRouteSuspense({ title, children }) {
@@ -183,9 +224,9 @@ const AuthenticatedApp = () => {
       setLegalNoticeOpen(shouldShowFirstLaunchLegalNotice);
       applyThemeMode(settings.dark_mode);
 
-      setScreenCaptureAllowed(settings.allow_screen_capture === true)
+      setScreenCaptureAllowedFromApp(settings.allow_screen_capture === true)
         .catch((error) => logSystemFailure('screen_capture_policy_apply', error));
-      checkIntegrity()
+      checkIntegrityFromApp()
         .catch((error) => logSystemFailure('device_integrity_check', error));
       try {
         await loadPrivacyZonesFromStorage(settings);
@@ -250,7 +291,7 @@ const AuthenticatedApp = () => {
     setAppLockBusy(true);
     setAppLockError('');
     try {
-      const result = await authenticateDevice('Verify to open your private driving data');
+      const result = await authenticateDeviceFromApp('Verify to open your private driving data');
       if (result.verified) {
         setAppLocked(false);
         backgroundedAtRef.current = 0;
@@ -360,7 +401,7 @@ const AuthenticatedApp = () => {
       else if (extra.type === 'phone_use_pattern') navigate('/coach');
       else if (extra.type === 'maintenance') navigate('/vehicles');
       else if (extra.type === 'export_saved') {
-        openExportLocation({ uri: extra.uri, mimeType: extra.mimeType }).catch((error) => {
+        openExportLocationFromApp({ uri: extra.uri, mimeType: extra.mimeType }).catch((error) => {
           logSystemFailure('notification_export_location_open', error, {
             notification_type: extra.type,
             has_uri: Boolean(extra.uri),
@@ -407,14 +448,60 @@ const AuthenticatedApp = () => {
 
         {/* Main App with shared Layout */}
         <Route element={<Layout />}>
-          <Route path="/" element={(
-            <AppRouteBoundary context="dashboard_page" title="Dashboard unavailable">
+          <Route path="/tracking" element={(
+            <AppRouteBoundary context="tracking_overview_page" title="Tracking overview unavailable">
+              <TrackingOverview />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/tracking/recorder" element={(
+            <AppRouteBoundary context="tracking_recorder_page" title="Tracking recorder unavailable">
               <Dashboard />
             </AppRouteBoundary>
           )} />
+          <Route path="/tracking/map" element={(
+            <AppRouteBoundary context="tracking_map_workspace_page" title="Tracking map workspace unavailable">
+              <TrackingMapWorkspace />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/tracking/events" element={(
+            <AppRouteBoundary context="tracking_events_page" title="Tracking events unavailable">
+              <TrackingEvents />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/tracking/alerts" element={(
+            <AppRouteBoundary context="tracking_alerts_lab_page" title="Tracking alerts lab unavailable">
+              <TrackingAlertsLab />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/tracking/evidence" element={(
+            <AppRouteBoundary context="tracking_evidence_console_page" title="Tracking evidence console unavailable">
+              <TrackingEvidenceConsole />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/tracking/speed" element={(
+            <AppRouteBoundary context="tracking_speed_console_page" title="Tracking speed console unavailable">
+              <TrackingSpeedConsole />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/tracking/privacy" element={(
+            <AppRouteBoundary context="tracking_privacy_console_page" title="Tracking privacy console unavailable">
+              <TrackingPrivacyConsole />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/tracking/reports" element={(
+            <AppRouteBoundary context="tracking_reports_lab_page" title="Tracking reports lab unavailable">
+              <TrackingReportsLab />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/tracking/replay" element={(
+            <AppRouteBoundary context="tracking_replay_pro_page" title="Tracking replay pro unavailable">
+              <TrackingReplayPro />
+            </AppRouteBoundary>
+          )} />
+          <Route path="/" element={<HomeRoute />} />
           <Route path="/trips" element={(
             <AppRouteBoundary context="trip_history_page" title="Trip history unavailable">
-              <TripHistory />
+              <TripHistoryRoute />
             </AppRouteBoundary>
           )} />
           <Route path="/3d-replay" element={(
@@ -429,7 +516,7 @@ const AuthenticatedApp = () => {
                 title="Trip detail unavailable"
                 message="Something went wrong while opening this trip. Reload to try again."
               >
-                <TripDetail />
+                <TripDetailRoute />
               </SectionErrorBoundary>
             </PageRouteSuspense>
           )} />

@@ -39,17 +39,46 @@ export const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 export const SETTINGS_KEY = 'drivesense_settings';
 export const LAST_PARKED_KEY = 'drivesense_last_parked';
 export const SETTINGS_CHANGED_EVENT = 'roadsage-settings-changed';
+export const ACTIVE_TRIP_CHANGED_EVENT = 'roadsage-active-trip-changed';
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
 let lastNativeSettingsSync = '';
+let settingsCache = null;
+let settingsCacheSerialized = '';
 let memorySettings = null;
 let activeTripMemory = null;
 let activeTripWriteQueue = Promise.resolve();
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 16;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 18;
 const SYSTEM_THEME_QUERY = '(prefers-color-scheme: dark)';
 let activeThemeMode = 'system';
 let systemThemeQueryList = null;
 let systemThemeQueryListener = null;
 let lastSystemBarsSignature = '';
+
+export const EXPERIENCE_MODES = Object.freeze({
+  COACHING: 'coaching',
+  TRACKING: 'tracking',
+});
+export const DEFAULT_EXPERIENCE_MODE = EXPERIENCE_MODES.COACHING;
+export const EXPERIENCE_MODE_VALUES = Object.freeze(Object.values(EXPERIENCE_MODES));
+export const VOICE_ALERT_STYLES = Object.freeze({
+  MODE_DEFAULT: 'mode_default',
+  COACHING: 'coaching',
+  TECHNICAL: 'technical',
+});
+export const DEFAULT_VOICE_ALERT_STYLE = VOICE_ALERT_STYLES.MODE_DEFAULT;
+export const VOICE_ALERT_STYLE_VALUES = Object.freeze(Object.values(VOICE_ALERT_STYLES));
+
+export const normalizeExperienceMode = (mode) => (
+  EXPERIENCE_MODE_VALUES.includes(mode) ? mode : DEFAULT_EXPERIENCE_MODE
+);
+
+export const isTrackingExperienceMode = (settings = {}) => (
+  normalizeExperienceMode(settings?.experience_mode) === EXPERIENCE_MODES.TRACKING
+);
+
+export const normalizeVoiceAlertStyle = (style) => (
+  VOICE_ALERT_STYLE_VALUES.includes(style) ? style : DEFAULT_VOICE_ALERT_STYLE
+);
 
 const settingsStorage = () => {
   try {
@@ -114,9 +143,8 @@ const isPrivateParkedLocation = async (location, settings = localSettings.get())
   return Boolean(isPointInPrivacyZone(location, zones, PARKED_LOCATION_PRIVACY_GUARD_M));
 };
 
-const syncSettingsForNative = (settings) => {
+const syncSettingsForNative = (settings, serialized = JSON.stringify(settings)) => {
   if (typeof window === 'undefined') return;
-  const serialized = JSON.stringify(settings);
   if (serialized === lastNativeSettingsSync) return;
   lastNativeSettingsSync = serialized;
   import('@capacitor/core')
@@ -146,6 +174,13 @@ const dispatchSettingsChanged = (settings, detail = {}) => {
       settings,
       ...detail,
     },
+  }));
+};
+
+const dispatchActiveTripChanged = () => {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+  window.dispatchEvent(new CustomEvent(ACTIVE_TRIP_CHANGED_EVENT, {
+    detail: { active: Boolean(activeTripMemory) },
   }));
 };
 
@@ -190,6 +225,7 @@ const STATUTORY_REGION_SETTING_VALUES = Object.freeze([
 
 export const DEFAULT_SETTINGS = {
   settings_defaults_version: CURRENT_SETTINGS_DEFAULTS_VERSION,
+  experience_mode: DEFAULT_EXPERIENCE_MODE,
   tracking_mode: 'manual',
   units: 'metric',
   currencySymbol: '$',
@@ -279,6 +315,7 @@ export const DEFAULT_SETTINGS = {
   tracking_paused: false,
   live_coaching_enabled: true,
   voice_alerts_enabled: true,
+  voice_alert_style: DEFAULT_VOICE_ALERT_STYLE,
   voice_speed_markers_enabled: false,
   sensor_fusion_enabled: true,
   crash_detection_enabled: true,
@@ -436,12 +473,19 @@ export function migrateDefaultSettings(parsed = {}) {
     merged.voice_speed_markers_enabled = false;
   }
 
+  const experienceModeChanged = !Object.prototype.hasOwnProperty.call(parsed, 'experience_mode') ||
+    merged.experience_mode !== normalizeExperienceMode(merged.experience_mode);
+  merged.experience_mode = normalizeExperienceMode(merged.experience_mode);
+  const voiceAlertStyleChanged = !Object.prototype.hasOwnProperty.call(parsed, 'voice_alert_style') ||
+    merged.voice_alert_style !== normalizeVoiceAlertStyle(merged.voice_alert_style);
+  merged.voice_alert_style = normalizeVoiceAlertStyle(merged.voice_alert_style);
+
   const osrmZoneGuardChanged = merged.osrm_block_near_any_zone !== true;
   merged.osrm_block_near_any_zone = true;
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
   return {
     settings: merged,
-    changed: calibrationSharingChanged || ecoSettingsRepaired || osrmZoneGuardChanged || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
+    changed: calibrationSharingChanged || ecoSettingsRepaired || experienceModeChanged || voiceAlertStyleChanged || osrmZoneGuardChanged || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
   };
 }
 
@@ -501,6 +545,8 @@ const IMPORT_NUMBER_RANGES = {
 };
 
 const SETTINGS_ENUMS = {
+  experience_mode: EXPERIENCE_MODE_VALUES,
+  voice_alert_style: VOICE_ALERT_STYLE_VALUES,
   tracking_mode: ['manual', 'auto_detect', 'background_auto'],
   units: ['metric', 'imperial'],
   currencySymbol: CURRENCY_SYMBOL_OPTIONS.map((option) => option.value),
@@ -774,12 +820,15 @@ export const localSettings = {
       const { value } = await Preferences.get({ key: SETTINGS_KEY });
       if (!value) return this.get();
 
+      if (settingsCache && value === settingsCacheSerialized) return settingsCache;
       const parsed = JSON.parse(value);
       const { settings: merged, changed } = migrateDefaultSettings(parsed);
       const serialized = JSON.stringify(merged);
       localStorage.setItem(SETTINGS_KEY, serialized);
       if (changed) await Preferences.set({ key: SETTINGS_KEY, value: serialized });
       lastNativeSettingsSync = serialized;
+      settingsCache = merged;
+      settingsCacheSerialized = serialized;
       return merged;
     } catch {
       return this.get();
@@ -790,50 +839,62 @@ export const localSettings = {
       const storage = settingsStorage();
       const raw = storage?.getItem(SETTINGS_KEY);
       if (raw) {
+        if (settingsCache && raw === settingsCacheSerialized) return settingsCache;
         const parsed = JSON.parse(raw);
         const { settings: merged, changed } = migrateDefaultSettings(parsed);
-        if (changed) {
-          storage.setItem(SETTINGS_KEY, JSON.stringify(merged));
-          syncSettingsForNative(merged);
-        }
-        syncSettingsForNative(merged);
+        const serialized = JSON.stringify(merged);
+        if (changed || serialized !== raw) storage.setItem(SETTINGS_KEY, serialized);
+        settingsCache = merged;
+        settingsCacheSerialized = serialized;
+        syncSettingsForNative(merged, serialized);
         return merged;
       }
       if (!storage && memorySettings) {
+        if (settingsCache === memorySettings) return settingsCache;
         const { settings: merged } = migrateDefaultSettings(memorySettings);
+        const serialized = JSON.stringify(merged);
         memorySettings = merged;
+        settingsCache = merged;
+        settingsCacheSerialized = serialized;
         return merged;
       }
-      // New user: save defaults immediately so we can detect returning users
       const defaults = { ...DEFAULT_SETTINGS };
-      if (storage) storage.setItem(SETTINGS_KEY, JSON.stringify(defaults));
+      const serialized = JSON.stringify(defaults);
+      if (storage) storage.setItem(SETTINGS_KEY, serialized);
       else memorySettings = defaults;
-      syncSettingsForNative(defaults);
+      settingsCache = defaults;
+      settingsCacheSerialized = serialized;
+      syncSettingsForNative(defaults, serialized);
       return defaults;
     } catch {
-      return { ...DEFAULT_SETTINGS };
+      return settingsCache || { ...DEFAULT_SETTINGS };
     }
   },
   set(data) {
     try {
+      const { settings: normalized } = migrateDefaultSettings(data);
+      const serialized = JSON.stringify(normalized);
       const storage = settingsStorage();
-      if (storage) storage.setItem(SETTINGS_KEY, JSON.stringify(data));
-      else memorySettings = data;
-      syncSettingsForNative(data);
-      dispatchSettingsChanged(data, { source: 'set' });
+      if (storage) storage.setItem(SETTINGS_KEY, serialized);
+      else memorySettings = normalized;
+      settingsCache = normalized;
+      settingsCacheSerialized = serialized;
+      syncSettingsForNative(normalized, serialized);
+      dispatchSettingsChanged(normalized, { source: 'set' });
+      return normalized;
     } catch (error) {
       logError('settings_local_persist', error, {
         requested_key_count: Object.keys(data || {}).length,
       });
+      return this.get();
     }
   },
   update(patch) {
     const current = this.get();
     const updated = { ...current, ...patch };
-    this.set(updated);
     const requestedKeys = Object.keys(patch || {});
     const changedKeys = requestedKeys.filter((key) => current[key] !== updated[key]);
-    const persisted = this.get();
+    const persisted = changedKeys.length ? this.set(updated) : current;
     const appliedKeys = changedKeys.filter((key) => persisted[key] === updated[key]);
     const failedKeys = changedKeys.filter((key) => persisted[key] !== updated[key]);
     const unchangedRequestedKeys = requestedKeys.filter((key) => current[key] === updated[key]);
@@ -849,7 +910,7 @@ export const localSettings = {
         changed_keys: changedKeys,
         applied_keys: appliedKeys,
         failed_keys: failedKeys,
-        changes: summarizeSettingsPatch(changedKeys, current, updated),
+        changes: summarizeSettingsPatch(changedKeys, current, persisted),
       }, {
         category: 'settings',
         title: 'Settings changed',
@@ -866,7 +927,7 @@ export const localSettings = {
         failed_keys: failedKeys,
         unchanged_requested_keys: unchangedRequestedKeys,
         persisted_matches_request: failedKeys.length === 0,
-        changes: summarizeSettingsPatch(requestedKeys, current, updated),
+        changes: summarizeSettingsPatch(requestedKeys, current, persisted),
       }, {
         category: 'settings',
         title: 'Settings update verified',
@@ -876,9 +937,10 @@ export const localSettings = {
     return persisted;
   },
 };
-
 export function clearSettingsMemoryForErasure() {
   memorySettings = null;
+  settingsCache = null;
+  settingsCacheSerialized = '';
   activeTripMemory = null;
   lastNativeSettingsSync = '';
 }
@@ -970,6 +1032,7 @@ export const activeTripStore = {
     if (recovered && JSON.stringify(recovered) !== JSON.stringify(activeTripMemory)) {
       await setEncryptedJson(ACTIVE_TRIP_KEY, activeTripMemory);
     }
+    dispatchActiveTripChanged();
     return activeTripMemory;
   },
   get() {
@@ -978,6 +1041,7 @@ export const activeTripStore = {
   set(trip) {
     activeTripMemory = sanitizeTripForPrivacyStorage(trip);
     const tripSnapshot = activeTripMemory;
+    dispatchActiveTripChanged();
     activeTripWriteQueue = activeTripWriteQueue
       .then(() => setEncryptedJson(ACTIVE_TRIP_KEY, tripSnapshot))
       .catch((error) => {
@@ -990,6 +1054,7 @@ export const activeTripStore = {
   },
   clear() {
     activeTripMemory = null;
+    dispatchActiveTripChanged();
     activeTripWriteQueue = activeTripWriteQueue
       .then(() => removeEncryptedJson(ACTIVE_TRIP_KEY))
       .catch((error) => {

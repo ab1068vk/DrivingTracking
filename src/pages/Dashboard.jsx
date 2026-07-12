@@ -312,7 +312,7 @@ function checkAndSpeakSpeedAlert(speed, resolved, settings, onAlert, { voiceMute
     speedKmh: speed,
     speedLimitKmh: resolved.limitKmh,
     tier: resolved.tier,
-  });
+  }, null, { settings });
   if (!message) return;
 
   speakSafetyAlertOnce(
@@ -604,6 +604,33 @@ function waitForTripEndingFeedbackPaint() {
   });
 }
 
+function ActiveTripElapsedClock({ startTime, fallbackSeconds = 0 }) {
+  const calculateElapsed = useCallback(() => {
+    const startedAt = new Date(startTime || '').getTime();
+    return Number.isFinite(startedAt)
+      ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+      : Math.max(0, Number(fallbackSeconds) || 0);
+  }, [fallbackSeconds, startTime]);
+  const [seconds, setSeconds] = useState(calculateElapsed);
+
+  useEffect(() => {
+    const update = () => setSeconds(calculateElapsed());
+    update();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') update();
+    }, 1000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') update();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [calculateElapsed]);
+
+  return formatDuration(seconds);
+}
 export default function Dashboard() {
   const [activeTrip, setActiveTrip] = useState(null);
   const [tracking, setTracking] = useState(false);
@@ -629,6 +656,7 @@ export default function Dashboard() {
   const locationPermissionEndingRef = useRef(false);
   const endTripRef = useRef(null);
   const timerRef = useRef(null);
+  const trackingStatusRefreshRef = useRef(null);
   const sensorFusionRef = useRef(null);
   const incidentAlertRef = useRef(0);
   const stayAlertSentRef = useRef(false);
@@ -669,22 +697,27 @@ export default function Dashboard() {
   const dangerZoneCurrentLocation = currentLocationInPrivacyZone ? null : currentLocation;
 
   const refreshTrackingStatusContext = useCallback(async () => {
-    const latestSettings = await localSettings.hydrateFromNative();
-    const diagnostics = getTrackingDiagnostics();
-    const [permissionStatus, nativeStatus, batteryStatus] = await Promise.all([
-      getPermissionStatus().catch(() => null),
-      isAndroid() ? getNativeAutoTrackingStatus().catch(() => null) : Promise.resolve(null),
-      isAndroid() ? getAndroidBatteryOptimizationStatus().catch(() => null) : Promise.resolve(null),
-    ]);
-    setSettings((current) => (
-      JSON.stringify(current) === JSON.stringify(latestSettings) ? current : latestSettings
-    ));
-    setTrackingStatusContext({
-      permissionStatus,
-      nativeStatus,
-      batteryStatus,
-      diagnostics,
-    });
+    if (trackingStatusRefreshRef.current) return trackingStatusRefreshRef.current;
+    const refresh = (async () => {
+      const latestSettings = await localSettings.hydrateFromNative();
+      const diagnostics = getTrackingDiagnostics();
+      const [permissionStatus, nativeStatus, batteryStatus] = await Promise.all([
+        getPermissionStatus().catch(() => null),
+        isAndroid() ? getNativeAutoTrackingStatus().catch(() => null) : Promise.resolve(null),
+        isAndroid() ? getAndroidBatteryOptimizationStatus().catch(() => null) : Promise.resolve(null),
+      ]);
+      setSettings((current) => (current === latestSettings ? current : latestSettings));
+      const nextContext = { permissionStatus, nativeStatus, batteryStatus, diagnostics };
+      setTrackingStatusContext((current) => (
+        JSON.stringify(current) === JSON.stringify(nextContext) ? current : nextContext
+      ));
+    })();
+    trackingStatusRefreshRef.current = refresh;
+    try {
+      return await refresh;
+    } finally {
+      if (trackingStatusRefreshRef.current === refresh) trackingStatusRefreshRef.current = null;
+    }
   }, []);
 
   const getLocalSpeedKnowledge = useCallback(() => {
@@ -709,7 +742,9 @@ export default function Dashboard() {
       if (document.visibilityState === 'visible') refreshTrackingStatusContext();
     };
     const interval = isAndroid()
-      ? window.setInterval(refreshTrackingStatusContext, tracking ? 10_000 : 60_000)
+      ? window.setInterval(() => {
+          if (document.visibilityState === 'visible') void refreshTrackingStatusContext();
+        }, tracking ? 10_000 : 60_000)
       : null;
     window.addEventListener('focus', handleFocus);
     window.addEventListener(SETTINGS_CHANGED_EVENT, handleSettingsChanged);
@@ -786,7 +821,7 @@ export default function Dashboard() {
         logError('heading_drift_notification', error);
       });
       if (!shouldMuteDashboardWebViewVoice(activeTripRef.current || activeTrip)) {
-        speakSafetyAlert(buildVoiceAlertMessage('heading_drift_beta'), cfg).catch((error) => {
+        speakSafetyAlert(buildVoiceAlertMessage('heading_drift_beta', {}, { settings: cfg }), cfg).catch((error) => {
           logError('heading_drift_voice_alert', error);
         });
       }
@@ -1009,8 +1044,10 @@ export default function Dashboard() {
   const startTimer = (startTime) => {
     stopTimer();
     timerRef.current = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime.getTime()) / 1000));
-    }, 1000);
+      if (document.visibilityState === 'visible') {
+        setElapsed(Math.floor((Date.now() - startTime.getTime()) / 1000));
+      }
+    }, 5000);
   };
 
   const stopTimer = () => {
@@ -1141,10 +1178,9 @@ export default function Dashboard() {
     reconcile('dashboard_mount_native_manual_reconcile');
     window.addEventListener('focus', handleFocus);
     document.addEventListener('visibilitychange', handleVisibility);
-    const interval = window.setInterval(
-      () => reconcile('dashboard_poll_native_manual_reconcile'),
-      5000
-    );
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') reconcile('dashboard_poll_native_manual_reconcile');
+    }, 5000);
 
     return () => {
       window.removeEventListener('focus', handleFocus);
@@ -1417,7 +1453,7 @@ export default function Dashboard() {
               speakSafetyAlert(buildVoiceAlertMessage('repeated_event_area', {
                 dominantType: typeLabel,
                 distanceM: zone.distanceM,
-              }), latestSettings).catch((error) => {
+              }, { settings: latestSettings }), latestSettings).catch((error) => {
                 logError('repeated_event_area_voice_alert', error, {
                   zone_id: zone.id,
                   distance_m: Math.round(zone.distanceM || 0),
@@ -1529,7 +1565,7 @@ export default function Dashboard() {
           if (!webViewVoiceMuted) {
             speakSafetyAlert(buildVoiceAlertMessage('possible_incident', {
               emergencyWorkflow,
-            }), latestSettings, { interrupt: true }).catch((error) => {
+            }, { settings: latestSettings }), latestSettings, { interrupt: true }).catch((error) => {
               logError('possible_incident_voice_alert', error, {
                 severity: incident.severity,
                 emergency_workflow: emergencyWorkflow,
@@ -1971,7 +2007,7 @@ export default function Dashboard() {
       if (!shouldMuteDashboardWebViewVoice(tripForNotifications)) {
         speakSafetyAlertOnce(
           'tracking_ready',
-          buildVoiceAlertMessage('tracking_ready'),
+          buildVoiceAlertMessage('tracking_ready', {}, { settings: cfg }),
           cfg,
           5 * 60 * 1000,
           undefined,
@@ -3624,7 +3660,7 @@ export default function Dashboard() {
                     </span>
                   )}
                 </div>
-                <div className="font-grotesk font-bold text-4xl">{formatDuration(elapsed)}</div>
+                <div className="font-grotesk font-bold text-4xl"><ActiveTripElapsedClock startTime={activeTrip?.start_time} fallbackSeconds={elapsed} /></div>
                 <div className="text-white/70 text-sm mt-1">
                   {activeTripIsCandidate ? (
                     activeTrip?.candidate_near_parked

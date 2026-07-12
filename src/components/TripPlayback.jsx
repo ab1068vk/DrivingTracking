@@ -19,6 +19,7 @@ import {
 import MapErrorBoundary from '@/components/MapErrorBoundary';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import usePrivacyZonesRevision from '@/hooks/usePrivacyZonesRevision';
+import usePlaybackScreenAwake from '@/hooks/usePlaybackScreenAwake';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
@@ -117,6 +118,7 @@ function loadLeaflet() {
 
 const SPEEDS = [1, 2, 4, 8];
 const REVIEW_SECONDS_PER_POINT = 0.6;
+const PLAYBACK_REACT_FRAME_MS = 66;
 
 const finiteCoordinate = (value) => {
   if (value == null || value === '') return null;
@@ -359,11 +361,13 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
   const markerHeadingRef = useRef(null);
   const secondaryMarkerHeadingRef = useRef(null);
   const animRef = useRef(null);
+  const playbackElapsedRef = useRef(0);
   const settingsRef = useRef(null);
   const invalidateTimersRef = useRef([]);
 
   const [currentIdx, setCurrentIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
+  usePlaybackScreenAwake(playing);
   const [speedIdx, setSpeedIdx] = useState(0);
   const [currentEvent, setCurrentEvent] = useState(null);
   const [followVehicle, setFollowVehicle] = useState(true);
@@ -456,6 +460,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
     setPlaying(false);
     setCurrentEvent(null);
     setFollowVehicle(true);
+    playbackElapsedRef.current = 0;
     setPlaybackElapsedSeconds(0);
     setSelectedSegmentId(null);
     setMapFailed(false);
@@ -794,26 +799,31 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
     if (!playing) { cancelAnimationFrame(animRef.current); return; }
 
     const speed = SPEEDS[speedIdx];
-    let last = null;
+    let lastFrameAt = null;
+    let lastCommitAt = 0;
+    let elapsedValue = playbackElapsedRef.current;
     const totalSeconds = stats.durationSeconds || Math.max(1, totalPoints - 1);
     const reviewDurationSeconds = Math.max(8, totalPoints * REVIEW_SECONDS_PER_POINT);
     const timelineScale = totalSeconds > 0 ? totalSeconds / reviewDurationSeconds : 1;
 
-    const step = (ts) => {
-      if (!last) last = ts;
-      const elapsedMs = ts - last;
-      last = ts;
-      setPlaybackElapsedSeconds((previous) => {
-        const next = previous + (elapsedMs / 1000) * speed * timelineScale;
-        if (next >= totalSeconds) {
-          setPlaying(false);
-          setCurrentIdx(totalPoints - 1);
-          return totalSeconds;
-        }
-        const position = playbackPositionAtElapsed(points, next, playbackPositionIndex);
-        setCurrentIdx(position.index);
-        return next;
-      });
+    const step = (timestamp) => {
+      if (lastFrameAt == null) lastFrameAt = timestamp;
+      const elapsedMs = timestamp - lastFrameAt;
+      lastFrameAt = timestamp;
+      elapsedValue += (elapsedMs / 1000) * speed * timelineScale;
+      const complete = elapsedValue >= totalSeconds;
+      if (complete || timestamp - lastCommitAt >= PLAYBACK_REACT_FRAME_MS) {
+        const committedElapsed = complete ? totalSeconds : elapsedValue;
+        playbackElapsedRef.current = committedElapsed;
+        setPlaybackElapsedSeconds(committedElapsed);
+        const position = playbackPositionAtElapsed(points, committedElapsed, playbackPositionIndex);
+        setCurrentIdx(complete ? totalPoints - 1 : position.index);
+        lastCommitAt = timestamp;
+      }
+      if (complete) {
+        setPlaying(false);
+        return;
+      }
       animRef.current = requestAnimationFrame(step);
     };
     animRef.current = requestAnimationFrame(step);
@@ -823,6 +833,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
   const handleReset = () => {
     setPlaying(false);
     setCurrentIdx(0);
+    playbackElapsedRef.current = 0;
     setPlaybackElapsedSeconds(0);
     setCurrentEvent(null);
   };
@@ -835,7 +846,9 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
     const safeIndex = clamp(index, 0, totalPoints - 1);
     setPlaying(false);
     setCurrentIdx(safeIndex);
-    setPlaybackElapsedSeconds(elapsedForIndex(safeIndex));
+    const elapsed = elapsedForIndex(safeIndex);
+    playbackElapsedRef.current = elapsed;
+    setPlaybackElapsedSeconds(elapsed);
   };
 
   const seekToElapsed = (seconds) => {
@@ -843,6 +856,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
     const position = playbackPositionAtElapsed(points, safeElapsed, playbackPositionIndex);
     setPlaying(false);
     setCurrentIdx(position.index);
+    playbackElapsedRef.current = safeElapsed;
     setPlaybackElapsedSeconds(safeElapsed);
   };
 

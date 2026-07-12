@@ -299,6 +299,125 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   return { filename, native: false };
 }
 
+export async function exportTechnicalReportPDF(report = {}, settings = {}) {
+  const doc = new jsPDF();
+  const now = new Date(report.generated_at || Date.now());
+  const filename = `road-sage-technical-report-${now.toISOString().slice(0, 10)}.pdf`;
+  recordSystemEvent('pdf_export_started', {
+    report_type: 'tracking_technical_report',
+    trip_count: report.counts?.trip_count || 0,
+  }, { category: 'storage', title: 'PDF export started' });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.text('Road Sage - Technical Export Report', 14, 22);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(`Generated: ${now.toLocaleString()}`, 14, 32);
+  doc.text('Privacy-safe technical summary. Private-zone coordinates and private-zone geometry are not exported.', 14, 40, { maxWidth: 182 });
+  doc.text(report.score_notice || SCORE_ESTIMATE_NOTICE, 14, 48, { maxWidth: 182 });
+
+  const summaryRows = [
+    ['Trips', report.counts?.trip_count ?? 0],
+    ['Event rows', report.counts?.event_row_count ?? 0],
+    ['Route quality rows', report.counts?.route_quality_row_count ?? 0],
+    ['Speed source rows', report.counts?.speed_source_row_count ?? 0],
+    ['Voice alert rows', report.counts?.voice_alert_row_count ?? 0],
+    ['Private coordinates exported', report.privacy?.private_coordinates_exported ? 'yes' : 'no'],
+  ];
+  let y = 66;
+  summaryRows.forEach(([label, value]) => {
+    doc.setFont('helvetica', 'bold');
+    doc.text(String(label), 14, y);
+    doc.setFont('helvetica', 'normal');
+    doc.text(String(value), 74, y);
+    y += 9;
+  });
+
+  doc.addPage();
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text('Route Point Quality Summary', 14, 20);
+  doc.setFontSize(8);
+  writeRow(doc, ['Trip', 'Retained', 'Raw', 'Map', 'Gaps', 'Privacy', 'Score estimate'], 32, [38, 24, 22, 22, 20, 26, 36]);
+  doc.setFont('helvetica', 'normal');
+  y = 40;
+  (report.route_quality_rows || []).slice(0, 28).forEach((row) => {
+    writeRow(doc, [
+      row.trip_id,
+      row.retained_route_points,
+      row.raw_route_points,
+      row.map_playback_points,
+      row.route_gap_count,
+      row.privacy_status,
+      row.score_estimate,
+    ], y, [38, 24, 22, 22, 20, 26, 36]);
+    y += 8;
+  });
+
+  doc.addPage();
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text('Event and Speed Source Extract', 14, 20);
+  doc.setFontSize(8);
+  writeRow(doc, ['Time/source', 'Type', 'Value', 'Confidence', 'Privacy', 'Status'], 32, [42, 36, 28, 28, 28, 34]);
+  doc.setFont('helvetica', 'normal');
+  y = 40;
+  (report.event_rows || []).slice(0, 16).forEach((row) => {
+    writeRow(doc, [
+      row.timestamp,
+      row.event_type,
+      row.value,
+      row.confidence,
+      row.privacy_status,
+      row.scoring_status,
+    ], y, [42, 36, 28, 28, 28, 34]);
+    y += 8;
+  });
+  y += 8;
+  doc.setFont('helvetica', 'bold');
+  writeRow(doc, ['Source', 'Kind', 'Limit', 'Confidence', 'Review', 'Fallback reason'], y, [36, 24, 20, 28, 20, 72]);
+  doc.setFont('helvetica', 'normal');
+  y += 8;
+  (report.speed_source_rows || []).slice(0, 14).forEach((row) => {
+    writeRow(doc, [
+      row.source_label,
+      row.row_kind,
+      row.limit_kmh,
+      row.confidence_label,
+      row.needs_review,
+      row.fallback_reason,
+    ], y, [36, 24, 20, 28, 20, 72]);
+    y += 8;
+  });
+
+  if (isNativePlatform()) {
+    const base64 = arrayBufferToBase64(doc.output('arraybuffer'));
+    const result = await saveExportToDownloads({
+      filename,
+      data: base64,
+      mimeType: 'application/pdf',
+      base64: true,
+    });
+    recordSystemEvent('pdf_export_completed', {
+      report_type: 'tracking_technical_report',
+      native: true,
+      trip_count: report.counts?.trip_count || 0,
+      mime_type: 'application/pdf',
+    }, { category: 'storage', title: 'PDF export completed' });
+    return { ...result, filename, native: true };
+  }
+
+  doc.save(filename);
+  recordSystemEvent('pdf_export_completed', {
+    report_type: 'tracking_technical_report',
+    native: false,
+    trip_count: report.counts?.trip_count || 0,
+    mime_type: 'application/pdf',
+  }, { category: 'storage', title: 'PDF export completed' });
+  return { filename, native: false };
+}
+
 export async function exportUBIReportPDF(ubiReport, settings = {}) {
   const doc = new jsPDF();
   const now = new Date(ubiReport.generatedAt || Date.now());
