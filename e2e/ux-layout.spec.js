@@ -106,7 +106,7 @@ test('surfaces hidden features through grouped nav and app search', async ({ pag
   await expect(page.getByRole('heading', { name: /Saved Road Speeds/i })).toBeVisible();
 });
 
-test('uses full-width technical shell in tracking mode without overflow', async ({ page }) => {
+test('uses a driver-focused tracking shell without overflow', async ({ page }) => {
   await page.addInitScript((settings) => {
     localStorage.setItem('drivesense_settings', JSON.stringify({
       ...settings,
@@ -119,7 +119,10 @@ test('uses full-width technical shell in tracking mode without overflow', async 
   await expect(page).toHaveURL(/\/tracking$/);
 
   await expect(page.getByRole('banner')).toContainText('Road Sage');
-  await expect(page.getByRole('heading', { name: 'Tracking Overview', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Track your next drive', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Start tracking', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Tracking shortcuts' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'What your recent tracking data can tell you', exact: true })).toBeVisible();
 
   const metrics = await page.evaluate(() => {
     const main = document.querySelector('#main-content');
@@ -136,14 +139,12 @@ test('uses full-width technical shell in tracking mode without overflow', async 
   expect(metrics.mainWidth).toBeGreaterThan(metrics.innerWidth * 0.72);
 
   if (metrics.innerWidth >= 768) {
-    const nav = page.getByRole('navigation', { name: 'Tracking console navigation' });
+    const nav = page.getByRole('navigation', { name: 'Trip tracking navigation' });
     await expect(nav).toBeVisible();
-    if (metrics.innerWidth >= 1280) {
-      for (const section of ['Live', 'Trips & routes', 'Analyze', 'Tools']) {
-        await expect(nav.getByText(section, { exact: true })).toBeVisible();
-      }
+    for (const section of ['Track now', 'Trips & routes', 'Driving details', 'Manage']) {
+      await expect(nav.getByText(section, { exact: true })).toBeVisible();
     }
-    for (const label of ['Tracking', 'Trips', 'Map', 'Replay', 'Events', 'Alerts', 'Evidence', 'Speed', 'Privacy', 'Reports', 'Settings']) {
+    for (const label of ['Live tracking', 'Record a drive', 'My trips', 'Route map', 'Compare drives', 'Drive events', 'Driving alerts', 'Data quality', 'Road speeds', 'Trip privacy', 'Share & export', 'Tracking settings']) {
       await expect(nav.getByRole('link', { name: label })).toBeVisible();
     }
   } else {
@@ -153,23 +154,23 @@ test('uses full-width technical shell in tracking mode without overflow', async 
     const nav = page.getByRole('navigation', { name: 'Mobile navigation' });
     await expect(nav).toBeVisible();
     await expect(nav).not.toHaveCSS('position', 'fixed');
-    for (const section of ['Live', 'Trips & routes', 'Analyze', 'Tools']) {
+    for (const section of ['Track now', 'Trips & routes', 'Driving details', 'Manage']) {
       await expect(nav.getByText(section, { exact: true })).toBeVisible();
     }
-    for (const label of ['Tracking', 'Trips', 'Map', 'Replay', 'Events', 'Alerts', 'Evidence', 'Speed', 'Privacy', 'Reports', 'Settings']) {
+    for (const label of ['Live tracking', 'Record a drive', 'My trips', 'Route map', 'Compare drives', 'Drive events', 'Driving alerts', 'Data quality', 'Road speeds', 'Trip privacy', 'Share & export', 'Tracking settings']) {
       await expect(nav.getByRole('link', { name: label })).toBeVisible();
     }
     await dialog.getByRole('button', { name: 'Close navigation menu' }).click();
   }
 
   await page.goto('/trips');
-  await expect(page.getByRole('heading', { name: 'Trip telemetry', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Trip telemetry|My Tracked Trips/, exact: true })).toBeVisible();
   await expect(page.getByText(/No driver grades or rankings are shown here/i)).toBeVisible();
   await expect(page.getByText('Best Score', { exact: true })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Search app' }).click();
   await page.getByPlaceholder('Search tracking, trips, map, events, speed, privacy...').fill('privacy');
-  await page.getByRole('option', { name: /Privacy/ }).click();
+  await page.getByRole('option', { name: /Trip privacy/ }).click();
   await expect(page).toHaveURL(/\/tracking\/privacy$/);
 });
 
@@ -183,9 +184,9 @@ test('renders tracking map workspace without horizontal overflow', async ({ page
 
   await page.goto('/tracking/map');
 
-  await expect(page.getByRole('heading', { name: 'Map Workspace', exact: true })).toBeVisible();
-  await expect(page.getByText('Selector', { exact: true })).toBeVisible();
-  await expect(page.getByText('Inspector', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Route Map', exact: true })).toBeVisible();
+  await expect(page.getByText('Choose a trip', { exact: true })).toBeVisible();
+  await expect(page.getByText('Route details', { exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Map workspace timeline' })).toBeVisible();
 
   const metrics = await page.evaluate(() => ({
@@ -216,7 +217,7 @@ test('renders tracking replay pro compare workflow without horizontal overflow',
 
   await page.goto('/tracking/replay');
 
-  await expect(page.getByRole('heading', { name: 'Compare Replay Pro', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Compare Drive Replays', exact: true })).toBeVisible();
   await expect(page.getByText('Morning Route A')).toBeVisible();
   await expect(page.getByText('Morning Route B')).toBeVisible();
   await expect(page.getByText('Speed timeline overlay', { exact: true })).toBeVisible();
@@ -242,9 +243,9 @@ test('renders tracking events workspace without horizontal overflow', async ({ p
 
   await page.goto('/tracking/events');
 
-  await expect(page.getByRole('heading', { name: 'Event Timeline', exact: true })).toBeVisible();
-  await expect(page.getByText('Technical Log', { exact: true })).toBeVisible();
-  await expect(page.getByText('Inspector', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Drive Event Timeline', exact: true })).toBeVisible();
+  await expect(page.getByText('Recorded events', { exact: true })).toBeVisible();
+  await expect(page.getByText('Event details', { exact: true })).toBeVisible();
 
   const metrics = await page.evaluate(() => ({
     innerWidth: window.innerWidth,
@@ -278,7 +279,7 @@ test('renders tracking speed console without horizontal overflow', async ({ page
   expect(metrics.mainMaxWidth).toBe('none');
 });
 
-test('renders tracking alerts lab without horizontal overflow', async ({ page }) => {
+test('renders driving alerts without horizontal overflow', async ({ page }) => {
   await page.addInitScript((settings) => {
     localStorage.setItem('drivesense_settings', JSON.stringify({
       ...settings,
@@ -288,7 +289,7 @@ test('renders tracking alerts lab without horizontal overflow', async ({ page })
 
   await page.goto('/tracking/alerts');
 
-  await expect(page.getByRole('heading', { name: 'Voice Alert Lab', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Driving Alerts', exact: true })).toBeVisible();
   await expect(page.getByText('Speed Tier Cooldowns', { exact: true })).toBeVisible();
   await expect(page.getByText('Ownership Rules', { exact: true })).toBeVisible();
 
@@ -313,7 +314,7 @@ test('renders tracking evidence console without horizontal overflow', async ({ p
 
   await expect(page.getByRole('heading', { name: 'Data Quality', exact: true })).toBeVisible();
   await expect(page.getByText('Evidence Rows', { exact: true })).toBeVisible();
-  await expect(page.getByText('Inspector', { exact: true })).toBeVisible();
+  await expect(page.getByText('Measurement details', { exact: true })).toBeVisible();
 
   const metrics = await page.evaluate(() => ({
     innerWidth: window.innerWidth,
@@ -324,7 +325,7 @@ test('renders tracking evidence console without horizontal overflow', async ({ p
   expect(metrics.mainMaxWidth).toBe('none');
 });
 
-test('renders tracking reports lab without horizontal overflow', async ({ page }) => {
+test('renders trip sharing and exports without horizontal overflow', async ({ page }) => {
   await page.addInitScript((settings) => {
     localStorage.setItem('drivesense_settings', JSON.stringify({
       ...settings,
@@ -334,9 +335,9 @@ test('renders tracking reports lab without horizontal overflow', async ({ page }
 
   await page.goto('/tracking/reports');
 
-  await expect(page.getByRole('heading', { name: 'Reports and Export Lab', exact: true })).toBeVisible();
-  await expect(page.getByText('Technical Export Options', { exact: true })).toBeVisible();
-  await expect(page.getByText('Payload Inspector', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Share and Export Trips', exact: true })).toBeVisible();
+  await expect(page.getByText('Export options', { exact: true })).toBeVisible();
+  await expect(page.getByText('Export details', { exact: true })).toBeVisible();
 
   const metrics = await page.evaluate(() => ({
     innerWidth: window.innerWidth,
@@ -357,7 +358,7 @@ test('renders tracking privacy console without horizontal overflow', async ({ pa
 
   await page.goto('/tracking/privacy');
 
-  await expect(page.getByRole('heading', { name: 'Privacy Tracking Console', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Trip Privacy', exact: true })).toBeVisible();
   await expect(page.getByText('Privacy Zones', { exact: true })).toBeVisible();
   await expect(page.getByText('Outbound Road Data', { exact: true })).toBeVisible();
 

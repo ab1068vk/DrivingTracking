@@ -77,7 +77,44 @@ describe('feedback-driven rescoring helpers', () => {
     );
   });
 
-  it('does not remove phone-use events added during the post-score merge', async () => {
+  it('re-scores one reviewed trip and returns before/after snapshots', async () => {
+    const routePoints = [
+      { lat: 43.6500, lng: -79.3800, speed_kmh: 80, accuracy: 5, timestamp: '2026-01-01T13:00:00.000Z' },
+      { lat: 43.6502, lng: -79.3800, speed_kmh: 80, accuracy: 5, timestamp: '2026-01-01T13:00:01.000Z' },
+      { lat: 43.65028, lng: -79.3800, speed_kmh: 20, accuracy: 5, timestamp: '2026-01-01T13:00:02.000Z' },
+      { lat: 43.65036, lng: -79.3800, speed_kmh: 20, accuracy: 5, timestamp: '2026-01-01T13:00:03.000Z' },
+    ];
+    const [initial] = await localTripRepository.upsertMany([completedTrip(routePoints)]);
+    const reviewedIndex = initial.driving_events.findIndex((event) => event.type !== 'phone_use');
+    const reviewedEvent = initial.driving_events[reviewedIndex];
+
+    expect(reviewedEvent).toBeTruthy();
+    await localTripRepository.update(initial.id, {
+      event_feedback: {
+        [feedbackKey(reviewedEvent, reviewedIndex)]: {
+          type: reviewedEvent.type,
+          value: reviewedEvent.value,
+          verdict: 'wrong',
+        },
+      },
+      needs_rescore: true,
+    });
+
+    const result = await localTripRepository.rescoreTripById(initial.id, { reason: 'test_feedback' });
+
+    expect(result).toMatchObject({
+      completed: 1,
+      skipped: false,
+      before: { overall: expect.any(Number) },
+      after: { overall: expect.any(Number) },
+      updatedTrip: {
+        id: initial.id,
+        needs_rescore: false,
+        feedback_adjusted_events_count: 1,
+      },
+    });
+  });
+  it('removes reviewed-wrong phone-use events before phone scoring', async () => {
     const routePoints = [
       { lat: 43.6500, lng: -79.3800, speed_kmh: 30, accuracy: 5, timestamp: '2026-01-01T12:00:00.000Z' },
       { lat: 43.6502, lng: -79.3800, speed_kmh: 30, accuracy: 5, timestamp: '2026-01-01T12:00:20.000Z' },
@@ -106,12 +143,14 @@ describe('feedback-driven rescoring helpers', () => {
       }),
     ]);
 
-    expect(rescored.feedback_adjusted_events_count).toBe(0);
-    expect(rescored.driving_events).toEqual(
+    expect(rescored.feedback_adjusted_events_count).toBe(1);
+    expect(rescored.driving_events).not.toEqual(
       expect.arrayContaining([expect.objectContaining({
         type: 'phone_use',
         timestamp: phoneUseEvent.timestamp,
       })])
     );
+    expect(rescored.phone_use_window_count).toBe(0);
+    expect(rescored.phone_use_score).toBe(100);
   });
 });

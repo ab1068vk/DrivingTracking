@@ -141,6 +141,15 @@ const diagnosticExplanationForEvent = (event = {}) => (
 
 const isDiagnosticOnlyTripEvent = (event = {}) => Boolean(diagnosticExplanationForEvent(event));
 
+const SCORE_AFFECTING_EVENT_FEEDBACK_TYPES = new Set([
+  'harsh_brake',
+  'rapid_acceleration',
+  'sharp_turn',
+  'speeding',
+  'idle',
+  'phone_use',
+]);
+
 const voiceSpeedMarkerKey = (marker = {}, index = 0) => String(
   marker.id ||
   marker.marker_id ||
@@ -371,6 +380,7 @@ export default function TripDetail() {
   const [metadataDraft, setMetadataDraft] = useState({ nickname: '', notes: '', tags: [] });
   const [osmFetchStatus, setOsmFetchStatus] = useState('');
   const [feedbackStatus, setFeedbackStatus] = useState('');
+  const [lastFeedbackUndo, setLastFeedbackUndo] = useState(null);
   const [showAllRouteRiskSegments, setShowAllRouteRiskSegments] = useState(false);
   const [dismissedTagsLoaded, setDismissedTagsLoaded] = useState(false);
   const [currentUsageAccessGranted, setCurrentUsageAccessGranted] = useState(null);
@@ -488,32 +498,89 @@ export default function TripDetail() {
     },
   });
   const feedbackMutation = useMutation({
-    mutationFn: async (/** @type {{eventKey:string, event:any, verdict:string}} */ vars) => {
-      const existing = trip?.event_feedback || {};
-      await tripService.update(id, {
-        event_feedback: {
-          ...existing,
-          [vars.eventKey]: {
-            verdict: vars.verdict,
-            type: vars.event?.type || 'unknown',
-            timestamp: vars.event?.timestamp || null,
-            value: vars.event?.value ?? null,
-            reviewed_at: new Date().toISOString(),
-          },
-        },
-        needs_rescore: true,
+    mutationFn: async (/** @type {{eventKey:string, event:any, verdict:string|null, scoreAffecting?:boolean, isUndo?:boolean}} */ vars) => {
+      const latestTrip = await tripService.getById(id);
+      const existing = { ...(latestTrip?.event_feedback || {}) };
+      const previousFeedback = existing[vars.eventKey] || null;
+      if (vars.verdict == null) {
+        delete existing[vars.eventKey];
+      } else {
+        existing[vars.eventKey] = {
+          verdict: vars.verdict,
+          type: vars.event?.type || 'unknown',
+          timestamp: vars.event?.timestamp || vars.event?.startTime || null,
+          value: vars.event?.value ?? null,
+          reviewed_at: new Date().toISOString(),
+          affects_score: vars.scoreAffecting !== false,
+        };
+      }
+      const shouldRestorePhoneEvidence = vars.isUndo && vars.event?.type === 'phone_use';
+      const currentPhoneEvents = Array.isArray(latestTrip?.phone_use_events) ? latestTrip.phone_use_events : [];
+      const phoneEventAlreadyPresent = currentPhoneEvents.some((event) => (
+        (event?.timestamp || event?.startTime) === (vars.event?.timestamp || vars.event?.startTime)
+      ));
+      const savedTrip = await tripService.update(id, {
+        event_feedback: existing,
+        needs_rescore: vars.scoreAffecting !== false,
         feedback_reviewed_at: new Date().toISOString(),
+        ...(shouldRestorePhoneEvidence && !phoneEventAlreadyPresent
+          ? { phone_use_events: [...currentPhoneEvents, vars.event] }
+          : {}),
       });
-      return tripService.getById(id);
+      const rescoreResult = vars.scoreAffecting === false
+        ? null
+        : await tripService.rescoreById(id, { reason: vars.isUndo ? 'event_feedback_undo' : 'event_feedback' });
+      return {
+        previousFeedback,
+        rescoreResult,
+        updatedTrip: rescoreResult?.updatedTrip || savedTrip,
+      };
     },
-    onSuccess: (updatedTrip, vars) => {
+    onSuccess: (result, vars) => {
+      const updatedTrip = result?.updatedTrip;
       if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
       qc.invalidateQueries({ queryKey: ['trip', id] });
       invalidateTripLists();
-      setFeedbackStatus(vars.verdict === 'wrong'
-        ? 'Marked wrong. This event is removed from scoring on rescore and used to raise future thresholds.'
-        : 'Marked accurate. This event stays in scoring and helps keep calibration from becoming too loose.');
-      setTimeout(() => setFeedbackStatus(''), 6000);
+
+      if (!vars.isUndo) {
+        setLastFeedbackUndo({
+          eventKey: vars.eventKey,
+          event: vars.event,
+          verdict: result?.previousFeedback?.verdict ?? null,
+          scoreAffecting: vars.scoreAffecting !== false,
+        });
+      } else {
+        setLastFeedbackUndo(null);
+      }
+
+      if (vars.verdict == null) {
+        setFeedbackStatus(vars.scoreAffecting === false ? 'Detection note removed.' : 'Event review removed and the trip was re-scored.');
+      } else if (vars.scoreAffecting === false) {
+        setFeedbackStatus(vars.verdict === 'wrong'
+          ? 'Detection flagged for review. This event type does not change the score.'
+          : 'Detection note saved. This event type does not change the score.');
+      } else if (result?.rescoreResult?.skipped) {
+        setFeedbackStatus('Review saved, but this trip could not be re-scored (' + String(result.rescoreResult.skippedReason || 'route data unavailable').replace(/_/g, ' ') + ').');
+      } else {
+        const before = result?.rescoreResult?.before?.overall;
+        const after = result?.rescoreResult?.after?.overall;
+        const scoreChange = before == null || after == null
+          ? 'Score remains unavailable.'
+          : before === after
+            ? 'Score stayed ' + after + '.'
+            : 'Score ' + before + ' → ' + after + '.';
+        setFeedbackStatus(vars.verdict === 'wrong'
+          ? 'Marked wrong and removed from scoring. ' + scoreChange
+          : 'Marked accurate and kept in scoring. ' + scoreChange);
+      }
+      setTimeout(() => {
+        setFeedbackStatus('');
+        setLastFeedbackUndo(null);
+      }, 10000);
+    },
+    onError: (error) => {
+      setFeedbackStatus(error?.message || 'Could not save and apply this event review.');
+      setLastFeedbackUndo(null);
     },
   });
   const speedLimitReviewMutation = useMutation({
@@ -555,7 +622,23 @@ export default function TripDetail() {
     },
     onSuccess: (result) => {
       const updatedTrip = result?.updatedTrip;
-      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
+      if (updatedTrip) {
+        qc.setQueryData(['trip', id], updatedTrip);
+        qc.setQueriesData({ queryKey: tripQueryKeys.summaries }, (trips) => (
+          Array.isArray(trips)
+            ? trips.map((item) => (
+              String(item?.id) === String(updatedTrip.id)
+                ? {
+                  ...item,
+                  speed_limit_review_required: updatedTrip.speed_limit_review_required,
+                  speed_limit_review_resolved_at: updatedTrip.speed_limit_review_resolved_at,
+                  speed_limit_review_reason: updatedTrip.speed_limit_review_reason,
+                }
+                : item
+            ))
+            : trips
+        ));
+      }
       qc.invalidateQueries({ queryKey: ['trip', id] });
       invalidateTripLists();
       qc.invalidateQueries({ queryKey: ['map-trips'] });
@@ -677,21 +760,18 @@ export default function TripDetail() {
     }
   }, [id, qc, trip?.voice_speed_limit_markers]);
   const feedbackRescoreMutation = useMutation({
-    mutationFn: async () => {
-      await tripService.update(id, {
-        needs_rescore: true,
-        score_update_acknowledged_at: null,
-        updated_at: new Date().toISOString(),
-      });
-      await tripService.listAll({ sort: '-start_time' }).catch(() => null);
-      return tripService.getById(id);
-    },
-    onSuccess: (updatedTrip) => {
+    mutationFn: () => tripService.rescoreById(id, { reason: 'event_feedback_manual' }),
+    onSuccess: (result) => {
+      const updatedTrip = result?.updatedTrip;
       if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
       qc.invalidateQueries({ queryKey: ['trip', id] });
       invalidateTripLists();
-      setFeedbackStatus('Trip re-scored with reviewed event feedback.');
-      setTimeout(() => setFeedbackStatus(''), 5000);
+      setFeedbackStatus(result?.skipped
+        ? 'Could not re-score this trip (' + String(result.skippedReason || 'route data unavailable').replace(/_/g, ' ') + ').'
+        : result?.before?.overall === result?.after?.overall
+          ? 'Trip re-scored. Score stayed ' + (result?.after?.overall ?? 'unavailable') + '.'
+          : 'Trip re-scored. Score ' + (result?.before?.overall ?? 'unavailable') + ' → ' + (result?.after?.overall ?? 'unavailable') + '.');
+      setTimeout(() => setFeedbackStatus(''), 7000);
     },
     onError: () => {
       setFeedbackStatus('Could not re-score this trip right now.');
@@ -756,10 +836,6 @@ export default function TripDetail() {
       });
       setCalibrationLabelCount(count);
     },
-  });
-  const skipCalibrationSurveyMutation = useMutation({
-    mutationFn: () => calibrationLabelService.skipTripSurvey(trip.id),
-    onSuccess: (marker) => setCalibrationSurveyStatus(marker || { skipped: true }),
   });
   const [dismissedTags, setDismissedTags] = useState([]);
 
@@ -1318,6 +1394,61 @@ export default function TripDetail() {
       detail: effectiveSpeedLimits.length ? `${effectiveSpeedLimits.join(', ')} km/h used` : 'Get road data for limits',
     },
   ];
+  const renderEventFeedbackControls = (evt, key, feedback, { diagnostic = false } = {}) => {
+    if (diagnostic) {
+      return (
+        <span className="rounded-full border border-border bg-secondary/50 px-2 py-1 text-[11px] font-semibold text-muted-foreground">
+          Diagnostic only — not scored
+        </span>
+      );
+    }
+
+    const scoreAffecting = SCORE_AFFECTING_EVENT_FEEDBACK_TYPES.has(evt?.type);
+    const options = scoreAffecting
+      ? [
+        { id: 'accurate', label: 'Accurate', className: 'border-emerald-200 text-emerald-700 dark:border-emerald-900/60 dark:text-emerald-300' },
+        { id: 'wrong', label: 'Wrong', className: 'border-red-200 text-red-700 dark:border-red-900/60 dark:text-red-300' },
+      ]
+      : [
+        { id: 'accurate', label: 'Looks right', className: 'border-emerald-200 text-emerald-700 dark:border-emerald-900/60 dark:text-emerald-300' },
+        { id: 'wrong', label: 'Flag', className: 'border-amber-200 text-amber-700 dark:border-amber-900/60 dark:text-amber-300' },
+      ];
+
+    return (
+      <>
+        {!scoreAffecting && (
+          <span className="text-[11px] text-muted-foreground" title="Saved as a detection note; this event type does not change scoring.">
+            Detection note
+          </span>
+        )}
+        {options.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            disabled={feedbackMutation.isPending}
+            aria-pressed={feedback === option.id}
+            title={scoreAffecting
+              ? 'Apply this review and re-score the trip now.'
+              : 'Save a detection note without changing the score.'}
+            onClick={() => feedbackMutation.mutate({
+              eventKey: key,
+              event: evt,
+              verdict: option.id,
+              scoreAffecting,
+            })}
+            className={'rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors disabled:opacity-50 ' + (
+              feedback === option.id
+                ? option.className + ' bg-background'
+                : 'border-border text-muted-foreground hover:bg-secondary'
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
+      </>
+    );
+  };
+
   const renderEventRow = ({ event: evt, originalIndex }, { diagnostic = false } = {}) => {
     const key = eventFeedbackKey(evt, originalIndex);
     const feedback = eventFeedback[key]?.verdict || null;
@@ -1375,21 +1506,7 @@ export default function TripDetail() {
               'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-400'}`}>
             {severityLabel}
           </span>
-          {[
-            { id: 'accurate', label: 'Accurate', className: 'border-emerald-200 text-emerald-700 dark:border-emerald-900/60 dark:text-emerald-300' },
-            { id: 'wrong', label: 'Wrong', className: 'border-red-200 text-red-700 dark:border-red-900/60 dark:text-red-300' },
-          ].map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => feedbackMutation.mutate({ eventKey: key, event: evt, verdict: option.id })}
-              className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors ${
-                feedback === option.id ? `${option.className} bg-background` : 'border-border text-muted-foreground hover:bg-secondary'
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
+          {renderEventFeedbackControls(evt, key, feedback, { diagnostic })}
         </div>
       </div>
     );
@@ -1411,6 +1528,8 @@ export default function TripDetail() {
           <div className="inline-flex items-center gap-1">
             <button
               onClick={() => metadataMutation.mutate({ is_favorite: trip.is_favorite !== true })}
+              disabled={metadataMutation.isPending}
+              aria-busy={metadataMutation.isPending || undefined}
               aria-label={trip.is_favorite ? 'Remove trip from favorites' : 'Add trip to favorites'}
               title={trip.is_favorite ? 'Remove favorite' : 'Favorite trip'}
               className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
@@ -1423,6 +1542,8 @@ export default function TripDetail() {
               type="button"
               aria-label="Delete trip"
               title="Delete trip"
+              disabled={deleteMutation.isPending}
+              aria-busy={deleteMutation.isPending || undefined}
               onClick={async () => {
                 const confirmed = await requestAppConfirm({
                   title: 'Delete trip?',
@@ -1432,7 +1553,7 @@ export default function TripDetail() {
                 });
                 if (confirmed) deleteMutation.mutate();
               }}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/50"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/50 disabled:cursor-progress disabled:opacity-60"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -2371,10 +2492,8 @@ export default function TripDetail() {
         status={calibrationSurveyStatus}
         labelCount={calibrationLabelCount}
         isPending={calibrationSurveyMutation.isPending}
-        isSkipping={skipCalibrationSurveyMutation.isPending}
         error={calibrationSurveyMutation.error}
         onSubmit={(surveyInput, options) => calibrationSurveyMutation.mutate({ surveyInput, ...options })}
-        onSkip={() => skipCalibrationSurveyMutation.mutate()}
       />
       {roadTypeScores.length > 0 && (
         <motion.details
@@ -2835,7 +2954,7 @@ export default function TripDetail() {
                   <span className="ml-1">/ {trip.feedback_adjusted_events_count} removed from scoring</span>
                 )}
               </div>
-              {(trip.needs_rescore || feedbackCounts.wrong > 0) && (
+              {trip.needs_rescore && (
                 <button
                   type="button"
                   onClick={() => feedbackRescoreMutation.mutate()}
@@ -2849,8 +2968,21 @@ export default function TripDetail() {
             </div>
           )}
           {feedbackStatus && (
-            <div className="mb-4 rounded-2xl border border-border bg-card p-3 text-xs font-medium text-muted-foreground">
-              {feedbackStatus}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card p-3 text-xs font-medium text-muted-foreground">
+              <span>{feedbackStatus}</span>
+              {lastFeedbackUndo && (
+                <button
+                  type="button"
+                  disabled={feedbackMutation.isPending}
+                  onClick={() => feedbackMutation.mutate({
+                    ...lastFeedbackUndo,
+                    isUndo: true,
+                  })}
+                  className="rounded-lg border border-border bg-background px-2.5 py-1 font-semibold text-foreground disabled:opacity-50"
+                >
+                  Undo
+                </button>
+              )}
             </div>
           )}
 
@@ -2917,8 +3049,21 @@ export default function TripDetail() {
             </div>
           )}
           {feedbackStatus && (
-            <div className="mb-4 rounded-2xl border border-border bg-card p-3 text-xs font-medium text-muted-foreground">
-              {feedbackStatus}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card p-3 text-xs font-medium text-muted-foreground">
+              <span>{feedbackStatus}</span>
+              {lastFeedbackUndo && (
+                <button
+                  type="button"
+                  disabled={feedbackMutation.isPending}
+                  onClick={() => feedbackMutation.mutate({
+                    ...lastFeedbackUndo,
+                    isUndo: true,
+                  })}
+                  className="rounded-lg border border-border bg-background px-2.5 py-1 font-semibold text-foreground disabled:opacity-50"
+                >
+                  Undo
+                </button>
+              )}
             </div>
           )}
 
@@ -3006,21 +3151,7 @@ export default function TripDetail() {
                         'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-400'}`}>
                       {evt.severity}
                     </span>
-                    {[
-                      { id: 'accurate', label: 'Accurate', className: 'border-emerald-200 text-emerald-700 dark:border-emerald-900/60 dark:text-emerald-300' },
-                      { id: 'wrong', label: 'Wrong', className: 'border-red-200 text-red-700 dark:border-red-900/60 dark:text-red-300' },
-                    ].map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        onClick={() => feedbackMutation.mutate({ eventKey: key, event: evt, verdict: option.id })}
-                        className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors ${
-                          feedback === option.id ? `${option.className} bg-background` : 'border-border text-muted-foreground hover:bg-secondary'
-                        }`}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
+                    {renderEventFeedbackControls(evt, key, feedback, { diagnostic: isDiagnosticOnlyTripEvent(evt) })}
                   </div>
                 </div>
               );
@@ -3217,10 +3348,12 @@ const shouldPromptForCalibrationSurvey = (tripId, labelCount, status) => {
   return hash % 3 === 0;
 };
 
-function PostTripCalibrationSurvey({ trip, status, labelCount, isPending, isSkipping, error, onSubmit, onSkip }) {
+function PostTripCalibrationSurvey({ trip, status, labelCount, isPending, error, onSubmit }) {
+  const tripScore = Number.isFinite(Number(trip?.score_overall)) ? Number(trip.score_overall) : null;
   const [draft, setDraft] = useState({
     scoreAccuracy: '',
     scoreIssueTypes: [],
+    targetScore: '',
     wasDriver: 'yes',
     contextTags: [],
     freeTextNote: '',
@@ -3228,23 +3361,50 @@ function PostTripCalibrationSurvey({ trip, status, labelCount, isPending, isSkip
   const [reviewOpen, setReviewOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [dismissedForSession, setDismissedForSession] = useState(false);
   const submitted = Boolean(status?.score_accuracy || status?.rating);
   const skipped = status?.skipped === true;
   const shouldPrompt = shouldPromptForCalibrationSurvey(status?.trip_id || trip?.id, labelCount, status);
+
+  useEffect(() => {
+    if (!submitted || editing) return;
+    setDraft({
+      scoreAccuracy: status?.score_accuracy || '',
+      scoreIssueTypes: Array.isArray(status?.score_issue_types) ? status.score_issue_types : [],
+      targetScore: Number.isFinite(Number(status?.target_score)) ? String(Number(status.target_score)) : '',
+      wasDriver: status?.wasDriver || status?.was_driver || 'yes',
+      contextTags: Array.isArray(status?.context_tags) ? status.context_tags : [],
+      freeTextNote: status?.free_text_note || '',
+    });
+  }, [editing, status, submitted]);
+
   const progressText = Number.isFinite(Number(labelCount))
-    ? `${Number(labelCount).toLocaleString()} local score review${Number(labelCount) === 1 ? '' : 's'}`
+    ? Number(labelCount).toLocaleString() + ' local score review' + (Number(labelCount) === 1 ? '' : 's')
     : 'Saved only on this device';
+  const savedAnswer = SCORE_ACCURACY_LABELS[status?.score_accuracy] || null;
   const statusText = submitted
-    ? 'Score review saved for personal calibration.'
+    ? 'Saved locally for personal calibration. This trip is not silently rewritten.'
     : isPending
       ? 'Saving score review...'
       : 'Tell Road Sage what it got right or wrong about this trip.';
-  const disabled = isPending || isSkipping || (submitted && !editing) || skipped;
+  const disabled = isPending || (submitted && !editing) || skipped;
   const needsIssue = draft.scoreAccuracy === 'too_low' || draft.scoreAccuracy === 'too_high';
+  const fairScore = draft.targetScore === '' ? null : Number(draft.targetScore);
+  const fairScoreInRange = Number.isInteger(fairScore) && fairScore >= 0 && fairScore <= 100;
+  const fairScoreDirectionValid = draft.scoreAccuracy === 'accurate'
+    ? tripScore == null || fairScore === tripScore
+    : draft.scoreAccuracy === 'too_low'
+      ? tripScore == null || (fairScore != null && fairScore > tripScore)
+      : draft.scoreAccuracy === 'too_high'
+        ? tripScore == null || (fairScore != null && fairScore < tripScore)
+        : false;
   const canSubmit = SCORE_ACCURACY_OPTIONS.includes(draft.scoreAccuracy) &&
+    fairScoreInRange &&
+    fairScoreDirectionValid &&
     (!needsIssue || draft.scoreIssueTypes.length > 0) &&
     WAS_DRIVER_OPTIONS.includes(draft.wasDriver) &&
     !disabled;
+
   const toggleScoreIssue = (type) => {
     setDraft((current) => ({
       ...current,
@@ -3261,11 +3421,24 @@ function PostTripCalibrationSurvey({ trip, status, labelCount, isPending, isSkip
         : [...current.contextTags, tag],
     }));
   };
+  const chooseAccuracy = (option) => {
+    setDraft((current) => ({
+      ...current,
+      scoreAccuracy: option,
+      scoreIssueTypes: option === 'accurate' ? [] : current.scoreIssueTypes,
+      targetScore: option === 'accurate' && tripScore != null
+        ? String(tripScore)
+        : current.scoreAccuracy === option
+          ? current.targetScore
+          : '',
+    }));
+  };
   const submit = () => {
     if (!canSubmit) return;
     onSubmit({
       scoreAccuracy: draft.scoreAccuracy,
       scoreIssueTypes: draft.scoreIssueTypes,
+      targetScore: fairScore,
       wasDriver: draft.wasDriver,
       contextTags: draft.contextTags,
       freeTextNote: draft.freeTextNote,
@@ -3276,43 +3449,47 @@ function PostTripCalibrationSurvey({ trip, status, labelCount, isPending, isSkip
     setReviewOpen(false);
   };
 
-  if (skipped) return null;
-  if (!shouldPrompt) return null;
+  if (skipped || dismissedForSession || !shouldPrompt) return null;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.16 }}
-      className={`rounded-xl border transition-colors ${
+      className={'rounded-xl border transition-colors ' + (
         reviewOpen || editing
           ? 'border-border bg-card p-3 shadow-sm'
           : 'border-border/60 bg-secondary/20 px-3 py-2'
-      }`}
+      )}
     >
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span className="shrink-0 rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold">
-              Score {trip?.score_overall ?? '—'}
+              Score {tripScore ?? '—'}
             </span>
-            <h2 className="truncate text-xs font-semibold">
+            <h2 className="min-w-0 text-sm font-semibold leading-tight">
               {submitted ? 'Your score review is saved' : 'Does this trip score look fair?'}
             </h2>
+            {savedAnswer && (
+              <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                {savedAnswer}
+              </span>
+            )}
           </div>
           {(reviewOpen || editing) && (
             <div className="mt-1 text-xs text-muted-foreground">{statusText}</div>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
           {(reviewOpen || editing) && (
-            <span className="hidden text-[11px] text-muted-foreground sm:inline">{progressText}</span>
+            <span className="text-[11px] text-muted-foreground">{progressText}</span>
           )}
           {!editing && (
             <button
               type="button"
               onClick={() => setReviewOpen((open) => !open)}
-              className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold"
+              className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-semibold"
             >
               {reviewOpen ? 'Close' : submitted ? 'View' : 'Review'}
             </button>
@@ -3321,180 +3498,206 @@ function PostTripCalibrationSurvey({ trip, status, labelCount, isPending, isSkip
       </div>
 
       {(reviewOpen || editing) && (
-      <>
-      <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="grid gap-2 sm:grid-cols-3 sm:max-w-3xl">
-          {SCORE_ACCURACY_OPTIONS.map((option) => {
-            const selected = draft.scoreAccuracy === option;
-            return (
-              <button
-                key={option}
-                type="button"
-                disabled={disabled}
-                onClick={() => setDraft((current) => ({
-                  ...current,
-                  scoreAccuracy: option,
-                  scoreIssueTypes: option === 'accurate' ? [] : current.scoreIssueTypes,
-                }))}
-                className={`min-h-12 rounded-lg border px-3 py-2 text-left text-xs font-semibold transition-colors ${
-                  selected
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border bg-secondary/50 hover:bg-secondary disabled:opacity-60'
-                }`}
-              >
-                {SCORE_ACCURACY_LABELS[option]}
-              </button>
-            );
-          })}
-        </div>
-
-        {submitted && !editing && (
-          <div className="flex flex-wrap gap-2 lg:justify-end">
-            <button
-              type="button"
-              onClick={() => {
-                setDraft((current) => ({
-                  ...current,
-                  scoreAccuracy: status?.score_accuracy || '',
-                  scoreIssueTypes: Array.isArray(status?.score_issue_types) ? status.score_issue_types : [],
-                }));
-                setEditing(true);
-                setReviewOpen(true);
-              }}
-              className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
-            >
-              Edit review
-            </button>
-          </div>
-        )}
-
-        {(!submitted || editing) && (
-          <div className="flex flex-wrap gap-2 lg:justify-end">
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() => setDetailsOpen((open) => !open)}
-              className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
-            >
-              {detailsOpen ? 'Hide context' : 'Add context'}
-            </button>
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={onSkip}
-              className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
-            >
-              {isSkipping ? 'Skipping...' : 'Not now'}
-            </button>
-            <button
-              type="button"
-              disabled={!canSubmit}
-              onClick={submit}
-              className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
-            >
-              Save score review
-            </button>
-          </div>
-        )}
-      </div>
-
-      {(!submitted || editing) && needsIssue && (
-        <div className="mt-4">
-          <div className="text-xs font-semibold">
-            {draft.scoreAccuracy === 'too_low'
-              ? 'What made the score seem too harsh?'
-              : 'What risk or problem did the score seem to miss?'}
-          </div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {SCORE_REVIEW_ISSUE_OPTIONS.map((type) => {
-              const selected = draft.scoreIssueTypes.includes(type);
-              return (
-                <button
-                  key={type}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => toggleScoreIssue(type)}
-                  className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                    selected
-                      ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-border bg-secondary/50 text-muted-foreground hover:bg-secondary'
-                  }`}
-                >
-                  {SCORE_REVIEW_ISSUE_LABELS[type]}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {(!submitted || editing) && (
-        <div className="mt-4 rounded-xl border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
-          This review does not silently rewrite this trip. Three consistent eligible reviews about braking, acceleration, or cornering can influence a suggested personal threshold in Settings. You still choose whether to apply it.
-        </div>
-      )}
-
-      {(!submitted || editing) && detailsOpen && (
-        <div className="mt-4 space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-xs font-medium text-muted-foreground">
-              Were you the driver?
-              <select
-                value={draft.wasDriver}
-                disabled={disabled}
-                onChange={(event) => setDraft((current) => ({ ...current, wasDriver: event.target.value }))}
-                className="mt-1 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
-              >
-                {WAS_DRIVER_OPTIONS.map((option) => (
-                  <option key={option} value={option}>{WAS_DRIVER_LABELS[option]}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div>
-            <div className="text-xs font-medium text-muted-foreground">Did any context affect this trip?</div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {TRIP_CONTEXT_TAG_OPTIONS.map((tag) => {
-                const selected = draft.contextTags.includes(tag);
+        <>
+          <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="grid gap-2 sm:grid-cols-3 sm:max-w-3xl">
+              {SCORE_ACCURACY_OPTIONS.map((option) => {
+                const selected = draft.scoreAccuracy === option;
                 return (
                   <button
-                    key={tag}
+                    key={option}
                     type="button"
                     disabled={disabled}
-                    onClick={() => toggleContextTag(tag)}
-                    className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                    aria-pressed={selected}
+                    onClick={() => chooseAccuracy(option)}
+                    className={'min-h-12 rounded-lg border px-3 py-2 text-left text-xs font-semibold transition-colors ' + (
                       selected
                         ? 'border-primary bg-primary text-primary-foreground'
-                        : 'border-border bg-secondary/50 text-muted-foreground hover:bg-secondary'
-                    }`}
+                        : 'border-border bg-secondary/50 hover:bg-secondary disabled:opacity-60'
+                    )}
                   >
-                    {CONTEXT_TAG_LABELS[tag]}
+                    {SCORE_ACCURACY_LABELS[option]}
                   </button>
                 );
               })}
             </div>
+
+            {submitted && !editing && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing(true);
+                  setReviewOpen(true);
+                }}
+                className="self-start rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
+              >
+                Edit review
+              </button>
+            )}
+
+            {(!submitted || editing) && (
+              <div className="flex flex-wrap gap-2 lg:justify-end">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setDetailsOpen((open) => !open)}
+                  className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
+                >
+                  {detailsOpen ? 'Hide context' : 'Add context'}
+                </button>
+                {!submitted && (
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setDismissedForSession(true)}
+                    className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"
+                  >
+                    Dismiss for now
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={!canSubmit}
+                  onClick={submit}
+                  className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+                >
+                  Save score review
+                </button>
+              </div>
+            )}
           </div>
 
-          <label className="block text-xs font-medium text-muted-foreground">
-            What did Road Sage misunderstand?
-            <textarea
-              value={draft.freeTextNote}
-              disabled={disabled}
-              onChange={(event) => setDraft((current) => ({ ...current, freeTextNote: event.target.value }))}
-              className="mt-1 min-h-20 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
-              placeholder="Optional. Stored locally only."
-            />
-          </label>
-        </div>
-      )}
+          {submitted && !editing && (
+            <div className="mt-3 grid gap-2 rounded-xl border border-border bg-secondary/30 p-3 text-xs text-muted-foreground sm:grid-cols-3">
+              <div><span className="font-semibold text-foreground">Fair score:</span> {status?.target_score ?? 'Not recorded'}</div>
+              <div><span className="font-semibold text-foreground">Driver:</span> {WAS_DRIVER_LABELS[status?.wasDriver || status?.was_driver] || 'Unsure'}</div>
+              <div><span className="font-semibold text-foreground">Context:</span> {status?.context_tags?.length ? status.context_tags.map((tag) => CONTEXT_TAG_LABELS[tag] || tag).join(', ') : 'None added'}</div>
+              {status?.free_text_note && (
+                <div className="sm:col-span-3"><span className="font-semibold text-foreground">Note:</span> {status.free_text_note}</div>
+              )}
+            </div>
+          )}
 
-      {error && (
-        <div className="mt-2 text-xs font-medium text-red-600 dark:text-red-400">
-          {error.message || 'Could not save this rating.'}
-        </div>
-      )}
-      </>
+          {(!submitted || editing) && draft.scoreAccuracy && (
+            <label className="mt-4 block max-w-xs text-xs font-semibold">
+              What score would feel fair?
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                inputMode="numeric"
+                value={draft.targetScore}
+                disabled={disabled || draft.scoreAccuracy === 'accurate'}
+                onChange={(event) => setDraft((current) => ({ ...current, targetScore: event.target.value }))}
+                className="mt-1 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
+                placeholder={tripScore == null ? '0–100' : draft.scoreAccuracy === 'too_low' ? 'Higher than ' + tripScore : 'Lower than ' + tripScore}
+              />
+              {!fairScoreDirectionValid && fairScoreInRange && (
+                <span className="mt-1 block font-normal text-red-600 dark:text-red-400">
+                  Choose a score {draft.scoreAccuracy === 'too_low' ? 'higher' : 'lower'} than {tripScore}.
+                </span>
+              )}
+            </label>
+          )}
+
+          {(!submitted || editing) && needsIssue && (
+            <div className="mt-4">
+              <div className="text-xs font-semibold">
+                {draft.scoreAccuracy === 'too_low'
+                  ? 'What made the score seem too harsh?'
+                  : 'What risk or problem did the score seem to miss?'}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {SCORE_REVIEW_ISSUE_OPTIONS.map((type) => {
+                  const selected = draft.scoreIssueTypes.includes(type);
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      disabled={disabled}
+                      aria-pressed={selected}
+                      onClick={() => toggleScoreIssue(type)}
+                      className={'rounded-full border px-2.5 py-1 text-xs font-semibold ' + (
+                        selected
+                          ? 'border-primary bg-primary text-primary-foreground'
+                          : 'border-border bg-secondary/50 text-muted-foreground hover:bg-secondary'
+                      )}
+                    >
+                      {SCORE_REVIEW_ISSUE_LABELS[type]}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {(!submitted || editing) && (
+            <div className="mt-4 rounded-xl border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
+              Saved locally. Three consistent eligible reviews can influence a suggested personal threshold in Settings. Applying that suggestion is always your choice.
+            </div>
+          )}
+
+          {(!submitted || editing) && detailsOpen && (
+            <div className="mt-4 space-y-4">
+              <label className="block max-w-sm text-xs font-medium text-muted-foreground">
+                Were you the driver?
+                <select
+                  value={draft.wasDriver}
+                  disabled={disabled}
+                  onChange={(event) => setDraft((current) => ({ ...current, wasDriver: event.target.value }))}
+                  className="mt-1 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
+                >
+                  {WAS_DRIVER_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{WAS_DRIVER_LABELS[option]}</option>
+                  ))}
+                </select>
+              </label>
+
+              <div>
+                <div className="text-xs font-medium text-muted-foreground">Did any context affect this trip?</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {TRIP_CONTEXT_TAG_OPTIONS.map((tag) => {
+                    const selected = draft.contextTags.includes(tag);
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        disabled={disabled}
+                        aria-pressed={selected}
+                        onClick={() => toggleContextTag(tag)}
+                        className={'rounded-full border px-2.5 py-1 text-xs font-semibold ' + (
+                          selected
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-border bg-secondary/50 text-muted-foreground hover:bg-secondary'
+                        )}
+                      >
+                        {CONTEXT_TAG_LABELS[tag]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <label className="block text-xs font-medium text-muted-foreground">
+                What did Road Sage misunderstand?
+                <textarea
+                  value={draft.freeTextNote}
+                  disabled={disabled}
+                  onChange={(event) => setDraft((current) => ({ ...current, freeTextNote: event.target.value }))}
+                  className="mt-1 min-h-20 w-full rounded-xl border border-border bg-secondary/50 px-3 py-2 text-sm text-foreground"
+                  placeholder="Optional. Stored locally only."
+                />
+              </label>
+            </div>
+          )}
+
+          {error && (
+            <div className="mt-2 text-xs font-medium text-red-600 dark:text-red-400">
+              {error.message || 'Could not save this score review.'}
+            </div>
+          )}
+        </>
       )}
     </motion.div>
   );

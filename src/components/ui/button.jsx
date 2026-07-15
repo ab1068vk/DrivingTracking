@@ -1,6 +1,7 @@
 import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva } from "class-variance-authority";
+import { LoaderCircle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
@@ -36,13 +37,61 @@ const buttonVariants = cva(
 
 /** @type {React.ForwardRefExoticComponent<any>} */
 const Button = React.forwardRef((propsArg, ref) => {
-  const { className = "", variant = "default", size = "default", asChild = false, ...props } = /** @type {any} */ (propsArg);
-  const Comp = asChild ? Slot : "button"
+  const {
+    className = "",
+    variant = "default",
+    size = "default",
+    asChild = false,
+    loading = false,
+    loadingText = "Working...",
+    children,
+    disabled,
+    onClick,
+    ...props
+  } = /** @type {any} */ (propsArg);
+  const isUnavailable = disabled || loading;
+
+  if (asChild) {
+    const child = React.Children.only(children);
+    const childContent = loading ? (
+      <>
+        <LoaderCircle className="animate-spin" aria-hidden="true" />
+        {loadingText}
+      </>
+    ) : child.props.children;
+    return (
+      <Slot
+        className={cn(buttonVariants({ variant, size, className }))}
+        ref={ref}
+        aria-disabled={isUnavailable ? true : undefined}
+        aria-busy={loading || undefined}
+        data-loading={loading ? 'true' : undefined}
+        onClick={isUnavailable
+          ? (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+          : onClick}
+        {...props}
+      >
+        {React.cloneElement(child, undefined, childContent)}
+      </Slot>
+    );
+  }
+
+  const Comp = "button"
   return (
     (<Comp
       className={cn(buttonVariants({ variant, size, className }))}
       ref={ref}
-      {...props} />)
+      disabled={isUnavailable}
+      aria-busy={loading || undefined}
+      data-loading={loading ? 'true' : undefined}
+      onClick={onClick}
+      {...props}>
+      {loading && <LoaderCircle className="animate-spin" aria-hidden="true" />}
+      {loading ? loadingText : children}
+    </Comp>)
   );
 })
 Button.displayName = "Button"

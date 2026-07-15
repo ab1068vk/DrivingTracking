@@ -1,13 +1,26 @@
 // @ts-check
+import { useEffect, useRef } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { beginInteractionTask, endInteractionTask } from '@/lib/interactionFeedback';
 
 export default function PageSkeleton({
   title = 'Loading page',
   showMap = false,
   cardCount = 3,
 }) {
+  const taskRef = useRef(null);
+
+  useEffect(() => {
+    taskRef.current = beginInteractionTask(title, { timeoutMs: 30_000 });
+    return () => endInteractionTask(taskRef.current);
+  }, [title]);
+
   return (
-    <div className="cyber-page-skeleton space-y-5" role="status" aria-label={title}>
+    <div className="cyber-page-skeleton space-y-5" role="status" aria-live="polite" aria-label={title}>
+      <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <span className="h-2.5 w-2.5 rounded-full bg-primary animate-pulse" aria-hidden="true" />
+        <span>{title}</span>
+      </div>
       <div className="flex items-center justify-between gap-4">
         <div className="space-y-2">
           <Skeleton className="h-7 w-48" />
@@ -22,7 +35,6 @@ export default function PageSkeleton({
       </div>
       {showMap && <Skeleton className="h-[24rem] rounded-2xl" />}
       <Skeleton className="h-64 rounded-2xl" />
-      <span className="sr-only">{title}</span>
     </div>
   );
 }

@@ -68,9 +68,9 @@ export default function TrackingTripDetail() {
 
   return <div className="min-w-0">
     <header className="border-b border-border pb-3">
-      <Link to="/trips" className="inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" />Trip telemetry</Link>
+      <Link to="/trips" className="inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" />My tracked trips</Link>
       <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0"><div className="text-[11px] font-bold uppercase text-muted-foreground">Neutral trip record</div><h1 className="truncate font-grotesk text-2xl font-bold">{trackingTripDisplayName(trip)}</h1>
+        <div className="min-w-0"><div className="text-[11px] font-bold text-muted-foreground">Advanced drive details</div><h1 className="truncate font-grotesk text-2xl font-bold">{trackingTripDisplayName(trip)}</h1>
           <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"><span>Started {dateTime(trip.start_time)}</span><span>Ended {dateTime(trip.end_time)}</span><span className="font-mono">ID {trip.id}</span></div>
         </div>
         <div className="flex flex-wrap gap-2"><Badge item={route} /><Badge item={evidence} /></div>

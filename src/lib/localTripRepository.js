@@ -21,6 +21,7 @@ import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import {
+  buildPhoneUseFromEvents,
   buildPhoneUsageAccessProvenance,
   buildPhoneUseFromTripEvidence,
   mergePhoneUseEventsIntoDrivingEvents,
@@ -52,7 +53,7 @@ export const DB_NAME_META_KEY = 'drivesense_indexeddb_name';
 export const DB_NAME = String(import.meta.env.VITE_DB_NAME || DEFAULT_DB_NAME).trim() || DEFAULT_DB_NAME;
 const TRIP_STORE = 'trips';
 const TRIP_SUMMARY_STORE = 'trip_summaries';
-export const TRIP_SCHEMA_VERSION = 24;
+export const TRIP_SCHEMA_VERSION = 26;
 export const TRIP_EVENT_MIGRATION_VERSION = 1;
 export const TRIP_EVENT_MIGRATION_KEY = 'drivesense_trip_event_migration_version';
 export const TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY = 'drivesense_heading_event_migration_note_dismissed';
@@ -131,6 +132,15 @@ export const AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO = 0.2;
  * version or calibration-input snapshot no longer matches current settings.
  *
  * Version 23 adds lane-changing detection/scoring fields and Safety blend input.
+ *
+ * Version 24 recalculates distance without dropping frequent vehicle-speed GPS
+ * samples below the accuracy-derived movement floor.
+ *
+ * Version 25 reruns that distance migration and refreshes outdated history
+ * summaries synchronously before trip cards are returned.
+ *
+ * Version 26 stops a smaller legacy native distance from overriding a larger
+ * route recalculation when privacy-masked points are present.
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';
@@ -400,15 +410,16 @@ const getAllTrips = async () => {
     db.close();
     const liveRecords = records.filter((record) => !isSecureDeleteTombstone(record));
     const trips = await decodeTripRecords(liveRecords);
-    const legacyTrips = liveRecords.filter((record) => !isEncryptedPayload(record?.encrypted_payload));
     const sanitizedTrips = await sanitizeTripsForPrivacyStorage(trips);
-    const sanitizedChanged = JSON.stringify(sanitizedTrips) !== JSON.stringify(trips);
-    if (legacyTrips.length || sanitizedChanged) await writeTripsToDb(DB_NAME, sanitizedTrips);
+    const tripsToRewrite = sanitizedTrips.filter((trip, index) => (
+      trip !== trips[index] || !isEncryptedPayload(liveRecords[index]?.encrypted_payload)
+    ));
+    if (tripsToRewrite.length) await writeTripsToDb(DB_NAME, tripsToRewrite);
     return sanitizedTrips;
   } catch {
     const trips = await getEncryptedJson(TRIPS_KEY, []);
     const sanitizedTrips = await sanitizeTripsForPrivacyStorage(trips);
-    if (JSON.stringify(sanitizedTrips) !== JSON.stringify(trips)) {
+    if (sanitizedTrips.some((trip, index) => trip !== trips[index])) {
       await setEncryptedJson(TRIPS_KEY, sanitizedTrips);
     }
     return sanitizedTrips;
@@ -873,6 +884,13 @@ export const preserveNativePrivacyAggregateStats = (trip = {}, calculatedStats =
   }
 
   const publicDistanceKm = Math.max(0, Number(calculatedStats?.distance_km) || 0);
+  if (publicDistanceKm > nativeDistanceKm) {
+    return {
+      ...calculatedStats,
+      distance_provenance: 'route_recalculated_above_native_aggregate',
+      native_distance_km_original: nativeDistanceKm,
+    };
+  }
   const next = {
     ...calculatedStats,
     distance_km: nativeDistanceKm,
@@ -905,6 +923,30 @@ export const applyEventFeedbackToEvents = (events = [], feedback = {}) => {
   return { events: filtered, removed };
 };
 
+export const applyEventFeedbackToPhoneUse = (phoneUse = {}, feedback = {}, durationSeconds = 0) => {
+  const confirmedEvents = Array.isArray(phoneUse?.phone_use_events) ? phoneUse.phone_use_events : [];
+  const proxyEvents = Array.isArray(phoneUse?.phone_proxy_events) ? phoneUse.phone_proxy_events : [];
+  const adjusted = applyEventFeedbackToEvents([...confirmedEvents, ...proxyEvents], feedback);
+  const rebuilt = buildPhoneUseFromEvents(adjusted.events, durationSeconds, 'none');
+  const hadConfirmedScore = phoneUse?.phone_use_score_available === true;
+  const hasConfirmedEvents = rebuilt.phone_use_events?.length > 0;
+
+  return {
+    phoneUse: hadConfirmedScore && !hasConfirmedEvents
+      ? {
+        ...rebuilt,
+        phone_use_score: 100,
+        phone_use_score_available: true,
+        phone_use_score_status: phoneUse.phone_use_score_status || 'android_usage_access',
+        data_sources: Array.isArray(phoneUse.data_sources) && phoneUse.data_sources.length
+          ? phoneUse.data_sources
+          : ['android_usage_access'],
+      }
+      : rebuilt,
+    removed: adjusted.removed,
+  };
+};
+
 const rescoreTrip = (trip, vehicles = []) => {
   if (!trip || trip.status !== 'completed') return trip;
   const routePoints = restoreOriginalRouteGeometry(trip.route_points || []);
@@ -931,7 +973,13 @@ const rescoreTrip = (trip, vehicles = []) => {
   );
   const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(scoringRoutePoints, thresholds, trip.end_time, privacyZones);
   const feedbackAdjusted = applyEventFeedbackToEvents(events, trip.event_feedback);
-  const phoneUse = mergedPhoneUseForTrip(trip, scoringRoutePoints, stats, detectedPhoneUse);
+  const mergedPhoneUse = mergedPhoneUseForTrip(trip, scoringRoutePoints, stats, detectedPhoneUse);
+  const phoneFeedbackAdjusted = applyEventFeedbackToPhoneUse(
+    mergedPhoneUse,
+    trip.event_feedback,
+    stats.duration_seconds
+  );
+  const phoneUse = phoneFeedbackAdjusted.phoneUse;
   const motionSamples = Array.isArray(trip.motion_samples) ? trip.motion_samples : [];
   const sensorFusionSummary = motionSamples.length
     ? buildSensorFusionSummary(motionSamples, scoringRoutePoints, null, feedbackAdjusted.events)
@@ -978,7 +1026,7 @@ const rescoreTrip = (trip, vehicles = []) => {
     driving_events: drivingEvents,
     phone_usage_access_provenance: phoneUsageAccessProvenance.changed ? phoneUsageAccessProvenance : null,
     ...(scoreProvenanceChange ? { score_provenance_change: scoreProvenanceChange } : {}),
-    feedback_adjusted_events_count: feedbackAdjusted.removed,
+    feedback_adjusted_events_count: feedbackAdjusted.removed + phoneFeedbackAdjusted.removed,
     needs_rescore: false,
     schema_version: TRIP_SCHEMA_VERSION,
     updated_at: new Date().toISOString(),
@@ -1071,6 +1119,31 @@ const rescoreTripsIfNeeded = async (trips = []) => {
   return next;
 };
 
+let currentTripSummariesPromise = null;
+
+const getCurrentTripSummaries = async () => {
+  if (currentTripSummariesPromise) return currentTripSummariesPromise;
+
+  currentTripSummariesPromise = (async () => {
+    const summaries = await getAllTripSummaries();
+    const hasOutdatedSchema = summaries.some((trip) => (
+      trip?.status === 'completed' &&
+      trip?.privacy_mode !== 'summary_only' &&
+      !trip?.route_data_expired_at &&
+      trip?.schema_version !== TRIP_SCHEMA_VERSION
+    ));
+    if (!hasOutdatedSchema) return summaries;
+
+    const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
+    const refreshedTrips = await rescoreTripsIfNeeded(taggedTrips);
+    return refreshedTrips.map(buildTripSummary);
+  })().finally(() => {
+    currentTripSummariesPromise = null;
+  });
+
+  return currentTripSummariesPromise;
+};
+
 const prepareTripForRead = async (trip) => {
   if (!trip) return null;
   const thresholds = buildDrivingThresholds(localSettings.get());
@@ -1109,6 +1182,32 @@ export async function verifyTripsPersistedForNativeAcknowledge(trips = []) {
   return true;
 }
 
+export const preserveResolvedSpeedLimitReview = (incomingTrip = {}, storedTrip = null) => {
+  const reviewWasResolved = storedTrip?.speed_limit_review_required === false ||
+    Boolean(storedTrip?.speed_limit_review_resolved_at);
+  if (!reviewWasResolved) return incomingTrip;
+
+  return {
+    ...incomingTrip,
+    speed_limit_review_required: false,
+    ...(storedTrip?.speed_limit_review_resolved_at
+      ? { speed_limit_review_resolved_at: storedTrip.speed_limit_review_resolved_at }
+      : {}),
+    speed_limit_review_reason: null,
+    ...(incomingTrip?.speed_limit_context
+      ? {
+        speed_limit_context: {
+          ...incomingTrip.speed_limit_context,
+          review_required: false,
+          ...(storedTrip?.speed_limit_review_resolved_at
+            ? { review_resolved_at: storedTrip.speed_limit_review_resolved_at }
+            : {}),
+        },
+      }
+      : {}),
+  };
+};
+
 const importNativeCompletedTrips = async () => {
   if (!isAndroid()) return emptyNativeImportResult();
   if (nativeTripImportPromise) return nativeTripImportPromise;
@@ -1121,6 +1220,9 @@ const importNativeCompletedTrips = async () => {
     const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []);
     const importedTrips = [];
     for (const trip of nativeTrips) {
+      const storedTrip = trip?.id == null
+        ? null
+        : await getStoredTripById(trip.id).catch(() => null);
       const routePoints = trip.route_points || [];
       const settings = localSettings.get();
       const thresholds = buildDrivingThresholds(settings);
@@ -1139,7 +1241,13 @@ const importNativeCompletedTrips = async () => {
         })
       );
       const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(scoringRoutePoints, thresholds, trip.end_time, privacyZones);
-      const phoneUse = mergedPhoneUseForTrip(trip, scoringRoutePoints, stats, detectedPhoneUse);
+      const mergedPhoneUse = mergedPhoneUseForTrip(trip, scoringRoutePoints, stats, detectedPhoneUse);
+      const phoneFeedbackAdjusted = applyEventFeedbackToPhoneUse(
+        mergedPhoneUse,
+        trip.event_feedback,
+        stats.duration_seconds
+      );
+      const phoneUse = phoneFeedbackAdjusted.phoneUse;
       const motionSamples = Array.isArray(trip.motion_samples) ? trip.motion_samples : [];
       const sensorFusionSummary = motionSamples.length
         ? buildSensorFusionSummary(motionSamples, scoringRoutePoints, null, events)
@@ -1158,7 +1266,7 @@ const importNativeCompletedTrips = async () => {
         zones: privacyZones,
       }).events;
 
-      const importedTrip = {
+      const importedTrip = preserveResolvedSpeedLimitReview({
         ...trip,
         ...stats,
         ...scores,
@@ -1174,7 +1282,7 @@ const importNativeCompletedTrips = async () => {
         imported_from_native: true,
         schema_version: TRIP_SCHEMA_VERSION,
         updated_at: trip.updated_at || new Date().toISOString(),
-      };
+      }, storedTrip);
 
       await putTrip(importedTrip);
       importedTrips.push(importedTrip);
@@ -1296,18 +1404,19 @@ export async function eraseTripRepositoryForDataRights() {
   return result;
 }
 
-export const enforceTripDataRetention = async ({ now = Date.now() } = {}) => {
+const isTripExpiredForRetention = (trip, cutoff) => {
+  const when = new Date(trip.end_time || trip.start_time || trip.created_at || 0).getTime();
+  return Number.isFinite(when) && when > 0 && when < cutoff;
+};
+export const enforceTripDataRetention = async ({ now = Date.now(), trips: providedTrips = null } = {}) => {
   const retentionDays = Number(localSettings.get().data_retention_days || 0);
   if (!retentionDays) {
     return { enabled: false, retentionDays: 0, deletedTrips: 0 };
   }
 
   const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
-  const trips = await getAllTrips();
-  const expired = trips.filter((trip) => {
-    const when = new Date(trip.end_time || trip.start_time || trip.created_at || 0).getTime();
-    return Number.isFinite(when) && when > 0 && when < cutoff;
-  });
+  const trips = Array.isArray(providedTrips) ? providedTrips : await getAllTrips();
+  const expired = trips.filter((trip) => isTripExpiredForRetention(trip, cutoff));
 
   for (const trip of expired) {
     await deleteTrip(trip.id);
@@ -1518,12 +1627,12 @@ const withId = (trip) => ({
 export const localTripRepository = {
   async listSummaries({ sort = '-start_time', limit = 100 } = {}) {
     await importNativeCompletedTrips();
-    return sortTrips(await getAllTripSummaries(), sort).slice(0, limit);
+    return sortTrips(await getCurrentTripSummaries(), sort).slice(0, limit);
   },
 
   async listAllSummaries({ sort = '-start_time' } = {}) {
     await importNativeCompletedTrips();
-    return sortTrips(await getAllTripSummaries(), sort);
+    return sortTrips(await getCurrentTripSummaries(), sort);
   },
 
   async list({ sort = '-start_time', limit = 100 } = {}) {
@@ -1537,8 +1646,13 @@ export const localTripRepository = {
 
   async listAllForExport({ sort = '-start_time' } = {}) {
     await importNativeCompletedTrips();
-    await enforceTripDataRetention();
-    return sortTrips(await getAllTrips(), sort);
+    const trips = await getAllTrips();
+    const now = Date.now();
+    const retention = await enforceTripDataRetention({ now, trips });
+    if (!retention.enabled || !retention.deletedTrips) return sortTrips(trips, sort);
+
+    const cutoff = now - retention.retentionDays * 24 * 60 * 60 * 1000;
+    return sortTrips(trips.filter((trip) => !isTripExpiredForRetention(trip, cutoff)), sort);
   },
 
   async listAll({ sort = '-start_time' } = {}) {
@@ -1727,6 +1841,52 @@ export const localTripRepository = {
       reason,
     });
     return result;
+  },
+
+  async rescoreTripById(id, { reason = 'manual' } = {}) {
+    await importNativeCompletedTrips();
+    await enforceTripDataRetention();
+    await migrateRetiredTripEventTypesOnce();
+    const trip = await getStoredTripById(id);
+    if (!trip) throw new Error('Trip not found');
+
+    const skippedReason = rescoreIneligibilityReason(trip);
+    if (skippedReason) {
+      return {
+        requested: 1,
+        completed: 0,
+        changed: false,
+        skipped: true,
+        skippedReason,
+        before: scoreSnapshot(trip),
+        after: scoreSnapshot(trip),
+        updatedTrip: await prepareTripForRead(trip),
+      };
+    }
+
+    const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []);
+    const before = scoreSnapshot(trip);
+    const rescored = rescoreTrip({ ...trip, needs_rescore: true }, vehicles);
+    const after = scoreSnapshot(rescored);
+    await putTrip(rescored);
+    await invalidateTripDerivedCaches();
+    recordSystemEvent('trip_targeted_rescore_completed', {
+      trip_id_present: true,
+      reason,
+      score_changed: scoreSnapshotsDiffer(before, after),
+      feedback_adjusted_events_count: Number(rescored.feedback_adjusted_events_count) || 0,
+    }, { category: 'scoring', title: 'Trip re-scored' });
+
+    return {
+      requested: 1,
+      completed: 1,
+      changed: scoreSnapshotsDiffer(before, after),
+      skipped: false,
+      skippedReason: null,
+      before,
+      after,
+      updatedTrip: await prepareTripForRead(rescored),
+    };
   },
 
   async getScoreMigrationSummary() {

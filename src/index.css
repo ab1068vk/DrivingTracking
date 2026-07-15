@@ -133,17 +133,6 @@
     -webkit-tap-highlight-color: transparent;
   }
 
-  html.mobile-navigation-open,
-  body.mobile-navigation-open {
-    overflow: hidden;
-    overscroll-behavior: none;
-  }
-
-  body.mobile-navigation-open {
-    width: 100%;
-    touch-action: none;
-  }
-
   .cyber-mobile-backdrop {
     touch-action: none;
   }
@@ -174,6 +163,27 @@
     touch-action: manipulation;
   }
 
+  :where(button, a, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"]) {
+    -webkit-tap-highlight-color: transparent;
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+    transition-duration: 120ms;
+  }
+
+  :where(button, a, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"])[data-app-pressed="true"] {
+    opacity: 0.88;
+    transform: scale(0.985);
+  }
+
+  :where(button, [role="button"])[aria-busy="true"],
+  :where(button, [role="button"])[data-loading="true"] {
+    cursor: progress;
+  }
+
+  :where(button, [role="button"]):disabled,
+  :where(button, [role="button"])[aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
   :where(button, a, input, select, textarea, [role="button"], [role="link"]):focus-visible {
     outline: 3px solid hsl(var(--ring));
     outline-offset: 3px;
@@ -189,6 +199,57 @@
       transition-duration: 0.01ms !important;
     }
   }
+}
+
+.app-interaction-feedback {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 1100;
+  height: 3px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  contain: strict;
+  transition: opacity 120ms ease;
+}
+
+.app-interaction-feedback[data-active="true"] {
+  opacity: 1;
+}
+
+.app-interaction-feedback__bar {
+  width: 42%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)), hsl(var(--primary)));
+  transform: translate3d(-110%, 0, 0);
+  will-change: transform;
+  animation: app-interaction-progress 1s ease-in-out infinite;
+}
+
+/* Cyber presentation rules intentionally restyle rounded cards and buttons.
+   Keep portalled dialogs anchored to the viewport and their close control
+   anchored to the dialog, regardless of those broad theme selectors. */
+.cyber-lab [data-app-dialog-content="true"] {
+  position: fixed !important;
+}
+
+.cyber-lab [data-app-dialog-close="true"] {
+  position: absolute !important;
+}
+
+html[data-mobile-navigation-open="true"] .app-interaction-feedback {
+  opacity: 0;
+}
+
+html[data-mobile-navigation-open="true"] .app-interaction-feedback__bar {
+  animation-play-state: paused;
+  will-change: auto;
+}
+
+@keyframes app-interaction-progress {
+  from { transform: translate3d(-110%, 0, 0); }
+  to { transform: translate3d(340%, 0, 0); }
 }
 
 @layer utilities {
@@ -331,7 +392,8 @@
   .tracking-console-shell {
     isolation: isolate;
     background:
-      linear-gradient(180deg, hsl(var(--background)), hsl(var(--secondary) / 0.42));
+      radial-gradient(circle at 82% 0%, hsl(var(--primary) / 0.09), transparent 30rem),
+      linear-gradient(180deg, hsl(var(--background)), hsl(var(--secondary) / 0.3));
   }
 
   .tracking-console-toolbar,
@@ -374,10 +436,131 @@
 
   .tracking-console-rail {
     min-height: 0;
+    box-shadow: 8px 0 24px hsl(215 30% 15% / 0.035);
   }
 
   .tracking-console-nav-item {
     width: 100%;
+  }
+
+  /* Advanced Tracking presentation layer. Everything here is intentionally
+     scoped below the tracking shell so Coaching Mode remains unchanged. */
+  .tracking-console-main > div > header:first-child {
+    position: relative;
+    overflow: hidden;
+    margin-bottom: 0.85rem;
+    border: 1px solid hsl(var(--border) / 0.72);
+    border-radius: 1.35rem;
+    background:
+      radial-gradient(circle at 92% 0%, hsl(var(--primary) / 0.14), transparent 18rem),
+      linear-gradient(135deg, hsl(var(--card)), hsl(var(--secondary) / 0.5));
+    padding: 1rem 1.15rem;
+    box-shadow: 0 12px 30px hsl(215 30% 15% / 0.055);
+  }
+
+  .tracking-console-main > div > header:first-child::after {
+    content: '';
+    position: absolute;
+    inset: auto 1.15rem 0;
+    height: 2px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, hsl(var(--primary)), hsl(174 72% 42%), transparent 72%);
+    opacity: 0.7;
+  }
+
+  .tracking-console-main > div > header:first-child h1 {
+    font-size: clamp(1.35rem, 2vw, 1.8rem);
+    letter-spacing: -0.025em;
+  }
+
+  .tracking-console-main > div > header:first-child p {
+    max-width: 58rem;
+    font-size: 0.82rem;
+    line-height: 1.55;
+  }
+
+  .tracking-console-main > div > :where(main, section, aside) [class*="rounded-md"][class*="border"],
+  .tracking-console-main > div > :where(main, section, aside)[class*="rounded-md"][class*="border"] {
+    border-radius: 0.95rem;
+  }
+
+  .tracking-console-main > div > :where(main, section, aside) [class*="bg-card"][class*="border"] {
+    border-color: hsl(var(--border) / 0.68);
+    box-shadow: 0 8px 22px hsl(215 30% 15% / 0.04);
+  }
+
+  .tracking-console-main table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .tracking-console-main thead {
+    background: hsl(var(--secondary) / 0.58);
+  }
+
+  .tracking-console-main tbody tr {
+    transition: background-color 120ms ease;
+  }
+
+  .tracking-console-main tbody tr:hover {
+    background: hsl(var(--primary) / 0.045);
+  }
+
+  .tracking-console-main :where(select, input[type="text"], input[type="search"]) {
+    border-radius: 0.8rem;
+    background: hsl(var(--card));
+  }
+
+  .tracking-console-main :where(select, input[type="text"], input[type="search"]):focus-visible {
+    border-color: hsl(var(--primary) / 0.65);
+    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.12);
+  }
+
+  .tracking-intelligence-panel {
+    background:
+      radial-gradient(circle at 100% 0%, hsl(var(--primary) / 0.1), transparent 20rem),
+      hsl(var(--card) / 0.94);
+  }
+
+  .tracking-mobile-dock {
+    position: sticky;
+    bottom: 0;
+    z-index: 45;
+    display: flex;
+    gap: 0.25rem;
+    border-top: 1px solid hsl(var(--border) / 0.75);
+    background: hsl(var(--background) / 0.94);
+    padding: 0.45rem max(0.5rem, env(safe-area-inset-right)) calc(0.45rem + env(safe-area-inset-bottom)) max(0.5rem, env(safe-area-inset-left));
+    box-shadow: 0 -10px 28px hsl(215 30% 15% / 0.08);
+    backdrop-filter: blur(18px);
+  }
+
+  .tracking-home-hero {
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 86% 12%, hsl(0 0% 100% / 0.22), transparent 13rem),
+      linear-gradient(135deg, hsl(var(--primary)), hsl(199 76% 42%) 58%, hsl(169 70% 36%));
+    color: white;
+    box-shadow: 0 18px 45px hsl(var(--primary) / 0.16);
+  }
+
+  .tracking-home-hero::after {
+    content: '';
+    position: absolute;
+    width: 12rem;
+    height: 12rem;
+    right: -4rem;
+    bottom: -7rem;
+    border: 1.5rem solid hsl(0 0% 100% / 0.1);
+    border-radius: 999px;
+    pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tracking-home-hero :where(.animate-pulse) {
+      animation: none;
+    }
   }
 
   @media (min-width: 768px) {
@@ -387,6 +570,18 @@
 
     .tracking-console-frame {
       min-height: 0;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .tracking-console-main > div > header:first-child {
+      margin-bottom: 0.65rem;
+      border-radius: 1.1rem;
+      padding: 0.9rem;
+    }
+
+    .tracking-console-main > div > header:first-child h1 {
+      font-size: 1.35rem;
     }
   }
 

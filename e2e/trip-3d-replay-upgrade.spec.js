@@ -23,6 +23,8 @@ const buildSyntheticTrip = () => {
       speed_kmh: Math.max(0, 28 + Math.sin(index / 4) * 18 + (index > 24 ? 16 : 0)),
       speed_limit_kmh: index > 24 ? 50 : 40,
       accuracy: 8,
+      altitude: 84 + Math.sin(index / 6) * 8 + index * 0.15,
+      altitude_accuracy: 6,
     };
   });
 
@@ -150,7 +152,7 @@ test.beforeEach(async ({ page }) => {
   }, onboardedSettings);
 });
 
-test('renders upgraded 3D replay with chapters and nonblank WebGL canvas', async ({ page }) => {
+test('renders upgraded 3D replay with chapters and nonblank WebGL canvas', async ({ page }, testInfo) => {
   const trip = buildSyntheticTrip();
 
   await page.addInitScript((tripRecord) => {
@@ -165,6 +167,20 @@ test('renders upgraded 3D replay with chapters and nonblank WebGL canvas', async
   await expect(page.getByRole('heading', { name: trip.nickname })).toBeVisible();
   await expect(page.getByText('Drive chapters')).toBeVisible();
   await expect(page.getByRole('button', { name: /Cinema/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Hood' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Enter 3D fullscreen' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Auto/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Director' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Enable local drive sound' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /1x replay/ })).toBeVisible();
+  await expect(page.getByLabel('3D telemetry')).toContainText('Accel steady');
+  await expect(page.getByLabel('3D telemetry')).toContainText('Cornering straight');
+  await expect(page.getByLabel('3D telemetry')).toContainText('Altitude');
+  await expect(page.getByLabel('3D telemetry')).toContainText('Scene optimized');
+  await expect(page.getByRole('img', { name: 'Trip elevation profile' })).toBeVisible();
+  if (testInfo.project.name === 'chromium') {
+    await expect(page.getByTestId('trip-3d-minimap')).toBeVisible();
+  }
 
   const canvas = page.locator('canvas').first();
   await expect(canvas).toBeVisible();
@@ -174,4 +190,14 @@ test('renders upgraded 3D replay with chapters and nonblank WebGL canvas', async
   const pixelSummary = summarizeCanvasPng(await canvas.screenshot());
   expect(pixelSummary.sampled).toBeGreaterThan(100);
   expect(pixelSummary.colored).toBeGreaterThan(25);
+
+  const playbackPosition = page.getByRole('slider', { name: '3D drive playback position' });
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await page.waitForTimeout(1100);
+  expect(Number(await playbackPosition.inputValue())).toBeGreaterThan(3);
+  await page.getByRole('button', { name: 'Pause' }).click();
+
+  await page.getByRole('button', { name: 'Enable local drive sound' }).click();
+  await expect(page.getByRole('button', { name: 'Disable local drive sound' })).toBeVisible();
+  await page.getByRole('button', { name: 'Disable local drive sound' }).click();
 });

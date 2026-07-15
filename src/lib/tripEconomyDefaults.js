@@ -18,28 +18,15 @@ export const CO2_KG_PER_LITER = {
   ev: 0,
 };
 
-/**
- * Provisional maintenance conversion used for extra-wear estimates.
- *
- * Calibration intent: one driving stress unit is currently treated as about
- * 8 km of service-life reserve consumed. This has not been calibrated against
- * OEM tire/service interval data, so maintenance reminders should treat it as
- * a planning heuristic rather than a manufacturer-backed life estimate.
- */
-export const WEAR_KM_PER_STRESS_UNIT = 8;
-export const MAINTENANCE_CALIBRATION_REGISTRY = {
-  wearKmPerStressUnit: {
-    value: WEAR_KM_PER_STRESS_UNIT,
-    unit: 'km_per_stress_unit',
-    calibrationStatus: 'provisional',
-    calibrationBasis: 'Not calibrated to OEM tire or maintenance interval data.',
-    note: '1 stress unit is assumed to consume about 8 km of service-life reserve until manufacturer or fleet outcome data is available.',
-  },
-};
+/** Retired compatibility exports. Maintenance now requires an explicit manufacturer-backed source. */
+export const WEAR_KM_PER_STRESS_UNIT = null;
+export const MAINTENANCE_CALIBRATION_REGISTRY = Object.freeze({
+  wearKmPerStressUnit: Object.freeze({
+    value: null,
+    calibrationStatus: 'retired',
+    calibrationBasis: 'No defensible conversion from driving events to component life.',
+    note: 'Road Sage does not convert GPS events into kilometres of wear or change service intervals.',
+  }),
+});
 
-export const DEFAULT_MAINTENANCE_ITEMS = [
-  { id: 'oil', label: 'Oil change', interval_km: 8000, last_service_km: 0 },
-  { id: 'tires', label: 'Tire rotation', interval_km: 10000, last_service_km: 0 },
-  { id: 'brakes', label: 'Brake check', interval_km: 20000, last_service_km: 0 },
-  { id: 'inspection', label: 'Inspection', interval_km: 20000, last_service_km: 0 },
-];
+export const DEFAULT_MAINTENANCE_ITEMS = Object.freeze([]);

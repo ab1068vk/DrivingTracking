@@ -229,8 +229,8 @@ export default function TrackingMapWorkspace() {
     <div className="tracking-map-workspace flex min-h-[calc(100dvh-8.5rem)] min-w-0 flex-col overflow-hidden">
       <header className="flex shrink-0 flex-col gap-2 border-b border-border bg-background/80 px-3 py-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
-          <div className="text-[11px] font-bold uppercase tracking-normal text-muted-foreground">Advanced Tracking Mode</div>
-          <h1 className="font-grotesk text-xl font-bold tracking-normal">Map Workspace</h1>
+          <div className="text-[11px] font-bold text-muted-foreground">Advanced trip tracking</div>
+          <h1 className="font-grotesk text-xl font-bold tracking-normal">Route Map</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {workspacePending && <span className="rounded-md border border-border bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground">Applying selection</span>}
@@ -245,7 +245,7 @@ export default function TrackingMapWorkspace() {
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[17rem_minmax(0,1fr)_19rem]">
         <aside className="min-h-0 border-b border-border bg-card/70 lg:border-b-0 lg:border-r">
           <div className="flex h-full min-h-0 flex-col">
-            <PaneHeader icon={Filter} title="Selector" detail={`${filteredSummaries.length} local trip summaries`} />
+            <PaneHeader icon={Filter} title="Choose a trip" detail={`${filteredSummaries.length} local trip summaries`} />
             <div className="space-y-3 overflow-y-auto p-3">
               <div>
                 <div className="mb-2 text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">Saved filters</div>
@@ -342,7 +342,7 @@ export default function TrackingMapWorkspace() {
 
         <aside className="min-h-0 border-t border-border bg-card/80 lg:border-l lg:border-t-0">
           <div className="flex h-full min-h-0 flex-col">
-            <PaneHeader icon={Layers} title="Inspector" detail="Selected layer and event details" />
+            <PaneHeader icon={Layers} title="Route details" detail="Selected layer and event details" />
             <div className="space-y-3 overflow-y-auto p-3 text-sm">
               <InspectorRow label="Selected trip" value={selectedTrip ? formatDate(selectedTrip.start_time) : 'source unavailable'} />
               <InspectorRow label="Route points retained" value={String(visualRoutePoints.length)} />

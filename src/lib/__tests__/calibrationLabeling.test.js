@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildCalibrationLabelPayload,
+  buildLocalSurveyRecord,
   dataQualityFlagsForCalibration,
 } from '@/lib/calibrationLabeling';
 import { fitCalibrationDataset, surveyRatingToTargetScore } from '@/lib/calibrationFitting';
@@ -137,6 +138,28 @@ describe('calibration labeling pipeline', () => {
     });
   });
 
+  it('stores explicit fair score, context, and note in the trip survey marker', async () => {
+    const payload = buildCalibrationLabelPayload(completedTrip, {
+      scoreAccuracy: 'too_low',
+      scoreIssueTypes: ['harsh_brake'],
+      targetScore: 95,
+      wasDriver: 'yes',
+      contextTags: ['traffic', 'weather'],
+    });
+    await localCalibrationLabelRepository.create(
+      buildLocalSurveyRecord(payload, { freeTextNote: 'GPS brake detection felt too sensitive.' }),
+      { tripId: 'trip-full-survey-marker' }
+    );
+
+    expect(await localCalibrationLabelRepository.getTripSurveyStatus('trip-full-survey-marker')).toMatchObject({
+      score_accuracy: 'too_low',
+      score_issue_types: ['harsh_brake'],
+      target_score: 95,
+      wasDriver: 'yes',
+      context_tags: ['traffic', 'weather'],
+      free_text_note: 'GPS brake detection felt too sensitive.',
+    });
+  });
   it('can skip the survey without creating a calibration label', async () => {
     const marker = await localCalibrationLabelRepository.markTripSkipped(`skip_${Date.now()}`);
 

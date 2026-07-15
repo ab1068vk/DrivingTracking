@@ -56,7 +56,7 @@ export default function TrackingSpeedConsole() {
       <header className="shrink-0 border-b border-border bg-background/80 px-3 py-2">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <div className="text-[11px] font-bold uppercase tracking-normal text-muted-foreground">Advanced Tracking Mode</div>
+            <div className="text-[11px] font-bold text-muted-foreground">Advanced trip tracking</div>
             <h1 className="font-grotesk text-xl font-bold tracking-normal">Speed Intelligence</h1>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
               Posted, estimated, learned, and user-entered speed sources are shown separately. Posted signs override app estimates.
@@ -177,7 +177,7 @@ export default function TrackingSpeedConsole() {
             </div>
           </Panel>
 
-          <Panel title="Console Notes" detail="Neutral telemetry language">
+          <Panel title="How road speeds work" detail="Neutral tracking language">
             <div className="space-y-3 text-sm">
               <Note icon={CheckCircle2} title="Posted signs override app estimates" text="User-confirmed posted signs and observed posted data are separated from estimates and learned rules." />
               <Note icon={AlertTriangle} title="Threshold exceeded" text={`Sample language: ${speedThresholdStatus({ speed_kmh: 68, speed_limit_kmh: 60 })}.`} />

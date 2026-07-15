@@ -15,7 +15,7 @@ import {
   Square,
   Signal,
 } from 'lucide-react';
-import { limitedTripSummaryQueryOptions, tripSummaryQueryOptions } from '@/api/trips';
+import { limitedTripSummaryQueryOptions } from '@/api/trips';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { ACTIVE_TRIP_CHANGED_EVENT, activeTripStore } from '@/lib/trackingStore';
 import { getPermissionStatus } from '@/lib/permissions';
@@ -29,8 +29,10 @@ import { getVoiceAlertDeliveryStatus } from '@/lib/voiceAlerts';
 import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
 import DeferredRecharts from '@/components/DeferredRecharts';
 import { buildTrackingTrendSeries } from '@/lib/trackingTelemetryAnalytics';
+import { Button } from '@/components/ui/button';
 
-const RECENT_TRIP_LIMIT = 12;
+const OVERVIEW_TRIP_LIMIT = 30;
+const RECENT_TRIP_TABLE_LIMIT = 8;
 
 const statusStyles = {
   good: 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300',
@@ -124,6 +126,49 @@ function trackingExplanationTone(status) {
   return 'error';
 }
 
+function buildOverviewIntelligence(trips = []) {
+  const rows = Array.isArray(trips) ? trips : [];
+  const weekCutoff = Date.now() - (7 * 24 * 60 * 60 * 1000);
+  const totals = rows.reduce((summary, trip) => {
+    const distance = Number(trip?.distance_km);
+    const duration = Number(trip?.duration_seconds);
+    const startedAt = new Date(trip?.start_time || 0).getTime();
+    const points = routePointCount(trip);
+    const events = eventCount(trip);
+    summary.distanceKm += Number.isFinite(distance) ? Math.max(0, distance) : 0;
+    summary.durationSeconds += Number.isFinite(duration) ? Math.max(0, duration) : 0;
+    summary.events += events;
+    summary.routeRetained += points > 1 ? 1 : 0;
+    if (Number.isFinite(startedAt) && startedAt >= weekCutoff) {
+      summary.weekTrips += 1;
+      summary.weekDistanceKm += Number.isFinite(distance) ? Math.max(0, distance) : 0;
+    }
+    return summary;
+  }, {
+    distanceKm: 0,
+    durationSeconds: 0,
+    events: 0,
+    routeRetained: 0,
+    weekTrips: 0,
+    weekDistanceKm: 0,
+  });
+  const routeCoverage = rows.length ? Math.round((totals.routeRetained / rows.length) * 100) : 0;
+  const eventRate = totals.distanceKm > 0 ? (totals.events / totals.distanceKm) * 100 : null;
+  const confidence = rows.length >= 5 && routeCoverage >= 80
+    ? { label: 'Strong', tone: 'good', detail: 'Enough recent routes are retained for dependable comparisons.' }
+    : rows.length
+      ? { label: 'Developing', tone: 'warn', detail: 'More completed routes will improve trend and comparison confidence.' }
+      : { label: 'Waiting for drives', tone: 'neutral', detail: 'Complete a few drives to establish advanced tracking context.' };
+  return {
+    rows: rows.length,
+    weekTrips: totals.weekTrips,
+    weekDistanceKm: totals.weekDistanceKm,
+    routeCoverage,
+    eventRate,
+    confidence,
+  };
+}
+
 export default function TrackingOverview() {
   const settings = useLocalSettings();
   const queryClient = useQueryClient();
@@ -138,11 +183,10 @@ export default function TrackingOverview() {
   const [nativeStatus, setNativeStatus] = useState(() => ({ enabled: false, recordingActive: false, activeTrip: null, completedTripsCount: 0 }));
   const diagnostics = useMemo(() => getTrackingDiagnostics(), []);
 
-  const recentTripsQuery = useQuery(limitedTripSummaryQueryOptions(RECENT_TRIP_LIMIT));
-  const allTripsQuery = useQuery(tripSummaryQueryOptions());
+  const recentTripsQuery = useQuery(limitedTripSummaryQueryOptions(OVERVIEW_TRIP_LIMIT));
   const recentTrips = Array.isArray(recentTripsQuery.data) ? recentTripsQuery.data : [];
-  const allTrips = Array.isArray(allTripsQuery.data) ? allTripsQuery.data : recentTrips;
-  const trendSeries = useMemo(() => buildTrackingTrendSeries(allTrips), [allTrips]);
+  const trendSeries = useMemo(() => buildTrackingTrendSeries(recentTrips), [recentTrips]);
+  const intelligence = useMemo(() => buildOverviewIntelligence(recentTrips), [recentTrips]);
   const latestTrip = recentTrips[0] || null;
   const nativeActiveTrip = normalizeNativeActiveTrip(nativeStatus);
   const activeTrip = webActiveTrip || nativeActiveTrip;
@@ -299,71 +343,129 @@ export default function TrackingOverview() {
   ];
 
   return (
-    <div className="min-w-0 space-y-3">
-      <header className="flex flex-col gap-3 border-b border-border pb-3 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0">
-          <div className="text-[11px] font-bold uppercase tracking-normal text-muted-foreground">Advanced Tracking Mode</div>
-          <h1 className="mt-1 font-grotesk text-2xl font-bold tracking-normal">Tracking Overview</h1>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Local telemetry view for recording state, permissions, recent trips, route retention, and diagnostics.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <StatusChip tone="neutral">Completed trips: {allTrips.length}</StatusChip>
-          <StatusChip tone={activeTrip ? 'good' : 'neutral'}>{activeTrip ? activeRecordingLabel : 'No active recording'}</StatusChip>
-        </div>
-      </header>
+    <div className="min-w-0 space-y-5 pb-2">
+      <section aria-labelledby="tracking-home-title" className="tracking-home-hero rounded-3xl p-5 sm:p-7">
+        <div className="relative z-10 grid gap-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+          <div className="min-w-0">
+            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/90 ring-1 ring-white/20">
+              <span className={`h-2 w-2 rounded-full ${activeTrip ? 'animate-pulse bg-emerald-300' : nativeStatus?.enabled ? 'bg-sky-200' : 'bg-white/60'}`} />
+              {activeTrip ? activeRecordingLabel : nativeStatus?.enabled ? 'Automatic tracking is ready' : 'Ready for your next drive'}
+            </div>
+            <h1 id="tracking-home-title" className="mt-4 font-grotesk text-3xl font-bold tracking-tight sm:text-4xl">
+              {activeTrip ? 'Your drive is being tracked' : 'Track your next drive'}
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/80 sm:text-base">
+              {activeTrip
+                ? nativeActiveTrip ? 'Road Sage is recording this drive in the background. Live distance, time, speed, and route points stay visible here.' : 'The in-app recorder is collecting this drive. Open it for live controls and trip details.'
+                : nativeStatus?.enabled ? 'Automatic tracking is armed and waiting for driving. You can also start a manual recording at any time.' : 'Start a manual recording now, or turn on automatic tracking in Settings for hands-free trip capture.'}
+            </p>
 
-      <section aria-label="Live recording control" className={activeTrip ? 'rounded-lg border border-emerald-300 bg-emerald-50/70 p-3 dark:border-emerald-900/70 dark:bg-emerald-950/20' : 'rounded-lg border border-border bg-card p-3'}>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className={activeTrip ? 'grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-600 text-white' : 'grid h-10 w-10 shrink-0 place-items-center rounded-full bg-secondary text-muted-foreground'}>
-              {activeTrip ? <Radio className="h-5 w-5 animate-pulse" /> : <Activity className="h-5 w-5" />}
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold">{activeTrip ? activeRecordingLabel : 'No trip is currently recording'}</h2>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {activeTrip
-                  ? nativeActiveTrip ? 'Native background recorder is supplying the live status below.' : 'The in-app recorder is supplying the live status below.'
-                  : nativeStatus?.enabled ? 'Automatic tracking is armed. You can also open the manual recorder.' : 'Open the recorder to start a manual trip, or enable automatic tracking in Settings.'}
-              </p>
-              {activeTrip && (
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-medium">
-                  <span>{formatDistance(activeTrip)}</span>
-                  <span>{formatDuration(activeTrip.duration_seconds)}</span>
-                  <span>{Math.max(0, Math.round(Number(activeTrip.speed_kmh) || 0))} km/h</span>
-                  <span>{routePointCount(activeTrip)} points</span>
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
-            {nativeActiveTrip ? (
-              <button
-                type="button"
-                onClick={endNativeRecording}
-                disabled={endingNativeTrip}
-                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-red-600 px-3 text-xs font-semibold text-white hover:bg-red-700 disabled:cursor-wait disabled:opacity-70"
-              >
-                <Square className="h-3.5 w-3.5" />
-                {endingNativeTrip ? 'Ending...' : 'End recording'}
-              </button>
+            {activeTrip ? (
+              <div className="mt-5 grid max-w-2xl grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Live trip measurements">
+                <HeroMetric label="Distance" value={formatDistance(activeTrip)} />
+                <HeroMetric label="Time" value={formatDuration(activeTrip.duration_seconds)} />
+                <HeroMetric label="Current speed" value={`${Math.max(0, Math.round(Number(activeTrip.speed_kmh) || 0))} km/h`} />
+                <HeroMetric label="Route points" value={String(routePointCount(activeTrip))} />
+              </div>
             ) : (
-              <Link
-                to="/tracking/recorder"
-                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
-              >
-                <Radio className="h-4 w-4" />
-                {activeTrip ? 'Open recorder' : 'Open manual recorder'}
-              </Link>
+              <div className="mt-5 flex flex-wrap gap-2 text-xs font-medium text-white/80">
+                <span className="rounded-full bg-white/10 px-3 py-1.5 ring-1 ring-white/20">GPS: {locationPermission === 'granted' ? 'ready' : 'needs attention'}</span>
+                <span className="rounded-full bg-white/10 px-3 py-1.5 ring-1 ring-white/20">{recentTrips.length} recent trips ready</span>
+                <span className="rounded-full bg-white/10 px-3 py-1.5 ring-1 ring-white/20">Privacy masking on</span>
+              </div>
             )}
+          </div>
+
+          <div className="relative z-10 flex min-w-52 flex-col gap-2">
+            {nativeActiveTrip ? (
+              <Button
+                type="button"
+                variant="destructive"
+                size="lg"
+                onClick={endNativeRecording}
+                loading={endingNativeTrip}
+                loadingText="Ending recording..."
+                className="min-h-12 rounded-xl px-5 shadow-lg"
+              >
+                <Square className="h-4 w-4" />
+                End recording
+              </Button>
+            ) : (
+              <Button asChild size="lg" className="min-h-12 rounded-xl bg-white px-5 text-slate-950 shadow-lg hover:bg-white/90">
+                <Link to="/tracking/recorder">
+                  <Radio className="h-5 w-5" />
+                  {activeTrip ? 'Open live recorder' : 'Start tracking'}
+                </Link>
+              </Button>
+            )}
+            <Button asChild variant="outline" className="min-h-11 rounded-xl border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white">
+              <Link to="/tracking/map"><Map className="h-4 w-4" />Open route map</Link>
+            </Button>
           </div>
         </div>
       </section>
 
-      <section aria-label="Tracking status strip" className="grid min-w-0 gap-2 md:grid-cols-2 xl:grid-cols-5">
+      {recentTripsQuery.isError && (
+        <section role="alert" className="flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900 sm:flex-row sm:items-center sm:justify-between dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+          <div>
+            <h2 className="font-semibold">Recent trips could not be loaded</h2>
+            <p className="mt-1 text-sm opacity-80">Your recordings are still stored locally. Retry the trip summary without leaving this screen.</p>
+          </div>
+          <Button variant="outline" onClick={() => recentTripsQuery.refetch()} loading={recentTripsQuery.isFetching} loadingText="Retrying...">
+            Retry loading trips
+          </Button>
+        </section>
+      )}
+
+      <section aria-label="Tracking shortcuts" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+        <TrackingShortcut to="/tracking/recorder" icon={Radio} title="Record" detail="Start or resume" />
+        <TrackingShortcut to="/trips" icon={Route} title="My trips" detail="Recent drives" />
+        <TrackingShortcut to="/tracking/map" icon={Map} title="Routes" detail="Explore the map" />
+        <TrackingShortcut to="/tracking/events" icon={Bell} title="Drive events" detail="Review the timeline" />
+        <TrackingShortcut to="/tracking/replay" icon={Activity} title="Compare" detail="Replay two drives" />
+        <TrackingShortcut to="/tracking/privacy" icon={ShieldCheck} title="Privacy" detail="Manage trip zones" />
+      </section>
+
+      <section aria-labelledby="tracking-intelligence-title" className="tracking-intelligence-panel rounded-3xl border border-border/70 bg-card/90 p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="text-xs font-semibold text-primary">Advanced tracking insights</div>
+            <h2 id="tracking-intelligence-title" className="mt-1 font-grotesk text-xl font-bold">What your recent tracking data can tell you</h2>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Calculated from the latest {OVERVIEW_TRIP_LIMIT} local trip summaries—no full-history scan required.</p>
+          </div>
+          <StatusChip tone={intelligence.confidence.tone}>Data confidence: {intelligence.confidence.label}</StatusChip>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <IntelligenceCard
+            icon={Route}
+            label="Last 7 days"
+            value={`${intelligence.weekDistanceKm.toFixed(intelligence.weekDistanceKm >= 10 ? 0 : 1)} km`}
+            detail={`${intelligence.weekTrips} tracked drive${intelligence.weekTrips === 1 ? '' : 's'} in the last week`}
+          />
+          <IntelligenceCard
+            icon={Signal}
+            label="Route retention"
+            value={`${intelligence.routeCoverage}%`}
+            detail={`${intelligence.rows ? Math.round((intelligence.routeCoverage / 100) * intelligence.rows) : 0} of ${intelligence.rows} recent trips include a usable route`}
+          />
+          <IntelligenceCard
+            icon={Activity}
+            label="Recorded event rate"
+            value={intelligence.eventRate == null ? 'Unavailable' : `${intelligence.eventRate.toFixed(1)} / 100 km`}
+            detail="Neutral recorded observations, normalized for distance"
+          />
+          <IntelligenceCard
+            icon={Gauge}
+            label="Comparison readiness"
+            value={intelligence.confidence.label}
+            detail={intelligence.confidence.detail}
+          />
+        </div>
+      </section>
+
+      <section aria-label="Tracking readiness" className="grid min-w-0 gap-2 md:grid-cols-2 xl:grid-cols-5">
         {statusStrip.map(({ icon: Icon, tone, label, detail }, index) => (
-          <div key={`${label}-${index}`} className="min-w-0 rounded-lg border border-border bg-card p-3">
+          <div key={`${label}-${index}`} className="min-w-0 rounded-2xl border border-border/70 bg-card/90 p-4 shadow-sm">
             <div className="flex min-w-0 items-center gap-2">
               <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
               <StatusChip tone={tone}>{label}</StatusChip>
@@ -376,7 +478,7 @@ export default function TrackingOverview() {
       <TrackingTrendChart rows={trendSeries} />
 
       <section className="grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.05fr)_minmax(20rem,0.95fr)_minmax(18rem,0.7fr)]">
-        <RecentTripsTable trips={recentTrips} loading={recentTripsQuery.isLoading} />
+        <RecentTripsTable trips={recentTrips.slice(0, RECENT_TRIP_TABLE_LIMIT)} loading={recentTripsQuery.isLoading} />
 
         <div className="min-w-0 rounded-lg border border-border bg-card">
           <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
@@ -431,8 +533,8 @@ export default function TrackingOverview() {
         <aside className="min-w-0 rounded-lg border border-border bg-card">
           <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
             <div>
-              <h2 className="text-sm font-semibold">Inspector</h2>
-              <p className="text-xs text-muted-foreground">Read-only tracking details</p>
+              <h2 className="text-sm font-semibold">Tracking health</h2>
+              <p className="text-xs text-muted-foreground">Permissions and recording readiness</p>
             </div>
             <AlertTriangle className="h-4 w-4 text-muted-foreground" />
           </div>
@@ -460,6 +562,45 @@ export default function TrackingOverview() {
         </aside>
       </section>
     </div>
+  );
+}
+
+function HeroMetric({ label, value }) {
+  return (
+    <div className="rounded-xl bg-white/10 px-3 py-2.5 ring-1 ring-white/20 backdrop-blur-sm">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-white/65">{label}</div>
+      <div className="mt-1 truncate font-grotesk text-lg font-bold text-white">{value}</div>
+    </div>
+  );
+}
+
+function TrackingShortcut({ to, icon: Icon, title, detail }) {
+  return (
+    <Link
+      to={to}
+      className="group flex min-h-24 items-center gap-3 rounded-2xl border border-border/70 bg-card/90 p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
+    >
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+        <Icon className="h-5 w-5" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold text-foreground">{title}</span>
+        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{detail}</span>
+      </span>
+    </Link>
+  );
+}
+
+function IntelligenceCard({ icon: Icon, label, value, detail }) {
+  return (
+    <article className="rounded-2xl border border-border/60 bg-background/70 p-4">
+      <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+        <span className="grid h-8 w-8 place-items-center rounded-xl bg-primary/10 text-primary"><Icon className="h-4 w-4" /></span>
+        {label}
+      </div>
+      <div className="mt-3 font-grotesk text-2xl font-bold tracking-tight">{value}</div>
+      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{detail}</p>
+    </article>
   );
 }
 

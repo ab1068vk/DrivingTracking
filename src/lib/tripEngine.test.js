@@ -2436,11 +2436,11 @@ describe('trip insights', () => {
       odometer_km: 7000,
       fuel_efficiency_l_per_100km: 10,
       fuel_price_per_liter: 2,
-      maintenance_items: [{ id: 'oil', label: 'Oil change', interval_km: 8000, last_service_km: 0 }],
+      maintenance_items: [{ id: 'oil', label: 'Oil change', interval_km: 8000, last_service_km: 0, source_type: 'owner_entered_manufacturer', source_title: 'Exact owner manual', confirmed_by_user: true }],
     };
 
     expect(getVehicleOdometerKm(vehicle, trips)).toBe(7100);
-    expect(getMaintenanceStatus(vehicle, trips)[0].status).toBe('soon');
+    expect(getMaintenanceStatus(vehicle, trips)[0].status).toBe('ok');
     expect(estimateTripEconomics(trips[0], vehicle).cost).toBe(20);
     expect(estimateTripEconomics(trips[0], vehicle).co2_kg).toBe(23.1);
     expect(buildScoreTips(trips)[0]).toContain('excellent');
@@ -2575,7 +2575,8 @@ describe('trip insights', () => {
       ...commute,
       trip_tire_wear_units: 2.5,
     }], {});
-    expect(healthImpact.extra_wear_km).toBe(32);
+    expect(healthImpact.extra_wear_km).toBeNull();
+    expect(healthImpact.diagnostic_only).toBe(true);
     expect(healthImpact.tire_wear_has_missing_speed_data).toBe(true);
     expect(healthImpact.tire_wear_missing_speed_event_count).toBe(1);
   });

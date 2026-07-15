@@ -1,7 +1,8 @@
 // @ts-check
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal, flushSync } from 'react-dom';
+import { useEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import {
   Activity,
   Award,
@@ -143,39 +144,39 @@ const commandGroups = [
 ];
 
 const trackingNavItems = [
-  { path: '/tracking', label: 'Tracking', hint: 'Live', icon: Activity, keywords: ['overview', 'live', 'recording', 'telemetry'] },
-  { path: '/tracking/recorder', label: 'Recorder', hint: 'Start/stop', icon: Radio, keywords: ['manual', 'record', 'start trip', 'end trip', 'live'] },
-  { path: '/trips', label: 'Trips', hint: 'Archive', icon: History, keywords: ['history', 'drive log', 'recorded trips'] },
-  { path: '/tracking/map', label: 'Map', hint: 'Spatial', icon: Map, keywords: ['route', 'gps', 'workspace'] },
-  { path: '/tracking/replay', label: 'Replay', hint: 'Compare', icon: Play, keywords: ['compare', 'replay', '3d', 'playback'] },
-  { path: '/tracking/events', label: 'Events', hint: 'Log', icon: ClipboardList, keywords: ['events', 'timeline', 'telemetry'] },
-  { path: '/tracking/alerts', label: 'Alerts', hint: 'Voice', icon: Bell, keywords: ['voice', 'speech', 'cooldowns', 'alerts'] },
-  { path: '/tracking/evidence', label: 'Evidence', hint: 'Quality', icon: Database, keywords: ['data quality', 'evidence', 'provenance', 'sources'] },
-  { path: '/tracking/speed', label: 'Speed', hint: 'Rules', icon: Gauge, keywords: ['speed rules', 'limits', 'markers', 'confidence'] },
-  { path: '/tracking/privacy', label: 'Privacy', hint: 'Zones', icon: ShieldCheck, keywords: ['privacy zones', 'masking', 'audit'] },
-  { path: '/tracking/reports', label: 'Reports', hint: 'Export', icon: BarChart3, keywords: ['reports', 'csv', 'pdf', 'export lab'] },
-  { path: '/settings', label: 'Settings', hint: 'Config', icon: Settings, keywords: ['settings', 'preferences', 'mode'] },
+  { path: '/tracking', label: 'Live tracking', hint: 'Now', icon: Activity, keywords: ['overview', 'live', 'recording', 'telemetry'] },
+  { path: '/tracking/recorder', label: 'Record a drive', hint: 'Start or stop', icon: Radio, keywords: ['manual', 'record', 'start trip', 'end trip', 'live'] },
+  { path: '/trips', label: 'My trips', hint: 'History', icon: History, keywords: ['history', 'drive log', 'recorded trips'] },
+  { path: '/tracking/map', label: 'Route map', hint: 'Explore', icon: Map, keywords: ['route', 'gps', 'workspace'] },
+  { path: '/tracking/replay', label: 'Compare drives', hint: 'Replay', icon: Play, keywords: ['compare', 'replay', '3d', 'playback'] },
+  { path: '/tracking/events', label: 'Drive events', hint: 'Timeline', icon: ClipboardList, keywords: ['events', 'timeline', 'telemetry'] },
+  { path: '/tracking/alerts', label: 'Driving alerts', hint: 'Voice', icon: Bell, keywords: ['voice', 'speech', 'cooldowns', 'alerts'] },
+  { path: '/tracking/evidence', label: 'Data quality', hint: 'Sources', icon: Database, keywords: ['data quality', 'evidence', 'provenance', 'sources'] },
+  { path: '/tracking/speed', label: 'Road speeds', hint: 'Limits', icon: Gauge, keywords: ['speed rules', 'limits', 'markers', 'confidence'] },
+  { path: '/tracking/privacy', label: 'Trip privacy', hint: 'Zones', icon: ShieldCheck, keywords: ['privacy zones', 'masking', 'audit'] },
+  { path: '/tracking/reports', label: 'Share & export', hint: 'Reports', icon: BarChart3, keywords: ['reports', 'csv', 'pdf', 'export'] },
+  { path: '/settings', label: 'Tracking settings', hint: 'Preferences', icon: Settings, keywords: ['settings', 'preferences', 'mode'] },
 ];
 
 const trackingNavSections = [
   {
-    label: 'Live',
-    description: 'Current status and recording controls.',
+    label: 'Track now',
+    description: 'See recording status or start a drive.',
     items: trackingNavItems.slice(0, 2),
   },
   {
     label: 'Trips & routes',
-    description: 'Recorded drives, maps, and comparison replay.',
+    description: 'Revisit recorded drives, routes, and replays.',
     items: trackingNavItems.slice(2, 5),
   },
   {
-    label: 'Analyze',
-    description: 'Event evidence, data quality, and speed context.',
+    label: 'Driving details',
+    description: 'Review events, alerts, data quality, and road speeds.',
     items: trackingNavItems.slice(5, 9),
   },
   {
-    label: 'Tools',
-    description: 'Privacy, exports, and console configuration.',
+    label: 'Manage',
+    description: 'Control trip privacy, sharing, and preferences.',
     items: trackingNavItems.slice(9),
   },
 ];
@@ -438,9 +439,6 @@ function MobileNavigation({
 }) {
   const [open, setOpen] = useState(false);
   const location = useLocation();
-  const closeButtonRef = useRef(null);
-  const scrollPositionRef = useRef(0);
-  const closeMenu = useCallback(() => setOpen(false), []);
 
   useEffect(() => {
     setOpen(false);
@@ -448,109 +446,83 @@ function MobileNavigation({
 
   useEffect(() => {
     if (!open || typeof document === 'undefined') return undefined;
-
-    const root = document.getElementById('root');
-    const scrollY = scrollPositionRef.current;
-    root?.setAttribute('inert', '');
-    document.documentElement.classList.add('mobile-navigation-open');
-    document.body.classList.add('mobile-navigation-open');
-
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape') closeMenu();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    requestAnimationFrame(() => closeButtonRef.current?.focus({ preventScroll: true }));
+    document.documentElement.dataset.mobileNavigationOpen = 'true';
 
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      root?.removeAttribute('inert');
-      document.documentElement.classList.remove('mobile-navigation-open');
-      document.body.classList.remove('mobile-navigation-open');
-      if (Math.abs(window.scrollY - scrollY) > 1) window.scrollTo(0, scrollY);
+      delete document.documentElement.dataset.mobileNavigationOpen;
     };
-  }, [closeMenu, open]);
-
-  const menu = open && typeof document !== 'undefined' ? createPortal(
-    <>
-      <div
-        className={cn("cyber-mobile-backdrop fixed inset-0 z-[1000] bg-black/40", responsiveClassName)}
-        aria-hidden="true"
-        onClick={closeMenu}
-      />
-      <div
-        id="mobile-navigation"
-        role="dialog"
-        aria-modal="true"
-        aria-label={dialogLabel}
-        className={cn("cyber-mobile-drawer fixed bottom-0 right-0 top-0 z-[1010] flex w-[min(22rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-l-3xl border-l border-border bg-card shadow-2xl", responsiveClassName)}
-      >
-        <div className="flex items-center justify-between gap-3 border-b border-border/70 px-5 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)]">
-          <div className="flex min-w-0 items-center gap-3">
-            <BrandMark className="cyber-brand-mark h-10 w-10 shrink-0" />
-            <div className="min-w-0">
-              <div className="truncate font-grotesk text-lg font-bold">Road Sage</div>
-              <div className="text-xs font-medium text-muted-foreground">{title}</div>
-            </div>
-          </div>
-          <button
-            ref={closeButtonRef}
-            type="button"
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-border/70 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            onClick={closeMenu}
-            aria-label="Close navigation menu"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <nav aria-label="Mobile navigation" className="mobile-navigation-scroll flex-1 overflow-y-auto px-4 py-5">
-          {sections.map(section => (
-            <div key={section.label} className="mb-5 last:mb-0">
-              <div className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">
-                {section.label}
-              </div>
-              <div className="grid gap-1">
-                {section.items.map(item => (
-                  <NavItemLink
-                    key={item.path}
-                    item={item}
-                    variant="mobile"
-                    onNavigate={closeMenu}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </nav>
-        {trackingActive && (
-          <div className="border-t border-border/70 p-4">
-            <div className="flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 dark:border-red-800/50 dark:bg-red-950/40 dark:text-red-400">
-              <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-              Trip recording is active
-            </div>
-          </div>
-        )}
-      </div>
-    </>,
-    document.body,
-  ) : null;
+  }, [open]);
 
   return (
-    <>
-      <button
-        type="button"
-        className={cn("cyber-menu-button grid min-h-11 min-w-11 place-items-center rounded-full border border-border/70 bg-card text-foreground shadow-sm transition-colors hover:bg-secondary", responsiveClassName)}
-        onClick={() => {
-          if (!open) scrollPositionRef.current = window.scrollY;
-          setOpen(value => !value);
-        }}
-        aria-label={open ? 'Close navigation menu' : 'Open navigation menu'}
-        aria-expanded={open}
-        aria-controls="mobile-navigation"
-      >
-        {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-      </button>
-      {menu}
-    </>
+    <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
+      <DialogPrimitive.Trigger asChild>
+        <button
+          type="button"
+          className={cn("cyber-menu-button grid min-h-11 min-w-11 place-items-center rounded-full border border-border/70 bg-card text-foreground shadow-sm transition-colors hover:bg-secondary", responsiveClassName)}
+          aria-label={open ? 'Close navigation menu' : 'Open navigation menu'}
+          aria-expanded={open}
+          aria-controls="mobile-navigation"
+        >
+          {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </button>
+      </DialogPrimitive.Trigger>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay
+          className={cn("cyber-mobile-backdrop fixed inset-0 z-[1000] bg-black/40", responsiveClassName)}
+        />
+        <DialogPrimitive.Content
+          id="mobile-navigation"
+          aria-label={dialogLabel}
+          className={cn("cyber-mobile-drawer fixed bottom-0 right-0 top-0 z-[1010] flex w-[min(22rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-l-3xl border-l border-border bg-card shadow-2xl focus:outline-none", responsiveClassName)}
+        >
+          <div className="flex items-center justify-between gap-3 border-b border-border/70 px-5 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)]">
+            <div className="flex min-w-0 items-center gap-3">
+              <BrandMark className="cyber-brand-mark h-10 w-10 shrink-0" />
+              <div className="min-w-0">
+                <div className="truncate font-grotesk text-lg font-bold">Road Sage</div>
+                <div className="text-xs font-medium text-muted-foreground">{title}</div>
+              </div>
+            </div>
+            <DialogPrimitive.Close asChild>
+              <button
+                type="button"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-border/70 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                aria-label="Close navigation menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </DialogPrimitive.Close>
+          </div>
+          <nav aria-label="Mobile navigation" className="mobile-navigation-scroll flex-1 overflow-y-auto px-4 py-5">
+            {sections.map(section => (
+              <div key={section.label} className="mb-5 last:mb-0">
+                <div className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">
+                  {section.label}
+                </div>
+                <div className="grid gap-1">
+                  {section.items.map(item => (
+                    <NavItemLink
+                      key={item.path}
+                      item={item}
+                      variant="mobile"
+                      onNavigate={() => setOpen(false)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </nav>
+          {trackingActive && (
+            <div className="border-t border-border/70 p-4">
+              <div className="flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 dark:border-red-800/50 dark:bg-red-950/40 dark:text-red-400">
+                <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                Trip recording is active
+              </div>
+            </div>
+          )}
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 function DesktopNavGroup({ section, pathname }) {
@@ -638,7 +610,7 @@ function TrackingShell({ location, trackingActive, rescoreProgress }) {
             <BrandMark className="cyber-brand-mark h-9 w-9 shrink-0" />
             <div className="cyber-brand-copy min-w-0">
               <span className="block truncate font-grotesk text-lg font-bold tracking-normal">Road Sage</span>
-              <span className="hidden text-[11px] font-semibold uppercase tracking-normal text-muted-foreground sm:block">Telemetry console</span>
+              <span className="hidden text-[11px] font-semibold text-muted-foreground sm:block">Advanced trip tracking</span>
             </div>
             {trackingActive && (
               <div className="tracking-console-chip border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
@@ -664,7 +636,7 @@ function TrackingShell({ location, trackingActive, rescoreProgress }) {
             <MobileNavigation
               trackingActive={trackingActive}
               sections={trackingNavSections}
-              title="Tracking console"
+              title="Trip tracking"
               dialogLabel="Tracking navigation menu"
               responsiveClassName="md:hidden"
             />
@@ -673,13 +645,12 @@ function TrackingShell({ location, trackingActive, rescoreProgress }) {
       </header>
 
       <div className="tracking-console-frame flex min-h-0 flex-1">
-        <aside className="tracking-console-rail hidden w-[4.75rem] shrink-0 border-r border-border bg-card/70 md:flex xl:w-48">
-          <nav aria-label="Tracking console navigation" className="flex min-h-0 w-full flex-col overflow-y-auto px-2 py-3">
+        <aside className="tracking-console-rail hidden w-56 shrink-0 border-r border-border/70 bg-card/75 md:flex">
+          <nav aria-label="Trip tracking navigation" className="flex min-h-0 w-full flex-col overflow-y-auto px-3 py-4">
             {trackingNavSections.map((section) => (
               <div key={section.label} className="mb-4 grid gap-1 last:mb-0">
                 <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80">
-                  <span className="hidden xl:inline">{section.label}</span>
-                  <span className="mx-auto block h-px w-7 bg-border xl:hidden" aria-hidden="true" />
+                  <span>{section.label}</span>
                 </div>
                 {section.items.map((item) => (
                   <TrackingNavLink
@@ -697,6 +668,7 @@ function TrackingShell({ location, trackingActive, rescoreProgress }) {
           <Outlet />
         </main>
       </div>
+
 
       <footer className="tracking-console-footer border-t border-border/60 px-4 py-2 text-center text-[11px] leading-relaxed text-muted-foreground">
         {LEGAL_DISCLAIMER_SHORT} Obey posted signs and local laws.
@@ -761,10 +733,12 @@ function TrackingNavLink({ item, pathname }) {
       )}
     >
       <Icon className="h-4 w-4 shrink-0" />
-      <span className="hidden truncate xl:inline">{item.label}</span>
+      <span className="truncate">{item.label}</span>
     </NavLink>
   );
 }
+
+
 function AppCommandPalette({
   open,
   onOpenChange,

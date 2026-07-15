@@ -969,6 +969,29 @@ describe('release blocker regressions', () => {
     expect(onboardingSource).toContain('Do not force-close the app during a drive');
   });
 
+  it('keeps mission coaching additive to live safety alerts and inside the prompt budget', () => {
+    const liveCoachSource = readFileSync(new URL('../../components/LiveCoachOverlay.jsx', import.meta.url), 'utf8');
+
+    expect(liveCoachSource).toContain("const phoneMissionPrompt = Boolean(canUseMissionPrompt('phone_use') && missionFocus?.cue)");
+    expect(liveCoachSource).toContain('missionPrompt: phoneMissionPrompt');
+    expect(liveCoachSource).toContain("const speedMissionPrompt = Boolean(canUseMissionPrompt('speeding') && missionFocus?.cue)");
+    expect(liveCoachSource).toContain('{liveSpeedAlert.text}');
+    expect(liveCoachSource).toContain('`${liveSpeedAlert.voiceText} ${missionFocus.cue}`');
+    expect(liveCoachSource).not.toContain('text: missionFocus?.cue || liveSpeedAlert.text');
+    expect(liveCoachSource).not.toContain('voiceText: missionFocus?.cue || liveSpeedAlert.voiceText');
+  });
+
+
+  it('keeps the Coach primary flow focused and defers expensive route evidence', () => {
+    const coachSource = readFileSync(new URL('../../pages/DrivingCoach.jsx', import.meta.url), 'utf8');
+
+    expect(coachSource).toContain('const driverCompleted = useMemo(() => completed.filter(isDriverMetricEligible), [completed])');
+    expect(coachSource).toContain("enabled: activeTab === 'patterns' && Boolean(tripId)");
+    expect(coachSource).toContain('<details className={`${CARD} group`}>');
+    expect(coachSource).toContain('Open your supporting weekly goals');
+    expect(coachSource).toContain('Open the local evidence assistant');
+  });
+
   it('does not hard-code London as the Trip Playback default map center', () => {
     const tripPlaybackSource = readFileSync(new URL('../../components/TripPlayback.jsx', import.meta.url), 'utf8');
     const legacyLondonLat = ['51', '505'].join('.');
@@ -1036,5 +1059,18 @@ describe('release blocker regressions', () => {
     expect(speedLimitEditorMapSource).toContain('isUsableLeafletMap');
     expect(speedLimitEditorMapSource).toContain("Use Leaflet's default SVG renderer");
     expect(speedLimitEditorMapSource).not.toContain('preferCanvas: true');
+  });
+
+  it('shows saved road speeds before trip enrichment and yields while drawing dense maps', () => {
+    const speedLimitsSource = readFileSync(new URL('../../pages/SpeedLimits.jsx', import.meta.url), 'utf8');
+    const speedLimitEditorMapSource = readFileSync(new URL('../../components/SpeedLimitEditorMap.jsx', import.meta.url), 'utf8');
+
+    expect(speedLimitsSource).toContain('Saved roads are ready. Adding recent trip evidence in the background');
+    expect(speedLimitsSource).toContain('Trip evidence could not load. The saved-road map is still available.');
+    expect(speedLimitsSource).not.toContain('!mapModelLoaded ? (');
+    expect(speedLimitEditorMapSource).toContain('const SECTION_DRAW_BATCH_SIZE = 60;');
+    expect(speedLimitEditorMapSource).toContain('window.requestAnimationFrame(drawBatch)');
+    expect(speedLimitEditorMapSource).toContain('window.cancelAnimationFrame(frameId)');
+    expect(speedLimitEditorMapSource).toContain("finishMeasure('cancelled')");
   });
 });

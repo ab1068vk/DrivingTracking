@@ -76,6 +76,7 @@ export const NATIVE_PRIVACY_SYNC_STATUS_OK = 'ok';
 export const NATIVE_PRIVACY_SYNC_STATUS_FAILED = 'failed';
 let privacyZonesMemory = null;
 let privacyZonesRevision = 0;
+let privacyZonesHydrationPromise = null;
 let privacyZonesStorageLoadPromise = null;
 let zoneStatsWriteQueue = Promise.resolve();
 
@@ -673,12 +674,21 @@ export async function getHydratedPrivacyZones(settings = localSettings.get()) {
   if (zones.length) return zones;
   if (!Array.isArray(settings?.privacy_zones) || settings.privacy_zones.length === 0) return [];
 
-  const secureZones = normalizePrivacyZones(await getEncryptedJson(PRIVACY_ZONES_SECURE_KEY, []));
-  if (secureZones.length) {
-    privacyZonesMemory = secureZones;
-    notifyPrivacyZonesChanged('hydrated', secureZones);
+  if (!privacyZonesHydrationPromise) {
+    privacyZonesHydrationPromise = getEncryptedJson(PRIVACY_ZONES_SECURE_KEY, [])
+      .then((storedZones) => {
+        const secureZones = normalizePrivacyZones(storedZones);
+        if (secureZones.length) {
+          privacyZonesMemory = secureZones;
+          notifyPrivacyZonesChanged('hydrated', secureZones);
+        }
+        return secureZones;
+      })
+      .finally(() => {
+        privacyZonesHydrationPromise = null;
+      });
   }
-  return secureZones;
+  return privacyZonesHydrationPromise;
 }
 
 async function persistPrivacyZones(zones = []) {
@@ -1260,11 +1270,13 @@ export function sanitizeTripForPrivacyStorage(trip = {}, settings = localSetting
   const zones = getPrivacyZones(settings);
   if (!zones.length) return trip;
 
-  const routePoints = Array.isArray(trip.route_points)
-    ? trip.route_points.map((point) => redactRoutePointForPrivacyStorage(point, zones))
+  const sourceRoutePoints = Array.isArray(trip.route_points) ? trip.route_points : null;
+  const routePoints = sourceRoutePoints
+    ? sourceRoutePoints.map((point) => redactRoutePointForPrivacyStorage(point, zones))
     : trip.route_points;
-  const drivingEvents = Array.isArray(trip.driving_events)
-    ? trip.driving_events.map((event) => {
+  const sourceDrivingEvents = Array.isArray(trip.driving_events) ? trip.driving_events : null;
+  const drivingEvents = sourceDrivingEvents
+    ? sourceDrivingEvents.map((event) => {
       const zone = isPointInPrivacyZone(event, zones, ZONE_EVENT_GUARD_M);
       return zone
         ? redactCoordinateFieldsForPrivacy(event, zone, { privacy_event_redacted: true })
@@ -1272,12 +1284,27 @@ export function sanitizeTripForPrivacyStorage(trip = {}, settings = localSetting
     })
     : trip.driving_events;
 
+  const routePointsRawCount = sourceRoutePoints
+    ? Number(trip.route_points_raw_count) || sourceRoutePoints.length
+    : null;
+  const routePointsMapCount = sourceRoutePoints
+    ? routePoints.filter((point) => finiteNumber(point?.lat) != null && finiteNumber(point?.lng) != null).length
+    : null;
+  const routePointsChanged = Boolean(sourceRoutePoints) && (
+    routePoints.some((point, index) => point !== sourceRoutePoints[index]) ||
+    trip.route_points_raw_count !== routePointsRawCount ||
+    trip.route_points_map_count !== routePointsMapCount
+  );
+  const drivingEventsChanged = Boolean(sourceDrivingEvents) && drivingEvents.some((event, index) => event !== sourceDrivingEvents[index]);
+
+  if (!routePointsChanged && !drivingEventsChanged) return trip;
+
   return {
     ...trip,
     ...(Array.isArray(routePoints) ? {
       route_points: routePoints,
-      route_points_raw_count: Number(trip.route_points_raw_count) || trip.route_points.length,
-      route_points_map_count: routePoints.filter((point) => finiteNumber(point?.lat) != null && finiteNumber(point?.lng) != null).length,
+      route_points_raw_count: routePointsRawCount,
+      route_points_map_count: routePointsMapCount,
     } : {}),
     ...(Array.isArray(drivingEvents) ? { driving_events: drivingEvents } : {}),
   };

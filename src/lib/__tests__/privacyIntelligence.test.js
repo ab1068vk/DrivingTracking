@@ -34,6 +34,7 @@ vi.mock('@/lib/systemLog', () => ({
 import {
   buildDrivingPrivacyReadout,
   buildOutboundPrivacyReadout,
+  buildZoneIntelligenceSnapshot,
   buildPrivacyRecommendations,
   buildPrivacyEvidenceSnapshot,
   detectCompoundRisk,
@@ -770,5 +771,28 @@ describe('privacy intelligence summaries', () => {
     expect(source).toMatch(
       /const score = computePrivacyScoreFromControls\(protections\);[\s\S]*const scoreHistory = await recordPrivacyScoreHistory\(score\);[\s\S]*const scoreTrend = summarizeScoreTrend\(scoreHistory\);/
     );
+  });
+
+  it('awaits the asynchronous zone-stat snapshot before mapping effectiveness', async () => {
+    const zones = await buildZoneIntelligenceSnapshot({
+      privacy_zones: [{
+        id: 'home',
+        label: 'Home',
+        lat: 43.65,
+        lng: -79.38,
+        radius_m: 150,
+      }],
+    }, [{
+      id: 'trip',
+      route_points: [{ lat: 43.65, lng: -79.38 }],
+      driving_events: [],
+    }]);
+
+    expect(Array.isArray(zones)).toBe(true);
+    expect(zones).toHaveLength(1);
+    expect(zones[0]).toMatchObject({
+      id: 'home',
+      effectiveness: expect.any(Object),
+    });
   });
 });

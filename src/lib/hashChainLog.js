@@ -200,6 +200,16 @@ export async function loadPrivacyAuditChain() {
   return chain;
 }
 
+// Consumers that need both entries and verification should use one secure
+// storage snapshot instead of loading the chain twice.
+export async function loadVerifiedPrivacyAuditChain() {
+  const state = await readAuditState();
+  return {
+    chain: state.chain,
+    result: await verifyAuditState(state),
+  };
+}
+
 export async function appendPrivacyEvent(event = {}) {
   const state = await readAuditState();
   const current = await verifyAuditState(state);

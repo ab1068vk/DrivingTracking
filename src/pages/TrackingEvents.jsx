@@ -87,8 +87,8 @@ export default function TrackingEvents() {
       <header className="shrink-0 border-b border-border bg-background/80 px-3 py-2">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <div className="text-[11px] font-bold uppercase tracking-normal text-muted-foreground">Advanced Tracking Mode</div>
-            <h1 className="font-grotesk text-xl font-bold tracking-normal">Event Timeline</h1>
+            <div className="text-[11px] font-bold text-muted-foreground">Advanced trip tracking</div>
+            <h1 className="font-grotesk text-xl font-bold tracking-normal">Drive Event Timeline</h1>
           </div>
           <div className="grid grid-cols-2 gap-2 text-xs sm:flex sm:flex-wrap sm:items-center">
             <StatusChip label="Rows" value={filteredRows.length} />
@@ -157,7 +157,7 @@ export default function TrackingEvents() {
             <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-card/70 px-3 py-2">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <ListFilter className="h-4 w-4 text-muted-foreground" />
-                Technical Log
+                Recorded events
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Search className="h-3.5 w-3.5" />
@@ -224,7 +224,7 @@ export default function TrackingEvents() {
             <div className="shrink-0 border-b border-border px-3 py-2">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <Info className="h-4 w-4 text-muted-foreground" />
-                Inspector
+                Event details
               </div>
               <div className="mt-0.5 text-xs text-muted-foreground">Detection context and evidence notes</div>
             </div>

@@ -621,22 +621,6 @@ function SavedRoadSpeedsSkeleton() {
   );
 }
 
-function MapModelSkeleton({ label = 'Loading map model...' }) {
-  return (
-    <div className="rounded-2xl border border-border bg-card p-3 shadow-sm" role="status" aria-label={label}>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="space-y-2">
-          <Skeleton className="h-5 w-40" />
-          <Skeleton className="h-4 w-72 max-w-[70vw]" />
-        </div>
-        <Skeleton className="h-8 w-24 rounded-xl" />
-      </div>
-      <Skeleton className="h-[28rem] min-h-[22rem] rounded-xl" />
-      <span className="sr-only">{label}</span>
-    </div>
-  );
-}
-
 export default function SpeedLimits() {
   const [searchParams] = useSearchParams();
   const tripId = searchParams.get('tripId');
@@ -3040,23 +3024,29 @@ export default function SpeedLimits() {
           </div>
         </div>
 
+        {mapModelLoading && (
+          <div className="flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-medium text-sky-800 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-200" role="status">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            Saved roads are ready. Adding recent trip evidence in the background…
+          </div>
+        )}
+        {mapModelState.status === 'error' && (
+          <div className="flex flex-col gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200 sm:flex-row sm:items-center sm:justify-between">
+            <span>Trip evidence could not load. The saved-road map is still available.</span>
+            <button
+              type="button"
+              onClick={() => loadMapModel({ force: true })}
+              className="inline-flex items-center justify-center rounded-lg border border-current/30 px-2.5 py-1 font-semibold hover:bg-background/50"
+            >
+              Retry trip evidence
+            </button>
+          </div>
+        )}
+
         {TRIAGE_DISABLE_MAPS ? (
           <div className="flex h-[28rem] min-h-[22rem] items-center justify-center rounded-2xl border border-border bg-secondary/30 text-sm text-muted-foreground">
             Map disabled for Phase 0 timing test
           </div>
-        ) : mapModelState.status === 'error' ? (
-          <div className="flex h-[28rem] min-h-[22rem] flex-col items-center justify-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 text-center text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
-            <div>Map trip data could not load. Saved speed rows are still available.</div>
-            <button
-              type="button"
-              onClick={() => loadMapModel({ force: true })}
-              className="inline-flex items-center justify-center rounded-xl bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700"
-            >
-              Retry map model
-            </button>
-          </div>
-        ) : !mapModelLoaded ? (
-          <MapModelSkeleton label="Loading saved road speed map model" />
         ) : <SpeedLimitEditorMap
           trips={mapTrips}
           corrections={rows}

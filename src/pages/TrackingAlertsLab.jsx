@@ -13,6 +13,7 @@ import useLocalSettings from '@/hooks/useLocalSettings';
 import { activeTripStore, localSettings, VOICE_ALERT_STYLE_VALUES } from '@/lib/trackingStore';
 import { getNativeAutoTrackingStatus, getNativeDiagnostics } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
+import { Button } from '@/components/ui/button';
 import { getSystemLogs } from '@/lib/systemLog';
 import {
   getVoiceAlertDeliveryStatus,
@@ -146,21 +147,21 @@ export default function TrackingAlertsLab() {
       <header className="shrink-0 border-b border-border bg-background/80 px-3 py-2">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <div className="text-[11px] font-bold uppercase tracking-normal text-muted-foreground">Advanced Tracking Mode</div>
-            <h1 className="font-grotesk text-xl font-bold tracking-normal">Voice Alert Lab</h1>
+            <div className="text-[11px] font-bold text-muted-foreground">Advanced trip tracking</div>
+            <h1 className="font-grotesk text-xl font-bold tracking-normal">Driving Alerts</h1>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
               Shared voice alert delivery, wording style, cooldowns, native ownership, and recent alert evidence.
             </p>
           </div>
-          <button
+          <Button
             type="button"
             onClick={runTestAlert}
-            disabled={testing}
-            className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60"
+            loading={testing}
+            loadingText="Playing test alert..."
           >
             <Volume2 className="h-4 w-4" />
-            Test alert
-          </button>
+            Play test alert
+          </Button>
         </div>
       </header>
 
@@ -257,7 +258,7 @@ export default function TrackingAlertsLab() {
           <Panel title="Ownership Rules" detail="Unchanged">
             <div className="space-y-3 text-sm">
               <Note icon={ShieldCheck} title="Native owner preserved" text="Android native trips mute WebView speech and keep background speech in the native service." />
-              <Note icon={CheckCircle2} title="Cooldowns preserved" text="The lab reads existing speed-tier cooldowns; it does not reset or replace shared cooldown tracking." />
+              <Note icon={CheckCircle2} title="Cooldowns preserved" text="This view reads existing speed-tier cooldowns; it does not reset or replace shared cooldown tracking." />
               <Note icon={Mic} title="Marker listener" text="Voice speed marker testing still uses the existing Android speech-recognition entry point." />
             </div>
           </Panel>

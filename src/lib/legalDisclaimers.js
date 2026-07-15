@@ -4,14 +4,14 @@ export const LEGAL_DISCLAIMER_SHORT =
 export const LEGAL_DISCLAIMER_SUMMARY =
   `${LEGAL_DISCLAIMER_SHORT} Road Sage estimates driving patterns from device sensors, GPS, maps, weather, route, vehicle, cost, emissions, phone-use, OBD, and optional third-party data that can be incomplete, delayed, unavailable, stale, misclassified, or wrong. You remain responsible for safe driving, posted signs, traffic laws, road conditions, vehicle condition, permissions, consent, data sharing, exports, backups, and every decision made from app outputs.`;
 
-export const LEGAL_NOTICE_ACK_VERSION = 6;
+export const LEGAL_NOTICE_ACK_VERSION = 7;
 
 export const LEGAL_NOTICE_INTRO =
   'Road Sage is a local-first driving log and coaching app for personal information and self-coaching. Read this notice before using tracking, background auto tracking, scores, maps, alerts, reports, exports, backups, privacy zones, external road data, phone-use checks, OBD features, vehicle features, or survey tools.';
 
 export const LEGAL_NOTICE_KEY_POINTS = [
   'Do not use the app while driving.',
-  'Scores, alerts, maps, speed limits, costs, emissions, fatigue signals, phone-use signals, possible incident signals, crash-related signals, and vehicle-health outputs are estimates and may be wrong.',
+  'Scores, alerts, maps, speed limits, costs, emissions, fatigue signals, phone-use signals, possible incident signals, crash-related signals, driving-load signals, and maintenance reminders are estimates and may be wrong.',
   'Road Sage is not legal, insurance, emergency, navigation, medical, tax, employment, fleet, compliance, repair, maintenance, or safety-critical advice.',
   'If Background Auto is enabled, Road Sage may collect location and activity signals while the app is minimized or in the background, but Android may stop tracking if the app is fully closed or force-stopped.',
   'Your data stays local by default. Saved road-speed reviews can reduce repeated OpenStreetMap lookups, but road-data features may still share limited route, location, date, or public road-area data with outside services when you tap Get Road Data, enable automatic road-data lookup, or approve route matching.',
@@ -106,7 +106,7 @@ export const LEGAL_DISCLAIMER_ITEMS = [
   {
     group: 'Records, exports & decisions',
     title: 'Vehicles and costs',
-    body: 'Maintenance, tire wear, fuel, EV, emissions, savings, and vehicle health estimates are not diagnostics, financial advice, environmental compliance validation, or repair instructions. Inspect your vehicle, follow the manufacturer schedule, and use a qualified professional for repairs, safety concerns, or compliance decisions.',
+    body: 'Maintenance reminders and driving-load signals are planning aids, not diagnostics, component-life measurements, repair instructions, or permission to delay service. Requirements vary by model year, market, trim, engine or battery, equipment, dashboard monitor, service history, recalls, software updates, and operating conditions. Follow the current owner and warranty manuals, tire placard, vehicle alerts, recall notices, and a qualified technician. If any source conflicts with Road Sage, that source wins.',
   },
   {
     group: 'Privacy & data',

@@ -32,7 +32,10 @@ export default function TripCard({
   const privateTrip = trip.privacy_mode === 'summary_only';
   const routeDataExpired = Boolean(trip.route_data_expired_at);
   const replay3dAvailable = trip.route_replay_available === true && !privateTrip && !routeDataExpired;
-  const speedLimitReviewRequired = trip.speed_limit_review_required === true && Boolean(trip.id) && !privateTrip;
+  const speedLimitReviewRequired = trip.speed_limit_review_required === true &&
+    !trip.speed_limit_review_resolved_at &&
+    Boolean(trip.id) &&
+    !privateTrip;
   const scoreUnavailableMessage = privateTrip
     ? 'Score unavailable because this private trip saved no route data'
     : SCORE_UNAVAILABLE_MESSAGE;

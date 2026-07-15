@@ -159,8 +159,21 @@ export const calibrationLabelService = {
     }
   },
 
-  getTripSurveyStatus(tripId) {
-    return localCalibrationLabelRepository.getTripSurveyStatus(tripId);
+  async getTripSurveyStatus(tripId) {
+    const marker = await localCalibrationLabelRepository.getTripSurveyStatus(tripId);
+    if (!marker?.label_id) return marker;
+    const labels = await localCalibrationLabelRepository.list();
+    const record = labels.find((label) => label?.id === marker.label_id);
+    if (!record) return marker;
+    return {
+      ...marker,
+      score_accuracy: record.surveyLabel?.scoreAccuracy ?? marker.score_accuracy ?? null,
+      score_issue_types: record.surveyLabel?.scoreIssueTypes ?? marker.score_issue_types ?? [],
+      target_score: record.surveyLabel?.targetScore ?? marker.target_score ?? null,
+      wasDriver: record.surveyLabel?.wasDriver ?? marker.wasDriver ?? marker.was_driver ?? null,
+      context_tags: record.surveyLabel?.contextTags ?? marker.context_tags ?? [],
+      free_text_note: record.local_only_note ?? marker.free_text_note ?? '',
+    };
   },
 
   countLocalLabels() {

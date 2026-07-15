@@ -81,8 +81,8 @@ export default function TrackingReplayPro() {
       <header className="shrink-0 border-b border-border bg-background/80 px-3 py-2">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
-            <div className="text-[11px] font-bold uppercase tracking-normal text-muted-foreground">Advanced Tracking Mode</div>
-            <h1 className="font-grotesk text-xl font-bold tracking-normal">Compare Replay Pro</h1>
+            <div className="text-[11px] font-bold text-muted-foreground">Advanced trip tracking</div>
+            <h1 className="font-grotesk text-xl font-bold tracking-normal">Compare Drive Replays</h1>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
               Compare retained routes with playback overlays, route gaps, speed-source changes, privacy indicators, and 3D replay chapters.
             </p>
@@ -131,7 +131,7 @@ export default function TrackingReplayPro() {
 
       <main className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[18rem_minmax(0,1fr)_22rem]">
         <aside className="min-h-0 border-b border-border bg-card/70 xl:border-b-0 xl:border-r">
-          <PaneHeader icon={GitCompare} title="Trip Pair" detail={`${availableOptions.length} replayable trips`} />
+          <PaneHeader icon={GitCompare} title="Drives being compared" detail={`${availableOptions.length} replayable trips`} />
           <div className="space-y-3 overflow-y-auto p-3 text-sm">
             <TripSummary title="Primary" trip={primaryTrip} available={compareData.primaryAvailable} reason={compareData.primaryUnavailableReason} />
             <TripSummary title="Comparison" trip={secondaryTrip} available={compareData.secondaryAvailable} reason={compareData.secondaryUnavailableReason} />
@@ -178,7 +178,7 @@ export default function TrackingReplayPro() {
         </section>
 
         <aside className="min-h-0 border-t border-border bg-card/80 xl:border-l xl:border-t-0">
-          <PaneHeader icon={Layers} title="Inspector" detail="Overlay, chapters, and route comparison" />
+          <PaneHeader icon={Layers} title="Replay details" detail="Overlay, chapters, and route comparison" />
           <div className="space-y-3 overflow-y-auto p-3">
             <Panel title="Route Comparison" detail={`${compareData.routeComparison.rows.length} metrics`}>
               <div className="grid gap-1 text-xs">

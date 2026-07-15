@@ -223,6 +223,41 @@ const fixture = {
     ],
     recommendedChecks: ['One saved route sample needs review.'],
   },
+  historicalExposure: {
+    scannedTripCount: 3,
+    affectedTripCount: 1,
+    exposedPointCount: 1,
+    exposedEventCount: 1,
+    alreadyProtectedPointCount: 2,
+    alreadyProtectedEventCount: 1,
+  },
+  tripPrivacyPreviews: [{
+    id: 'trip-preview',
+    startedAt: now,
+    endedAt: now + 1000,
+    pointCount: 3,
+    eventCount: 1,
+    affected: true,
+    exposureCount: 2,
+    before: {
+      exposedPoints: 1,
+      exposedEvents: 1,
+      protectedPoints: 1,
+      retainedPoints: 1,
+      startStatus: 'exposed',
+      endStatus: 'retained',
+      segments: ['exposed', 'protected', 'retained'],
+    },
+    after: {
+      exposedPoints: 0,
+      exposedEvents: 0,
+      protectedPoints: 2,
+      retainedPoints: 1,
+      startStatus: 'protected',
+      endStatus: 'retained',
+      segments: ['protected', 'protected', 'retained'],
+    },
+  }],
   chain: [
     { seq: 1, op: 'ZONE_SAVED', timestamp: now - 2000, hash: 'a'.repeat(64) },
     { seq: 2, op: 'TRANSMISSION', timestamp: now - 1000, hash: 'b'.repeat(64), details: { service: 'osrm', status: 'warning' } },
@@ -277,6 +312,12 @@ describe('Privacy Intelligence tabs', () => {
     expect(outputs[2]).toContain('Failing control');
     expect(outputs[2]).toContain('Unknown control');
     expect(outputs[3]).toContain('Raw points in zones');
+    expect(outputs[3]).toContain('Historical exposure scanner');
+    expect(outputs[3]).toContain('Before / after trip simulator');
+    expect(outputs[3]).toContain('Before protection');
+    expect(outputs[3]).toContain('After protection');
+    expect(outputs[3]).toContain('Protect 2 records');
+    expect(outputs[3]).not.toContain('43.65');
     expect(outputs[3]).toContain('Frequent stop suggestion');
     expect(outputs[3]).toContain('Review the suggested 140 m circle before saving');
     expect(outputs[3]).toContain('2 raw points were just outside this zone');

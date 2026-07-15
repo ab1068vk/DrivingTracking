@@ -154,6 +154,8 @@ import {
 } from '@/lib/privacyZones';
 import { prepareScoreInputsForPrivacy } from '@/lib/scoreInputPrivacy';
 import { appendPrivacyEvent } from '@/lib/hashChainLog';
+import { processDriverProgressionAfterTrip } from '@/lib/driverProgression';
+import { toast } from '@/components/ui/use-toast';
 import {
   PRIVATE_TRIP_MODE,
   buildPrivateTripRecord,
@@ -635,6 +637,7 @@ export default function Dashboard() {
   const [activeTrip, setActiveTrip] = useState(null);
   const [tracking, setTracking] = useState(false);
   const [endingTrip, setEndingTrip] = useState(false);
+  const [startingTrip, setStartingTrip] = useState(false);
   const [currentLocation, setCurrentLocation] = useState(null);
   const [elapsed, setElapsed] = useState(0);
   const [locationError, setLocationError] = useState(null);
@@ -653,6 +656,7 @@ export default function Dashboard() {
   const lastMovingSpeedRef = useRef(0);
   const autoEndingTripRef = useRef(false);
   const endingTripRef = useRef(false);
+  const startingTripRef = useRef(false);
   const locationPermissionEndingRef = useRef(false);
   const endTripRef = useRef(null);
   const timerRef = useRef(null);
@@ -849,9 +853,9 @@ export default function Dashboard() {
   });
 
   useEffect(() => {
-    if (!recentTripsLoaded || fullHistoryEnabled) return undefined;
+    if (!recentTripsLoaded || fullHistoryEnabled || completedTrips.length < 50) return undefined;
     return scheduleDashboardIdleWork(() => setFullHistoryEnabled(true));
-  }, [fullHistoryEnabled, recentTripsLoaded]);
+  }, [completedTrips.length, fullHistoryEnabled, recentTripsLoaded]);
 
   const { data: vehicles = [] } = useQuery({
     queryKey: ['vehicles'],
@@ -1671,7 +1675,11 @@ export default function Dashboard() {
     nearParkedLocation = false,
     triggerReason = null,
   } = {}) => {
-    if (trackingRef.current || endingTripRef.current) return;
+    if (trackingRef.current || endingTripRef.current || startingTripRef.current) return;
+    startingTripRef.current = true;
+    setStartingTrip(true);
+    await waitForTripEndingFeedbackPaint();
+    try {
     autoEndingTripRef.current = false;
     endingTripRef.current = false;
     locationPermissionEndingRef.current = false;
@@ -2032,6 +2040,10 @@ export default function Dashboard() {
       }).catch((error) => {
         logError('private_trip_audit_start', error);
       });
+    }
+    } finally {
+      startingTripRef.current = false;
+      setStartingTrip(false);
     }
   }, [dailyFatigue.shouldWarnBeforeTrip, refreshTrackingStatusContext, startGPS]);
 
@@ -2783,7 +2795,28 @@ export default function Dashboard() {
         });
       });
     }
-    await syncAchievementNotifications(calculateAchievementBadges([completedTrip, ...completedTrips], settings, vehicles)).catch((err) => {
+    const progressionTrips = [completedTrip, ...completedTrips];
+    let progressionUpdate = null;
+    try {
+      progressionUpdate = processDriverProgressionAfterTrip(progressionTrips, settings, {
+        tripId: savedTrip?.id || completedTrip.id,
+      });
+      if (progressionUpdate.newUnlocks.length > 0) {
+        const leadUnlock = progressionUpdate.newUnlocks[0];
+        toast({
+          title: progressionUpdate.newUnlocks.length === 1 ? leadUnlock.title : `${progressionUpdate.newUnlocks.length} progression unlocks`,
+          description: progressionUpdate.newUnlocks.length === 1
+            ? `${leadUnlock.detail} · +${leadUnlock.xp} XP`
+            : `${leadUnlock.title} and ${progressionUpdate.newUnlocks.length - 1} more. Open Driver Progression to celebrate.`,
+        });
+      }
+    } catch (err) {
+      logError('post_trip_driver_progression_sync', err, { tripId: savedTrip?.id || completedTrip.id });
+    }
+    await syncAchievementNotifications([
+      ...calculateAchievementBadges(progressionTrips, settings, vehicles),
+      ...(progressionUpdate?.notificationBadges || []),
+    ]).catch((err) => {
       logError('post_trip_achievement_notification_sync', err, { tripId: savedTrip?.id || completedTrip.id });
     });
     const newDailyFatigue = computeDailyFatigue(
@@ -3884,9 +3917,14 @@ export default function Dashboard() {
               </div>
               <button
                 onClick={() => handleStartTrip()}
-                className="cyber-start-button w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg hover:opacity-90 transition-opacity"
+                disabled={startingTrip}
+                aria-label={startingTrip ? 'Starting trip' : 'Start trip'}
+                aria-busy={startingTrip || undefined}
+                className="cyber-start-button w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg hover:opacity-90 transition-opacity disabled:cursor-progress disabled:opacity-70"
               >
-                <Play className="w-7 h-7 text-white ml-0.5" />
+                {startingTrip
+                  ? <RefreshCw className="h-7 w-7 animate-spin text-white" />
+                  : <Play className="w-7 h-7 text-white ml-0.5" />}
               </button>
             </div>
             {isAndroidManualMode && (
@@ -3942,13 +3980,15 @@ export default function Dashboard() {
             <button
               type="button"
               onClick={() => handleStartTrip({ privateTrip: true })}
-              className="cyber-private-trip mt-4 flex w-full items-center gap-3 rounded-2xl border border-border bg-secondary/50 px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-secondary"
+              disabled={startingTrip}
+              aria-busy={startingTrip || undefined}
+              className="cyber-private-trip mt-4 flex w-full items-center gap-3 rounded-2xl border border-border bg-secondary/50 px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-secondary disabled:cursor-progress disabled:opacity-65"
             >
               <div className="rounded-xl bg-slate-900 p-2 text-white dark:bg-slate-700">
                 <Shield className="h-5 w-5" />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold">Start Private Trip</div>
+                <div className="text-sm font-semibold">{startingTrip ? 'Starting trip...' : 'Start Private Trip'}</div>
                 <div className="mt-0.5 text-xs text-muted-foreground">
                   <span className="block">Save distance and duration only.</span>
                   <span className="block">No route, addresses, events, or score.</span>
@@ -4052,22 +4092,44 @@ export default function Dashboard() {
             <h2 className="font-semibold text-base">Weekly Driver Goals</h2>
             <Target className="w-4 h-4 text-primary" />
           </div>
+          {weeklyGoals.some((goal) => goal.status === 'building_evidence') && (
+            <div className="mb-3 rounded-xl bg-primary/5 px-3 py-2 text-[11px] font-medium text-muted-foreground">
+              Goals activate after {weeklyGoals[0]?.evidence?.minimum_trips || 3} trips and {weeklyGoals[0]?.evidence?.minimum_distance_km || 25} km. Until then, Road Sage is building evidence—not awarding easy completions.
+            </div>
+          )}
           <div className="space-y-2">
             {weeklyGoals.map((goal) => {
-              const pct = goal.direction === 'under'
-                ? Math.min(100, goal.target > 0 ? (goal.value / goal.target) * 100 : 100)
-                : Math.min(100, goal.target > 0 ? (goal.value / goal.target) * 100 : 0);
+              const evidencePct = goal.evidence
+                ? Math.min(
+                    100,
+                    (goal.evidence.trips / goal.evidence.minimum_trips) * 100,
+                    (goal.evidence.distance_km / goal.evidence.minimum_distance_km) * 100
+                  )
+                : 0;
+              const pct = !goal.qualified
+                ? evidencePct
+                : goal.met
+                  ? 100
+                  : goal.direction === 'under'
+                    ? (goal.target > 0 ? Math.min(99, (goal.target / Math.max(goal.target, goal.value)) * 100) : 0)
+                    : Math.min(99, goal.target > 0 ? (goal.value / goal.target) * 100 : 0);
+              const statusClass = !goal.qualified
+                ? 'text-primary font-semibold'
+                : goal.met ? 'text-emerald-500 font-semibold' : 'text-orange-500 font-semibold';
+              const barClass = !goal.qualified ? 'bg-primary' : goal.met ? 'bg-emerald-500' : 'bg-orange-500';
               return (
                 <div key={goal.id}>
                   <div className="flex items-center justify-between text-xs mb-1">
                     <span className="font-medium">{goal.label}</span>
-                    <span className={goal.met ? 'text-emerald-500 font-semibold' : 'text-orange-500 font-semibold'}>
-                      {goal.value}/{goal.target}{goal.unit ? ` ${goal.unit}` : goal.direction === 'over' ? '+' : ''}
+                    <span className={statusClass}>
+                      {!goal.qualified
+                        ? `${goal.evidence.trips}/${goal.evidence.minimum_trips} trips · ${goal.evidence.distance_km}/${goal.evidence.minimum_distance_km} km`
+                        : `${goal.value}/${goal.target}${goal.unit ? ` ${goal.unit}` : goal.direction === 'over' ? '+' : ''}`}
                     </span>
                   </div>
                   <div className="h-2 bg-secondary rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full ${goal.met ? 'bg-emerald-500' : 'bg-orange-500'}`}
+                      className={`h-full rounded-full ${barClass}`}
                       style={{ width: `${pct}%` }}
                     />
                   </div>

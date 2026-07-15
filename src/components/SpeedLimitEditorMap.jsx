@@ -21,6 +21,7 @@ const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyrigh
 const DEFAULT_CENTER = [43.6532, -79.3832];
 const MAX_PERMANENT_LABELS = 80;
 const MOBILE_MAX_PERMANENT_LABELS = 30;
+const SECTION_DRAW_BATCH_SIZE = 60;
 
 const sectionKey = (section = {}) => String(
   section.sectionKey ||
@@ -461,26 +462,62 @@ function SpeedLimitEditorMapContent({
   useEffect(() => {
     const map = mapRef.current;
     const layers = sectionLayersRef.current;
-    if (!mapReady || !isUsableLeafletMap(map) || !isUsableLayerGroup(layers)) return;
+    if (!mapReady || !isUsableLeafletMap(map) || !isUsableLayerGroup(layers)) return undefined;
     const endDraw = beginMeasure('SpeedLimitEditorMap.layerDraw', { sectionCount: sections.length });
 
     stopLeafletMap(map);
     safeLeafletCall(() => layers.clearLayers());
+    const drawableSections = selectedGeohash
+      ? sections.filter((section) => sectionKey(section) !== selectedGeohash)
+      : sections;
+    let nextIndex = 0;
+    let frameId = null;
+    let cancelled = false;
+    let measured = false;
 
-    sections.forEach((section) => {
-      if (selectedGeohash && sectionKey(section) === selectedGeohash) return;
-      addSectionToLayer({
-        section,
-        layerGroup: layers,
-        selected: false,
-        showPermanentLabel: permanentLabelKeys.has(sectionKey(section)),
-        addMode: false,
-        onSelect: (section) => {
-          if (!addModeRef.current) onSelectRef.current?.(section);
-        },
-      });
-    });
-    endDraw({ outcome: 'success' });
+    const finishMeasure = (outcome) => {
+      if (measured) return;
+      measured = true;
+      endDraw({ outcome, drawnSectionCount: nextIndex });
+    };
+    const drawBatch = () => {
+      frameId = null;
+      if (cancelled || !isUsableLeafletMap(map) || !isUsableLayerGroup(layers)) {
+        finishMeasure('cancelled');
+        return;
+      }
+
+      const batchEnd = Math.min(nextIndex + SECTION_DRAW_BATCH_SIZE, drawableSections.length);
+      for (; nextIndex < batchEnd; nextIndex += 1) {
+        const section = drawableSections[nextIndex];
+        addSectionToLayer({
+          section,
+          layerGroup: layers,
+          selected: false,
+          showPermanentLabel: permanentLabelKeys.has(sectionKey(section)),
+          addMode: false,
+          onSelect: (nextSection) => {
+            if (!addModeRef.current) onSelectRef.current?.(nextSection);
+          },
+        });
+      }
+
+      if (nextIndex < drawableSections.length) {
+        frameId = window.requestAnimationFrame(drawBatch);
+      } else {
+        finishMeasure('success');
+      }
+    };
+
+    // Draw enough content for the map to feel ready, then yield between batches
+    // so dense saved-speed models do not monopolize the mobile WebView thread.
+    drawBatch();
+
+    return () => {
+      cancelled = true;
+      if (frameId != null) window.cancelAnimationFrame(frameId);
+      finishMeasure('cancelled');
+    };
   }, [mapReady, permanentLabelKeys, sections, selectedGeohash]);
 
   useEffect(() => {

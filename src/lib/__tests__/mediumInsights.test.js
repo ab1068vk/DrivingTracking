@@ -207,7 +207,7 @@ describe('mediumInsights', () => {
       {
         odometer_km: undefined,
         maintenance_items: [
-          { id: 'oil', label: 'Oil change', interval_km: 1000, last_service_km: 0 },
+          { id: 'oil', label: 'Oil change', interval_km: 1000, last_service_km: 0, source_type: 'owner_entered_manufacturer', source_title: 'Exact owner manual', confirmed_by_user: true },
         ],
       },
       [

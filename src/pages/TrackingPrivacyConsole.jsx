@@ -21,6 +21,7 @@ import {
 } from '@/pages/PrivacyIntelligence';
 import { logSystemFailure } from '@/lib/systemLog';
 import { buildTrackingPrivacyConsoleData } from '@/lib/trackingPrivacyConsole';
+import { Button } from '@/components/ui/button';
 
 const toneClass = {
   ok: 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100',
@@ -81,7 +82,7 @@ export default function TrackingPrivacyConsole() {
     queryFn: () => loadPrivacyIntelligence(),
     enabled: authed,
     staleTime: 30 * 1000,
-    refetchInterval: authed ? 30 * 1000 : false,
+    refetchInterval: authed ? 2 * 60 * 1000 : false,
   });
 
   useEffect(() => {
@@ -102,19 +103,21 @@ export default function TrackingPrivacyConsole() {
       <div className="grid min-h-[calc(100dvh-8.5rem)] place-items-center p-4">
         <section className="w-full max-w-xl rounded-md border border-border bg-card p-6 text-center">
           <Lock className="mx-auto h-8 w-8 text-primary" />
-          <h1 className="mt-3 font-grotesk text-xl font-bold">Privacy Tracking Console</h1>
+          <h1 className="mt-3 font-grotesk text-xl font-bold">Unlock Trip Privacy</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Privacy-zone, masking, outbound road-data, and audit evidence require local device authentication.
           </p>
           {authError && <p className="mt-3 text-sm font-medium text-red-600 dark:text-red-300">{authError}</p>}
-          <button
+          <Button
             type="button"
             onClick={() => authenticate()}
-            className="mt-4 inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
+            loading={authLoading}
+            loadingText="Checking access..."
+            className="mt-4"
           >
             <ShieldCheck className="h-4 w-4" />
-            {authLoading ? 'Checking access' : 'Unlock console'}
-          </button>
+            Unlock trip privacy
+          </Button>
         </section>
       </div>
     );
@@ -125,8 +128,8 @@ export default function TrackingPrivacyConsole() {
       <header className="shrink-0 border-b border-border bg-background/80 px-3 py-2">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <div className="text-[11px] font-bold uppercase tracking-normal text-muted-foreground">Advanced Tracking Mode</div>
-            <h1 className="font-grotesk text-xl font-bold tracking-normal">Privacy Tracking Console</h1>
+            <div className="text-[11px] font-bold text-muted-foreground">Advanced trip tracking</div>
+            <h1 className="font-grotesk text-xl font-bold tracking-normal">Trip Privacy</h1>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
               App-recorded privacy evidence for zones, masking, private trips, outbound road data, and local audit history.
             </p>
@@ -134,22 +137,24 @@ export default function TrackingPrivacyConsole() {
           <div className="flex flex-wrap items-center gap-2">
             <ToolbarLink to="/privacy-intelligence" icon={ShieldCheck}>Privacy Intelligence</ToolbarLink>
             <ToolbarLink to="/settings#privacy-zones" icon={Database}>Zone settings</ToolbarLink>
-            <button
+            <Button
               type="button"
               onClick={() => refetch()}
-              disabled={isFetching}
-              className="inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
+              variant="outline"
+              size="sm"
+              loading={isFetching}
+              loadingText="Refreshing privacy..."
             >
-              <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
-              Refresh
-            </button>
+              <RefreshCw className="h-4 w-4" />
+              Refresh privacy
+            </Button>
           </div>
         </div>
       </header>
 
       <main className="min-h-0 flex-1 overflow-auto">
         {error && (
-          <div className="m-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
+          <div role="alert" className="m-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
             Privacy evidence source unavailable. {error?.message || 'Retry from the toolbar.'}
           </div>
         )}
@@ -241,7 +246,7 @@ export default function TrackingPrivacyConsole() {
             </div>
           </Panel>
 
-          <Panel title="Inspector" detail={`Updated ${formatTime(consoleData.generatedAt)}`}>
+          <Panel title="Privacy details" detail={`Updated ${formatTime(consoleData.generatedAt)}`}>
             <div className="grid gap-2">
               <EvidenceRow row={consoleData.nativeSync} />
               <div className="rounded-md border border-border bg-background/70 p-3 text-sm">

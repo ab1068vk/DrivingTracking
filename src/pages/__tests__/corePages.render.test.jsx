@@ -12,6 +12,7 @@ const setTripSummaries = (trips) => {
   queryData.set(JSON.stringify(['trip-summaries']), trips);
   queryData.set(JSON.stringify(['trip-summaries', 'limited', 50]), trips);
   queryData.set(JSON.stringify(['trip-summaries', 'limited', 12]), trips);
+  queryData.set(JSON.stringify(['trip-summaries', 'limited', 30]), trips);
   queryData.set(JSON.stringify(['trip-summaries', 'limited', 100]), trips);
 };
 const settings = {
@@ -97,7 +98,9 @@ vi.mock('framer-motion', () => {
   const passthrough = (tag) => ({ children, ...props }) => React.createElement(tag, props, children);
   return {
     AnimatePresence: ({ children }) => <>{children}</>,
+    MotionConfig: ({ children }) => <>{children}</>,
     motion: new Proxy({}, { get: (_target, tag) => passthrough(tag) }),
+    useReducedMotion: () => false,
   };
 });
 
@@ -128,11 +131,18 @@ vi.mock('recharts', () => {
 
 vi.mock('@tanstack/react-query', () => ({
   keepPreviousData: Symbol('keepPreviousData'),
-  useQuery: ({ queryKey }) => ({
-    data: queryData.get(JSON.stringify(queryKey)) ?? [],
-    isLoading: false,
-    refetch: vi.fn(),
-  }),
+  useQuery: ({ queryKey }) => {
+    const value = queryData.get(JSON.stringify(queryKey));
+    const error = value instanceof Error ? value : null;
+    return {
+      data: error ? undefined : value ?? [],
+      isLoading: false,
+      isFetching: false,
+      isError: Boolean(error),
+      error,
+      refetch: vi.fn(),
+    };
+  },
   useQueries: ({ queries = [] }) => queries.map(({ queryKey }) => ({
     data: queryData.get(JSON.stringify(queryKey)) ?? null,
     isLoading: false,
@@ -345,6 +355,21 @@ describe('core page component renders', () => {
     expect(html).toContain('approximate');
   }, 10_000);
 
+  it('renders the Driving Coach mission shell with secondary tools collapsed', async () => {
+    const { default: DrivingCoach } = await import('@/pages/DrivingCoach');
+    const html = renderToStaticMarkup(<DrivingCoach />);
+
+    expect(html).toContain('Driving Coach');
+    expect(html).toContain('Today');
+    expect(html).toContain('Program');
+    expect(html).toContain('Patterns');
+    expect(html).toContain('Driver Model');
+    expect(html).toContain('<details');
+    expect(html).toContain('Open your supporting weekly goals');
+    expect(html).toContain('Open the local evidence assistant');
+  });
+
+
   it('renders TrackingOverview empty state without trips', async () => {
     const { activeTripStore } = await import('@/lib/trackingStore');
     activeTripStore.get.mockReturnValue(null);
@@ -352,10 +377,12 @@ describe('core page component renders', () => {
     const { default: TrackingOverview } = await import('@/pages/TrackingOverview');
     const html = renderToStaticMarkup(<TrackingOverview />);
 
-    expect(html).toContain('Tracking Overview');
+    expect(html).toContain('Track your next drive');
     expect(html).toContain('No completed trips');
     expect(html).toContain('No route data available');
     expect(html).toContain('GPS permission');
+    expect(html).toContain('Advanced tracking insights');
+    expect(html).toContain('Waiting for drives');
   });
 
   it('renders TrackingOverview loaded and active-trip state', async () => {
@@ -376,6 +403,42 @@ describe('core page component renders', () => {
     expect(html).toContain('Route points retained');
     expect(html).toContain('Score estimate');
     expect(html).toContain('trip-1');
+    expect(html).toContain('Route retention');
+    expect(html).toContain('100%');
+  });
+
+  it('renders TrackingOverview trip-loading error with an in-place retry', async () => {
+    queryData.set(JSON.stringify(['trip-summaries', 'limited', 30]), new Error('Local store unavailable'));
+    const { default: TrackingOverview } = await import('@/pages/TrackingOverview');
+    const html = renderToStaticMarkup(<TrackingOverview />);
+
+    expect(html).toContain('Recent trips could not be loaded');
+    expect(html).toContain('Retry loading trips');
+    expect(html).toContain('Your recordings are still stored locally');
+  });
+
+  it('renders Milestones with a prioritized next step and advanced progression details', async () => {
+    const { default: Achievements } = await import('@/pages/Achievements');
+    const html = renderToStaticMarkup(<Achievements />);
+
+    expect(html).toContain('Milestones');
+    expect(html).toContain('Recommended next step');
+    expect(html).toContain('Adaptive missions');
+    expect(html).toContain('How XP is earned');
+    expect(html).toContain('Mastery');
+    expect(html).toContain('Records');
+    expect(html).toContain('History');
+  });
+
+  it('renders a retry state when Milestones trip history cannot be loaded', async () => {
+    queryData.set(JSON.stringify(['trip-summaries', 'limited', 50]), new Error('Local store unavailable'));
+    queryData.set(JSON.stringify(['trip-summaries']), new Error('Local store unavailable'));
+    const { default: Achievements } = await import('@/pages/Achievements');
+    const html = renderToStaticMarkup(<Achievements />);
+
+    expect(html).toContain('Milestones could not be loaded');
+    expect(html).toContain('Retry loading milestones');
+    expect(html).not.toContain('Your progression starts with a real trip');
   });
 
   it('renders linked TrackingTripDetail analytics and comparison controls', async () => {
@@ -383,7 +446,7 @@ describe('core page component renders', () => {
     const { default: TrackingTripDetail } = await import('@/pages/TrackingTripDetail');
     const html = renderToStaticMarkup(<TrackingTripDetail />);
 
-    expect(html).toContain('Neutral trip record');
+    expect(html).toContain('Advanced drive details');
     expect(html).toContain('Compare speed profile');
     expect(html).toContain('Linked telemetry analysis');
     expect(html).toContain('Speed and recorded limit');
@@ -396,7 +459,7 @@ describe('core page component renders', () => {
     const { default: TrackingMapWorkspace } = await import('@/pages/TrackingMapWorkspace');
     const html = renderToStaticMarkup(<TrackingMapWorkspace />);
 
-    expect(html).toContain('Map Workspace');
+    expect(html).toContain('Route Map');
     expect(html).toContain('No completed trips match');
     expect(html).toContain('No route selected');
     expect(html).toContain('Timeline tracks');
@@ -434,7 +497,7 @@ describe('core page component renders', () => {
     const { default: TrackingMapWorkspace } = await import('@/pages/TrackingMapWorkspace');
     const html = renderToStaticMarkup(<TrackingMapWorkspace />);
 
-    expect(html).toContain('Map Workspace');
+    expect(html).toContain('Route Map');
     expect(html).toContain('Trip map placeholder');
     expect(html).toContain('Speeding');
     expect(html).toContain('privacy masked');
@@ -458,8 +521,8 @@ describe('core page component renders', () => {
     const { default: TrackingEvents } = await import('@/pages/TrackingEvents');
     const html = renderToStaticMarkup(<TrackingEvents />);
 
-    expect(html).toContain('Event Timeline');
-    expect(html).toContain('Technical Log');
+    expect(html).toContain('Drive Event Timeline');
+    expect(html).toContain('Recorded events');
     expect(html).toContain('No events recorded for the selected filters.');
   });
 
@@ -487,7 +550,7 @@ describe('core page component renders', () => {
     const { default: TrackingEvents } = await import('@/pages/TrackingEvents');
     const html = renderToStaticMarkup(<TrackingEvents />);
 
-    expect(html).toContain('Event Timeline');
+    expect(html).toContain('Drive Event Timeline');
     expect(html).toContain('Hard braking event');
     expect(html).toContain('Phone-use window detected');
     expect(html).toContain('GPS diagnostic proxy');
@@ -539,7 +602,7 @@ describe('core page component renders', () => {
     const { default: TrackingPrivacyConsole } = await import('@/pages/TrackingPrivacyConsole');
     const html = renderToStaticMarkup(<TrackingPrivacyConsole />);
 
-    expect(html).toContain('Privacy Tracking Console');
+    expect(html).toContain('Unlock Trip Privacy');
     expect(html).toContain('local device authentication');
     expect(html).not.toContain('43.65');
     expect(html).not.toContain('Outbound Road Data');
@@ -551,7 +614,7 @@ describe('core page component renders', () => {
     const { default: TrackingAlertsLab } = await import('@/pages/TrackingAlertsLab');
     const html = renderToStaticMarkup(<TrackingAlertsLab />);
 
-    expect(html).toContain('Voice Alert Lab');
+    expect(html).toContain('Driving Alerts');
     expect(html).toContain('Speed Tier Cooldowns');
     expect(html).toContain('Ownership Rules');
     expect(html).toContain('Hard braking event recorded.');
@@ -584,7 +647,7 @@ describe('core page component renders', () => {
     const { default: TrackingReportsLab } = await import('@/pages/TrackingReportsLab');
     const html = renderToStaticMarkup(<TrackingReportsLab />);
 
-    expect(html).toContain('Reports and Export Lab');
+    expect(html).toContain('Share and Export Trips');
     expect(html).toContain('Trip event CSV');
     expect(html).toContain('Route point quality summary');
     expect(html).toContain('Speed-source audit CSV');
@@ -599,7 +662,7 @@ describe('core page component renders', () => {
     const { default: TrackingReplayPro } = await import('@/pages/TrackingReplayPro');
     const html = renderToStaticMarkup(<TrackingReplayPro />);
 
-    expect(html).toContain('Compare Replay Pro');
+    expect(html).toContain('Compare Drive Replays');
     expect(html).toContain('Primary trip');
     expect(html).toContain('Comparison trip');
     expect(html).toContain('Speed timeline overlay');
@@ -700,6 +763,7 @@ describe('core page component renders', () => {
     expect(html).toContain('does not reconstruct exact point deductions');
     expect(html).toContain('Braking efficiency');
     expect(html).toContain('Does this trip score look fair?');
+    expect(html).toContain('<h2 class="min-w-0 text-sm font-semibold leading-tight">Does this trip score look fair?</h2>');
     expect(html).toContain('>Review<');
     expect(html).not.toContain('What made the score seem too harsh?');
     expect(html).not.toContain('Three consistent eligible reviews');
@@ -912,7 +976,7 @@ describe('core page component renders', () => {
     expect(html).toContain('other system entries expire after 3 days');
   });
 
-  it('shows tire-life estimate calibration warning on Vehicles', async () => {
+  it('keeps legacy tire estimates out of the Vehicles driving-load advisory', async () => {
     queryData.set(JSON.stringify(['vehicles']), [{
       id: 'vehicle-1',
       name: 'Commuter',
@@ -929,10 +993,14 @@ describe('core page component renders', () => {
     const { default: Vehicles } = await import('@/pages/Vehicles');
     const html = renderToStaticMarkup(<Vehicles />);
 
-    expect(html).toContain('Tire wear impact');
-    expect(html).toContain('Provisional tire estimate');
-    expect(html).toContain('estimated tire life reduction');
-    expect(html).toContain('Reference-speed model is provisional; not physical tread wear.');
+    expect(html).toContain('Driving-load advisory');
+    expect(html).toContain('GPS driving-event proxy only');
+    expect(html).toContain('does not measure oil condition, tread depth, brake thickness');
+    expect(html).toContain('never changes a manufacturer due date');
+    expect(html).not.toContain('Tire wear impact');
+    expect(html).not.toContain('Provisional tire estimate');
+    expect(html).not.toContain('estimated tire life reduction');
+    expect(html).not.toContain('Reference-speed model is provisional');
   });
 
   it('renders only insufficient-data UBI status below the score-card evidence threshold', async () => {

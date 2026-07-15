@@ -1,6 +1,7 @@
 import { buildDangerZones } from '@/lib/dangerZoneEngine';
 import { routeKeyForTrip } from '@/lib/commuteMatching';
 import { excludePrivacyTouchedDaysFromTrends } from '@/lib/privateTripMode';
+import { buildVehicleMaintenancePlan } from '@/lib/vehicleMaintenance';
 export { COMMUTE_MATCH_RADIUS_M, routeKeyForTrip } from '@/lib/commuteMatching';
 
 const DAY_MS = 86400000;
@@ -308,6 +309,23 @@ export function buildGoalStatus(weekTrips = [], settings = {}) {
   const harshBrakeTarget = Number(settings.weekly_goal_harsh_brakes ?? 0);
   const minAverageScore = Number(settings.weekly_goal_min_avg_score ?? 85);
   const maxNightKm = Number(settings.weekly_goal_max_night_km ?? 20);
+  const weekDistanceKm = trendTrips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  const minimumTrips = Math.max(1, Number(settings.weekly_goal_min_trips ?? 3));
+  const minimumDistanceKm = Math.max(1, Number(settings.weekly_goal_min_distance_km ?? 25));
+  const qualified = trendTrips.length >= minimumTrips && weekDistanceKm >= minimumDistanceKm;
+  const evidence = {
+    qualified,
+    trips: trendTrips.length,
+    distance_km: Math.round(weekDistanceKm * 10) / 10,
+    minimum_trips: minimumTrips,
+    minimum_distance_km: minimumDistanceKm,
+  };
+  const goalState = (conditionMet) => ({
+    met: qualified && conditionMet,
+    qualified,
+    status: !qualified ? 'building_evidence' : conditionMet ? 'met' : 'needs_attention',
+    evidence,
+  });
   return [
     {
       id: 'no_harsh_braking',
@@ -317,24 +335,24 @@ export function buildGoalStatus(weekTrips = [], settings = {}) {
           : `Keep harsh braking at ${harshBrakeTarget} or less`,
       value: harshBrakes,
       target: harshBrakeTarget,
-      met: harshBrakes <= harshBrakeTarget,
-      display: `${harshBrakes}/${harshBrakeTarget}`,
+      ...goalState(harshBrakes <= harshBrakeTarget),
+      display: qualified ? `${harshBrakes}/${harshBrakeTarget}` : `${trendTrips.length}/${minimumTrips} trips · ${Math.round(weekDistanceKm * 10) / 10}/${minimumDistanceKm} km`,
     },
     {
       id: 'average_score',
       label: `Keep average score above ${minAverageScore}`,
       value: avgScore,
       target: minAverageScore,
-      met: weightedScore != null && avgScore >= minAverageScore,
-      display: weightedScore != null ? `${avgScore}/${minAverageScore}` : 'No distance',
+      ...goalState(weightedScore != null && avgScore >= minAverageScore),
+      display: qualified && weightedScore != null ? `${avgScore}/${minAverageScore}` : `${trendTrips.length}/${minimumTrips} trips · ${Math.round(weekDistanceKm * 10) / 10}/${minimumDistanceKm} km`,
     },
     {
       id: 'night_distance',
       label: `Drive under ${maxNightKm} km at night`,
       value: Math.round(nightKm * 10) / 10,
       target: maxNightKm,
-      met: nightKm <= maxNightKm,
-      display: `${Math.round(nightKm * 10) / 10}/${maxNightKm} km`,
+      ...goalState(nightKm <= maxNightKm),
+      display: qualified ? `${Math.round(nightKm * 10) / 10}/${maxNightKm} km` : `${trendTrips.length}/${minimumTrips} trips · ${Math.round(weekDistanceKm * 10) / 10}/${minimumDistanceKm} km`,
     },
   ];
 }
@@ -583,22 +601,17 @@ export function buildVehicleCostSummary(vehicle = {}, trips = []) {
 
 export function buildMaintenanceReminders(vehicle = {}, trips = []) {
   const completed = trips.filter((trip) => trip.status === 'completed');
-  const odometer = (Number(vehicle.odometer_km) || 0) + completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
-  const items = Array.isArray(vehicle.maintenance_items) ? vehicle.maintenance_items : [];
-  const distanceReminders = items.filter((item) => Number(item.interval_km) > 0).map((item) => {
-    const interval = Number(item.interval_km) || 0;
-    const last = Number(item.last_service_km) || 0;
-    const remaining = last + interval - odometer;
-    return {
-      id: item.id,
-      label: item.label,
-      type: 'distance',
-      remaining_km: Math.round(remaining),
-      status: remaining <= 0 ? 'due' : remaining <= Math.max(500, interval * 0.1) ? 'soon' : 'ok',
-    };
-  });
-  return distanceReminders.sort((a, b) => {
-    const severity = { due: 0, soon: 1, ok: 2 };
-    return severity[a.status] - severity[b.status];
-  });
+  const distanceKm = completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  const anchoredDistanceKm = Number(vehicle.odometer_trip_distance_anchor_km) || 0;
+  const odometerKm = Math.round((Number(vehicle.odometer_km) || 0) + Math.max(0, distanceKm - anchoredDistanceKm));
+  const plan = buildVehicleMaintenancePlan(vehicle, { odometerKm });
+  const severity = { due: 0, soon: 1, needs_confirmation: 2, needs_baseline: 3, needs_source: 4, ok: 5 };
+  return plan.items
+    .map((item) => ({
+      ...item,
+      type: item.interval_km > 0 && item.interval_months > 0
+        ? 'distance_and_time'
+        : item.interval_months > 0 ? 'time' : 'distance',
+    }))
+    .sort((a, b) => (severity[a.status] ?? 9) - (severity[b.status] ?? 9));
 }

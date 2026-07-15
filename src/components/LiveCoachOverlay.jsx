@@ -24,6 +24,7 @@ import { alertMarginForConfidence, shouldWarnForSpeed, VOICE_COOLDOWNS_BY_TIER }
 import { buildSpeedingMessage, buildVoiceAlertMessage } from '@/lib/voiceAlertMessages';
 import { LocalSpeedKnowledge } from '@/lib/localSpeedKnowledge';
 import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
+import { COACH_FOCUS_CATALOG, loadCoachProgramStore } from '@/lib/coachPrograms';
 
 // CHANGES (session):
 // - Added tier-aware speed alert helpers for LiveCoachOverlay.
@@ -170,9 +171,13 @@ export default function LiveCoachOverlay({
   const lastCoachCheckRef = useRef(0);
   const lastDisplayedAlertRef = useRef({});
   const localSpeedKnowledgeRef = useRef(null);
+  const activeProgramRef = useRef(null);
+  const missionBriefedRef = useRef(false);
+  const missionPromptCountRef = useRef(0);
   const previousCountsRef = useRef({
     [EVENT_TYPES.HARSH_BRAKE]: currentEvents.filter((event) => event.type === EVENT_TYPES.HARSH_BRAKE).length,
     [EVENT_TYPES.RAPID_ACCELERATION]: currentEvents.filter((event) => event.type === EVENT_TYPES.RAPID_ACCELERATION).length,
+    [EVENT_TYPES.SHARP_TURN]: currentEvents.filter((event) => event.type === EVENT_TYPES.SHARP_TURN).length,
     [EVENT_TYPES.STOP_START_PATTERN]: currentEvents.filter((event) => event.type === EVENT_TYPES.STOP_START_PATTERN || event.type === EVENT_TYPES.TAILGATE_CYCLE).length,
   });
 
@@ -209,10 +214,19 @@ export default function LiveCoachOverlay({
     previousCountsRef.current = {
       [EVENT_TYPES.HARSH_BRAKE]: 0,
       [EVENT_TYPES.RAPID_ACCELERATION]: 0,
+      [EVENT_TYPES.SHARP_TURN]: 0,
       [EVENT_TYPES.STOP_START_PATTERN]: 0,
     };
     lastCoachCheckRef.current = new Date(tripStartTime).getTime() || Date.now();
     lastDisplayedAlertRef.current = {};
+    activeProgramRef.current = null;
+    missionBriefedRef.current = false;
+    missionPromptCountRef.current = 0;
+    loadCoachProgramStore().then((store) => {
+      activeProgramRef.current = store.active?.status === 'active' ? store.active : null;
+    }).catch(() => {
+      activeProgramRef.current = null;
+    });
   }, [tripStartTime]);
 
   useEffect(() => {
@@ -254,6 +268,7 @@ export default function LiveCoachOverlay({
       ));
       const harshBrakeCount = events.filter((event) => event.type === EVENT_TYPES.HARSH_BRAKE).length;
       const rapidAccelCount = events.filter((event) => event.type === EVENT_TYPES.RAPID_ACCELERATION).length;
+      const sharpTurnCount = events.filter((event) => event.type === EVENT_TYPES.SHARP_TURN).length;
       const stopStartPatternCount = events.filter((event) => event.type === EVENT_TYPES.STOP_START_PATTERN || event.type === EVENT_TYPES.TAILGATE_CYCLE).length;
       const speedingEvents = events.filter((event) => event.type === EVENT_TYPES.SPEEDING);
       const latestSpeeding = speedingEvents[speedingEvents.length - 1];
@@ -281,17 +296,42 @@ export default function LiveCoachOverlay({
       );
       const resolvedSpeedLimit = createTierAwareSpeedLimitContext(latestSpeedLimitContext, settings);
       const durationMins = Number.isFinite(tripStartMs) ? (now - tripStartMs) / 60000 : 0;
+      const activeProgram = activeProgramRef.current;
+      const missionFocus = activeProgram
+        ? COACH_FOCUS_CATALOG[activeProgram.focusId] || null
+        : null;
+      const canUseMissionPrompt = (focusId) => (
+        activeProgram?.status === 'active' &&
+        activeProgram.focusId === focusId &&
+        missionPromptCountRef.current < (Number(activeProgram.promptBudget) || 3)
+      );
+      const missionMessage = (focusId, fallbackText, voiceKey, fallbackVoiceText) => {
+        const matchedFocusId = canUseMissionPrompt(focusId)
+          ? focusId
+          : canUseMissionPrompt('consistency') ? 'consistency' : null;
+        if (!matchedFocusId) {
+          return { text: fallbackText, voiceKey, voiceText: fallbackVoiceText, voiceCooldownMs: VOICE_COOLDOWNS_MS[voiceKey] };
+        }
+        return {
+          text: missionFocus?.cue || fallbackText,
+          voiceKey: `coach_program_${activeProgram.id}_${voiceKey}`,
+          voiceText: missionFocus?.cue || fallbackVoiceText,
+          voiceCooldownMs: VOICE_COOLDOWNS_MS[voiceKey],
+          missionPrompt: true,
+        };
+      };
 
       let nextMessage = null;
       const liveSpeedAlert = buildTierAwareSpeedAlert(latestSpeed, resolvedSpeedLimit, settings);
       const livePhoneAlertsEnabled = settings.phone_use_detection_enabled !== false && settings.phone_use_live_alert_enabled !== false;
       if (newPhoneWindows.length > 0 && livePhoneAlertsEnabled) {
         const highestConfidence = [...newPhoneWindows].sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0];
+        const phoneMissionPrompt = Boolean(canUseMissionPrompt('phone_use') && missionFocus?.cue);
         nextMessage = {
           text: (
             <>
               <span className="block text-sm font-bold uppercase">Put your phone down</span>
-              <span className="block text-xs font-medium">Phone activity was recorded during this drive. Keep your eyes on the road.</span>
+              <span className="block text-xs font-medium">{phoneMissionPrompt ? missionFocus.cue : 'Phone activity was recorded during this drive. Keep your eyes on the road.'}</span>
             </>
           ),
           tone: 'danger',
@@ -299,9 +339,10 @@ export default function LiveCoachOverlay({
           voiceKey: 'phone_use',
           voiceText: buildVoiceAlertMessage('phone_use', {
             source: highestConfidence.source || highestConfidence.evidence_source,
-          }, { settings }),
+          }, { settings }) + (phoneMissionPrompt ? ` ${missionFocus.cue}` : ''),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.phone_use,
           voiceParams: { interrupt: true },
+          missionPrompt: phoneMissionPrompt,
         };
         if (settings.notif_phone_use_alert_enabled !== false) {
           notifyPhoneUseDetected({
@@ -323,35 +364,72 @@ export default function LiveCoachOverlay({
           voiceText: buildVoiceAlertMessage('heading_drift_beta', {}, { settings }),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.heading_drift_beta,
         };
+      } else if (activeProgram?.status === 'active' && missionFocus && !missionBriefedRef.current && durationMins >= 0.2 && durationMins <= 5) {
+        missionBriefedRef.current = true;
+        nextMessage = {
+          text: missionFocus.liveCue,
+          voiceKey: `coach_program_brief_${activeProgram.id}`,
+          voiceText: missionFocus.liveCue,
+          voiceCooldownMs: 24 * 60 * 60 * 1000,
+          displayMs: 10000,
+        };
       } else if (liveSpeedAlert) {
-        nextMessage = liveSpeedAlert;
+        const speedMissionPrompt = Boolean(canUseMissionPrompt('speeding') && missionFocus?.cue);
+        if (speedMissionPrompt) {
+          nextMessage = {
+            ...liveSpeedAlert,
+            text: (
+              <>
+                {liveSpeedAlert.text}
+                <span className="mt-1 block border-t border-current/20 pt-1 text-xs font-medium">
+                  Coach: {missionFocus.cue}
+                </span>
+              </>
+            ),
+            voiceText: liveSpeedAlert.voiceText
+              ? `${liveSpeedAlert.voiceText} ${missionFocus.cue}`
+              : null,
+            missionPrompt: true,
+          };
+        } else {
+          nextMessage = liveSpeedAlert;
+        }
       } else if (harshBrakeCount > previousCountsRef.current[EVENT_TYPES.HARSH_BRAKE]) {
-        nextMessage = {
-          text: 'Brake earlier and more gradually',
-          voiceKey: 'harsh_brake',
-          voiceText: buildVoiceAlertMessage('harsh_brake', {}, { settings }),
-          voiceCooldownMs: VOICE_COOLDOWNS_MS.harsh_brake,
-        };
+        nextMessage = missionMessage(
+          'harsh_brakes',
+          'Brake earlier and more gradually',
+          'harsh_brake',
+          buildVoiceAlertMessage('harsh_brake', {}, { settings })
+        );
+      } else if (sharpTurnCount > previousCountsRef.current[EVENT_TYPES.SHARP_TURN]) {
+        nextMessage = missionMessage(
+          'sharp_turns',
+          'Set your speed before the turn',
+          'sharp_turn',
+          'Set your speed before the turn and accelerate as the wheel straightens.'
+        );
       } else if (stopStartPatternCount > previousCountsRef.current[EVENT_TYPES.STOP_START_PATTERN]) {
-        nextMessage = {
-          text: 'Repeated stop-start pattern recorded',
-          voiceKey: 'stop_start_pattern',
-          voiceText: buildVoiceAlertMessage('stop_start_pattern', {}, { settings }),
-          voiceCooldownMs: VOICE_COOLDOWNS_MS.stop_start_pattern,
-        };
+        nextMessage = missionMessage(
+          'consistency',
+          'Repeated stop-start pattern recorded',
+          'stop_start_pattern',
+          buildVoiceAlertMessage('stop_start_pattern', {}, { settings })
+        );
       } else if (rapidAccelCount > previousCountsRef.current[EVENT_TYPES.RAPID_ACCELERATION]) {
-        nextMessage = {
-          text: 'Accelerate more smoothly',
-          voiceKey: 'rapid_accel',
-          voiceText: buildVoiceAlertMessage('rapid_accel', {}, { settings }),
-          voiceCooldownMs: VOICE_COOLDOWNS_MS.rapid_accel,
-        };
+        nextMessage = missionMessage(
+          'rapid_accel',
+          'Accelerate more smoothly',
+          'rapid_accel',
+          buildVoiceAlertMessage('rapid_accel', {}, { settings })
+        );
       } else if (durationMins >= (settings.threshold_long_drive_minutes ?? 120)) {
+        const fatigueMission = canUseMissionPrompt('fatigue');
         nextMessage = {
-          text: `Long drive reminder. You have been driving for ${Math.round(durationMins)} minutes.`,
-          voiceKey: 'long_drive',
-          voiceText: buildVoiceAlertMessage('long_drive', {}, { settings }),
+          text: fatigueMission ? missionFocus.cue : `Long drive reminder. You have been driving for ${Math.round(durationMins)} minutes.`,
+          voiceKey: fatigueMission ? `coach_program_${activeProgram.id}_long_drive` : 'long_drive',
+          voiceText: fatigueMission ? missionFocus.cue : buildVoiceAlertMessage('long_drive', {}, { settings }),
           voiceCooldownMs: VOICE_COOLDOWNS_MS.long_drive,
+          missionPrompt: fatigueMission,
         };
       } else if ((stats.idle_time_seconds || 0) > 300) {
         nextMessage = {
@@ -389,11 +467,13 @@ export default function LiveCoachOverlay({
       previousCountsRef.current = {
         [EVENT_TYPES.HARSH_BRAKE]: harshBrakeCount,
         [EVENT_TYPES.RAPID_ACCELERATION]: rapidAccelCount,
+        [EVENT_TYPES.SHARP_TURN]: sharpTurnCount,
         [EVENT_TYPES.STOP_START_PATTERN]: stopStartPatternCount,
       };
       lastCoachCheckRef.current = now;
 
       if (nextMessage && canDisplayAlert(nextMessage.voiceKey, nextMessage.voiceCooldownMs)) {
+        if (nextMessage.missionPrompt) missionPromptCountRef.current += 1;
         queueRef.current.push(nextMessage);
         showNext();
       }

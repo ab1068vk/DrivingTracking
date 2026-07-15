@@ -1,7 +1,6 @@
 import {
   getLastCheckpointExportedAt,
-  loadPrivacyAuditChain,
-  verifyChain,
+  loadVerifiedPrivacyAuditChain,
 } from '@/lib/hashChainLog';
 import {
   getHydratedPrivacyZones,
@@ -39,6 +38,7 @@ import {
 import { getKeyRotationStatus } from '@/lib/keyRotationManager';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { getEncryptedJson, setEncryptedJson } from '@/lib/securePayloadCrypto';
+import { buildHistoricalPrivacyExposure } from '@/lib/privacyTripRemediation';
 import { logSystemFailure } from '@/lib/systemLog';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -647,6 +647,14 @@ export async function getZoneStats(trips = null) {
     ? trips
     : await tripService.listAll({ sort: '-start_time' }).catch(() => []);
   return getZoneStatsSnapshot(zoneSettings, sourceTrips);
+}
+
+export async function buildZoneIntelligenceSnapshot(settings, trips = []) {
+  const zones = await getZoneStatsSnapshot(settings, trips);
+  return (Array.isArray(zones) ? zones : []).map((zone) => ({
+    ...zone,
+    effectiveness: getZoneEffectiveness(zone, trips),
+  }));
 }
 
 export function transmissionPrivacyLevel(entry = {}) {
@@ -1418,26 +1426,42 @@ export function summarizeAudit(chain = [], lastCheckpointExportedAt = null) {
   };
 }
 
-export async function loadPrivacyIntelligence() {
+async function buildPrivacyIntelligence() {
   const settings = localSettings.get();
+  // Start independent secure-storage and trip reads immediately. The old load
+  // path waited for every protection check and history write before beginning
+  // these operations, which made the whole page feel blocked.
+  const tripsPromise = tripService.listAllForExport({ sort: '-start_time' }).catch(() => []);
+  const transmissionsPromise = getTransmissionSummary();
+  const auditPromise = loadVerifiedPrivacyAuditChain();
+  const checkpointPromise = getLastCheckpointExportedAt();
+  const hydratedZonesPromise = getHydratedPrivacyZones(settings).catch(() => []);
+
   const protections = await getProtectionStatus();
   const score = computePrivacyScoreFromControls(protections);
-  const postureRegression = await recordAndDetectVersionPostureRegression(protections);
+  const posturePromise = recordAndDetectVersionPostureRegression(protections);
   const scoreHistory = await recordPrivacyScoreHistory(score);
-  const scoreTrend = summarizeScoreTrend(scoreHistory);
-  const tripsPromise = tripService.listAll({ sort: '-start_time' }).catch(() => []);
-  const [trips, transmissions, chain, chainResult, lastCheckpointExportedAt] = await Promise.all([
+  const [
+    postureRegression,
+    trips,
+    transmissions,
+    auditSnapshot,
+    lastCheckpointExportedAt,
+    hydratedZones,
+  ] = await Promise.all([
+    posturePromise,
     tripsPromise,
-    getTransmissionSummary(),
-    loadPrivacyAuditChain(),
-    verifyChain(),
-    getLastCheckpointExportedAt(),
+    transmissionsPromise,
+    auditPromise,
+    checkpointPromise,
+    hydratedZonesPromise,
   ]);
-  const zones = await getZoneStats(trips);
-  const zonesWithEffectiveness = zones.map((zone) => ({
-    ...zone,
-    effectiveness: getZoneEffectiveness(zone, trips),
-  }));
+  const scoreTrend = summarizeScoreTrend(scoreHistory);
+  const chain = auditSnapshot?.chain || [];
+  const chainResult = auditSnapshot?.result || { valid: false, reason: 'Audit verification unavailable.' };
+  const zoneSettings = hydratedZones.length ? { ...settings, privacy_zones: hydratedZones } : settings;
+  const zonesWithEffectiveness = await buildZoneIntelligenceSnapshot(zoneSettings, trips);
+  const historicalExposure = buildHistoricalPrivacyExposure(trips, zonesWithEffectiveness);
   const zoneSuggestions = await getPrivacyZoneSuggestions({
     trips,
     zones: zonesWithEffectiveness,
@@ -1488,6 +1512,8 @@ export async function loadPrivacyIntelligence() {
     zoneSuggestions,
     zoneSummary,
     drivingReadout,
+    historicalExposure: historicalExposure.summary,
+    tripPrivacyPreviews: historicalExposure.previews,
     transmissions,
     chain,
     chainResult,
@@ -1495,4 +1521,30 @@ export async function loadPrivacyIntelligence() {
     actionPlan,
     evidenceSnapshot,
   };
+}
+
+const PRIVACY_INTELLIGENCE_CACHE_MS = 30 * 1000;
+let privacyIntelligenceCache = null;
+let privacyIntelligenceLoadPromise = null;
+
+export async function loadPrivacyIntelligence({ force = false } = {}) {
+  const now = Date.now();
+  if (
+    !force &&
+    privacyIntelligenceCache &&
+    now - privacyIntelligenceCache.generatedAt < PRIVACY_INTELLIGENCE_CACHE_MS
+  ) {
+    return privacyIntelligenceCache;
+  }
+  if (privacyIntelligenceLoadPromise) return privacyIntelligenceLoadPromise;
+
+  privacyIntelligenceLoadPromise = buildPrivacyIntelligence()
+    .then((result) => {
+      privacyIntelligenceCache = result;
+      return result;
+    })
+    .finally(() => {
+      privacyIntelligenceLoadPromise = null;
+    });
+  return privacyIntelligenceLoadPromise;
 }

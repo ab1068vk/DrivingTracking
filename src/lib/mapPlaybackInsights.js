@@ -466,19 +466,51 @@ export function buildPlaybackTimeline(points = [], events = []) {
 }
 
 export function buildPlaybackPositionIndex(points = [], options = {}) {
-  const { alreadyClean = false } = options;
+  const {
+    alreadyClean = false,
+    compressGaps = false,
+    gapTransitionSeconds = 0.8,
+  } = options;
   const clean = alreadyClean
     ? (Array.isArray(points) ? points : [])
     : cleanRoutePoints(restoreOriginalRouteGeometry(points));
-  const timesMs = clean.map(pointTimeMs);
+  const sourceTimesMs = clean.map(pointTimeMs);
+  const hasSourceTimeline = sourceTimesMs.length > 1 && sourceTimesMs.every((time, index) => (
+    time != null && (index === 0 || time > sourceTimesMs[index - 1])
+  ));
+  const gapToIndices = new Set();
+  let timesMs = sourceTimesMs;
+  let firstMs = sourceTimesMs[0] ?? null;
+
+  if (compressGaps && hasSourceTimeline) {
+    const safeGapTransitionSeconds = Math.max(0.1, Math.min(3, Number(gapTransitionSeconds) || 0.8));
+    let replayElapsedSeconds = 0;
+    timesMs = [0];
+    firstMs = 0;
+
+    for (let index = 1; index < clean.length; index++) {
+      const sourceDurationSeconds = Math.max(0, (sourceTimesMs[index] - sourceTimesMs[index - 1]) / 1000);
+      const isGap = clean[index]?.tracking_gap === true ||
+        clean[index]?.route_gap === true ||
+        sourceDurationSeconds > MAX_VISUAL_SEGMENT_GAP_SECONDS;
+      if (isGap) gapToIndices.add(index);
+      replayElapsedSeconds += isGap ? safeGapTransitionSeconds : sourceDurationSeconds;
+      timesMs.push(replayElapsedSeconds * 1000);
+    }
+  }
+
   const hasTimeline = timesMs.length > 1 && timesMs.every((time, index) => (
     time != null && (index === 0 || time > timesMs[index - 1])
   ));
   return {
     points: clean,
     timesMs,
-    firstMs: timesMs[0] ?? null,
+    sourceTimesMs,
+    firstMs,
     hasTimeline,
+    hasSourceTimeline,
+    gapToIndices,
+    durationSeconds: hasTimeline ? Math.max(0, (timesMs.at(-1) - firstMs) / 1000) : 0,
   };
 }
 
@@ -537,22 +569,32 @@ export function playbackPositionAtElapsed(points = [], elapsedSeconds = 0, posit
   const ratio = prevMs != null && currMs != null && currMs > prevMs
     ? Math.max(0, Math.min(1, (targetMs - prevMs) / (currMs - prevMs)))
     : 1;
-  const point = {
-    ...curr,
-    lat: prev.lat + (curr.lat - prev.lat) * ratio,
-    lng: prev.lng + (curr.lng - prev.lng) * ratio,
-    speed_kmh: prev.speed_kmh != null && curr.speed_kmh != null
-      ? Number(prev.speed_kmh) + (Number(curr.speed_kmh) - Number(prev.speed_kmh)) * ratio
-      : curr.speed_kmh,
-  };
+  const isGap = indexData.gapToIndices?.has?.(safeIndex) === true;
+  const point = isGap
+    ? {
+      ...(ratio < 0.5 ? prev : curr),
+      speed_kmh: 0,
+    }
+    : {
+      ...curr,
+      lat: prev.lat + (curr.lat - prev.lat) * ratio,
+      lng: prev.lng + (curr.lng - prev.lng) * ratio,
+      speed_kmh: prev.speed_kmh != null && curr.speed_kmh != null
+        ? Number(prev.speed_kmh) + (Number(curr.speed_kmh) - Number(prev.speed_kmh)) * ratio
+        : curr.speed_kmh,
+    };
 
   return {
     index: safeIndex,
     point,
-    heading: calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng),
+    heading: isGap
+      ? Number(point.heading ?? point.bearing ?? 0) || 0
+      : calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng),
     ratio,
     fromIndex: Math.max(0, safeIndex - 1),
     toIndex: safeIndex,
+    isGap,
+    gapRatio: isGap ? ratio : 0,
   };
 }
 

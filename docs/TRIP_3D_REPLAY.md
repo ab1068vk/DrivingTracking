@@ -1,6 +1,6 @@
 # 3D Replay Documentation
 
-Last updated: 2026-07-08
+Last updated: 2026-07-13
 
 This document describes the complete current 3D Replay implementation in Road Sage / DriveSense. It covers the routes, data contracts, rendering pipeline, privacy handling, playback behavior, diagnostics, tests, and the main code snippets needed to understand or extend the feature.
 
@@ -164,6 +164,8 @@ Useful route point fields:
 | `speed_kmh` | Speed display, visual rate, speed band, dynamics |
 | `obd_speed_kmh` | Preferred segment display speed when present |
 | `accuracy` | Visual filtering and smoothing decisions |
+| `altitude` or `altitude_m` | Elevation-aware road geometry and elevation profile |
+| `altitude_accuracy` or `altitudeAccuracy` | Rejects unreliable altitude samples above 40 m accuracy |
 | `speed_limit_kmh` | Speed limit coloring, signs, over-limit chapters |
 | `speed_limit_source` | Timeline metadata |
 | `speed_limit_road_name` | Timeline metadata |
@@ -365,7 +367,7 @@ function buildProjection(points = []) {
 }
 ```
 
-This keeps short and long routes inside a bounded scene while preserving relative geometry.
+The current projection also splits at recorded GPS gaps and packs disconnected route groups into a bounded local scene. A remote post-gap coordinate can no longer shrink the usable road into a tiny corner of the canvas. GPS altitude is retained for the current-altitude readout and elevation profile, but it does not deform the road. Phone altitude noise without a matching terrain mesh previously caused vertical bouncing and could place road sections below the ground plane, so the drivable spline deliberately remains stable and flat.
 
 ## Three.js Scene
 
@@ -379,9 +381,11 @@ renderer = new THREE.WebGLRenderer({
   powerPreference: 'high-performance',
 });
 
-const quality = RENDER_QUALITIES[qualityIdx] || RENDER_QUALITIES[1];
+const quality = selectedQuality.id === 'auto' ? adaptiveQuality : selectedQuality;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
-renderer.shadowMap.enabled = true;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = quality.shadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
@@ -397,10 +401,11 @@ Scene contents:
 | Object | Implementation |
 | --- | --- |
 | Ground plane | `THREE.PlaneGeometry` with dark material |
+| Sky | Local shader gradient dome with day, dusk, and night themes; no external imagery or API |
 | Grid | `THREE.GridHelper` |
 | Lighting | `HemisphereLight`, `DirectionalLight`, car `PointLight` |
-| Route guide | `THREE.Line` over projected smooth points |
-| Road | Curved ribbons and segment overlays |
+| Environment | Deterministic instanced buildings and trees generated locally with a camera-safe clearance corridor |
+| Road | Shared spline, batched curved ribbons, vertex-color overlay, dashed center line |
 | Speed signs | Canvas texture applied to sprites |
 | Stop markers | Cylinders at stop points |
 | Event markers | Poles, spheres, and pulsing rings |
@@ -423,11 +428,12 @@ return () => {
 
 ## Road Rendering
 
-Road rendering groups contiguous timeline segments, projects each segment, smooths centerlines, and draws ribbons:
+Road rendering groups contiguous timeline segments and creates one canonical spline model. The road, car, camera look-ahead, speed signs, stops, and events all use that model, so the car does not cut across a visually smoothed corner:
 
 ```js
-const roadGroups = projectedRoadGroups(timeline.segments, projection);
-addCurvedRoad(scene, roadGroups, colorMode);
+const roadModels = buildRoadModels(timeline.segments, projection);
+addCurvedRoad(scene, roadModels, displayMode);
+const pose = roadPoseForPlayback(roadModels, playbackPosition);
 ```
 
 Road dimensions:
@@ -518,33 +524,32 @@ Playback speeds:
 const SPEEDS = [1, 2, 4, 8];
 ```
 
-Visual playback also scales with vehicle speed:
+`1x` is a distance-aware replay pace rather than literal wall-clock trip time. The renderer estimates a useful base replay duration from route distance at 45 km/h, bounded to 45–150 seconds, and caps compression at 12×. The `1x`, `2x`, `4x`, and `8x` controls multiply that base pace. This avoids very slow replays caused by long stops or sparse GPS timestamps while preserving the recorded timeline for seeking and labels:
 
 ```js
-const VISUAL_REFERENCE_SPEED_KMH = 35;
-const MIN_VISUAL_PLAYBACK_RATE = 0.22;
-const MAX_VISUAL_PLAYBACK_RATE = 3.1;
-
-function visualPlaybackRateForSpeed(speedKmh = 0) {
-  if (speed <= IDLE_SPEED_KMH) return MIN_VISUAL_PLAYBACK_RATE;
-  return clampNumber(speed / VISUAL_REFERENCE_SPEED_KMH, MIN_VISUAL_PLAYBACK_RATE, MAX_VISUAL_PLAYBACK_RATE);
-}
+const nextElapsed = advancePlaybackElapsed(
+  elapsedRef.current,
+  delta,
+  speedMultiplierRef.current * baseReplayRate,
+  durationSeconds
+);
 ```
 
 The animation loop advances time only while playing:
 
 ```js
 if (playingRef.current) {
-  const playbackPosition = playbackPositionAtElapsed(points, elapsedRef.current, positionIndex);
-  const speed = speedKmhAtPlaybackPosition(timeline, playbackPosition);
-  const visualRate = visualPlaybackRateForSpeed(speed);
-  const nextElapsed = Math.min(
-    durationSeconds,
-    elapsedRef.current + delta * speedMultiplierRef.current * visualRate
+  const nextElapsed = advancePlaybackElapsed(
+    elapsedRef.current,
+    delta,
+    speedMultiplierRef.current,
+    durationSeconds
   );
   elapsedRef.current = nextElapsed;
 }
 ```
+
+Long GPS gaps are compressed into an explicit 0.8-second transition. During that transition the vehicle is hidden and the UI explains that replay is continuing at the next recorded point. Normal recorded time remains unchanged.
 
 Controls exposed in the UI:
 
@@ -553,9 +558,14 @@ Controls exposed in the UI:
 | Restart | Seeks to zero and resets camera to cinematic |
 | Play/Pause | Toggles animation |
 | Speed | Cycles `1x`, `2x`, `4x`, `8x` |
-| Quality | Cycles low, medium, high pixel ratios |
+| Quality | Cycles auto, low, medium, and high render budgets |
+| Route color | Toggles speed-band and speed-limit coloring |
+| Director | Enables automatic camera choices around events, corners, speed, and stops |
+| Theme | Cycles local day, dusk, and night lighting |
+| Sound | Opt-in synthesized Web Audio drive tone; off by default |
 | Follow/Free | Toggles automatic vehicle follow |
 | Reset camera | Resets OrbitControls and switches to free |
+| Fullscreen | Opens the complete replay and controls fullscreen |
 | Range input | Seeks by elapsed seconds |
 | Camera mode buttons | Switch camera modes |
 | Chapter buttons | Jump to generated chapter |
@@ -569,6 +579,7 @@ Camera modes:
 const CAMERA_MODES = [
   { id: 'cinematic', label: 'Cinema' },
   { id: 'chase', label: 'Chase' },
+  { id: 'hood', label: 'Hood' },
   { id: 'top', label: 'Top' },
   { id: 'side', label: 'Side' },
   { id: 'event', label: 'Event' },
@@ -582,6 +593,7 @@ Camera behavior:
 | --- | --- |
 | `cinematic` | Follow camera with side drift and event focus when near events |
 | `chase` | Rear-following drive camera |
+| `hood` | Low vehicle-mounted forward camera |
 | `top` | Top-down replay view |
 | `side` | Side tracking view |
 | `event` | Focuses nearest active event marker when possible |
@@ -599,17 +611,20 @@ const lookAheadElapsed = Math.min(
 
 ## Render Quality
 
-The quality button changes renderer pixel ratio:
+Quality tiers control resolution, shadows, shadow-map size, procedural environment density, antialiasing, and the event-marker cap:
 
 ```js
 const RENDER_QUALITIES = [
-  { id: 'low', label: 'Low', pixelRatio: 0.85 },
-  { id: 'medium', label: 'Med', pixelRatio: 1.2 },
-  { id: 'high', label: 'High', pixelRatio: 2 },
+  { id: 'auto', label: 'Auto', pixelRatio: 1.2, shadows: true, environmentCount: 70 },
+  { id: 'low', label: 'Low', pixelRatio: 0.8, shadows: false, environmentCount: 24 },
+  { id: 'medium', label: 'Med', pixelRatio: 1.2, shadows: true, environmentCount: 70 },
+  { id: 'high', label: 'High', pixelRatio: 1.8, shadows: true, environmentCount: 120 },
 ];
 ```
 
-The renderer caps actual pixel ratio at the lower of device pixel ratio and the selected quality:
+Auto begins at medium and falls back after three sustained low-FPS samples. The renderer caps actual pixel ratio at the lower of device pixel ratio and the effective quality. Rendering is skipped while the page is hidden or the replay is offscreen.
+
+In follow-camera modes, disconnected road groups outside a bounded nearby radius are hidden. Top and free-orbit modes intentionally show the full overview. This keeps normal driving views from rendering distant post-gap geometry while preserving overview navigation.
 
 ```js
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.pixelRatio));
@@ -684,6 +699,12 @@ The canvas overlay shows four live stats:
 | Traveled | `routeDistanceAtPlaybackPosition()` |
 | Motion | `dynamicsAtPlaybackPosition()` |
 | Camera | current camera mode |
+
+The control panel also provides longitudinal, lateral, and combined g estimates, elevation availability/range, current world-streaming state, a local elevation profile, and a route minimap on wider screens. These values are derived from saved trip data and do not call a remote analytics service.
+
+## Cost, Network, And Offline Behavior
+
+3D Replay has no paid or metered runtime dependency. It uses bundled Three.js code, saved local trip/GPS data, procedural meshes and shaders, canvas-generated road signs, and the browser's Web Audio API. It does not require an API key, map tile subscription, cloud model, asset CDN, or runtime download. Sound is generated locally and remains off until the user enables it.
 
 Motion labels:
 
@@ -804,12 +825,17 @@ Key performance choices:
 | Lazy-loaded pages/components | Avoids pulling Three.js into initial app route work |
 | Summary picker first | Avoids loading full route geometry for all trips |
 | `prepareMapRoutePoints(..., { maxPoints: 720 })` | Keeps renderer geometry bounded |
-| Event markers capped to 120 | Prevents huge event-heavy scenes |
+| Event markers follow the active quality cap | Prevents huge event-heavy scenes |
+| Batched road ribbons and instanced scenery | Reduces geometry and draw-call overhead |
+| Nearby route-group streaming | Hides disconnected distant geometry during follow views |
 | Chapters capped to 12 | Keeps controls usable |
 | UI state update throttled to about 110 ms while playing | Keeps React updates lower than render frame rate |
 | `ResizeObserver` | Keeps canvas size synced without layout polling |
 | GPU disposal on cleanup | Reduces WebGL memory leaks |
-| Render quality button | Lets weaker devices lower pixel ratio |
+| Adaptive render quality | Lowers the complete scene budget after sustained low FPS |
+| Page/intersection checks | Avoids rendering a paused invisible canvas |
+| Reduced-motion handling | Disables suspension bob, speed trail, and event pulsing when requested |
+| WebGL context recovery | Pauses rendering and exposes a restoring state after GPU context loss |
 
 The Vite config has a dedicated Three.js vendor chunk:
 
@@ -826,7 +852,7 @@ It:
 1. Creates a synthetic trip with 48 route points.
 2. Stores it in `localStorage` with IndexedDB disabled.
 3. Opens `/trips/${trip.id}/3d`.
-4. Checks the heading, chapter UI, and camera button.
+4. Checks the heading, chapter UI, Hood camera, fullscreen, adaptive quality, Director, local sound, telemetry, elevation profile, and desktop minimap.
 5. Screenshots the page.
 6. Screenshots the canvas and parses PNG pixels to ensure the WebGL canvas is nonblank.
 

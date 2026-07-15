@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/components/ui/use-toast';
 import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
@@ -168,12 +169,26 @@ const SettingsSection = /** @type {any} */ (memo(function SettingsSection(props)
   previous.id === next.id && previous.activeId !== previous.id && next.activeId !== next.id
 )));
 
-function SettingRow({ icon: Icon = null, label, sublabel = '', children = null, onClick = null, danger = false }) {
+function SettingRow({ icon: Icon = null, label, sublabel = '', children = null, onClick = null, danger = false, disabled = false }) {
+  const actionable = typeof onClick === 'function';
+  const activate = (event) => {
+    if (!actionable || disabled) return;
+    onClick(event);
+  };
+
   return (
     <div
       data-setting-label={label}
-      className={`scroll-mt-24 flex items-center justify-between gap-3 py-3 px-1 border-b border-border/50 last:border-0 ${onClick ? 'cursor-pointer hover:bg-secondary/50 rounded-xl -mx-1 px-2 transition-colors' : ''}`}
-      onClick={onClick}
+      role={actionable ? 'button' : undefined}
+      tabIndex={actionable && !disabled ? 0 : undefined}
+      aria-disabled={actionable && disabled ? true : undefined}
+      className={`scroll-mt-24 flex items-center justify-between gap-3 py-3 px-1 border-b border-border/50 last:border-0 ${actionable ? 'rounded-xl -mx-1 px-2 transition-colors' : ''} ${actionable && !disabled ? 'cursor-pointer hover:bg-secondary/50' : ''} ${actionable && disabled ? 'cursor-not-allowed opacity-60' : ''}`}
+      onClick={activate}
+      onKeyDown={(event) => {
+        if (!actionable || disabled || (event.key !== 'Enter' && event.key !== ' ')) return;
+        event.preventDefault();
+        activate(event);
+      }}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
         {Icon && (
@@ -744,7 +759,9 @@ const calibrationLabelDate = (label = {}) => {
 
 const yieldToPaint = () => new Promise((resolve) => {
   if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-    window.requestAnimationFrame(() => resolve());
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => resolve());
+    });
     return;
   }
   setTimeout(resolve, 0);
@@ -798,6 +815,7 @@ export default function Settings() {
   const [calibrationLabels, setCalibrationLabels] = useState([]);
   const [calibrationMarkers, setCalibrationMarkers] = useState({});
   const [calibrationLabelStatus, setCalibrationLabelStatus] = useState('');
+  const [calibrationLabelsBusy, setCalibrationLabelsBusy] = useState(false);
   const [parkedLocation, setParkedLocation] = useState(null);
   const [privacyDraft, setPrivacyDraft] = useState({
     label: 'Private place',
@@ -859,9 +877,23 @@ export default function Settings() {
   const [auditVerifying, setAuditVerifying] = useState(false);
   const [rawGpsLifecycleStatus, setRawGpsLifecycleStatus] = useState(null);
   const [rawGpsLifecycleBusy, setRawGpsLifecycleBusy] = useState(false);
+  const [dataRetentionBusy, setDataRetentionBusy] = useState(false);
+  const [heightenedPrivacyBusy, setHeightenedPrivacyBusy] = useState(false);
+  const [tripDeleteBusy, setTripDeleteBusy] = useState(false);
   const importInputRef = useRef(null);
   const corridorDraftExpiryRef = useRef(null);
+  const dialogActionLocksRef = useRef(new Set());
   const qc = useQueryClient();
+
+  const lockDialogAction = (key) => {
+    if (dialogActionLocksRef.current.has(key)) return false;
+    dialogActionLocksRef.current.add(key);
+    return true;
+  };
+
+  const unlockDialogAction = (key) => {
+    dialogActionLocksRef.current.delete(key);
+  };
 
   // Load settings from local storage
   const [cfg, setCfg] = useState(() => localSettings.get());
@@ -1599,7 +1631,10 @@ export default function Settings() {
         tripService.listAll({ sort: '-start_time' }),
         calibrationLabelService.listLocalLabels(),
       ]);
-      const profile = computeCalibrationProfile(trips, buildDrivingThresholds(cfg), { surveyLabels });
+      const profile = {
+        ...computeCalibrationProfile(trips, buildDrivingThresholds(cfg), { surveyLabels }),
+        analyzedAt: new Date().toISOString(),
+      };
       await saveCalibrationProfile(profile);
       setCalibProfile(profile);
       recordSystemEvent('calibration_profile_analyzed', {
@@ -1652,14 +1687,17 @@ export default function Settings() {
   };
 
   const clearCalibrationLabels = async () => {
-    const confirmed = await requestAppConfirm({
-      title: 'Delete survey labels?',
-      message: 'Delete all local survey labels and answered-trip markers?',
-      confirmLabel: 'Delete labels',
-      destructive: true,
-    });
-    if (!confirmed) return;
+    if (calibrationLabelsBusy || !lockDialogAction('calibration-labels-clear')) return;
     try {
+      const confirmed = await requestAppConfirm({
+        title: 'Delete survey labels?',
+        message: 'Delete all local survey labels and answered-trip markers?',
+        confirmLabel: 'Delete labels',
+        destructive: true,
+      });
+      if (!confirmed) return;
+      setCalibrationLabelsBusy(true);
+      await yieldToPaint();
       const deletedLabels = calibrationLabels.length;
       const deletedMarkers = Object.keys(calibrationMarkers).length;
       await calibrationLabelService.replaceLocalLabels([]);
@@ -1677,6 +1715,9 @@ export default function Settings() {
         marker_count: Object.keys(calibrationMarkers).length,
       });
       setCalibrationLabelStatus('Could not clear survey labels.');
+    } finally {
+      setCalibrationLabelsBusy(false);
+      unlockDialogAction('calibration-labels-clear');
     }
   };
 
@@ -1721,34 +1762,40 @@ export default function Settings() {
       updateCfg({ heightened_privacy_mode: false });
       return;
     }
-
-    const confirmed = await requestAppConfirm({
-      title: 'Turn on heightened privacy?',
-      message: 'Turn on heightened privacy mode? Existing raw GPS inside every configured privacy zone will be permanently erased. Scores, distance, duration, and summaries will remain.',
-      confirmLabel: 'Turn on',
-      destructive: true,
-    });
-    if (!confirmed) return;
-
-    updateCfg({ heightened_privacy_mode: true });
+    if (heightenedPrivacyBusy || !lockDialogAction('heightened-privacy')) return;
     try {
-      const result = await purgeExistingGpsForHeightenedPrivacy({
-        ...cfgRef.current,
-        heightened_privacy_mode: true,
+      const confirmed = await requestAppConfirm({
+        title: 'Turn on heightened privacy?',
+        message: 'Turn on heightened privacy mode? Existing raw GPS inside every configured privacy zone will be permanently erased. Scores, distance, duration, and summaries will remain.',
+        confirmLabel: 'Turn on',
+        destructive: true,
       });
-      if (result.pointsPurged > 0 || result.eventsPurged > 0) {
+      if (!confirmed) return;
+      setHeightenedPrivacyBusy(true);
+      await yieldToPaint();
+      updateCfg({ heightened_privacy_mode: true });
+      try {
+        const result = await purgeExistingGpsForHeightenedPrivacy({
+          ...cfgRef.current,
+          heightened_privacy_mode: true,
+        });
+        if (result.pointsPurged > 0 || result.eventsPurged > 0) {
+          toast({
+            title: 'Heightened privacy enabled',
+            description: `Removed ${result.pointsPurged} stored GPS point${result.pointsPurged === 1 ? '' : 's'} and ${result.eventsPurged} event location${result.eventsPurged === 1 ? '' : 's'} from configured privacy zones.`,
+          });
+        }
+      } catch (error) {
+        logSystemFailure('heightened_privacy_existing_gps_purge', error);
         toast({
-          title: 'Heightened privacy enabled',
-          description: `Removed ${result.pointsPurged} stored GPS point${result.pointsPurged === 1 ? '' : 's'} and ${result.eventsPurged} event location${result.eventsPurged === 1 ? '' : 's'} from configured privacy zones.`,
+          title: 'Heightened privacy is on',
+          description: 'New activity is protected, but existing GPS cleanup could not be completed. Try enabling the mode again after checking storage access.',
+          variant: 'destructive',
         });
       }
-    } catch (error) {
-      logSystemFailure('heightened_privacy_existing_gps_purge', error);
-      toast({
-        title: 'Heightened privacy is on',
-        description: 'New activity is protected, but existing GPS cleanup could not be completed. Try enabling the mode again after checking storage access.',
-        variant: 'destructive',
-      });
+    } finally {
+      setHeightenedPrivacyBusy(false);
+      unlockDialogAction('heightened-privacy');
     }
   };
 
@@ -1806,10 +1853,18 @@ export default function Settings() {
   };
 
   const rescoreTrips = async () => {
-    await getPermissionStatus().catch(() => null);
-    const onlyProvenanceMismatch = (scoreMigrationSummary.mismatch_count || 0) > 0;
-    setRescoreConfirmOpen(false);
-    await runCompletedTripRescore({ onlyProvenanceMismatch, reason: 'manual' });
+    if (rescoreBusy || !lockDialogAction('rescore')) return;
+    setRescoreBusy(true);
+    await yieldToPaint();
+    try {
+      await getPermissionStatus().catch(() => null);
+      const onlyProvenanceMismatch = (scoreMigrationSummary.mismatch_count || 0) > 0;
+      setRescoreConfirmOpen(false);
+      await runCompletedTripRescore({ onlyProvenanceMismatch, reason: 'manual' });
+    } finally {
+      setRescoreBusy(false);
+      unlockDialogAction('rescore');
+    }
   };
 
   const dismissCalibration = async () => {
@@ -1842,40 +1897,47 @@ export default function Settings() {
   const updateRetention = async (days) => {
     const currentDays = Number(cfg.data_retention_days || 0);
     if (days === currentDays) return;
+    if (dataRetentionBusy || !lockDialogAction('trip-retention')) return;
     const periodLabel = days === 0 ? 'forever' : days === 365 ? '1 year' : `${days} days`;
-    if (days > 0) {
-      const confirmed = await requestAppConfirm({
-        title: 'Change trip retention?',
-        message: `Keep complete trips for ${periodLabel}? Trips older than ${periodLabel} will be permanently deleted from this device as soon as this setting is saved. Existing backup files are not changed.`,
-        confirmLabel: 'Save retention',
-        destructive: true,
-      });
-      if (!confirmed) return;
-    }
-
-    updateCfg({ data_retention_days: days });
-    await settingsPersistenceQueueRef.current;
-    if (Number(localSettings.get().data_retention_days || 0) !== days) return;
-    recordSystemEvent('trip_retention_setting_changed', {
-      previous_days: currentDays,
-      retention_days: days,
-    }, { category: 'settings', title: 'Trip retention setting changed' });
     try {
-      const result = await enforceTripDataRetention();
-      await qc.invalidateQueries();
-      toast({
-        title: 'Trip retention updated',
-        description: days === 0
-          ? 'Complete trips will be kept until you delete them.'
-          : `${result.deletedTrips} expired trip${result.deletedTrips === 1 ? '' : 's'} deleted. Future trips older than ${periodLabel} will be removed automatically.`,
-      });
-    } catch (error) {
-      logSystemFailure('trip_data_retention_enforcement', error, { retention_days: days });
-      toast({
-        title: 'Retention saved, cleanup failed',
-        description: 'The new retention period was saved, but expired trips could not be deleted right now.',
-        variant: 'destructive',
-      });
+      if (days > 0) {
+        const confirmed = await requestAppConfirm({
+          title: 'Change trip retention?',
+          message: `Keep complete trips for ${periodLabel}? Trips older than ${periodLabel} will be permanently deleted from this device as soon as this setting is saved. Existing backup files are not changed.`,
+          confirmLabel: 'Save retention',
+          destructive: true,
+        });
+        if (!confirmed) return;
+      }
+      setDataRetentionBusy(true);
+      await yieldToPaint();
+      updateCfg({ data_retention_days: days });
+      await settingsPersistenceQueueRef.current;
+      if (Number(localSettings.get().data_retention_days || 0) !== days) return;
+      recordSystemEvent('trip_retention_setting_changed', {
+        previous_days: currentDays,
+        retention_days: days,
+      }, { category: 'settings', title: 'Trip retention setting changed' });
+      try {
+        const result = await enforceTripDataRetention();
+        await qc.invalidateQueries();
+        toast({
+          title: 'Trip retention updated',
+          description: days === 0
+            ? 'Complete trips will be kept until you delete them.'
+            : `${result.deletedTrips} expired trip${result.deletedTrips === 1 ? '' : 's'} deleted. Future trips older than ${periodLabel} will be removed automatically.`,
+        });
+      } catch (error) {
+        logSystemFailure('trip_data_retention_enforcement', error, { retention_days: days });
+        toast({
+          title: 'Retention saved, cleanup failed',
+          description: 'The new retention period was saved, but expired trips could not be deleted right now.',
+          variant: 'destructive',
+        });
+      }
+    } finally {
+      setDataRetentionBusy(false);
+      unlockDialogAction('trip-retention');
     }
   };
 
@@ -1894,7 +1956,7 @@ export default function Settings() {
       description: hours === 0
         ? 'Privacy-operation logging is off. Non-privacy System Logs are still kept for 3 days.'
         : `Privacy-operation records will be kept for ${hours} hour${hours === 1 ? '' : 's'}.`,
-    });
+      });
   };
 
   const updateRawGpsRetention = async (days) => {
@@ -1930,20 +1992,21 @@ export default function Settings() {
   };
 
   const runRawGpsRetentionNow = async () => {
+    if (rawGpsLifecycleBusy || !lockDialogAction('raw-gps-retention')) return;
     const retentionDays = Number(cfg.raw_gps_retention_days || 0);
     const periodLabel = retentionDays >= 365 && retentionDays % 365 === 0
       ? `${retentionDays / 365} year${retentionDays === 365 ? '' : 's'}`
       : `${retentionDays} days`;
-    const confirmed = await requestAppConfirm({
-      title: 'Remove old route coordinates?',
-      message: `Remove route coordinates from trips older than ${periodLabel} now? Their route line on the map and playback will be permanently unavailable on this device. Scores, distance, duration, and summaries will remain.`,
-      confirmLabel: 'Remove GPS',
-      destructive: true,
-    });
-    if (!confirmed) return;
-
-    setRawGpsLifecycleBusy(true);
     try {
+      const confirmed = await requestAppConfirm({
+        title: 'Remove old route coordinates?',
+        message: `Remove route coordinates from trips older than ${periodLabel} now? Their route line on the map and playback will be permanently unavailable on this device. Scores, distance, duration, and summaries will remain.`,
+        confirmLabel: 'Remove GPS',
+        destructive: true,
+      });
+      if (!confirmed) return;
+      setRawGpsLifecycleBusy(true);
+      await yieldToPaint();
       const result = await enforceRawGpsRetention({ force: true });
       setRawGpsLifecycleStatus(result);
       await qc.invalidateQueries();
@@ -1967,6 +2030,7 @@ export default function Settings() {
       });
     } finally {
       setRawGpsLifecycleBusy(false);
+      unlockDialogAction('raw-gps-retention');
     }
   };
 
@@ -2417,11 +2481,12 @@ export default function Settings() {
   };
 
   const confirmDeletePrivacyZone = async () => {
-    if (!privacyDeleteZone || privacyDeleteBusy) return;
-    if (!await requireSensitiveAuthentication('Verify to delete this privacy zone')) return;
+    if (!privacyDeleteZone || privacyDeleteBusy || !lockDialogAction('privacy-delete')) return;
     setPrivacyDeleteBusy(true);
+    await yieldToPaint();
 
     try {
+      if (!await requireSensitiveAuthentication('Verify to delete this privacy zone')) return;
       let purgeResult = null;
       const tripsBeforeDelete = await getSettingsTrips();
       if (privacyDeletePurge) {
@@ -2473,7 +2538,9 @@ export default function Settings() {
         description: error.message || 'Try again after Road Sage finishes loading trip history.',
         variant: 'destructive',
       });
+    } finally {
       setPrivacyDeleteBusy(false);
+      unlockDialogAction('privacy-delete');
     }
   };
 
@@ -2618,43 +2685,58 @@ export default function Settings() {
   };
 
   const handleDeleteAllTrips = async () => {
-    const confirmed = await requestAppConfirm({
-      title: 'Delete all trips?',
-      message: 'Delete ALL trips? This cannot be undone.',
-      confirmLabel: 'Delete trips',
-      destructive: true,
-    });
-    if (!confirmed) return;
-    const trips = await getSettingsTrips();
-    for (const t of trips) {
-      await tripService.delete(t.id);
+    if (tripDeleteBusy || !lockDialogAction('delete-all-trips')) return;
+    try {
+      const confirmed = await requestAppConfirm({
+        title: 'Delete all trips?',
+        message: 'Delete ALL trips? This cannot be undone.',
+        confirmLabel: 'Delete trips',
+        destructive: true,
+      });
+      if (!confirmed) return;
+      setTripDeleteBusy(true);
+      await yieldToPaint();
+      const trips = await getSettingsTrips();
+      for (const t of trips) {
+        await tripService.delete(t.id);
+      }
+      await Promise.all([
+        setJson(SAVED_FILTERS_KEY, []),
+        calibrationLabelService.replaceLocalLabels([]),
+        calibrationLabelService.replaceTripSurveyMarkers({}),
+        clearCalibrationProfile(),
+        invalidateRouteRiskIndex(),
+        clearMapMatchingCache(),
+        clearOsmSpeedLimitCache(),
+        clearWeatherContextCache(),
+        isAndroid() ? clearNativeCompletedTripsFromSettings() : Promise.resolve(),
+      ]);
+      setCalibrationLabels([]);
+      setCalibrationMarkers({});
+      setCalibProfile(null);
+      recordSystemEvent('trip_history_deleted', {
+        deleted_trip_count: trips.length,
+        cleared_saved_filters: true,
+        cleared_trip_calibration: true,
+        cleared_external_context_caches: true,
+        cleared_native_completed_trips: isAndroid(),
+      }, { category: 'storage', severity: 'warn', title: 'Trip history deleted' });
+      await qc.invalidateQueries();
+      toast({
+        title: 'Trips deleted',
+        description: 'Trip records and local trip-derived caches were removed from this device.',
+      });
+    } catch (error) {
+      logSystemFailure('settings_delete_all_trips', error);
+      toast({
+        title: 'Trips not fully deleted',
+        description: error?.message || 'Road Sage could not finish deleting trip history.',
+        variant: 'destructive',
+      });
+    } finally {
+      setTripDeleteBusy(false);
+      unlockDialogAction('delete-all-trips');
     }
-    await Promise.all([
-      setJson(SAVED_FILTERS_KEY, []),
-      calibrationLabelService.replaceLocalLabels([]),
-      calibrationLabelService.replaceTripSurveyMarkers({}),
-      clearCalibrationProfile(),
-      invalidateRouteRiskIndex(),
-      clearMapMatchingCache(),
-      clearOsmSpeedLimitCache(),
-      clearWeatherContextCache(),
-      isAndroid() ? clearNativeCompletedTripsFromSettings() : Promise.resolve(),
-    ]);
-    setCalibrationLabels([]);
-    setCalibrationMarkers({});
-    setCalibProfile(null);
-    recordSystemEvent('trip_history_deleted', {
-      deleted_trip_count: trips.length,
-      cleared_saved_filters: true,
-      cleared_trip_calibration: true,
-      cleared_external_context_caches: true,
-      cleared_native_completed_trips: isAndroid(),
-    }, { category: 'storage', severity: 'warn', title: 'Trip history deleted' });
-    qc.invalidateQueries();
-    toast({
-      title: 'Trips deleted',
-      description: 'Trip records and local trip-derived caches were removed from this device.',
-    });
   };
 
   const handleExportAll = async () => {
@@ -2719,24 +2801,25 @@ export default function Settings() {
   };
 
   const handleEraseAllLocalData = async () => {
-    if (erasureBusy) return;
-    const confirmed = await requestAppConfirm({
-      title: 'Erase all local data?',
-      message: 'This erases trips, settings, privacy logs, zones, and local keys from this device.',
-      confirmLabel: 'Erase local data',
-      destructive: true,
-      requiredText: 'ERASE ROAD SAGE',
-      inputLabel: 'Type ERASE ROAD SAGE to continue.',
-    });
-    if (!confirmed) return;
-    setErasureBusy(true);
-    recordSystemEvent('local_data_erasure_confirmed', {}, {
-      category: 'storage',
-      severity: 'warn',
-      title: 'Local data erasure confirmed',
-      message: 'This entry is removed with the rest of local data if erasure succeeds.',
-    });
+    if (erasureBusy || !lockDialogAction('erase-all-local-data')) return;
     try {
+      const confirmed = await requestAppConfirm({
+        title: 'Erase all local data?',
+        message: 'This erases trips, settings, privacy logs, zones, and local keys from this device.',
+        confirmLabel: 'Erase local data',
+        destructive: true,
+        requiredText: 'ERASE ROAD SAGE',
+        inputLabel: 'Type ERASE ROAD SAGE to continue.',
+      });
+      if (!confirmed) return;
+      setErasureBusy(true);
+      await yieldToPaint();
+      recordSystemEvent('local_data_erasure_confirmed', {}, {
+        category: 'storage',
+        severity: 'warn',
+        title: 'Local data erasure confirmed',
+        message: 'This entry is removed with the rest of local data if erasure succeeds.',
+      });
       const result = await eraseAllLocalDataAndDownloadReceiptFromSettings();
       if (typeof window !== 'undefined') {
         await requestAppAlert(`${result.filename} was exported. Road Sage will now reload so erased in-memory data is not reused.`);
@@ -2748,12 +2831,14 @@ export default function Settings() {
         window.location.reload();
         return;
       }
-      setErasureBusy(false);
       toast({
         title: 'Erasure failed',
         description: error?.message || 'Road Sage could not finish erasing local data.',
         variant: 'destructive',
       });
+    } finally {
+      setErasureBusy(false);
+      unlockDialogAction('erase-all-local-data');
     }
   };
 
@@ -2794,19 +2879,19 @@ export default function Settings() {
   };
 
   const performExportBackup = async () => {
-    if (!backupExportReady || backupExportBusy) return;
-    if (backupExportPlaintext && !await requireSensitiveAuthentication('Verify to export a readable backup')) return;
+    if (!backupExportReady || backupExportBusy || !lockDialogAction('backup-export')) return;
     setBackupExportBusy(true);
-    recordSystemEvent('backup_export_confirmed', {
-      output_format: backupExportPlaintext ? 'json' : 'encrypted',
-      encrypted: !backupExportPlaintext,
-    }, {
-      category: 'storage',
-      severity: backupExportPlaintext ? 'warn' : 'info',
-      title: backupExportPlaintext ? 'Readable backup export confirmed' : 'Encrypted backup export confirmed',
-    });
     try {
       await yieldToPaint();
+      if (backupExportPlaintext && !await requireSensitiveAuthentication('Verify to export a readable backup')) return;
+      recordSystemEvent('backup_export_confirmed', {
+        output_format: backupExportPlaintext ? 'json' : 'encrypted',
+        encrypted: !backupExportPlaintext,
+      }, {
+        category: 'storage',
+        severity: backupExportPlaintext ? 'warn' : 'info',
+        title: backupExportPlaintext ? 'Readable backup export confirmed' : 'Encrypted backup export confirmed',
+      });
       const [trips, vehicles] = await Promise.all([
         getSettingsTripsForExport(),
         getSettingsVehicles(),
@@ -2830,6 +2915,7 @@ export default function Settings() {
       });
     } finally {
       setBackupExportBusy(false);
+      unlockDialogAction('backup-export');
     }
   };
 
@@ -2888,7 +2974,7 @@ export default function Settings() {
   };
 
   const handleImportPassphraseSubmit = async () => {
-    if (!pendingBackupImportFile || backupImportPassphrase.length < BACKUP_PASSPHRASE_MIN_LENGTH || backupImportBusy) return;
+    if (!pendingBackupImportFile || backupImportPassphrase.length < BACKUP_PASSPHRASE_MIN_LENGTH || backupImportBusy || !lockDialogAction('backup-import')) return;
     setBackupImportBusy(true);
     try {
       recordSystemEvent('backup_import_password_submitted', {
@@ -2934,6 +3020,7 @@ export default function Settings() {
       });
     } finally {
       setBackupImportBusy(false);
+      unlockDialogAction('backup-import');
     }
   };
 
@@ -3773,10 +3860,12 @@ export default function Settings() {
         {/* Driving Goals */}
         <SectionTitle id="settings-driving-goals">Driving Goals</SectionTitle>
         <p className="text-xs text-muted-foreground px-1 mb-3">
-          Weekly targets used by the Dashboard goals card.
+          Weekly targets used by the Dashboard goals card. Goals remain in “Building evidence” until both qualification minimums are reached.
         </p>
         <div className="space-y-4">
           {[
+            { key: 'weekly_goal_min_trips', label: 'Minimum qualifying trips', min: 1, max: 10, step: 1 },
+            { key: 'weekly_goal_min_distance_km', label: 'Minimum qualifying distance (km)', min: 5, max: 150, step: 5 },
             { key: 'weekly_goal_harsh_brakes', label: 'Max harsh brakes', min: 0, max: 20, step: 1 },
             { key: 'weekly_goal_speeding_events', label: 'Max speeding events', min: 0, max: 20, step: 1 },
             { key: 'weekly_goal_min_avg_score', label: 'Minimum average score', min: 50, max: 100, step: 5 },
@@ -3960,8 +4049,8 @@ export default function Settings() {
         <div className="mb-4 rounded-2xl border border-border bg-secondary/30 p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold">Threshold calibration</div>
-              <div className="mt-1 text-xs text-muted-foreground">Analyse your driving and event feedback to suggest personalized detection thresholds.</div>
+              <div className="text-sm font-semibold">Personal detection calibration</div>
+              <div className="mt-1 text-xs text-muted-foreground">Analyse retained trip evidence and your reviews. Nothing changes until you apply a clearly listed suggestion.</div>
             </div>
             <button
               type="button"
@@ -3972,6 +4061,11 @@ export default function Settings() {
               {calibLoading ? 'Analysing...' : calibProfile?.appliedAt ? 'Re-analyze' : 'Analyse my driving'}
             </button>
           </div>
+          {calibProfile?.analyzedAt && (
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              Last analysed {new Date(calibProfile.analyzedAt).toLocaleString()} — review suggestions below before applying.
+            </div>
+          )}
           <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 [overflow-wrap:anywhere] dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-100">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0 font-semibold">{PENALTY_SCALE_CALIBRATION.label}</div>
@@ -4023,7 +4117,7 @@ export default function Settings() {
                     <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
                       {calibProfile.surveyThresholdSignals.map((signal) => (
                         <div key={signal.thresholdKey}>
-                          {signal.responseCount} consistent {signal.issueType.replace(/_/g, ' ')} reviews influenced this suggestion.
+                          {signal.responseCount} consistent {signal.issueType.replace(/_/g, ' ')} reviews suggested {signal.direction === 'tighten' ? 'more sensitive' : 'less sensitive'} detection.
                         </div>
                       ))}
                     </div>
@@ -4156,12 +4250,15 @@ export default function Settings() {
           )}
           <details className="mt-3 rounded-xl border border-border bg-card p-3 text-xs [overflow-wrap:anywhere]">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 font-semibold">
-              <span className="min-w-0">Calibration registry</span>
+              <span className="min-w-0">Scoring assumptions — read only</span>
               <span className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                 <CalibrationStatusTag />
                 {PROVISIONAL_SCORING_CONSTANTS.length}
               </span>
             </summary>
+            <div className="mt-3 rounded-lg bg-secondary/50 p-2 text-muted-foreground">
+              Informational only. These are app-wide provisional scoring assumptions already used by the scoring engine; they are separate from your personal suggestions above.
+            </div>
             <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
               {PROVISIONAL_SCORING_CONSTANTS.map((entry) => (
                 <div key={entry.key} className="rounded-lg bg-secondary/60 p-2">
@@ -4917,6 +5014,7 @@ export default function Settings() {
             <Toggle
               value={cfg.heightened_privacy_mode === true}
               onChange={updateHeightenedPrivacyMode}
+              disabled={heightenedPrivacyBusy}
             />
           </SettingRow>
           {cfg.heightened_privacy_mode === true && (
@@ -5049,10 +5147,10 @@ export default function Settings() {
                 <button
                   type="button"
                   onClick={clearCalibrationLabels}
-                  disabled={calibrationLabels.length === 0}
+                  disabled={calibrationLabels.length === 0 || calibrationLabelsBusy}
                   className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground disabled:opacity-50"
                 >
-                  Clear labels
+                  {calibrationLabelsBusy ? 'Clearing...' : 'Clear labels'}
                 </button>
               </div>
             </div>
@@ -5060,10 +5158,10 @@ export default function Settings() {
             <div className="mt-3 rounded-lg border border-border bg-background/70 p-3 text-xs text-muted-foreground">
               <div className="font-semibold text-foreground">What survey answers do</div>
               <div className="mt-1">
-                Survey answers stay on this device. They do not upload anywhere, change past trip scores, or automatically tune detection thresholds.
+                Survey answers stay on this device. They do not upload anywhere or silently change scores. Analyse my driving can turn repeated eligible answers into a suggestion; you still choose whether to apply it.
               </div>
               <div className="mt-2">
-                The app uses them as local calibration notes: Settings can compare your rating with the app score, show whether scores feel too harsh or too generous, track coverage gaps like city/highway/night trips, preserve the labels in backup/export, and log survey actions in System Logs.
+                The app compares your explicit fair score with its score, shows whether scoring feels too harsh or too generous, tracks coverage gaps such as city/highway/night trips, preserves labels in backup/export, and records survey actions in System Logs.
               </div>
             </div>
 
@@ -5080,7 +5178,7 @@ export default function Settings() {
                         ? `${calibrationSurveySummary.averageScoreDelta > 0 ? '+' : ''}${calibrationSurveySummary.averageScoreDelta}`
                         : 'N/A'}
                     </div>
-                    <div className="text-muted-foreground">Avg score delta</div>
+                    <div className="text-muted-foreground">Avg fair-score delta</div>
                   </div>
                   <div className="rounded-lg bg-card p-2">
                     <div className="font-semibold text-foreground">{answeredCalibrationTrips}</div>
@@ -5118,7 +5216,7 @@ export default function Settings() {
                     <div key={label.id || label.labelId} className="grid grid-cols-[1fr_auto] gap-2 border-b border-border/50 p-2 last:border-0">
                       <div className="min-w-0">
                         <div className="truncate font-semibold text-foreground">
-                          Rating {label.surveyLabel?.overallDriveRating ?? 'N/A'} - {calibrationLabelDate(label)}
+                          Fair score {label.surveyLabel?.targetScore ?? 'N/A'} - {calibrationLabelDate(label)}
                         </div>
                         <div className="mt-0.5 truncate text-muted-foreground">
                           Local only - {label.eligibleForCalibration === false ? 'excluded from calibration' : 'eligible for analysis'}
@@ -5617,6 +5715,7 @@ export default function Settings() {
             label="Erase All Local Data"
             sublabel="Overwrite/remove local Road Sage stores and export an erasure receipt. Last app action before reload."
             onClick={handleEraseAllLocalData}
+            disabled={erasureBusy}
           >
             <span className="rounded-full border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
               {erasureBusy ? 'Erasing...' : 'Erase'}
@@ -5630,6 +5729,8 @@ export default function Settings() {
             <select
               value={cfg.data_retention_days}
               onChange={e => updateRetention(Number(e.target.value))}
+              disabled={dataRetentionBusy}
+              aria-busy={dataRetentionBusy || undefined}
               className="bg-card border border-border rounded-lg text-xs px-2 py-1"
             >
               <option value={90}>90 days</option>
@@ -5705,8 +5806,11 @@ export default function Settings() {
             sublabel="Permanently removes all trip data"
             danger
             onClick={handleDeleteAllTrips}
+            disabled={tripDeleteBusy}
           >
-            <ChevronRight className="w-4 h-4 text-red-400" />
+            {tripDeleteBusy
+              ? <span className="text-xs font-semibold text-red-500">Deleting...</span>
+              : <ChevronRight className="w-4 h-4 text-red-400" />}
           </SettingRow>
           {cfg.osrm_consent_invalidated_reason === 'privacy_zone_changed' && (
             <div className="mx-1 mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
@@ -5789,14 +5893,15 @@ export default function Settings() {
             >
               Cancel
             </button>
-            <button
-              type="button"
+            <Button
               onClick={rescoreTrips}
               disabled={rescoreBusy || rescoreCandidateCount === 0}
-              className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              loading={rescoreBusy}
+              loadingText="Updating..."
+              className="rounded-xl"
             >
-              {rescoreBusy ? 'Updating...' : `Update ${rescoreCandidateCount} trip${rescoreCandidateCount === 1 ? '' : 's'}`}
-            </button>
+              {`Update ${rescoreCandidateCount} trip${rescoreCandidateCount === 1 ? '' : 's'}`}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -5844,10 +5949,11 @@ export default function Settings() {
               type="button"
               onClick={async () => {
                 const check = privacyProtectionCheck;
-                if (!check || privacyProtectionSaving) return;
+                if (!check || privacyProtectionSaving || !lockDialogAction('privacy-save')) return;
                 setPrivacyProtectionSaving(true);
                 toast({ title: 'Activating privacy protection', description: 'The zone is being secured now. Checking and cleaning saved trips may take a moment.' });
                 try {
+                  await yieldToPaint();
                   const savedZone = check.type === 'corridor'
                     ? await savePrivacyZone(null, check.sourceLabel || 'Private route', check.radius_m)
                     : await savePrivacyZone(check.location, check.sourceLabel || 'Private place', check.radius_m);
@@ -5856,6 +5962,7 @@ export default function Settings() {
                   setPrivacyProtectionCheck(null);
                 } finally {
                   setPrivacyProtectionSaving(false);
+                  unlockDialogAction('privacy-save');
                 }
               }}
               disabled={privacyProtectionSaving}
@@ -5925,22 +6032,19 @@ export default function Settings() {
             >
               Cancel
             </button>
-            <button
-              type="button"
+            <Button
               onClick={confirmDeletePrivacyZone}
               disabled={!privacyDeleteZone || privacyDeleteBusy}
+              loading={privacyDeleteBusy}
+              loadingText="Deleting..."
               className={`rounded-lg px-3 py-2 text-sm font-semibold text-white disabled:opacity-50 ${
                 privacyDeletePurge
                   ? 'bg-red-600 hover:bg-red-700'
                   : 'bg-amber-700 hover:bg-amber-800'
               }`}
             >
-              {privacyDeleteBusy
-                ? 'Deleting...'
-                : privacyDeletePurge
-                  ? 'Erase GPS & Delete Zone'
-                  : 'Delete Zone Only'}
-            </button>
+              {privacyDeletePurge ? 'Erase GPS & Delete Zone' : 'Delete Zone Only'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -6060,14 +6164,15 @@ export default function Settings() {
             >
               Cancel
             </button>
-            <button
-              type="button"
+            <Button
               onClick={performExportBackup}
               disabled={!backupExportReady || backupExportBusy}
-              className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+              loading={backupExportBusy}
+              loadingText="Saving..."
+              className="rounded-lg"
             >
-              {backupExportBusy ? 'Saving...' : backupExportPlaintext ? 'Save JSON' : 'Save Encrypted'}
-            </button>
+              {backupExportPlaintext ? 'Save JSON' : 'Save Encrypted'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -6140,14 +6245,15 @@ export default function Settings() {
             >
               Cancel
             </button>
-            <button
-              type="button"
+            <Button
               onClick={handleImportPassphraseSubmit}
               disabled={backupImportPassphrase.length < BACKUP_PASSPHRASE_MIN_LENGTH || backupImportBusy}
-              className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+              loading={backupImportBusy}
+              loadingText="Importing..."
+              className="rounded-lg"
             >
-              {backupImportBusy ? 'Importing...' : 'Import'}
-            </button>
+              Import
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

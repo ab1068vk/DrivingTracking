@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { tripService } from '@/api/trips';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { Button } from '@/components/ui/button';
 import { downloadCSV } from '@/lib/tripEngine';
 import { readSpeedKnowledgeData } from '@/lib/speedKnowledgeRepository';
 import { getSystemLogs } from '@/lib/systemLog';
@@ -203,8 +204,8 @@ export default function TrackingReportsLab() {
       <header className="shrink-0 border-b border-border bg-background/80 px-3 py-2">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <div className="text-[11px] font-bold uppercase tracking-normal text-muted-foreground">Advanced Tracking Mode</div>
-            <h1 className="font-grotesk text-xl font-bold tracking-normal">Reports and Export Lab</h1>
+            <div className="text-[11px] font-bold text-muted-foreground">Advanced trip tracking</div>
+            <h1 className="font-grotesk text-xl font-bold tracking-normal">Share and Export Trips</h1>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
               Technical exports reuse existing privacy-safe CSV, PDF, backup, data-rights, and export-integrity paths.
             </p>
@@ -222,7 +223,7 @@ export default function TrackingReportsLab() {
           <div className="min-w-0 rounded-md border border-border bg-card/80">
             <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
               <div>
-                <div className="text-sm font-semibold">Technical Export Options</div>
+                <div className="text-sm font-semibold">Export options</div>
                 <div className="text-xs text-muted-foreground">{tripsLoading ? 'Reading local trips.' : `${actions.length} export paths available`}</div>
               </div>
               <div className="text-xs font-semibold text-muted-foreground">{status || 'No export running.'}</div>
@@ -256,15 +257,17 @@ export default function TrackingReportsLab() {
                         <Td>{action.count}</Td>
                         <Td>{action.privacy}</Td>
                         <Td>
-                          <button
+                          <Button
                             type="button"
                             onClick={() => runExport(action.id, action.run)}
                             disabled={Boolean(busyId)}
-                            className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60"
+                            loading={busyId === action.id}
+                            loadingText="Preparing export..."
+                            size="sm"
                           >
                             <Download className="h-4 w-4" />
-                            {busyId === action.id ? 'Preparing' : 'Export'}
-                          </button>
+                            Export
+                          </Button>
                         </Td>
                       </tr>
                     );
@@ -276,7 +279,7 @@ export default function TrackingReportsLab() {
 
           <aside className="min-w-0 rounded-md border border-border bg-card/80">
             <div className="border-b border-border px-3 py-2">
-              <div className="text-sm font-semibold">Payload Inspector</div>
+              <div className="text-sm font-semibold">Export details</div>
               <div className="text-xs text-muted-foreground">Privacy and estimate labels</div>
             </div>
             <div className="space-y-3 p-3 text-sm">
@@ -286,7 +289,7 @@ export default function TrackingReportsLab() {
               <InspectorRow label="Private-zone geometry" value={payload.privacy.private_zone_geometry_exported ? 'exported' : 'not exported'} />
               <InspectorRow label="Privacy transform" value={payload.privacy.transform} />
               <div className="rounded-md border border-border bg-background/70 p-3 text-xs leading-relaxed text-muted-foreground">
-                Existing coaching reports remain on <a href="/reports" className="font-semibold text-primary">/reports</a>. This lab exposes technical export paths for Advanced Tracking Mode.
+                Coaching reports remain available in <a href="/reports" className="font-semibold text-primary">Reports</a>. This view adds privacy-safe formats for advanced trip tracking.
               </div>
             </div>
           </aside>

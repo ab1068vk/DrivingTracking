@@ -13,6 +13,7 @@ import {
   migrateLegacyTripStorageToEncrypted,
   normalizeRetiredTripEventTypes,
   preserveNativePrivacyAggregateStats,
+  preserveResolvedSpeedLimitReview,
   rotateTripEncryptionKey,
   TRIP_EVENT_MIGRATION_KEY,
   TRIP_EVENT_MIGRATION_VERSION,
@@ -253,6 +254,70 @@ describe('localTripRepository IndexedDB migrations', () => {
     });
   });
 
+  it('does not restore a smaller native undercount over a corrected private-route distance', () => {
+    const reconciled = preserveNativePrivacyAggregateStats({
+      start_source: 'native_auto',
+      distance_km: 54.177,
+      avg_speed_kmh: 56.1,
+      duration_seconds: 3479,
+      route_points: [
+        { lat: 43.65, lng: -79.38, timestamp: '2026-07-12T00:38:55.808Z' },
+        { masked_for_privacy: true, privacy_gap: true, timestamp: '2026-07-12T00:39:00.000Z' },
+      ],
+    }, {
+      distance_km: 67.55,
+      estimated_private_distance_km: 0.4,
+      avg_speed_kmh: 69.9,
+      duration_seconds: 3479,
+    });
+
+    expect(reconciled).toMatchObject({
+      distance_km: 67.55,
+      avg_speed_kmh: 69.9,
+      duration_seconds: 3479,
+      distance_provenance: 'route_recalculated_above_native_aggregate',
+      native_distance_km_original: 54.177,
+    });
+  });
+
+  it('keeps a completed speed review resolved when the native trip is imported again', () => {
+    const reimported = preserveResolvedSpeedLimitReview({
+      id: 'native-trip-reviewed',
+      speed_limit_review_required: true,
+      speed_limit_review_reason: 'Background tracking cannot confirm posted signs while driving.',
+      speed_limit_context: {
+        status: 'deferred_review',
+        review_required: true,
+      },
+    }, {
+      id: 'native-trip-reviewed',
+      speed_limit_review_required: false,
+      speed_limit_review_resolved_at: '2026-07-14T12:00:00.000Z',
+    });
+
+    expect(reimported).toMatchObject({
+      speed_limit_review_required: false,
+      speed_limit_review_resolved_at: '2026-07-14T12:00:00.000Z',
+      speed_limit_review_reason: null,
+      speed_limit_context: {
+        review_required: false,
+        review_resolved_at: '2026-07-14T12:00:00.000Z',
+      },
+    });
+  });
+
+  it('keeps genuinely unresolved native speed reviews required', () => {
+    const reimported = preserveResolvedSpeedLimitReview({
+      id: 'native-trip-unreviewed',
+      speed_limit_review_required: true,
+    }, {
+      id: 'native-trip-unreviewed',
+      speed_limit_review_required: true,
+    });
+
+    expect(reimported.speed_limit_review_required).toBe(true);
+  });
+
   it('expires route coordinates while preserving trip summaries', () => {
     const expired = expireTripRouteData({
       id: 'old-trip',
@@ -379,6 +444,41 @@ describe('localTripRepository IndexedDB migrations', () => {
 
     expect(result).toEqual({ enabled: true, retentionDays: 90, deletedTrips: 1 });
     expect(trips.map((trip) => trip.id)).toEqual(['retained-trip']);
+  });
+
+  it('loads trips only once when export enforces complete-trip retention', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    const values = new Map([[
+      'drivesense_settings',
+      JSON.stringify({
+        settings_defaults_version: 11,
+        data_retention_days: 365,
+        raw_gps_retention_days: 30,
+        privacy_zones: [],
+      }),
+    ]]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    await localTripRepository.create({
+      id: 'export-retained-trip',
+      status: 'completed',
+      start_time: new Date().toISOString(),
+      end_time: new Date().toISOString(),
+      route_points: [{ lat: 43.65, lng: -79.38 }],
+    });
+
+    const tripStore = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips');
+    tripStore.getAllCount = 0;
+
+    const trips = await localTripRepository.listAllForExport();
+
+    expect(trips).toHaveLength(1);
+    expect(tripStore.getAllCount).toBe(1);
   });
 
   it('opens an empty IndexedDB and creates the trip store with required indexes', async () => {
@@ -855,6 +955,44 @@ describe('localTripRepository IndexedDB migrations', () => {
       current_scoring_version: SCORING_VERSION,
       reason: 'scoring_version_changed',
     });
+  });
+
+  it('refreshes an outdated trip before returning its cached history summary', async () => {
+    vi.stubGlobal('indexedDB', undefined);
+    const values = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    const startMs = Date.parse('2026-07-11T20:38:00.000Z');
+    const routePoints = Array.from({ length: 11 }, (_, index) => ({
+      lat: 43.65 + index * 0.000135,
+      lng: -79.38,
+      speed_kmh: 54,
+      accuracy: 30,
+      timestamp: new Date(startMs + index * 1_000).toISOString(),
+    }));
+    values.set('drivesense_trips', JSON.stringify([{
+      id: 'distance-undercount',
+      status: 'completed',
+      start_time: routePoints[0].timestamp,
+      end_time: routePoints.at(-1).timestamp,
+      route_points: routePoints,
+      distance_km: 0,
+      schema_version: TRIP_SCHEMA_VERSION - 1,
+      score_provenance: {
+        scoring_version: SCORING_VERSION,
+        constants_snapshot: buildScoreConstantsSnapshot(DEFAULT_THRESHOLDS),
+      },
+    }]));
+
+    const [summary] = await localTripRepository.listSummaries();
+
+    expect(summary.schema_version).toBe(TRIP_SCHEMA_VERSION);
+    expect(summary.distance_km).toBeGreaterThan(0.14);
+    expect(summary.distance_km).toBeLessThan(0.17);
   });
 
   it('immediately re-scores eligible completed trips and reports skipped history', async () => {

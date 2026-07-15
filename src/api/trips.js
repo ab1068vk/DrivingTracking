@@ -78,6 +78,10 @@ export const tripService = {
     return repository().rescoreCompletedTrips(options);
   },
 
+  rescoreById: async (id, options = {}) => {
+    return repository().rescoreTripById(id, options);
+  },
+
   getScoreMigrationSummary: async () => {
     return repository().getScoreMigrationSummary();
   },

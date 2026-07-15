@@ -69,7 +69,7 @@ export default function TrackingEvidenceConsole() {
       <header className="shrink-0 border-b border-border bg-background/80 px-3 py-2">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <div className="text-[11px] font-bold uppercase tracking-normal text-muted-foreground">Advanced Tracking Mode</div>
+            <div className="text-[11px] font-bold text-muted-foreground">Advanced trip tracking</div>
             <h1 className="font-grotesk text-xl font-bold tracking-normal">Data Quality</h1>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
               Evidence inventory for recorded metrics, route samples, lookup status, sensor sources, and scoring provenance.
@@ -179,7 +179,7 @@ export default function TrackingEvidenceConsole() {
             <div className="border-b border-border px-3 py-2">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <Info className="h-4 w-4 text-muted-foreground" />
-                Inspector
+                Measurement details
               </div>
               <div className="text-xs text-muted-foreground">What data exists and how reliable it is</div>
             </div>

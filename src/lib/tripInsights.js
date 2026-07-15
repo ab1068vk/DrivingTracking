@@ -23,6 +23,11 @@ import {
   MAINTENANCE_CALIBRATION_REGISTRY,
   WEAR_KM_PER_STRESS_UNIT,
 } from '@/lib/tripEconomyDefaults';
+import {
+  buildDrivingLoadAdvisory,
+  buildVehicleMaintenancePlan,
+  normalizeMaintenanceItems,
+} from '@/lib/vehicleMaintenance';
 
 // CHANGES (session):
 // - Hardened trip economics against blank numeric Settings drafts.
@@ -57,12 +62,8 @@ export const FATIGUE_HEATMAP_SEGMENT_SECONDS = 30;
 export const FATIGUE_HEATMAP_MIN_SEGMENTS = 20;
 export const DRIVER_SIGNATURE_BRAKING_RECENCY_DAYS = 90;
 
-export const STRESS_UNITS = {
-  harsh_brake: { low: 1.5, medium: 4, high: 8 },
-  rapid_acceleration: { low: 1, medium: 3, high: 6 },
-  sharp_turn: { low: 0.5, medium: 2, high: 4 },
-  tailgate_cycle: { low: 1, medium: 3, high: 5 },
-};
+// Retained as an empty compatibility export. Road Sage no longer converts driving events into component wear.
+export const STRESS_UNITS = Object.freeze({});
 
 const DAY_MS = 86400000;
 
@@ -219,28 +220,12 @@ export function getVehicleOdometerKm(vehicle, trips = []) {
 }
 
 export function getMaintenanceItems(vehicle) {
-  const current = Array.isArray(vehicle?.maintenance_items) ? vehicle.maintenance_items : [];
-  const byId = new Map(current.map((item) => [item.id, item]));
-  return DEFAULT_MAINTENANCE_ITEMS.map((item) => ({
-    ...item,
-    ...(byId.get(item.id) || {}),
-    interval_km: Number(byId.get(item.id)?.interval_km || item.interval_km),
-    last_service_km: Number(byId.get(item.id)?.last_service_km || item.last_service_km || 0),
-  }));
+  return normalizeMaintenanceItems(vehicle || {});
 }
 
 export function getMaintenanceStatus(vehicle, trips = []) {
-  const odometer = getVehicleOdometerKm(vehicle, trips);
-  return getMaintenanceItems(vehicle).map((item) => {
-    const nextDueKm = item.last_service_km + item.interval_km;
-    const remainingKm = nextDueKm - odometer;
-    return {
-      ...item,
-      next_due_km: nextDueKm,
-      remaining_km: remainingKm,
-      status: remainingKm <= 0 ? 'due' : remainingKm <= 1000 ? 'soon' : 'ok',
-    };
-  });
+  const odometerKm = getVehicleOdometerKm(vehicle, trips);
+  return buildVehicleMaintenancePlan(vehicle || {}, { odometerKm }).items;
 }
 
 /**
@@ -422,64 +407,51 @@ export function buildDriverSignature(trips) {
 }
 
 /**
- * Adjust maintenance intervals based on measured driving stress.
- * @param {Array<Object>} trips - Trips for the vehicle.
- * @param {{oil_change_km?:number,oil_change_interval_km?:number,tire_rotation_km?:number,tire_rotation_interval_km?:number,inspection_km?:number,odometer_km?:number,maintenance_items?:Array}} vehicle - Vehicle service settings.
- * @param {Object} settings - User settings for fallback intervals.
- * @returns {{stress_index:number,aggression_index:number,brake_stress_index:number|null,corner_stress_index:number,has_missing_speed_data:boolean,missing_speed_event_count:number,oil_change:Object,tire_rotation:Object,inspection:Object}} Predictive maintenance.
- * @example
- * const maintenance = calculatePredictiveMaintenance(trips, vehicle, settings);
+ * Compatibility view of source-backed service items plus a separate driving-load advisory.
+ * Driving behavior never changes a manufacturer interval or creates a missing schedule.
  */
-export function calculatePredictiveMaintenance(trips, vehicle = {}, settings = {}) {
+export function calculatePredictiveMaintenance(trips, vehicle = {}, _settings = {}) {
   const completed = (trips || []).filter((trip) => trip.status === 'completed');
-  const mean = (values, fallback = 0) => {
-    const finite = values.filter((value) => Number.isFinite(value));
-    return finite.length ? finite.reduce((sum, value) => sum + value, 0) / finite.length : fallback;
-  };
-  const aggressionIndex = clamp(1 - mean(completed.map((trip) => Number(trip.aggressive_driving_score)), 100) / 100, 0, 1);
-  const brakingScores = completed
-    .map((trip) => trip.braking_efficiency_score)
-    .filter((score) => score != null && Number.isFinite(Number(score)))
-    .map((score) => Number(score));
-  const brakeStressIndex = completed.length >= 5 && brakingScores.length >= 3
-    ? clamp(1 - mean(brakingScores) / 100, 0, 1)
-    : null;
-  const cornerStressIndex = clamp(mean(completed.map((trip) => Number(trip.trip_tire_wear_units)), 0) / 10, 0, 1);
+  const odometerKm = getVehicleOdometerKm(vehicle, completed);
+  const plan = buildVehicleMaintenancePlan(vehicle, { odometerKm });
+  const advisory = buildDrivingLoadAdvisory(completed);
   const missingSpeedEventCount = completed.reduce((sum, trip) => sum + getTripTireWearMissingSpeedEventCount(trip), 0);
   const hasMissingSpeedData = missingSpeedEventCount > 0 || completed.some((trip) => trip.trip_tire_wear_has_missing_speed_data === true);
-  const brakeStressForComposite = brakeStressIndex ?? 0;
-  const stressIndex = clamp(aggressionIndex * 0.40 + brakeStressForComposite * 0.35 + cornerStressIndex * 0.25, 0, 1);
-  const adjustmentFactor = 1 - stressIndex * 0.40;
-  const items = getMaintenanceItems(vehicle);
-  const byId = new Map(items.map((item) => [item.id, item]));
-  const odometer = getVehicleOdometerKm(vehicle, completed);
-  const itemFor = (ids, fallbackInterval) => ids.map((id) => byId.get(id)).find(Boolean) || { interval_km: fallbackInterval, last_service_km: 0 };
-  const build = (item, baseInterval) => {
-    const adjustedInterval = Math.round(baseInterval * adjustmentFactor);
-    const usedKm = odometer - (Number(item.last_service_km) || 0);
-    const remainingKm = Math.round(adjustedInterval - usedKm);
-    return {
-      adjusted_interval_km: adjustedInterval,
-      remaining_km: remainingKm,
-      status: remainingKm <= 0 ? 'due' : remainingKm <= 500 ? 'soon' : 'ok',
-      urgency_delta: adjustedInterval - baseInterval,
-    };
+  const findItem = (...terms) => plan.items.find((item) => {
+    const haystack = `${item.id} ${item.label}`.toLowerCase();
+    return terms.some((term) => haystack.includes(term));
+  });
+  const compatibilityItem = (item) => item ? {
+    adjusted_interval_km: item.interval_km || null,
+    remaining_km: item.remaining_km,
+    remaining_days: item.remaining_days,
+    status: item.status,
+    urgency_delta: 0,
+    source_type: item.source_type,
+    schedule_adjustment_applied: false,
+  } : {
+    adjusted_interval_km: null,
+    remaining_km: null,
+    remaining_days: null,
+    status: 'not_configured',
+    urgency_delta: 0,
+    source_type: 'none',
+    schedule_adjustment_applied: false,
   };
 
-  const oilBase = Number(vehicle.oil_change_km || vehicle.oil_change_interval_km || settings.oil_change_km) || itemFor(['oil'], 8000).interval_km;
-  const tireBase = Number(vehicle.tire_rotation_km || vehicle.tire_rotation_interval_km || settings.tire_rotation_km) || itemFor(['tires'], 10000).interval_km;
-  const inspectionBase = Number(vehicle.inspection_km || settings.inspection_km) || itemFor(['inspection'], 20000).interval_km;
-
   return {
-    stress_index: Math.round(stressIndex * 100) / 100,
-    aggression_index: Math.round(aggressionIndex * 100) / 100,
-    brake_stress_index: brakeStressIndex == null ? null : Math.round(brakeStressIndex * 100) / 100,
-    corner_stress_index: Math.round(cornerStressIndex * 100) / 100,
+    diagnostic_only: true,
+    schedule_adjustment_applied: false,
+    stress_index: null,
+    aggression_index: null,
+    brake_stress_index: null,
+    corner_stress_index: null,
+    advisory,
     has_missing_speed_data: hasMissingSpeedData,
     missing_speed_event_count: missingSpeedEventCount,
-    oil_change: build(itemFor(['oil'], oilBase), oilBase),
-    tire_rotation: build(itemFor(['tires'], tireBase), tireBase),
-    inspection: build(itemFor(['inspection'], inspectionBase), inspectionBase),
+    oil_change: compatibilityItem(findItem('oil')),
+    tire_rotation: compatibilityItem(findItem('tire', 'rotation')),
+    inspection: compatibilityItem(findItem('inspection', 'brake check')),
   };
 }
 
@@ -686,49 +658,62 @@ export function calculateWeeklyDrivingGoals(trips = [], settings = {}) {
     .reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0) * 10) / 10;
   const weightedScore = distanceWeightedScore(weekTrips);
   const avgScore = weightedScore == null ? 0 : Math.round(weightedScore);
+  const weekDistanceKm = Math.round(weekTrips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0) * 10) / 10;
+  const minimumTrips = Math.max(1, Number(settings.weekly_goal_min_trips ?? 3));
+  const minimumDistanceKm = Math.max(1, Number(settings.weekly_goal_min_distance_km ?? 25));
+  const qualified = weekTrips.length >= minimumTrips && weekDistanceKm >= minimumDistanceKm;
+  const evidence = {
+    qualified,
+    trips: weekTrips.length,
+    distance_km: weekDistanceKm,
+    minimum_trips: minimumTrips,
+    minimum_distance_km: minimumDistanceKm,
+  };
+  const withStatus = (goal, conditionMet) => ({
+    ...goal,
+    met: qualified && conditionMet,
+    qualified,
+    status: !qualified ? 'building_evidence' : conditionMet ? 'met' : 'needs_attention',
+    evidence,
+  });
 
   return [
-    {
+    withStatus({
       id: 'harsh_brakes',
       label: 'Harsh brakes',
       value: harshBrakes,
       target: Number(settings.weekly_goal_harsh_brakes ?? 5),
       direction: 'under',
-      met: harshBrakes <= Number(settings.weekly_goal_harsh_brakes ?? 5),
-    },
-    {
+    }, harshBrakes <= Number(settings.weekly_goal_harsh_brakes ?? 5)),
+    withStatus({
       id: 'speeding',
       label: 'Speeding events',
       value: speedingEvents,
       target: Number(settings.weekly_goal_speeding_events ?? 3),
       direction: 'under',
-      met: speedingEvents <= Number(settings.weekly_goal_speeding_events ?? 3),
-    },
-    {
+    }, speedingEvents <= Number(settings.weekly_goal_speeding_events ?? 3)),
+    withStatus({
       id: 'avg_score',
       label: 'Average score',
       value: avgScore,
       target: Number(settings.weekly_goal_min_avg_score ?? 80),
       direction: 'over',
-      met: weightedScore != null && avgScore >= Number(settings.weekly_goal_min_avg_score ?? 80),
-    },
-    {
+    }, weightedScore != null && avgScore >= Number(settings.weekly_goal_min_avg_score ?? 80)),
+    withStatus({
       id: 'night_distance',
       label: 'Night distance',
       value: nightDistanceKm,
       target: Number(settings.weekly_goal_max_night_km ?? 20),
       direction: 'under',
-      met: nightDistanceKm <= Number(settings.weekly_goal_max_night_km ?? 20),
       unit: 'km',
-    },
-    {
+    }, nightDistanceKm <= Number(settings.weekly_goal_max_night_km ?? 20)),
+    withStatus({
       id: 'night_trips',
       label: 'Night trips',
       value: nightTrips,
       target: Number(settings.weekly_goal_max_night_trips ?? 3),
       direction: 'under',
-      met: nightTrips <= Number(settings.weekly_goal_max_night_trips ?? 3),
-    },
+    }, nightTrips <= Number(settings.weekly_goal_max_night_trips ?? 3)),
   ];
 }
 
@@ -1158,58 +1143,29 @@ export function calculateCarbonImpact(completedTrips = [], settings = {}, vehicl
   };
 }
 
-export function calculateVehicleHealthImpact(vehicleTrips = [], vehicle = {}) {
+export function calculateVehicleHealthImpact(vehicleTrips = [], _vehicle = {}) {
   const completed = vehicleTrips.filter((trip) => trip.status === 'completed');
-  let totalStressUnits = 0;
-  let aggressiveKm = 0;
-
-  for (const trip of completed) {
-    const events = Array.isArray(trip.driving_events) ? trip.driving_events : [];
-    const tripStress = events.reduce((sum, event) => (
-      sum + (STRESS_UNITS[event.type]?.[event.severity] || 0)
-    ), 0);
-    totalStressUnits += tripStress;
-    if (events.length > 0) aggressiveKm += Number(trip.distance_km) || 0;
-  }
-
-  const totalDistanceKm = completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
-  const aggressiveRatio = totalDistanceKm > 0 ? aggressiveKm / totalDistanceKm : 0;
-  const oilBase = Number(vehicle.oil_change_interval_km) || 8000;
-  const tireBase = Number(vehicle.tire_rotation_interval_km) || 10000;
-  const totalTireWear = completed.reduce((sum, trip) => sum + (Number(trip.trip_tire_wear_units) || 0), 0);
-  const tireWearMissingSpeedEventCount = completed.reduce((sum, trip) => sum + getTripTireWearMissingSpeedEventCount(trip), 0);
-  const tireWearHasMissingSpeedData = tireWearMissingSpeedEventCount > 0 || completed.some((trip) => trip.trip_tire_wear_has_missing_speed_data === true);
-  const tireWearGrade = totalTireWear < 50 ? 'minimal' : totalTireWear < 150 ? 'normal' : totalTireWear < 300 ? 'elevated' : 'accelerated';
-  const avgEngineStressScore = calculateAverageEngineStressScore(completed);
-  const baseHealthGrade = totalStressUnits < 50 ? 'A' : totalStressUnits < 150 ? 'B' : totalStressUnits < 300 ? 'C' : 'D';
-  const downgrade = (grade) => ({ A: 'B', B: 'C', C: 'D', D: 'D' }[grade] || grade);
-  const healthGrade = avgEngineStressScore != null && avgEngineStressScore < 55
-    ? downgrade(baseHealthGrade)
-    : baseHealthGrade;
-  const engineStressGrade = avgEngineStressScore == null
-    ? 'unknown'
-    : avgEngineStressScore >= 90
-      ? 'low stress'
-      : avgEngineStressScore >= 70
-        ? 'moderate'
-        : avgEngineStressScore >= 50
-          ? 'high'
-          : 'critical';
+  const advisory = buildDrivingLoadAdvisory(completed);
+  const missingSpeedEventCount = completed.reduce((sum, trip) => sum + getTripTireWearMissingSpeedEventCount(trip), 0);
+  const hasMissingSpeedData = missingSpeedEventCount > 0 || completed.some((trip) => trip.trip_tire_wear_has_missing_speed_data === true);
 
   return {
-    total_stress_units: Math.round(totalStressUnits * 10) / 10,
-    extra_wear_km: Math.round(totalStressUnits * WEAR_KM_PER_STRESS_UNIT),
-    aggressive_ratio: Math.round(aggressiveRatio * 100),
-    adjusted_oil_change_km: aggressiveRatio > 0.3 ? Math.round(oilBase * 0.85) : oilBase,
-    adjusted_tire_rotation_km: aggressiveRatio > 0.3 ? Math.round(tireBase * 0.80) : tireBase,
-    health_grade: healthGrade,
-    engine_stress_score: avgEngineStressScore == null ? null : Math.round(avgEngineStressScore),
-    engine_stress_grade: engineStressGrade,
-    vehicle_tire_wear_total: Math.round(totalTireWear * 10) / 10,
-    tire_wear_grade: tireWearGrade,
-    tire_wear_has_missing_speed_data: tireWearHasMissingSpeedData,
-    tire_wear_missing_speed_event_count: tireWearMissingSpeedEventCount,
-    tire_life_impact_km: Math.round(totalTireWear * 0.5),
+    diagnostic_only: true,
+    total_stress_units: null,
+    extra_wear_km: null,
+    aggressive_ratio: null,
+    adjusted_oil_change_km: null,
+    adjusted_tire_rotation_km: null,
+    health_grade: 'not_estimated',
+    engine_stress_score: null,
+    engine_stress_grade: 'not_estimated',
+    vehicle_tire_wear_total: null,
+    tire_wear_grade: 'not_estimated',
+    tire_wear_has_missing_speed_data: hasMissingSpeedData,
+    tire_wear_missing_speed_event_count: missingSpeedEventCount,
+    tire_life_impact_km: null,
+    driving_load_advisory: advisory,
+    disclaimer: advisory.disclaimer,
   };
 }
 

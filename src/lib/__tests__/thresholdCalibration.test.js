@@ -186,6 +186,29 @@ describe('thresholdCalibration', () => {
     expect(profile.suggested.threshold_harsh_brake_ms2).toBeGreaterThan(thresholds.HARSH_BRAKE_MS2);
   });
 
+  it('uses three consistent too-generous reviews to suggest more sensitive detection', () => {
+    const surveyLabels = Array.from({ length: 3 }, (_, index) => ({
+      eligibleForCalibration: true,
+      scoreOutput: { overall: 88 + index },
+      surveyLabel: {
+        scoreAccuracy: 'too_high',
+        scoreIssueTypes: ['rapid_acceleration'],
+        overallDriveRating: 3,
+        targetScore: 72 + index,
+        wasDriver: 'yes',
+      },
+    }));
+    const profile = computeCalibrationProfile([trip(1, 10, [30, 35, 32])], thresholds, { surveyLabels });
+
+    expect(profile.insufficient).toBe(false);
+    expect(profile.surveyThresholdSignals).toContainEqual(expect.objectContaining({
+      issueType: 'rapid_acceleration',
+      responseCount: 3,
+      direction: 'tighten',
+      thresholdKey: 'threshold_rapid_accel_ms2',
+    }));
+    expect(profile.suggested.threshold_rapid_accel_ms2).toBeLessThan(thresholds.RAPID_ACCEL_MS2);
+  });
   it('summarizes survey coverage by road type and context', () => {
     const labels = [
       {

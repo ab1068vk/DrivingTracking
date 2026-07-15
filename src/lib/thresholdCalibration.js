@@ -117,12 +117,16 @@ export function summarizeCalibrationSurveyLabels(labels = []) {
   const tagCounts = {};
   const issueCounts = {};
   const tooHarshIssueCounts = {};
+  const tooGenerousIssueCounts = {};
   for (const label of rows) {
     for (const tag of label.contextTags) tagCounts[tag] = (tagCounts[tag] || 0) + 1;
     for (const issue of label.scoreIssueTypes) {
       issueCounts[issue] = (issueCounts[issue] || 0) + 1;
       if (label.scoreAccuracy === 'too_low') {
         tooHarshIssueCounts[issue] = (tooHarshIssueCounts[issue] || 0) + 1;
+      }
+      if (label.scoreAccuracy === 'too_high') {
+        tooGenerousIssueCounts[issue] = (tooGenerousIssueCounts[issue] || 0) + 1;
       }
     }
   }
@@ -138,16 +142,16 @@ export function summarizeCalibrationSurveyLabels(labels = []) {
   let recommendation = 'Survey labels are broadly aligned with the current score output.';
   if (averageScoreDelta != null && averageScoreDelta >= 8) {
     direction = 'scores_feel_too_harsh';
-    recommendation = 'Drivers are rating trips higher than the score output; review harsh-event false positives before tightening thresholds.';
+    recommendation = 'Your fair scores are higher than the app scores; review false positives before applying less-sensitive detection.';
   } else if (averageScoreDelta != null && averageScoreDelta <= -8) {
     direction = 'scores_feel_too_generous';
-    recommendation = 'Drivers are rating trips lower than the score output; review missed risky events before loosening thresholds.';
+    recommendation = 'Your fair scores are lower than the app scores; review missed risky events before applying more-sensitive detection.';
   } else if (tooHigh > tooLow + 1) {
     direction = 'scores_feel_too_generous';
-    recommendation = 'Score-accuracy feedback leans too high; inspect low-scored event coverage before applying looser thresholds.';
+    recommendation = 'Score feedback says the app is too generous; inspect missed-event coverage before applying more-sensitive detection.';
   } else if (tooLow > tooHigh + 1) {
     direction = 'scores_feel_too_harsh';
-    recommendation = 'Score-accuracy feedback leans too low; inspect false-positive event feedback before applying stricter thresholds.';
+    recommendation = 'Score feedback says the app is too harsh; inspect false positives before applying less-sensitive detection.';
   }
 
   return {
@@ -162,6 +166,7 @@ export function summarizeCalibrationSurveyLabels(labels = []) {
     scoreAccuracy: { accurate, tooHigh, tooLow },
     issueCounts,
     tooHarshIssueCounts,
+    tooGenerousIssueCounts,
     topContextTags,
     uploadStatus: { uploaded: uploadedCount, localOnly: localOnlyCount, pendingUpload: pendingUploadCount },
   };
@@ -226,7 +231,11 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
   const feedbackSummary = summarizeEventFeedback(completed);
   const surveySummary = summarizeCalibrationSurveyLabels(options.surveyLabels || []);
   const surveyCoverage = summarizeSurveyCoverage(options.surveyLabels || []);
-  const consistentSurveyIssueCount = Math.max(0, ...Object.values(surveySummary.tooHarshIssueCounts || {}));
+  const consistentSurveyIssueCount = Math.max(
+    0,
+    ...Object.values(surveySummary.tooHarshIssueCounts || {}),
+    ...Object.values(surveySummary.tooGenerousIssueCounts || {})
+  );
 
   if (tripsAnalyzed < 15 && kmAnalyzedRaw < 200 && feedbackSummary.total < 3 && consistentSurveyIssueCount < 3) {
     return {
@@ -296,22 +305,33 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
   }
 
   const surveyThresholdSignals = [];
-  for (const [issueType, count] of Object.entries(surveySummary.tooHarshIssueCounts || {})) {
-    const config = surveyThresholdMap[issueType];
-    if (!config || count < 3) continue;
-    const nudge = Math.min(config.maxNudge, config.baseNudge + Math.max(0, count - 3) * config.step);
-    const target = roundThreshold(
-      config.key,
-      clamp(Number(current[config.key]) + nudge, config.min, config.max)
-    );
-    suggested[config.key] = Math.max(Number(suggested[config.key] || current[config.key]), target);
-    surveyThresholdSignals.push({
-      issueType,
-      responseCount: count,
-      thresholdKey: config.key,
-      suggestedValue: suggested[config.key],
-    });
-  }
+  const applySurveyThresholdSignals = (counts, direction) => {
+    for (const [issueType, count] of Object.entries(counts || {})) {
+      const config = surveyThresholdMap[issueType];
+      if (!config || count < 3) continue;
+      const nudge = Math.min(config.maxNudge, config.baseNudge + Math.max(0, count - 3) * config.step);
+      const target = roundThreshold(
+        config.key,
+        clamp(
+          Number(current[config.key]) + (direction === 'loosen' ? nudge : -nudge),
+          config.min,
+          config.max
+        )
+      );
+      suggested[config.key] = direction === 'loosen'
+        ? Math.max(Number(suggested[config.key] || current[config.key]), target)
+        : Math.min(Number(suggested[config.key] || current[config.key]), target);
+      surveyThresholdSignals.push({
+        issueType,
+        responseCount: count,
+        direction,
+        thresholdKey: config.key,
+        suggestedValue: suggested[config.key],
+      });
+    }
+  };
+  applySurveyThresholdSignals(surveySummary.tooHarshIssueCounts, 'loosen');
+  applySurveyThresholdSignals(surveySummary.tooGenerousIssueCounts, 'tighten');
 
   const delta = Object.fromEntries(Object.entries(suggested).map(([key, value]) => [
     key,

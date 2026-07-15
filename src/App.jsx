@@ -22,6 +22,7 @@ import Layout from '@/components/Layout';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LegalNoticeDialog from '@/components/LegalNoticeDialog';
 import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
+import AppInteractionFeedback from '@/components/AppInteractionFeedback';
 import { AppDialogHost } from '@/lib/appDialog';
 import { LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
 import { useLocalSettingSelector } from '@/hooks/useLocalSettings';
@@ -67,6 +68,49 @@ async function syncNativeCompletedTripsToLocalStore() {
 
 let privacyZoneExpirySweep = null;
 const pendingIdleResumeTasks = new Set();
+const scheduleAfterQuietPeriod = (task, { quietMs = 12_000 } = {}) => {
+  let timerId = 0;
+  let idleId = 0;
+  let cancelled = false;
+
+  const cancelScheduledRun = () => {
+    window.clearTimeout(timerId);
+    if (idleId && typeof window.cancelIdleCallback === 'function') {
+      window.cancelIdleCallback(idleId);
+    }
+    timerId = 0;
+    idleId = 0;
+  };
+
+  const run = () => {
+    if (cancelled) return;
+    window.removeEventListener('app:user-interaction', schedule);
+    void task();
+  };
+
+  function schedule() {
+    if (cancelled) return;
+    cancelScheduledRun();
+    timerId = window.setTimeout(() => {
+      timerId = 0;
+      if (typeof window.requestIdleCallback === 'function') {
+        idleId = window.requestIdleCallback(run);
+      } else {
+        timerId = window.setTimeout(run, 500);
+      }
+    }, quietMs);
+  }
+
+  window.addEventListener('app:user-interaction', schedule);
+  schedule();
+
+  return () => {
+    cancelled = true;
+    cancelScheduledRun();
+    window.removeEventListener('app:user-interaction', schedule);
+  };
+};
+
 const scheduleIdleResumeTask = (name, task, source) => {
   if (pendingIdleResumeTasks.has(name)) return;
   pendingIdleResumeTasks.add(name);
@@ -124,8 +168,9 @@ const SystemLogs = lazy(() => import('@/pages/SystemLogs'));
 const Insights = lazy(() => import('@/pages/Insights'));
 
 function AppRouteBoundary({ context, title = 'Page unavailable', message = 'Something went wrong while opening this page. Reload to try again.', children }) {
+  const loadingTitle = title.replace(/\s+unavailable$/i, '');
   return (
-    <Suspense fallback={<PageLoadingSkeleton title={`Loading ${title.toLowerCase()}`} />}>
+    <Suspense fallback={<PageLoadingSkeleton title={`Loading ${loadingTitle.toLowerCase()}`} />}>
       <SectionErrorBoundary context={context} title={title} message={message}>
         {children}
       </SectionErrorBoundary>
@@ -208,6 +253,8 @@ const AuthenticatedApp = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
+    let disposed = false;
+    const cancelDeferredTasks = [];
     const bootstrapSettings = async () => {
       const endBootstrap = beginMeasure('app.coldBootstrap');
       const notificationService = import('@/lib/notificationService');
@@ -246,23 +293,28 @@ const AuthenticatedApp = () => {
           .catch((error) => logSystemFailure('app_boot_native_auto_tracking_start', error));
       }
 
-      const runDeferredMaintenance = async () => {
-        await measureAsync('app.bootstrap.tripRepositoryMaintenance', () => import('@/lib/localTripRepository')
-          .then(({ runTripRepositoryMaintenance }) => runTripRepositoryMaintenance()))
-          .catch((error) => logSystemFailure('trip_repository_maintenance', error));
-        await measureAsync('app.bootstrap.keyRotation', () => checkAndRotateEncryptionKeyFromApp())
-          .catch((error) => logSystemFailure('encryption_key_rotation_check', error));
-        measureAsync('app.bootstrap.roadContextQueue', () => import('@/lib/roadContextQueue')
-          .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs()))
-          .catch((error) => logSystemFailure('road_context_queue_resume', error));
-        import('@/lib/rescoringWorker')
-          .then(({ startRescoringWorker }) => startRescoringWorker())
-          .catch((error) => logSystemFailure('rescoring_worker_start', error));
-      };
-      if (typeof window.requestIdleCallback === 'function') {
-        window.requestIdleCallback(runDeferredMaintenance, { timeout: 1500 });
-      } else {
-        window.setTimeout(runDeferredMaintenance, 0);
+      if (!disposed) {
+        cancelDeferredTasks.push(
+          scheduleAfterQuietPeriod(
+            () => measureAsync('app.bootstrap.tripRepositoryMaintenance', () => import('@/lib/localTripRepository')
+              .then(({ runTripRepositoryMaintenance }) => runTripRepositoryMaintenance()))
+              .catch((error) => logSystemFailure('trip_repository_maintenance', error)),
+            { quietMs: 12_000 }
+          ),
+          scheduleAfterQuietPeriod(
+            () => measureAsync('app.bootstrap.keyRotation', () => checkAndRotateEncryptionKeyFromApp())
+              .catch((error) => logSystemFailure('encryption_key_rotation_check', error)),
+            { quietMs: 22_000 }
+          ),
+          scheduleAfterQuietPeriod(async () => {
+            await measureAsync('app.bootstrap.roadContextQueue', () => import('@/lib/roadContextQueue')
+              .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs()))
+              .catch((error) => logSystemFailure('road_context_queue_resume', error));
+            await import('@/lib/rescoringWorker')
+              .then(({ startRescoringWorker }) => startRescoringWorker())
+              .catch((error) => logSystemFailure('rescoring_worker_start', error));
+          }, { quietMs: 30_000 })
+        );
       }
       endBootstrap({ outcome: 'success' });
     };
@@ -274,6 +326,10 @@ const AuthenticatedApp = () => {
       setOnboardingDone(Boolean(fallbackSettings.onboarding_completed));
       applyThemeMode(fallbackSettings.dark_mode);
     });
+    return () => {
+      disposed = true;
+      cancelDeferredTasks.forEach((cancel) => cancel());
+    };
   }, []);
 
   useEffect(() => {
@@ -655,6 +711,7 @@ function App() {
       <QueryClientProvider client={queryClientInstance}>
         <Router>
           <RouteLogger />
+          <AppInteractionFeedback />
           <AuthenticatedApp />
         </Router>
         <AppDialogHost />

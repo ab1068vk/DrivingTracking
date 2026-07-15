@@ -889,9 +889,14 @@ export function calculateSegmentMetrics(previousPoint, point, thresholds = DEFAU
   const trustedSpeed = thresholds.MIN_TRUSTED_SPEED_KMH ?? 18;
 
   // Frequent Android samples can each be shorter than the accuracy-derived
-  // floor. A vehicle-speed reading is independent movement evidence, so those
-  // short steps must not be discarded as jitter.
-  const reportedShowsVehicleMovement = reportedSpeedKmh != null && reportedSpeedKmh >= trustedSpeed;
+  // floor. A trusted vehicle-speed reading can support those short steps only
+  // when it agrees with real coordinate displacement. This prevents a stale
+  // speed reading from turning duplicates or a poor-accuracy wobble into
+  // accepted movement while retaining coherent frequent vehicle samples.
+  const reportedShowsVehicleMovement = reportedSpeedKmh != null &&
+    reportedSpeedKmh >= trustedSpeed &&
+    distanceM >= 2 &&
+    Math.abs(reportedSpeedKmh - impliedSpeedKmh) <= 12;
   const tinyMovement = distanceM < noiseFloorM && !reportedShowsVehicleMovement;
   const displacementSaysStill = impliedSpeedKmh < stationarySpeed && distanceM < noiseFloorM * 1.5;
   const reportedDisagreesWithDisplacement = reportedSpeedKmh != null &&

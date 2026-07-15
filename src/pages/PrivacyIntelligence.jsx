@@ -18,11 +18,13 @@ import {
   Lock,
   MapPin,
   Radio,
+  Route,
   RefreshCw,
   Search,
   Settings,
   Shield,
   ShieldCheck,
+  Trash2,
   Upload,
   XCircle,
 } from 'lucide-react';
@@ -35,6 +37,7 @@ import {
   PRIVACY_REPORT_PASSWORD_MIN_LENGTH,
 } from '@/lib/privacyReport';
 import { dismissPrivacyZoneSuggestion } from '@/lib/privacyZoneSuggestions';
+import { purgeExistingGpsForHeightenedPrivacy } from '@/lib/privacyZones';
 import { logSystemFailure } from '@/lib/systemLog';
 import ProtectionGuidance from '@/components/privacy/ProtectionGuidance';
 import {
@@ -268,8 +271,8 @@ export default function PrivacyIntelligence() {
 
   useEffect(() => {
     let cancelled = false;
-    void authenticate().then((verified) => {
-      if (cancelled || verified) return;
+    void authenticate().then(() => {
+      if (cancelled) return;
       setLoading(false);
     });
     return () => { cancelled = true; };
@@ -288,7 +291,7 @@ export default function PrivacyIntelligence() {
     if (!authed) return;
     if (!quiet) setRefreshing(true);
     try {
-      setData(await loadPrivacyIntelligence());
+      setData(await loadPrivacyIntelligence({ force: !quiet }));
       setError('');
     } catch (loadError) {
       logSystemFailure('privacy_intelligence_load_failed', loadError, {});
@@ -302,7 +305,7 @@ export default function PrivacyIntelligence() {
   useEffect(() => {
     if (!authed) return undefined;
     loadData({ quiet: true });
-    const interval = setInterval(() => loadData({ quiet: true }), 30_000);
+    const interval = setInterval(() => loadData({ quiet: true }), 2 * 60_000);
     return () => clearInterval(interval);
   }, [authed, loadData]);
 
@@ -360,6 +363,20 @@ export default function PrivacyIntelligence() {
 
       {error && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">{error}</div>}
 
+      {!data && (
+        <section role="status" className="rounded-2xl border border-primary/20 bg-primary/5 p-5">
+          <div className="flex items-start gap-3">
+            <RefreshCw className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary" />
+            <div>
+              <h2 className="font-semibold">Building your privacy readout</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                The page is ready. Local trip masking, outbound-request evidence, zones, and audit integrity are being checked in parallel.
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
       <nav aria-label="Privacy Intelligence sections" className="overflow-x-auto rounded-2xl border border-border bg-card p-1 shadow-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="flex min-w-max gap-1">
           {TABS.map(({ id, label, icon: Icon }) => (
@@ -374,10 +391,10 @@ export default function PrivacyIntelligence() {
 
       <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground"><ActiveIcon className="h-4 w-4" />{activeTab.label}</div>
 
-      {tab === 'overview' && <OverviewTab data={data} onOpenTab={setTab} onOpenSettings={() => navigate('/settings')} />}
-      {tab === 'transmissions' && <TransmissionsTab data={data} onClear={async () => { await clearTransmissionLog(); await loadData(); }} />}
-      {tab === 'protections' && <ProtectionsTab data={data} onOpenSettings={() => navigate('/settings')} />}
-      {tab === 'zones' && (
+      {data && tab === 'overview' && <OverviewTab data={data} onOpenTab={setTab} onOpenSettings={() => navigate('/settings')} />}
+      {data && tab === 'transmissions' && <TransmissionsTab data={data} onClear={async () => { await clearTransmissionLog(); await loadData(); }} />}
+      {data && tab === 'protections' && <ProtectionsTab data={data} onOpenSettings={() => navigate('/settings')} />}
+      {data && tab === 'zones' && (
         <ZonesTab
           data={data}
           onAcceptSuggestion={(suggestion) => navigate('/settings?section=settings-privacy-data', {
@@ -387,9 +404,14 @@ export default function PrivacyIntelligence() {
             await dismissPrivacyZoneSuggestion(suggestion);
             await loadData({ quiet: true });
           }}
+          onRemediate={async () => {
+            const result = await purgeExistingGpsForHeightenedPrivacy();
+            await loadData();
+            return result;
+          }}
         />
       )}
-      {tab === 'audit' && <AuditTab data={data} />}
+      {data && tab === 'audit' && <AuditTab data={data} />}
     </div>
   );
 }
@@ -929,7 +951,7 @@ export function ProtectionsTab({ data, onOpenSettings }) {
   );
 }
 
-export function ZonesTab({ data, onAcceptSuggestion, onDismissSuggestion }) {
+export function ZonesTab({ data, onAcceptSuggestion, onDismissSuggestion, onRemediate }) {
   const zones = data?.zones || [];
   const suggestions = data?.zoneSuggestions || [];
   const summary = data?.zoneSummary || {};
@@ -953,6 +975,11 @@ export function ZonesTab({ data, onAcceptSuggestion, onDismissSuggestion }) {
         suggestions={suggestions}
         onAcceptSuggestion={onAcceptSuggestion}
         onDismissSuggestion={onDismissSuggestion}
+      />
+      <PrivacyTripProtectionLab
+        previews={data?.tripPrivacyPreviews || []}
+        summary={data?.historicalExposure || {}}
+        onRemediate={onRemediate}
       />
       <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
         <div className="flex items-start gap-3"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="font-semibold">How these counts work</div><p className="mt-1 text-xs text-muted-foreground">Zone counts come from saved trip records, not from refreshing this page. The score input self-test uses a synthetic zone and only checks that the scoring pipeline is masking private inputs; it is not a count of your real drives.</p></div></div>
@@ -1015,6 +1042,194 @@ export function ZonesTab({ data, onAcceptSuggestion, onDismissSuggestion }) {
       </div>
     </div>
   );
+}
+
+const previewSegmentClass = {
+  exposed: 'bg-red-500',
+  protected: 'bg-violet-500',
+  retained: 'bg-slate-300 dark:bg-slate-700',
+};
+
+/**
+ * @param {{
+ *   previews?: Array<Record<string, any>>,
+ *   summary?: Record<string, any>,
+ *   onRemediate?: () => Promise<Record<string, any>>
+ * }} props
+ */
+function PrivacyTripProtectionLab({ previews = [], summary = {}, onRemediate }) {
+  const [selectedTripId, setSelectedTripId] = useState('');
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [remediating, setRemediating] = useState(false);
+  const [remediationResult, setRemediationResult] = useState(null);
+  const [remediationError, setRemediationError] = useState('');
+  const preview = previews.find((item) => item.id === selectedTripId) || previews[0] || null;
+  const exposedPointCount = Number(summary.exposedPointCount) || 0;
+  const exposedEventCount = Number(summary.exposedEventCount) || 0;
+  const exposureTotal = exposedPointCount + exposedEventCount;
+
+  const runRemediation = async () => {
+    if (typeof onRemediate !== 'function') return;
+    setRemediating(true);
+    setRemediationError('');
+    try {
+      const result = await onRemediate();
+      setRemediationResult(result || {});
+      setConfirmOpen(false);
+    } catch (error) {
+      setRemediationError(error?.message || 'Historical privacy remediation failed.');
+    } finally {
+      setRemediating(false);
+    }
+  };
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+      <div className="border-b border-border bg-gradient-to-r from-violet-500/10 via-primary/5 to-transparent p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-600 text-white">
+              <Route className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="font-semibold">Historical exposure scanner</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Preview exactly how configured zones change saved trips. This view contains no coordinates, addresses, or map requests.
+              </p>
+            </div>
+          </div>
+          <span className={`w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${exposureTotal ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-200' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100'}`}>
+            {exposureTotal ? `${exposureTotal} exposed record${exposureTotal === 1 ? '' : 's'}` : 'No exposure found'}
+          </span>
+        </div>
+      </div>
+
+      <div className="space-y-4 p-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <ZoneMetric label="Trips scanned" value={summary.scannedTripCount || 0} />
+          <ZoneMetric label="Trips needing action" value={summary.affectedTripCount || 0} />
+          <ZoneMetric label="Exposed GPS samples" value={exposedPointCount} />
+          <ZoneMetric label="Exposed driving events" value={exposedEventCount} />
+        </div>
+
+        {preview ? (
+          <div className="rounded-xl border border-border bg-background/60 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-sm font-semibold">Before / after trip simulator</div>
+                <div className="mt-1 text-xs text-muted-foreground">Select a trip to inspect its coordinate-free protection shape.</div>
+              </div>
+              <select
+                aria-label="Trip privacy preview"
+                value={preview.id}
+                onChange={(event) => setSelectedTripId(event.target.value)}
+                className="h-10 min-w-0 rounded-xl border border-input bg-background px-3 text-sm sm:max-w-sm"
+              >
+                {previews.map((item, index) => (
+                  <option key={item.id || index} value={item.id}>
+                    {item.startedAt ? formatTime(item.startedAt) : `Trip ${index + 1}`} - {item.exposureCount ? `${item.exposureCount} exposed` : 'protected'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <TripPrivacyState
+                title="Before protection"
+                tone="before"
+                segments={preview.before.segments}
+                exposedPoints={preview.before.exposedPoints}
+                exposedEvents={preview.before.exposedEvents}
+                protectedPoints={preview.before.protectedPoints}
+                startStatus={preview.before.startStatus}
+                endStatus={preview.before.endStatus}
+              />
+              <TripPrivacyState
+                title="After protection"
+                tone="after"
+                segments={preview.after.segments}
+                exposedPoints={preview.after.exposedPoints}
+                exposedEvents={preview.after.exposedEvents}
+                protectedPoints={preview.after.protectedPoints}
+                startStatus={preview.after.startStatus}
+                endStatus={preview.after.endStatus}
+              />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+              <PreviewLegend tone="exposed" label="Raw inside a zone" />
+              <PreviewLegend tone="protected" label="Coordinate-free privacy gap" />
+              <PreviewLegend tone="retained" label="Public route sample retained" />
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-border p-5 text-center text-sm text-muted-foreground">No saved trips are available to preview.</div>
+        )}
+
+        {remediationResult && (
+          <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
+            Protected {remediationResult.pointsPurged || 0} GPS sample{remediationResult.pointsPurged === 1 ? '' : 's'} and removed {remediationResult.eventsPurged || 0} private event{remediationResult.eventsPurged === 1 ? '' : 's'} across {remediationResult.tripsAffected || 0} trip{remediationResult.tripsAffected === 1 ? '' : 's'}.
+          </div>
+        )}
+        {remediationError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">{remediationError}</div>}
+
+        <div className="flex flex-col gap-3 rounded-xl border border-border bg-secondary/30 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm font-semibold">Bulk historical remediation</div>
+            <p className="mt-1 text-xs text-muted-foreground">Replace exposed in-zone GPS with privacy gaps, remove private events, record an audit entry, and queue affected scores for recalculation.</p>
+          </div>
+          <button
+            type="button"
+            disabled={!exposureTotal || remediating || typeof onRemediate !== 'function'}
+            onClick={() => setConfirmOpen(true)}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <Trash2 className="h-4 w-4" />
+            {exposureTotal ? `Protect ${exposureTotal} record${exposureTotal === 1 ? '' : 's'}` : 'History is protected'}
+          </button>
+        </div>
+      </div>
+
+      <Dialog open={confirmOpen} onOpenChange={(open) => !remediating && setConfirmOpen(open)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Protect exposed historical GPS?</DialogTitle>
+            <DialogDescription>
+              This permanently removes raw coordinates and driving events inside every configured privacy zone. Coordinate-free gap markers remain so trip timing and route continuity stay understandable. This cannot restore the deleted coordinates later.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
+            {summary.affectedTripCount || 0} trip{summary.affectedTripCount === 1 ? '' : 's'}, {exposedPointCount} GPS sample{exposedPointCount === 1 ? '' : 's'}, and {exposedEventCount} event{exposedEventCount === 1 ? '' : 's'} will be remediated.
+          </div>
+          <div className="flex justify-end gap-2">
+            <button type="button" disabled={remediating} onClick={() => setConfirmOpen(false)} className="rounded-xl border border-border px-4 py-2 text-sm font-semibold">Cancel</button>
+            <button type="button" disabled={remediating} onClick={runRemediation} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+              {remediating ? 'Protecting history...' : 'Permanently protect history'}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </section>
+  );
+}
+
+function TripPrivacyState({ title, tone, segments = [], exposedPoints, exposedEvents, protectedPoints, startStatus, endStatus }) {
+  return (
+    <div className={`rounded-xl border p-3 ${tone === 'after' ? 'border-violet-200 bg-violet-50/70 dark:border-violet-900/60 dark:bg-violet-950/20' : 'border-border bg-card'}`}>
+      <div className="flex items-center justify-between gap-2"><div className="text-xs font-bold uppercase tracking-wide">{title}</div><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${exposedPoints + exposedEvents ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-200' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100'}`}>{exposedPoints + exposedEvents ? 'Exposure found' : 'Protected'}</span></div>
+      <RoutePrivacyStrip segments={segments} label={`${title} route protection`} />
+      <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px]"><div><div className="font-bold text-red-600">{exposedPoints || 0}</div><div className="text-muted-foreground">Exposed GPS</div></div><div><div className="font-bold text-violet-600">{protectedPoints || 0}</div><div className="text-muted-foreground">Protected GPS</div></div><div><div className="font-bold">{exposedEvents || 0}</div><div className="text-muted-foreground">Exposed events</div></div></div>
+      <div className="mt-3 text-[11px] text-muted-foreground">Start: {startStatus} - End: {endStatus}</div>
+    </div>
+  );
+}
+
+function RoutePrivacyStrip({ segments = [], label }) {
+  if (!segments.length) return <div className="mt-3 rounded-lg bg-secondary p-3 text-center text-[11px] text-muted-foreground">No route samples</div>;
+  return <div aria-label={label} className="mt-3 grid h-8 overflow-hidden rounded-lg border border-border" style={{ gridTemplateColumns: `repeat(${segments.length}, minmax(2px, 1fr))` }}>{segments.map((status, index) => <span key={`${status}_${index}`} title={status} className={previewSegmentClass[status] || previewSegmentClass.retained} />)}</div>;
+}
+
+function PreviewLegend({ tone, label }) {
+  return <span className="inline-flex items-center gap-1.5"><span className={`h-2.5 w-2.5 rounded-sm ${previewSegmentClass[tone]}`} />{label}</span>;
 }
 
 function ZoneSuggestionCards({

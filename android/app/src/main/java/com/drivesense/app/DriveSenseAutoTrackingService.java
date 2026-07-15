@@ -356,10 +356,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         removeActivityUpdates();
         stopLocationUpdates();
         stopMotionSensors();
-        stopVoiceSpeedMarkers();
         DriveSenseNativeTripStore.setServiceEnabled(this, false);
         if (speechController != null) speechController.shutdown();
         if (speedVoiceController != null) speedVoiceController.stop();
+        removeTrackingNotification();
         super.onDestroy();
     }
 
@@ -418,6 +418,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         } catch (Exception ignored) {
             DriveSenseNativeTripStore.setServiceEnabled(context, false);
         }
+        cancelTrackingNotification(context);
         showAutoTrackingOffNotification(context);
     }
 
@@ -459,6 +460,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     private static void cancelAutoTrackingOffNotification(Context context) {
         NotificationManagerCompat.from(context).cancel(NOTIF_ID_AUTO_STATUS);
+    }
+
+    private static void cancelTrackingNotification(Context context) {
+        NotificationManagerCompat.from(context).cancel(NOTIF_ID_TRACKING_START);
     }
 
     private static void ensureAutoStatusChannel(Context context) {
@@ -2836,7 +2841,12 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         removeActivityUpdates();
         stopLocationUpdates();
         DriveSenseNativeTripStore.setServiceEnabled(this, false);
+        removeTrackingNotification();
+    }
+
+    private void removeTrackingNotification() {
         stopForeground(STOP_FOREGROUND_REMOVE);
+        cancelTrackingNotification(this);
     }
 
     private Notification buildNotification(String text) {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -92,6 +92,7 @@ export const requestAppAlert = (options) => {
 export function AppDialogHost() {
   const [queue, setQueue] = useState([]);
   const [confirmationText, setConfirmationText] = useState('');
+  const settlingRef = useRef(false);
   const current = queue[0] || null;
 
   useEffect(() => {
@@ -103,7 +104,8 @@ export function AppDialogHost() {
   }, []);
 
   const settle = (result) => {
-    if (!current) return;
+    if (!current || settlingRef.current) return;
+    settlingRef.current = true;
     current.resolve(result);
     setQueue((items) => items.slice(1));
   };
@@ -112,6 +114,7 @@ export function AppDialogHost() {
   const confirmationMatches = !current?.requiredText || confirmationText === current.requiredText;
 
   useEffect(() => {
+    settlingRef.current = false;
     setConfirmationText('');
   }, [current?.id]);
 

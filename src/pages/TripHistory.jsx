@@ -169,7 +169,7 @@ export default function TripHistory() {
     isFetching: fullHistoryFetching,
   } = useQuery({
     ...tripSummaryQueryOptions(),
-    enabled: recentTripsLoaded,
+    enabled: recentTripsLoaded && recentCompleted.length >= 100,
     select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
   const completed = fullHistoryCompleted.length > 0 ? fullHistoryCompleted : recentCompleted;

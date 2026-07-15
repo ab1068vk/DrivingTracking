@@ -126,6 +126,30 @@ describe('mapPlaybackInsights', () => {
     expect(reCleanedIndex.points).toHaveLength(1);
   });
 
+  it('compresses GPS gaps into a short explicit replay transition', () => {
+    const points = [
+      point(0, 30, { timestamp: '2026-01-01T12:00:00.000Z' }),
+      point(1, 30, { timestamp: '2026-01-01T12:00:10.000Z' }),
+      point(2, 30, { timestamp: '2026-01-01T15:00:00.000Z', tracking_gap: true }),
+      point(3, 30, { timestamp: '2026-01-01T15:00:10.000Z' }),
+    ];
+    const index = buildPlaybackPositionIndex(points, {
+      alreadyClean: true,
+      compressGaps: true,
+      gapTransitionSeconds: 1,
+    });
+
+    expect(index.durationSeconds).toBe(21);
+    expect(index.gapToIndices.has(2)).toBe(true);
+
+    const duringGap = playbackPositionAtElapsed(points, 10.25, index);
+    expect(duringGap.isGap).toBe(true);
+    expect(duringGap.point.lat).toBe(points[1].lat);
+
+    const afterGap = playbackPositionAtElapsed(points, 11, index);
+    expect(afterGap.point.lat).toBe(points[2].lat);
+  });
+
   it('uses elapsed time rather than point index for timeline progress', () => {
     const points = [
       point(0, 30, { timestamp: '2026-01-01T12:00:00.000Z' }),

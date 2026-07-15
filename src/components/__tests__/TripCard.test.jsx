@@ -59,6 +59,17 @@ describe('TripCard score provenance display', () => {
     expect(html).toContain('aria-label="Review speed limits for Untitled trip"');
   });
 
+  it('hides the speed-limit review action after the trip review was resolved', () => {
+    const html = renderToStaticMarkup(<TripCard trip={{
+      ...trip('calibrated'),
+      speed_limit_review_required: true,
+      speed_limit_review_resolved_at: '2026-05-01T09:00:00.000Z',
+    }} />);
+
+    expect(html).not.toContain('Review speed');
+    expect(html).not.toContain('aria-label="Review speed limits for Untitled trip"');
+  });
+
   it('labels trips with differential privacy aggregate noise', () => {
     const html = renderToStaticMarkup(<TripCard trip={{ ...trip('calibrated'), _dpApplied: true }} />);
 

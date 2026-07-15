@@ -92,8 +92,8 @@ export default function TrackingTripHistory() {
   return <div className="min-w-0">
     <header className="border-b border-border pb-3">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-        <div><div className="text-[11px] font-bold uppercase text-muted-foreground">Advanced Tracking Mode</div>
-          <h1 className="font-grotesk text-2xl font-bold">Trip telemetry</h1>
+        <div><div className="text-[11px] font-bold text-muted-foreground">Advanced trip tracking</div>
+          <h1 className="font-grotesk text-2xl font-bold">My Tracked Trips</h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Recorded measurements, observations, privacy state, and evidence availability. No driver grades or rankings are shown here.</p>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">

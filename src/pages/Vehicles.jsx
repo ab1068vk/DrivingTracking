@@ -6,15 +6,23 @@ import { limitedTripSummaryQueryOptions, tripQueryKeys, tripService, tripSummary
 import { vehicleService } from '@/api/vehicles';
 import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle, Zap, ClipboardCheck, Route, CalendarClock, TrendingUp, Sparkles } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
-import { calculateAverageEngineStressScore, calculatePredictiveMaintenance, calculateVehicleHealthImpact, estimateTripEconomics, getMaintenanceStatus, getVehicleOdometerKm, getVehicleTripDistanceKm } from '@/lib/tripInsights';
-import { buildMaintenanceReminders, buildVehicleCostSummary } from '@/lib/mediumInsights';
+import VehicleMaintenancePanel from '@/components/VehicleMaintenancePanel';
+import { estimateTripEconomics, getVehicleOdometerKm, getVehicleTripDistanceKm } from '@/lib/tripInsights';
+import { buildVehicleCostSummary } from '@/lib/mediumInsights';
 import { buildVehicleAssignmentSuggestions } from '@/lib/vehicleSuggestions';
+import {
+  buildVehicleMaintenancePlan,
+  DRIVETRAIN_OPTIONS,
+  normalizePowertrain,
+  POWERTRAIN_OPTIONS,
+  TRANSMISSION_OPTIONS,
+} from '@/lib/vehicleMaintenance';
+import { VEHICLE_MAINTENANCE_DISCLAIMER } from '@/lib/vehicleReferenceCatalog';
 import { toast } from '@/components/ui/use-toast';
 import { logError } from '@/lib/errorReporting';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
 import { getTripComponentScore } from '@/lib/tripEngine';
-import { METRIC_REGISTRY } from '@/lib/metricRegistry';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { PageEmptyState, PageHeader } from '@/components/PageChrome';
 import { requestAppConfirm } from '@/lib/appDialog';
@@ -33,21 +41,17 @@ const scheduleVehiclesIdleWork = (callback) => {
 let odometerSyncFailureCount = 0;
 let odometerSyncFailureToastShown = false;
 export const MAX_FUEL_PRICE_PER_UNIT = 100;
-const TIRE_WEAR_CALIBRATION_NOTE = METRIC_REGISTRY.trip_tire_wear_units.calibrationNote;
-
-const FUEL_TYPES = [
-  { value: 'gasoline', label: 'Gasoline' },
-  { value: 'diesel', label: 'Diesel' },
-  { value: 'hybrid', label: 'Hybrid' },
-  { value: 'electric', label: 'Electric' },
-];
+const FUEL_TYPES = POWERTRAIN_OPTIONS;
+const humanizePowertrain = (value) => (
+  POWERTRAIN_OPTIONS.find((option) => option.value === normalizePowertrain(value))?.label || 'Unknown'
+);
 
 export function validateVehicleForm(form) {
   const errors = [];
   const year = Number(form.year);
   const currentYear = new Date().getFullYear() + 1;
   const odometer = Number(form.odometer_km);
-  const fuelType = String(form.fuel_type || 'gasoline').toLowerCase();
+  const fuelType = normalizePowertrain(form.powertrain || form.fuel_type);
   const isElectric = fuelType === 'electric' || fuelType === 'ev';
   const efficiency = Number(form.fuel_efficiency_l_per_100km);
   const evEfficiency = Number(form.ev_efficiency_kwh_per_100km);
@@ -57,7 +61,7 @@ export function validateVehicleForm(form) {
   if (!String(form.name || '').trim()) errors.push('Nickname is required.');
   if (form.year && (!Number.isInteger(year) || year < 1900 || year > currentYear)) errors.push(`Year must be between 1900 and ${currentYear}.`);
   if (!Number.isFinite(odometer) || odometer < 0) errors.push('Odometer must be zero or higher.');
-  if (!FUEL_TYPES.some((type) => type.value === fuelType)) errors.push('Fuel type is not supported.');
+  if (!FUEL_TYPES.some((type) => type.value === fuelType)) errors.push('Powertrain is not supported.');
   if (!isElectric && (!Number.isFinite(efficiency) || efficiency < 3 || efficiency > 40)) errors.push('Fuel efficiency must be between 3 and 40 L/100km.');
   if (isElectric && (!Number.isFinite(evEfficiency) || evEfficiency < 5 || evEfficiency > 40)) errors.push('EV efficiency must be between 5 and 40 kWh/100km.');
   if (!Number.isFinite(fuelPrice) || fuelPrice < 0 || fuelPrice > MAX_FUEL_PRICE_PER_UNIT) {
@@ -68,7 +72,7 @@ export function validateVehicleForm(form) {
 }
 
 export function getVehicleFormWarnings(form) {
-  const fuelType = String(form.fuel_type || 'gasoline').toLowerCase();
+  const fuelType = normalizePowertrain(form.powertrain || form.fuel_type);
   const efficiency = Number(form.fuel_efficiency_l_per_100km);
   if (!['electric', 'ev'].includes(fuelType) && Number.isFinite(efficiency) && efficiency > 25 && efficiency <= 40) {
     return ['Fuel efficiency above 25 L/100km is unusual. Confirm this value before saving.'];
@@ -132,11 +136,12 @@ export function buildFleetIntelligence(vehicles = [], trips = [], settings = {})
   ), 0);
   const unassignedTrips = getUnassignedCompletedTrips(completedTrips);
   const reviewTrips = getTripsNeedingVehicleReview(completedTrips);
-  const serviceItems = vehicles.flatMap((vehicle) => (
-    getMaintenanceStatus(vehicle, getTripsForVehicle(vehicle, completedTrips))
-      .filter((item) => item.status !== 'ok')
-      .map((item) => ({ vehicle, item }))
-  ));
+  const serviceItems = vehicles.flatMap((vehicle) => {
+    const vehicleTrips = getTripsForVehicle(vehicle, completedTrips);
+    const odometerKm = getVehicleOdometerKm(vehicle, completedTrips);
+    const plan = buildVehicleMaintenancePlan(vehicle, { odometerKm });
+    return [...plan.due_items, ...plan.soon_items].map((item) => ({ vehicle, item }));
+  });
   const ranked = vehicles
     .map((vehicle) => {
       const vehicleTrips = getTripsForVehicle(vehicle, completedTrips);
@@ -183,7 +188,16 @@ function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
     name: '',
     make: '',
     model: '',
+    trim: '',
     year: '',
+    market: 'CA',
+    engine: '',
+    drivetrain: '',
+    transmission: '',
+    powertrain: 'gasoline',
+    use_profile: 'normal',
+    in_service_date: '',
+    maintenance_monitor: 'none',
     color: '#3b82f6',
     odometer_km: 0,
     fuel_type: 'gasoline',
@@ -194,7 +208,8 @@ function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
     ...initial,
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const isElectric = ['electric', 'ev'].includes(String(form.fuel_type || '').toLowerCase());
+  const powertrain = normalizePowertrain(form.powertrain || form.fuel_type);
+  const isElectric = powertrain === 'electric';
   const errors = validateVehicleForm(form);
   const warnings = getVehicleFormWarnings(form);
   const canSave = errors.length === 0;
@@ -222,6 +237,20 @@ function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
         </div>
         <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Trim / configuration</label>
+          <input value={form.trim || ''} onChange={e => set('trim', e.target.value)} placeholder="LE, Touring, Long Range"
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Vehicle market</label>
+          <select value={form.market || 'CA'} onChange={e => set('market', e.target.value)}
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary">
+            <option value="CA">Canada</option>
+            <option value="US">United States</option>
+            <option value="OTHER">Other / imported</option>
+          </select>
+        </div>
+        <div>
           <label className="text-xs text-muted-foreground mb-1 block">Year</label>
           <input value={form.year} onChange={e => set('year', e.target.value)} placeholder="2022" type="number"
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
@@ -232,11 +261,16 @@ function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Fuel type</label>
-          <select value={form.fuel_type || 'gasoline'} onChange={e => set('fuel_type', e.target.value)}
+          <label className="text-xs text-muted-foreground mb-1 block">Powertrain</label>
+          <select value={powertrain} onChange={e => setForm(current => ({ ...current, powertrain: e.target.value, fuel_type: e.target.value }))}
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary">
             {FUEL_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
           </select>
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">{isElectric ? 'Motor / battery configuration' : 'Engine / displacement'}</label>
+          <input value={form.engine || ''} onChange={e => set('engine', e.target.value)} placeholder={isElectric ? 'Dual motor, battery option' : '2.0L turbo, engine code'}
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
         </div>
         <div>
           <label className="text-xs text-muted-foreground mb-1 block">{isElectric ? 'EV kWh/100km' : 'Fuel L/100km'}</label>
@@ -248,6 +282,48 @@ function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
             step="0.1"
             className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary"
           />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Drivetrain</label>
+          <select value={form.drivetrain || ''} onChange={e => set('drivetrain', e.target.value)}
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary">
+            <option value="">Select</option>
+            {DRIVETRAIN_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Transmission</label>
+          <select value={form.transmission || ''} onChange={e => set('transmission', e.target.value)}
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary">
+            <option value="">Select</option>
+            {TRANSMISSION_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">In-service date</label>
+          <input type="date" value={form.in_service_date || ''} onChange={e => set('in_service_date', e.target.value)}
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary" />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Vehicle maintenance monitor</label>
+          <select value={form.maintenance_monitor || 'none'} onChange={e => set('maintenance_monitor', e.target.value)}
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary">
+            <option value="none">No / unknown</option>
+            <option value="oil_life">Oil-life monitor</option>
+            <option value="service_codes">Dashboard service codes</option>
+            <option value="maintenance_summary">In-vehicle maintenance summary</option>
+          </select>
+        </div>
+        <div className="col-span-2">
+          <label className="text-xs text-muted-foreground mb-1 block">Operating profile</label>
+          <select value={form.use_profile || 'normal'} onChange={e => set('use_profile', e.target.value)}
+            className="w-full px-3 py-2 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary">
+            <option value="normal">Normal personal use</option>
+            <option value="short_trip_cold">Frequent short/cold trips</option>
+            <option value="towing">Towing / heavy loads</option>
+            <option value="commercial">Commercial / high-idle use</option>
+            <option value="dusty">Dusty or off-road use</option>
+          </select>
         </div>
         <div className="col-span-2">
           <label className="text-xs text-muted-foreground mb-1 block">{isElectric ? `Energy Price (${displayCurrencySymbol}/kWh)` : `Fuel Price (${displayCurrencySymbol}/L)`}</label>
@@ -289,7 +365,8 @@ function VehicleForm({ initial = {}, onSave, onCancel, currencySymbol = '$' }) {
           onClick={() => canSave && onSave({
             ...form,
             odometer_km: Number(form.odometer_km) || 0,
-            fuel_type: String(form.fuel_type || 'gasoline').toLowerCase(),
+            powertrain,
+            fuel_type: powertrain,
             fuel_efficiency_l_per_100km: Number(form.fuel_efficiency_l_per_100km) || 8.5,
             ev_efficiency_kwh_per_100km: Number(form.ev_efficiency_kwh_per_100km) || 18,
             fuel_price_per_liter: Number(form.fuel_price_per_liter) || 1.65,
@@ -434,15 +511,6 @@ export default function Vehicles() {
     invalidate();
   };
 
-  const handleServiceDone = async (vehicle, item, odometerKm) => {
-    const items = getMaintenanceStatus(vehicle, trips).map((entry) => (
-      entry.id === item.id
-        ? { ...entry, last_service_km: odometerKm }
-        : entry
-    ));
-    await vehicleService.update(vehicle.id, { maintenance_items: items });
-    invalidate();
-  };
 
   useEffect(() => {
     if (!vehicles.length || !trips.length) return;
@@ -515,6 +583,13 @@ export default function Vehicles() {
           </button>
         )}
       />
+
+      <div role="note" className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs leading-relaxed text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <div><span className="font-semibold">Maintenance estimates are not vehicle instructions. </span>{VEHICLE_MAINTENANCE_DISCLAIMER}</div>
+        </div>
+      </div>
 
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="grid gap-3 md:grid-cols-4">
         <div className="rounded-2xl border border-border bg-card p-4">
@@ -780,21 +855,11 @@ export default function Vehicles() {
           const isEditing = editId === v.id;
           const odometerKm = getVehicleOdometerKm(v, trips);
           const vehicleTrips = tripListFor(v);
-          const predictiveMaintenance = calculatePredictiveMaintenance(vehicleTrips, v, {});
-          const stressLabel = predictiveMaintenance.stress_index > 0.6
-            ? 'High'
-            : predictiveMaintenance.stress_index > 0.3
-              ? 'Moderate'
-              : 'Low';
-          const maintenance = getMaintenanceStatus(v, trips);
-          const dueMaintenance = maintenance.filter((item) => item.status !== 'ok');
+          const maintenancePlan = buildVehicleMaintenancePlan(v, { odometerKm });
+          const dueMaintenance = [...maintenancePlan.due_items, ...maintenancePlan.soon_items];
           const fuelTotals = fuelTotalsFor(v);
-          const healthImpact = calculateVehicleHealthImpact(tripListFor(v), v);
           const costSummary = buildVehicleCostSummary(v, vehicleTrips);
-          const reminders = buildMaintenanceReminders(v, vehicleTrips);
-          const urgentReminders = reminders.filter((item) => item.status !== 'ok');
-          const avgEngineStress = calculateAverageEngineStressScore(vehicleTrips);
-          const isElectricVehicle = ['electric', 'ev'].includes(String(v.fuel_type || '').toLowerCase());
+          const isElectricVehicle = normalizePowertrain(v.powertrain || v.fuel_type) === 'electric';
           const efficiencyLabel = isElectricVehicle
             ? `${v.ev_efficiency_kwh_per_100km || 18} kWh/100km`
             : `${v.fuel_efficiency_l_per_100km || 8.5} L/100km`;
@@ -822,15 +887,6 @@ export default function Vehicles() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-sm">{v.name}</span>
-                        <span className={`text-xs border px-1.5 py-0.5 rounded-full ${
-                          stressLabel === 'High'
-                            ? 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950/30 dark:border-red-800/50'
-                            : stressLabel === 'Moderate'
-                              ? 'bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-950/30 dark:border-yellow-800/50'
-                              : 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-800/50'
-                        }`}>
-                          {stressLabel} stress
-                        </span>
                         {v.is_default && (
                           <span className="text-xs bg-amber-50 dark:bg-amber-950/30 text-amber-600 border border-amber-200 dark:border-amber-800/50 px-1.5 py-0.5 rounded-full">
                             Default
@@ -838,7 +894,10 @@ export default function Vehicles() {
                         )}
                       </div>
                       <div className="text-xs text-muted-foreground mt-0.5">
-                        {[v.year, v.make, v.model].filter(Boolean).join(' ') || 'No details'}
+                        {[v.year, v.make, v.model, v.trim].filter(Boolean).join(' ') || 'Vehicle details incomplete'}
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-muted-foreground">
+                        {[v.market || 'CA', humanizePowertrain(v.powertrain || v.fuel_type), v.engine].filter(Boolean).join(' / ')}
                       </div>
                       <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
                         <span>{count} trip{count !== 1 ? 's' : ''}</span>
@@ -883,61 +942,29 @@ export default function Vehicles() {
                         <Wrench className="w-3.5 h-3.5" />
                         Maintenance
                       </div>
-                      <div className={`font-semibold text-sm mt-1 ${dueMaintenance.length ? 'text-orange-500' : 'text-emerald-500'}`}>
-                        {dueMaintenance.length ? `${dueMaintenance.length} due soon` : 'All good'}
+                      <div className={`font-semibold text-sm mt-1 ${!maintenancePlan.configured ? 'text-muted-foreground' : dueMaintenance.length ? 'text-orange-500' : 'text-emerald-500'}`}>
+                        {!maintenancePlan.configured
+                          ? 'Schedule needed'
+                          : dueMaintenance.length
+                            ? `${dueMaintenance.length} due or coming up`
+                            : 'Schedule current'}
                       </div>
-                      <div className="text-xs text-muted-foreground">{efficiencyLabel}</div>
+                    </div>
+                    <div className="bg-secondary/50 rounded-xl p-3">
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <ClipboardCheck className="w-3.5 h-3.5" />
+                        Schedule confidence
+                      </div>
+                      <div className="font-semibold text-sm mt-1">{maintenancePlan.confidence.score}% profile</div>
+                      <div className="text-xs text-muted-foreground">{maintenancePlan.configured ? 'Verified schedule enabled' : 'Manufacturer schedule needed'}</div>
                     </div>
                     <div className="bg-secondary/50 rounded-xl p-3">
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         <Activity className="w-3.5 h-3.5" />
-                        Driving impact
+                        Powertrain
                       </div>
-                      <div className={`font-semibold text-sm mt-1 ${
-                        healthImpact.health_grade === 'A' ? 'text-emerald-500' : healthImpact.health_grade === 'B' ? 'text-blue-500' : 'text-orange-500'
-                      }`}>
-                        Grade {healthImpact.health_grade}
-                      </div>
-                      <div className="text-xs text-muted-foreground">{healthImpact.extra_wear_km.toLocaleString()} extra wear km</div>
-                    </div>
-                    <div className="bg-secondary/50 rounded-xl p-3">
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Wrench className="w-3.5 h-3.5" />
-                        Adjusted service
-                      </div>
-                      <div className="font-semibold text-sm mt-1">{healthImpact.adjusted_oil_change_km.toLocaleString()} km oil</div>
-                      <div className="text-xs text-muted-foreground">{healthImpact.aggressive_ratio}% aggressive km</div>
-                    </div>
-                    <div className="bg-secondary/50 rounded-xl p-3">
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Activity className="w-3.5 h-3.5" />
-                        Engine stress
-                      </div>
-                      <div className="font-semibold text-sm mt-1">{avgEngineStress == null ? 'N/A' : `${Math.round(avgEngineStress)} score`}</div>
-                      <div className="text-xs text-muted-foreground">High-speed acceleration adds engine and transmission wear.</div>
-                    </div>
-                    <div className="bg-secondary/50 rounded-xl p-3">
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <AlertTriangle className={`w-3.5 h-3.5 ${
-                          ['elevated', 'accelerated'].includes(healthImpact.tire_wear_grade) ? 'text-yellow-500' : ''
-                        }`} />
-                        Tire wear impact
-                        <span className="ml-auto rounded-full border border-yellow-300 bg-yellow-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-yellow-700 dark:border-yellow-900/60 dark:bg-yellow-950/30 dark:text-yellow-300">
-                          Provisional
-                        </span>
-                      </div>
-                      <div className="font-semibold text-sm mt-1 capitalize">{healthImpact.tire_wear_grade}</div>
-                      <div className="text-xs text-muted-foreground">{healthImpact.tire_life_impact_km.toLocaleString()} km estimated tire life reduction</div>
-                      <div role="alert" className="mt-2 rounded-lg border border-yellow-300 bg-yellow-50 px-2 py-1.5 text-[11px] font-semibold text-yellow-800 dark:border-yellow-900/60 dark:bg-yellow-950/30 dark:text-yellow-200">
-                        Provisional tire estimate: {TIRE_WEAR_CALIBRATION_NOTE}
-                      </div>
-                      {healthImpact.tire_wear_has_missing_speed_data && (
-                        <div className="mt-1 text-[11px] text-yellow-600 dark:text-yellow-400">
-                          {healthImpact.tire_wear_missing_speed_event_count > 0
-                            ? `${healthImpact.tire_wear_missing_speed_event_count} event${healthImpact.tire_wear_missing_speed_event_count === 1 ? '' : 's'} lacked speed; neutral estimate used.`
-                            : 'Some events lacked speed; neutral estimate used.'}
-                        </div>
-                      )}
+                      <div className="font-semibold text-sm mt-1 capitalize">{humanizePowertrain(v.powertrain || v.fuel_type)}</div>
+                      <div className="text-xs text-muted-foreground">Maintenance items are filtered by applicability.</div>
                     </div>
                   </div>
 
@@ -969,80 +996,15 @@ export default function Vehicles() {
                     </div>
                   </div>
 
-                  <div className="mt-3 rounded-2xl border border-border bg-card p-3">
-                    <div className="mb-3 flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 text-sm font-semibold">
-                        <Wrench className="h-4 w-4 text-primary" />
-                        Maintenance reminders
-                      </div>
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                        urgentReminders.length ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                      }`}>
-                        {urgentReminders.length ? `${urgentReminders.length} due soon` : 'All clear'}
-                      </span>
-                    </div>
-                    <div className="space-y-2">
-                      {reminders.map((reminder) => (
-                        <div key={`${reminder.type}-${reminder.id}`} className="flex items-center justify-between gap-3 rounded-xl bg-secondary/50 p-2 text-xs">
-                          <div>
-                            <div className="font-medium">{reminder.label}</div>
-                            <div className={`mt-0.5 ${
-                              reminder.status === 'due' ? 'text-red-500' : reminder.status === 'soon' ? 'text-orange-500' : 'text-muted-foreground'
-                            }`}>
-                              {reminder.remaining_km <= 0
-                                ? `${Math.abs(reminder.remaining_km).toLocaleString()} km overdue`
-                                : `${reminder.remaining_km.toLocaleString()} km left`}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleServiceDone(v, reminder, odometerKm)}
-                            className="rounded-lg bg-card px-2 py-1 text-muted-foreground hover:text-foreground"
-                          >
-                            Done
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 mt-3">
-                    {maintenance.map((item) => {
-                      const predictive = item.id === 'oil'
-                        ? predictiveMaintenance.oil_change
-                        : item.id === 'tires'
-                          ? predictiveMaintenance.tire_rotation
-                          : predictiveMaintenance.inspection;
-                      const adjustedFrom = Math.abs((predictive.urgency_delta || 0));
-                      return (
-                        <div key={item.id} className="flex items-center justify-between gap-3 text-xs border border-border rounded-xl p-2">
-                          <div className="min-w-0">
-                            <div className="font-medium">{item.label}</div>
-                            <div className={`mt-0.5 ${
-                              predictive.status === 'due' ? 'text-red-500' : predictive.status === 'soon' ? 'text-orange-500' : 'text-muted-foreground'
-                            }`}>
-                              {predictive.status === 'due'
-                                ? `${Math.abs(predictive.remaining_km).toLocaleString()} km overdue`
-                                : `${predictive.remaining_km.toLocaleString()} km left`}
-                            </div>
-                            <div className="mt-0.5 text-[11px] text-muted-foreground">
-                              Adjusted {predictive.adjusted_interval_km.toLocaleString()} km from {item.interval_km.toLocaleString()} km{adjustedFrom ? ` (${adjustedFrom.toLocaleString()} km sooner)` : ''}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleServiceDone(v, item, odometerKm)}
-                            className="px-2 py-1 rounded-lg bg-secondary text-muted-foreground hover:text-foreground whitespace-nowrap"
-                          >
-                            Done
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {predictiveMaintenance.stress_index > 0.6 && (
-                    <div className="mt-3 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-xs text-yellow-800 dark:border-yellow-800/50 dark:bg-yellow-950/30 dark:text-yellow-300">
-                      Your aggressive driving style is accelerating wear. Smoother acceleration and earlier braking can stretch service intervals.
-                    </div>
-                  )}
+                  <VehicleMaintenancePanel
+                    vehicle={v}
+                    trips={vehicleTrips}
+                    odometerKm={odometerKm}
+                    onUpdate={async (patch) => {
+                      await vehicleService.update(v.id, patch);
+                      invalidate();
+                    }}
+                  />
                 </div>
               )}
             </motion.div>

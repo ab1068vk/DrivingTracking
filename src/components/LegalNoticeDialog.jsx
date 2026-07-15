@@ -50,7 +50,7 @@ const CRITICAL_BOUNDARIES = [
   },
   {
     title: 'Estimates only',
-    body: 'Scores, alerts, limits, costs, fatigue, phone-use, incident, and vehicle signals can be wrong, delayed, or unavailable.',
+    body: 'Scores, alerts, limits, costs, fatigue, phone-use, incident, driving-load, and maintenance signals can be wrong, delayed, stale, or unavailable. Follow the exact vehicle manufacturer information.',
     icon: ClipboardCheck,
     tone: 'text-amber-700 dark:text-amber-200',
     surface: 'border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/25',
