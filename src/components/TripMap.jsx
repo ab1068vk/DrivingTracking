@@ -14,7 +14,7 @@ import {
   titleCase,
 } from '@/lib/mapPopupHtml';
 import { buildSpeedSegments } from '@/lib/tripInsights';
-import { calculateBearing, formatDistance, formatDuration, headingDiff, haversineDistance } from '@/lib/tripEngine';
+import { calculateBearing, formatDistance, formatDuration, formatSpeed, headingDiff, haversineDistance } from '@/lib/tripEngine';
 import { HEIGHTENED_PRIVACY_MODE_KEY } from '@/lib/privacyMode';
 import {
   getPrivacyZoneDisplayCircle,
@@ -58,7 +58,6 @@ const EVENT_COLORS = {
   near_miss: '#dc2626',
   close_proximity: '#dc2626',
   phone_use: '#dc2626',
-  voice_speed_limit_marker: '#2563eb',
   possible_crash: '#991b1b',
 };
 const EMPTY_ROUTE_POINTS = [];
@@ -79,7 +78,6 @@ const EVENT_LABELS = {
   near_miss: '!',
   close_proximity: '!',
   phone_use: 'P',
-  voice_speed_limit_marker: 'SL',
   possible_crash: '!!',
 };
 
@@ -92,12 +90,14 @@ const RISK_COLORS = {
 
 const selectTripMapSettings = (settings = {}) => ({
   privacy_zones: settings.privacy_zones,
+  units: settings.units || 'metric',
   [HEIGHTENED_PRIVACY_MODE_KEY]: settings[HEIGHTENED_PRIVACY_MODE_KEY],
   show_privacy_circles: settings.show_privacy_circles,
 });
 
 const sameTripMapSettings = (previous, next) => (
   previous?.[HEIGHTENED_PRIVACY_MODE_KEY] === next?.[HEIGHTENED_PRIVACY_MODE_KEY] &&
+  previous?.units === next?.units &&
   previous?.show_privacy_circles === next?.show_privacy_circles &&
   JSON.stringify(previous?.privacy_zones || []) === JSON.stringify(next?.privacy_zones || [])
 );
@@ -270,10 +270,10 @@ const routeFitKey = (routes = []) => routes.map((route) => {
   ].join(':');
 }).join('|');
 
-const formatSpeedRange = (min, max) => {
+const formatSpeedRange = (min, max, units = 'metric') => {
   const low = Math.round(Number(min) || 0);
   const high = Math.round(Number(max) || 0);
-  return low === high ? `${low} km/h` : `${low}-${high} km/h`;
+  return low === high ? formatSpeed(low, units) : `${formatSpeed(low, units)}–${formatSpeed(high, units)}`;
 };
 
 const buildSpeedLimitOverlayRuns = (route, localKnowledgeForPoint) => {
@@ -350,17 +350,17 @@ const buildSpeedLimitOverlayRuns = (route, localKnowledgeForPoint) => {
   return runs;
 };
 
-const speedLimitOverlayPopupHtml = (route, run) => {
+const speedLimitOverlayPopupHtml = (route, run, units = 'metric') => {
   const maxOver = Number(run.maxOverBy) || 0;
   const minOver = Number(run.minOverBy) || 0;
   const comparison = maxOver > 0
-    ? `${Math.round(maxOver)} km/h max over`
+    ? `${formatSpeed(maxOver, units)} max over`
     : minOver < 0
-      ? `${Math.round(Math.abs(minOver))} km/h under`
+      ? `${formatSpeed(Math.abs(minOver), units)} under`
       : 'At the saved limit';
   return `${routeLabelPopupPrefix(route.label)}<b>${escapeHtml(run.roadName)}</b>` +
-    `<br>Speed: ${escapeHtml(formatSpeedRange(run.minSpeed, run.maxSpeed))}` +
-    `<br>Limit: ${escapeHtml(Math.round(run.limit))} km/h` +
+    `<br>Speed: ${escapeHtml(formatSpeedRange(run.minSpeed, run.maxSpeed, units))}` +
+    `<br>Limit: ${escapeHtml(formatSpeed(run.limit, units))}` +
     `<br>${escapeHtml(comparison)}` +
     `<br>Source: ${escapeHtml(speedLimitSourceLabel(run.source))}` +
     `<br>${escapeHtml(run.segmentCount)} merged segment${run.segmentCount === 1 ? '' : 's'}`;
@@ -468,20 +468,20 @@ const clusterPopupHtml = (events = []) => `
   </div>
 `;
 
-const eventPopupHtml = (event) => {
+const eventPopupHtml = (event, units = 'metric') => {
   const label = titleCase(event.type || 'event');
   const speedLimitValue = event.speed_limit_kmh ?? event.inferred_zone_kmh;
   const speedLimitSource = event.speed_limit_source || event.source || null;
   const speedLimitLabel = Number.isFinite(Number(speedLimitValue))
-    ? `${Math.round(Number(speedLimitValue))} km/h${speedLimitSource === 'inferred' ? ' inferred estimate' : ''}`
+    ? `${formatSpeed(Number(speedLimitValue), units)}${speedLimitSource === 'inferred' ? ' inferred estimate' : ''}`
     : null;
   const rows = [
     ['Severity', titleCase(event.severity || event.confidence_level || 'medium')],
     ['Time', formatEventTime(event.timestamp)],
-    ['Speed', Number.isFinite(Number(event.speed_kmh)) ? `${Math.round(Number(event.speed_kmh))} km/h` : null],
+    ['Speed', Number.isFinite(Number(event.speed_kmh)) ? formatSpeed(Number(event.speed_kmh), units) : null],
     ['Limit', speedLimitLabel],
     ['Over by', Number.isFinite(Number(event.speed_kmh)) && Number.isFinite(Number(speedLimitValue))
-      ? `${Math.max(0, Math.round(Number(event.speed_kmh) - Number(speedLimitValue)))} km/h`
+      ? formatSpeed(Math.max(0, Number(event.speed_kmh) - Number(speedLimitValue)), units)
       : null],
     ['Duration', Number.isFinite(Number(event.durationS ?? event.duration_seconds ?? event.value)) && (event.type === 'phone_use' || event.type === 'idle' || event.duration_seconds != null)
       ? `${Math.round(Number(event.durationS ?? event.duration_seconds ?? event.value))}s`
@@ -627,6 +627,7 @@ function TripMapContent({
   const [showInsights, setShowInsights] = useState(true);
   const [selectedSegment, setSelectedSegment] = useState(null);
   const settings = useTripMapSettings();
+  const units = settings.units || 'metric';
   const heightenedPrivacy = settings?.[HEIGHTENED_PRIVACY_MODE_KEY] === true;
   const privacyZonesRevision = usePrivacyZonesRevision();
   onEventSelectRef.current = onEventSelect;
@@ -1094,7 +1095,7 @@ function TripMapContent({
                   lineJoin: 'round',
                 }
               )
-                .bindPopup(speedLimitOverlayPopupHtml(route, run))
+                .bindPopup(speedLimitOverlayPopupHtml(route, run, units))
                 .addTo(layers);
             });
           }
@@ -1191,7 +1192,7 @@ function TripMapContent({
           iconAnchor: isCluster ? [17, 17] : isPhoneUse ? [14, 14] : [15, 15],
         });
         window.L.marker([cluster.lat, cluster.lng], { icon })
-          .bindPopup(isCluster ? clusterPopupHtml(cluster.events) : eventPopupHtml(evt))
+          .bindPopup(isCluster ? clusterPopupHtml(cluster.events) : eventPopupHtml(evt, units))
           .on('click', () => {
             if (typeof onEventSelectRef.current === 'function') {
               onEventSelectRef.current(isCluster ? cluster.events[0] : evt, {
@@ -1377,21 +1378,21 @@ function TripMapContent({
           <div className="grid grid-cols-3 gap-2">
             <div>
               <div className="text-muted-foreground">Speed</div>
-              <div className="font-semibold">{Math.round(selectedSegment.speedKmh)} km/h</div>
+              <div className="font-semibold">{formatSpeed(selectedSegment.speedKmh, units)}</div>
             </div>
             <div>
               <div className="text-muted-foreground">Limit</div>
-              <div className="font-semibold">{selectedSegment.speedLimitKmh ? `${Math.round(selectedSegment.speedLimitKmh)} km/h` : '-'}</div>
+              <div className="font-semibold">{selectedSegment.speedLimitKmh ? formatSpeed(selectedSegment.speedLimitKmh, units) : '-'}</div>
             </div>
             <div>
               <div className="text-muted-foreground">Length</div>
-              <div className="font-semibold">{formatDistance(selectedSegment.distanceKm)}</div>
+              <div className="font-semibold">{formatDistance(selectedSegment.distanceKm, units)}</div>
             </div>
           </div>
           {(selectedSegment.roadName || selectedSegment.overLimitKmh > 0) && (
             <div className="mt-2 rounded-xl bg-secondary/60 px-3 py-2 text-muted-foreground">
               {selectedSegment.roadName || 'Matched route segment'}
-              {selectedSegment.overLimitKmh > 0 ? ` - ${Math.round(selectedSegment.overLimitKmh)} km/h over` : ''}
+              {selectedSegment.overLimitKmh > 0 ? ` - ${formatSpeed(selectedSegment.overLimitKmh, units)} over` : ''}
             </div>
           )}
         </div>
@@ -1422,12 +1423,12 @@ function TripMapContent({
           )}
           <div className="grid grid-cols-4 gap-2 text-center">
             <div>
-              <div className="font-grotesk text-lg font-bold">{formatDistance(telemetry.distanceKm)}</div>
+              <div className="font-grotesk text-lg font-bold">{formatDistance(telemetry.distanceKm, units)}</div>
               <div className="text-[10px] text-muted-foreground">Distance</div>
             </div>
             <div>
-              <div className="font-grotesk text-lg font-bold">{telemetry.maxSpeedKmh}</div>
-              <div className="text-[10px] text-muted-foreground">Max km/h</div>
+              <div className="font-grotesk text-lg font-bold">{formatSpeed(telemetry.maxSpeedKmh, units)}</div>
+              <div className="text-[10px] text-muted-foreground">Maximum speed</div>
             </div>
             <div>
               <div className="font-grotesk text-lg font-bold">{events.length}</div>
@@ -1441,7 +1442,7 @@ function TripMapContent({
           {telemetry.durationSeconds > 0 && (
             <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
               <span>{formatDuration(telemetry.durationSeconds)}</span>
-              <span>{telemetry.avgSpeedKmh} km/h avg</span>
+              <span>{formatSpeed(telemetry.avgSpeedKmh, units)} average including stops</span>
               <span>{recordedPointCount} GPS</span>
               {recordedPointCount !== telemetry.pointCount && <span>{telemetry.pointCount} map pts</span>}
             </div>

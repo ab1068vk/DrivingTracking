@@ -17,7 +17,7 @@ import {
   buildPlaybackTimeline,
   prepareMapRoutePoints,
 } from '@/lib/mapPlaybackInsights';
-import { prefetchLocalKnowledge } from '@/lib/tripEngine';
+import { formatDistance, formatSpeed, prefetchLocalKnowledge } from '@/lib/tripEngine';
 import { LocalSpeedKnowledge } from '@/lib/localSpeedKnowledge';
 import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import { buildRiskHotspots } from '@/lib/mediumInsights';
@@ -75,6 +75,7 @@ const progressStyle = (start, end, color) => ({
 
 export default function TrackingMapWorkspace() {
   const settings = useLocalSettings();
+  const units = settings.units || 'metric';
   const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
   const [selectedTripId, setSelectedTripId] = useState('');
   const [savedFilter, setSavedFilter] = useState('all');
@@ -303,7 +304,7 @@ export default function TrackingMapWorkspace() {
                       className={`rounded-md border px-2 py-2 text-left text-xs ${String(effectiveSelectedTripId) === String(trip.id) ? 'border-primary bg-primary/10' : 'border-border hover:bg-secondary/70'}`}
                     >
                       <div className="font-semibold">{formatDate(trip.start_time)}</div>
-                      <div className="mt-1 text-muted-foreground">{Number(trip.distance_km || 0).toFixed(1)} km / {trip.route_data_expired_at ? 'route expired' : 'route retained'}</div>
+                      <div className="mt-1 text-muted-foreground">{formatDistance(Number(trip.distance_km) || 0, units)} / {trip.route_data_expired_at ? 'route expired' : 'route retained'}</div>
                     </button>
                   ))}
                 </div>
@@ -362,7 +363,7 @@ export default function TrackingMapWorkspace() {
                   <div className="mt-2 space-y-2 text-xs">
                     <InspectorRow label="Type" value={titleCase(inspectedEvent.type)} />
                     <InspectorRow label="Time" value={formatDate(inspectedEvent.timestamp || inspectedEvent.startTime)} />
-                    <InspectorRow label="Speed" value={Number.isFinite(Number(inspectedEvent.speed_kmh)) ? `${Math.round(Number(inspectedEvent.speed_kmh))} km/h` : 'source unavailable'} />
+                    <InspectorRow label="Speed" value={Number.isFinite(Number(inspectedEvent.speed_kmh)) ? formatSpeed(Number(inspectedEvent.speed_kmh), units) : 'source unavailable'} />
                     <InspectorRow label="Source" value={inspectedEvent.source || inspectedEvent.speed_limit_source || 'source unavailable'} />
                     <InspectorRow label="Coordinates" value={eventPrivacyMasked(inspectedEvent) ? 'privacy masked' : 'available on map marker'} />
                     {eventPrivacyMasked(inspectedEvent) && (

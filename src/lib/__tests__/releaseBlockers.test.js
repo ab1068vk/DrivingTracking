@@ -849,7 +849,7 @@ describe('release blocker regressions', () => {
 
     expect(appSource).toContain('context="trip_detail_page"');
     expect(tripDetailSource).toContain('context="trip_detail_score_overview"');
-    expect(tripDetailSource).toContain('<TripScoreOverview trip={trip} speedLimitSourceBreakdown={speedLimitSourceBreakdown} />');
+    expect(tripDetailSource).toContain('<TripScoreOverview trip={trip} speedLimitSourceBreakdown={speedLimitSourceBreakdown} units={units} />');
     expect(dashboardSource).toContain('context="dashboard_risk_panel"');
     expect(dashboardSource).toContain('<DashboardRiskPanel');
     expect(tripMapSource).toContain('context="trip_map"');

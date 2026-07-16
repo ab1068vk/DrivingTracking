@@ -155,7 +155,7 @@ const trackingNavItems = [
   { path: '/tracking/speed', label: 'Road speeds', hint: 'Limits', icon: Gauge, keywords: ['speed rules', 'limits', 'markers', 'confidence'] },
   { path: '/tracking/privacy', label: 'Trip privacy', hint: 'Zones', icon: ShieldCheck, keywords: ['privacy zones', 'masking', 'audit'] },
   { path: '/tracking/reports', label: 'Share & export', hint: 'Reports', icon: BarChart3, keywords: ['reports', 'csv', 'pdf', 'export'] },
-  { path: '/settings', label: 'Tracking settings', hint: 'Preferences', icon: Settings, keywords: ['settings', 'preferences', 'mode'] },
+  { path: '/settings', label: 'Settings', hint: 'Preferences', icon: Settings, keywords: ['settings', 'preferences', 'mode'] },
 ];
 
 const trackingNavSections = [

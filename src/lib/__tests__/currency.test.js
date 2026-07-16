@@ -24,7 +24,7 @@ describe('currency formatting', () => {
     expect(tripDetailSource).toContain('formatCurrencyAmount(economics.cost, settings)');
     expect(vehiclesSource).toContain('formatCurrencyAmount(fuelTotals.cost, currencySymbol)');
     expect(vehiclesSource).toContain('formatCurrencyAmount(costSummary.monthly_cost, currencySymbol)');
-    expect(vehiclesSource).toContain('formatCurrencyAmount(costSummary.cost_per_km, currencySymbol)');
+    expect(vehiclesSource).toContain('formatCurrencyAmount(convertPerDistanceRate(costSummary.cost_per_km, units), currencySymbol)');
     expect(vehiclesSource).toContain('formatCurrencyAmount(costSummary.fuel_cost, currencySymbol)');
     expect(vehiclesSource).toContain('formatCurrencyAmount(costSummary.maintenance_reserve, currencySymbol)');
     expect(pdfSource).toContain('formatCurrencyAmount(economics.cost, settings)');

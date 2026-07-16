@@ -17,9 +17,9 @@ Important existing files and responsibilities:
 - `src/lib/tripEngine.js`: trip stats, event detection, scoring, thresholds, speed-limit resolution, metric export.
 - `src/lib/metricRegistry.js`: metric labels, data sources, calibration notes, CSV/PDF metric metadata.
 - `src/pages/MapScreen.jsx`, `src/components/TripMap.jsx`, `src/components/TripPlayback.jsx`: route maps, playback, overlays, route gaps, privacy masking, speed layers, danger zones, route risk.
-- `src/pages/SpeedLimits.jsx`, `src/pages/SpeedAnalysis.jsx`, `src/lib/localSpeedKnowledge.js`, `src/lib/speedKnowledgeRepository.js`: user-labeled speeds, learned/local speed rules, speed-source audit, voice speed markers.
+- `src/pages/SpeedLimits.jsx`, `src/pages/SpeedAnalysis.jsx`, `src/lib/localSpeedKnowledge.js`, `src/lib/speedKnowledgeRepository.js`: user-labeled speeds, learned/local speed rules, speed-source audit.
 - `src/lib/privacyZones.js`, `src/pages/PrivacyIntelligence.jsx`, `src/lib/privacyIntelligence.js`, `src/lib/privateTripMode.js`: privacy zones, privacy stats, export masking, privacy audit, private summary-only trips.
-- `src/lib/voiceAlerts.js`, `src/lib/voiceAlertMessages.js`, `android/.../DriveSenseAutoTrackingService.java`, `android/.../DriveSenseSpeedVoiceController.java`: shared voice alert delivery, native Android speech, cooldowns, speed marker capture.
+- `src/lib/voiceAlerts.js`, `src/lib/voiceAlertMessages.js`, `android/.../DriveSenseAutoTrackingService.java`: shared voice alert delivery, native Android text-to-speech, and cooldowns.
 - `src/pages/Report.jsx`, `src/lib/pdfExport.js`, `src/lib/ubiReport.js`, `src/lib/dataBackup.js`, `src/lib/dataRights.js`: exports, reports, backup, portability.
 - `e2e/app-smoke.spec.js`, `e2e/ux-layout.spec.js`, `e2e/trip-3d-replay-upgrade.spec.js`, and `src/**/__tests__`: smoke, layout, privacy, speed, trip engine, settings, native parity, and render coverage.
 
@@ -166,7 +166,6 @@ Data sources:
 - trip detail `driving_events`
 - route points for speed/time context
 - phone-use merged events where available
-- voice speed markers
 - possible crash/incident events
 - route gaps and privacy gaps
 - metric/evidence labels from `metricRegistry.js`
@@ -195,7 +194,6 @@ It should expose:
 
 - posted vs estimated vs learned/user-entered sources
 - user-confirmed posted signs
-- voice speed markers
 - local speed rules needing review
 - temporary/expiring speed rules
 - speed-limit coverage by trip
@@ -269,7 +267,6 @@ Surface in UI:
 - native/webview owner
 - speed tier cooldowns
 - test alert
-- voice speed marker listener status
 - recent alert log if available from system/native diagnostics
 
 Acceptance criteria:

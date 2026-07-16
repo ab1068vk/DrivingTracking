@@ -1,6 +1,6 @@
 import { routeKeyForTrip } from '@/lib/commuteMatching';
 import { getJson, setJson } from '@/lib/mobileStorage';
-import { excludePrivacyTouchedDaysFromTrends } from '@/lib/privateTripMode';
+import { tripTouchesPrivacyZoneForTrend } from '@/lib/privateTripMode';
 
 export const COACH_PROGRAM_STORAGE_KEY = 'drivesense_coach_programs_v1';
 export const COACH_PROGRAM_CHANGED_EVENT = 'drivesense:coach-program-changed';
@@ -149,7 +149,7 @@ const asDateMs = (value) => {
   return Number.isFinite(time) ? time : 0;
 };
 
-const completedTrips = (trips = []) => excludePrivacyTouchedDaysFromTrends(trips)
+const completedTrips = (trips = []) => (Array.isArray(trips) ? trips : [])
   .filter((trip) => trip?.status === 'completed')
   .sort((a, b) => asDateMs(b.start_time || b.created_at) - asDateMs(a.start_time || a.created_at));
 
@@ -268,7 +268,10 @@ const roundMetric = (value) => value == null || !Number.isFinite(Number(value))
 export function buildCoachEvidenceAudit(allTrips = [], eligibleTrips = allTrips) {
   const allCompleted = (allTrips || []).filter((trip) => trip?.status === 'completed');
   const eligibleCompleted = (eligibleTrips || []).filter((trip) => trip?.status === 'completed');
-  const trendEligible = excludePrivacyTouchedDaysFromTrends(eligibleCompleted);
+  // Zone coordinates/events are masked before storage and scoring, so local
+  // coaching can use the remaining metrics and public route portions.
+  const trendEligible = eligibleCompleted;
+  const privacyProtected = eligibleCompleted.filter(tripTouchesPrivacyZoneForTrend).length;
   const scoreReady = trendEligible.filter((trip) => tripMetric(trip, 'consistency') != null);
   const eventReady = trendEligible.filter((trip) => (
     ['harsh_brakes', 'rapid_accel', 'sharp_turns', 'speeding', 'phone_use']
@@ -284,7 +287,8 @@ export function buildCoachEvidenceAudit(allTrips = [], eligibleTrips = allTrips)
     eventReady: eventReady.length,
     routeReady: routeReady.length,
     excludedDriver: Math.max(0, allCompleted.length - eligibleCompleted.length),
-    excludedPrivacy: Math.max(0, eligibleCompleted.length - trendEligible.length),
+    excludedPrivacy: 0,
+    privacyProtected,
     missingCoachMeasurements: trendEligible.filter((trip) => !coachReadyIds.has(trip.id)).length,
     hasMinimumEvidence: scoreReady.length >= 2 || eventReady.length >= 2,
   };

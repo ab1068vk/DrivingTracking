@@ -7,11 +7,9 @@ export const POSTED_SIGN_OVERRIDE_NOTE = 'Posted signs override app estimates.';
 
 const SOURCE_GROUPS = Object.freeze({
   user_confirmed_posted_sign: 'posted',
-  voice_user_posted_sign: 'posted',
   openstreetmap: 'posted',
   user_entered_estimate: 'estimated',
   user_correction: 'estimated',
-  voice_user_estimate: 'estimated',
   osm_highway_default: 'estimated',
   region_default_estimate: 'estimated',
   inferred: 'estimated',
@@ -44,16 +42,6 @@ const correctionKey = (correction = {}, index = 0) => (
 
 const cellKey = (key, index = 0) => key || `cell-${index}`;
 
-const markerReviewed = (marker = {}) => (
-  marker.review_status === 'saved' ||
-  marker.review_status === 'ignored' ||
-  marker.reviewed_at
-);
-
-const markerLimit = (marker = {}) => finiteNumber(
-  marker.limit_kmh ?? marker.limitKmh ?? marker.speed_limit_kmh ?? marker.spoken_limit_kmh
-);
-
 function formatExpiry(expiresAt, nowMs) {
   if (!expiresAt) return { status: 'active', label: 'No expiry' };
   const time = new Date(expiresAt).getTime();
@@ -74,13 +62,11 @@ export function trackingSpeedSourceLabel(source, options = {}) {
 export function fallbackReasonForSpeedSource(source) {
   switch (source) {
     case 'user_confirmed_posted_sign':
-    case 'voice_user_posted_sign':
       return 'User-confirmed posted sign evidence. Posted signs override app estimates.';
     case 'openstreetmap':
       return 'OpenStreetMap maxspeed evidence. Local posted signs and temporary limits still override app estimates.';
     case 'user_entered_estimate':
     case 'user_correction':
-    case 'voice_user_estimate':
       return 'User-entered estimate. Confirm a posted sign when parked to raise source confidence.';
     case 'osm_highway_default':
       return 'OSM road-type estimate used where posted maxspeed was unavailable.';
@@ -154,33 +140,6 @@ function buildCellRows(cells = {}, nowMs = Date.now()) {
   });
 }
 
-function buildVoiceMarkerRows(trips = []) {
-  const rows = [];
-  for (const trip of trips) {
-    const markers = Array.isArray(trip?.voice_speed_limit_markers) ? trip.voice_speed_limit_markers : [];
-    markers.forEach((marker, index) => {
-      const source = marker.source || (marker.posted === true ? 'voice_user_posted_sign' : 'voice_user_estimate');
-      rows.push({
-        id: `${trip.id || 'trip'}-voice-${marker.id || index}`,
-        kind: 'voice_marker',
-        tripId: trip.id || '',
-        roadName: marker.roadName || marker.road_name || 'Voice speed marker',
-        limitKmh: markerLimit(marker),
-        source,
-        sourceLabel: trackingSpeedSourceLabel(source),
-        sourceGroup: sourceGroup(source),
-        confidenceLabel: markerReviewed(marker) ? 'Reviewed' : 'Needs review',
-        confidencePercent: markerReviewed(marker) ? 90 : 0,
-        authority: sourceGroup(source) === 'posted' ? 'confirmed' : 'estimated',
-        needsReview: !markerReviewed(marker),
-        fallbackReason: fallbackReasonForSpeedSource(source),
-        editHref: trip.id ? `/trips/${trip.id}?review=speed-limit-conflicts` : '/speed-limits?view=review',
-      });
-    });
-  }
-  return rows;
-}
-
 function buildSourceSummary(rows = []) {
   const bySource = new Map();
   rows.forEach((row) => {
@@ -246,8 +205,7 @@ export function buildTrackingSpeedConsoleData({
   const cells = speedKnowledgeData?.cells || {};
   const ruleRows = buildRuleRows(corrections, nowMs);
   const cellRows = buildCellRows(cells, nowMs);
-  const voiceMarkerRows = buildVoiceMarkerRows(trips);
-  const rows = [...ruleRows, ...cellRows, ...voiceMarkerRows];
+  const rows = [...ruleRows, ...cellRows];
   const health = inspectSpeedKnowledgeHealth({ cells, corrections }, nowMs);
   const sourceSummary = buildSourceSummary(rows);
   const tripCoverageRows = buildTripCoverageRows(trips);
@@ -264,7 +222,6 @@ export function buildTrackingSpeedConsoleData({
     rows,
     ruleRows,
     cellRows,
-    voiceMarkerRows,
     sourceSummary,
     tripCoverageRows,
     pendingReviewRows,
@@ -274,8 +231,6 @@ export function buildTrackingSpeedConsoleData({
     counts: {
       savedRuleCount: ruleRows.length,
       learnedCellCount: cellRows.length,
-      voiceMarkerCount: voiceMarkerRows.length,
-      pendingVoiceMarkerCount: voiceMarkerRows.filter((row) => row.needsReview).length,
       pendingReviewCount: pendingReviewRows.length,
       expiringRuleCount: expiringRules.length,
       expiredRuleCount: expiredRules.length,

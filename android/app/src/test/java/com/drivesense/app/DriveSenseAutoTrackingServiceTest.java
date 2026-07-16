@@ -228,23 +228,6 @@ public class DriveSenseAutoTrackingServiceTest {
     }
 
     @Test
-    public void voiceSpeedMarkerParserExtractsReviewedSpeedCommands() {
-        DriveSenseSpeedVoiceController.SpeedCommand posted =
-            DriveSenseSpeedVoiceController.parseTranscript("Hey Road Sage, posted speed is 60");
-        DriveSenseSpeedVoiceController.SpeedCommand estimate =
-            DriveSenseSpeedVoiceController.parseTranscript("speed limit fifty");
-
-        assertNotNull(posted);
-        assertEquals(60, posted.limitKmh);
-        assertTrue(posted.posted);
-        assertNotNull(estimate);
-        assertEquals(50, estimate.limitKmh);
-        assertFalse(estimate.posted);
-        assertNull(DriveSenseSpeedVoiceController.parseTranscript("call Sarah when we get home"));
-        assertNull(DriveSenseSpeedVoiceController.parseTranscript("Road Sage speed 17"));
-    }
-
-    @Test
     public void nativeBackgroundSpeedLookupUsesLatestMatchingUserCorrection() throws Exception {
         double lat = 43.6532d;
         double lng = -79.3832d;

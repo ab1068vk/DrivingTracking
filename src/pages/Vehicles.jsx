@@ -22,7 +22,8 @@ import { toast } from '@/components/ui/use-toast';
 import { logError } from '@/lib/errorReporting';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
-import { getTripComponentScore } from '@/lib/tripEngine';
+import { formatDistance, getTripComponentScore } from '@/lib/tripEngine';
+import { convertPerDistanceRate, distanceUnitLabel, formatDistanceScope } from '@/lib/unitFormatting';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { PageEmptyState, PageHeader } from '@/components/PageChrome';
 import { requestAppConfirm } from '@/lib/appDialog';
@@ -389,6 +390,7 @@ export default function Vehicles() {
   const [tripStatsEnabled, setTripStatsEnabled] = useState(false);
   const settings = useLocalSettings();
   const currencySymbol = normalizeCurrencySymbol(settings.currencySymbol);
+  const units = settings.units || 'metric';
 
   const { data: vehicles = [], isLoading } = useQuery({
     queryKey: ['vehicles'],
@@ -622,7 +624,7 @@ export default function Vehicles() {
             This month
           </div>
           <div className="mt-2 text-2xl font-bold">{formatCurrencyAmount(fleetIntelligence.monthlyCost, currencySymbol)}</div>
-          <div className="text-xs text-muted-foreground">{Math.round(fleetIntelligence.totalKm).toLocaleString()} km total history</div>
+          <div className="text-xs text-muted-foreground">{formatDistanceScope(fleetIntelligence.totalKm, units)} total history</div>
         </div>
         <div className={`rounded-2xl border p-4 ${
           fleetIntelligence.serviceDueCount
@@ -655,7 +657,7 @@ export default function Vehicles() {
               <div className="mt-1 text-sm font-semibold">{fleetIntelligence.busiestVehicle?.vehicle?.name || 'No trip data yet'}</div>
               <div className="text-xs text-muted-foreground">
                 {fleetIntelligence.busiestVehicle
-                  ? `${Math.round(fleetIntelligence.busiestVehicle.distanceKm).toLocaleString()} km across ${fleetIntelligence.busiestVehicle.trips} trip${fleetIntelligence.busiestVehicle.trips === 1 ? '' : 's'}`
+                  ? `${formatDistanceScope(fleetIntelligence.busiestVehicle.distanceKm, units)} across ${fleetIntelligence.busiestVehicle.trips} trip${fleetIntelligence.busiestVehicle.trips === 1 ? '' : 's'}`
                   : 'Complete trips to build a vehicle profile'}
               </div>
             </div>
@@ -746,7 +748,7 @@ export default function Vehicles() {
                 <div key={trip.id} className="rounded-xl bg-card p-3 text-xs">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="min-w-0">
-                      <div className="font-semibold">{formatTripDate(trip)} - {(Number(trip.distance_km) || 0).toFixed(1)} km</div>
+                      <div className="font-semibold">{formatTripDate(trip)} - {formatDistance(Number(trip.distance_km) || 0, units)}</div>
                       <div className="truncate text-muted-foreground">{locationLabel}</div>
                       {trip.vehicle_assignment_status === 'needs_confirmation' && (
                         <div className="mt-1 text-[11px] text-orange-700 dark:text-orange-300">
@@ -845,7 +847,7 @@ export default function Vehicles() {
       )}
 
       {vehicles.length >= 2 && (
-        <VehicleCompare vehicles={vehicles} trips={trips} />
+        <VehicleCompare vehicles={vehicles} trips={trips} units={units} />
       )}
 
       <div className="space-y-3">
@@ -904,7 +906,7 @@ export default function Vehicles() {
                         {score !== null && (
                           <span className="font-semibold text-primary">Avg score: {formatEstimatedScore(score)} <span className="font-normal capitalize text-muted-foreground">aggregate evidence</span></span>
                         )}
-                        <span>{odometerKm.toLocaleString()} km</span>
+                        <span>{formatDistanceScope(odometerKm, units, 0)}</span>
                       </div>
                       {v.auto_odometer_last_sync_at && (
                         <div className="mt-1 text-[11px] text-muted-foreground">
@@ -974,7 +976,7 @@ export default function Vehicles() {
                         <Fuel className="h-4 w-4 text-primary" />
                         Cost dashboard
                       </div>
-                      <span className="text-xs text-muted-foreground">{costSummary.monthly_distance_km} km this month</span>
+                      <span className="text-xs text-muted-foreground">{formatDistance(costSummary.monthly_distance_km, units)} this month</span>
                     </div>
                     <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
                       <div className="rounded-xl bg-secondary/50 p-3">
@@ -982,8 +984,8 @@ export default function Vehicles() {
                         <div className="mt-1 text-sm font-semibold">{formatCurrencyAmount(costSummary.monthly_cost, currencySymbol)}</div>
                       </div>
                       <div className="rounded-xl bg-secondary/50 p-3">
-                        <div className="text-xs text-muted-foreground">Cost per km</div>
-                        <div className="mt-1 text-sm font-semibold">{formatCurrencyAmount(costSummary.cost_per_km, currencySymbol)}</div>
+                        <div className="text-xs text-muted-foreground">Cost per {distanceUnitLabel(units)}</div>
+                        <div className="mt-1 text-sm font-semibold">{formatCurrencyAmount(convertPerDistanceRate(costSummary.cost_per_km, units), currencySymbol)}</div>
                       </div>
                       <div className="rounded-xl bg-secondary/50 p-3">
                         <div className="text-xs text-muted-foreground">Fuel estimate</div>
@@ -997,6 +999,7 @@ export default function Vehicles() {
                   </div>
 
                   <VehicleMaintenancePanel
+                    units={units}
                     vehicle={v}
                     trips={vehicleTrips}
                     odometerKm={odometerKm}

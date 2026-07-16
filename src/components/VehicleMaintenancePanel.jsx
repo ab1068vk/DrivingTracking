@@ -25,6 +25,7 @@ import {
   VEHICLE_MAINTENANCE_DISCLAIMER,
   VEHICLE_REFERENCE_CATALOG_VERSION,
 } from '@/lib/vehicleReferenceCatalog';
+import { formatDistanceScope, formatPerDistanceRate } from '@/lib/unitFormatting';
 
 const statusTone = {
   due: 'border-red-300 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200',
@@ -37,15 +38,15 @@ const statusTone = {
 
 const humanize = (value) => String(value || '').replace(/_/g, ' ');
 
-function dueText(item) {
+function dueText(item, units) {
   if (item.status === 'needs_confirmation') return 'Confirm exact model-year applicability before enabling';
   if (item.status === 'needs_source') return 'Not scheduled - add the exact manufacturer source';
   if (item.status === 'needs_baseline') return 'Add the last service date or vehicle in-service date before calendar tracking';
   const parts = [];
   if (item.remaining_km != null) {
     parts.push(item.remaining_km <= 0
-      ? `${Math.abs(item.remaining_km).toLocaleString()} km overdue`
-      : `${item.remaining_km.toLocaleString()} km remaining`);
+      ? `${formatDistanceScope(Math.abs(item.remaining_km), units, 0)} overdue`
+      : `${formatDistanceScope(item.remaining_km, units, 0)} remaining`);
   }
   if (item.remaining_days != null) {
     parts.push(item.remaining_days <= 0
@@ -75,7 +76,7 @@ const freshItemDraft = (odometerKm) => ({
   condition_note: '',
 });
 
-export default function VehicleMaintenancePanel({ vehicle, trips, odometerKm, onUpdate }) {
+export default function VehicleMaintenancePanel({ vehicle, trips, odometerKm, onUpdate, units = 'metric' }) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState(() => freshItemDraft(odometerKm));
@@ -220,7 +221,7 @@ export default function VehicleMaintenancePanel({ vehicle, trips, odometerKm, on
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="font-semibold">{item.label}</div>
-                  <div className="mt-1">{dueText(item)}</div>
+                  <div className="mt-1">{dueText(item, units)}</div>
                   <div className="mt-1 opacity-80">{sourceLabel(item)}</div>
                   {(item.source_title || item.source_page) && (
                     <div className="mt-1 opacity-80">
@@ -296,7 +297,7 @@ export default function VehicleMaintenancePanel({ vehicle, trips, odometerKm, on
         </div>
         <div className="mt-2 grid grid-cols-3 gap-2 text-center text-xs">
           <div className="rounded-lg bg-secondary/50 p-2"><div className="font-semibold capitalize">{advisory.level}</div><div className="text-muted-foreground">pattern</div></div>
-          <div className="rounded-lg bg-secondary/50 p-2"><div className="font-semibold">{advisory.events_per_100km ?? 'N/A'}</div><div className="text-muted-foreground">events/100 km</div></div>
+          <div className="rounded-lg bg-secondary/50 p-2"><div className="font-semibold">{formatPerDistanceRate(advisory.events_per_100km, units, { suffix: 'events', empty: 'N/A' })}</div><div className="text-muted-foreground">risk density</div></div>
           <div className="rounded-lg bg-secondary/50 p-2"><div className="font-semibold capitalize">{advisory.evidence_level}</div><div className="text-muted-foreground">evidence</div></div>
         </div>
         <div className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
@@ -320,7 +321,7 @@ export default function VehicleMaintenancePanel({ vehicle, trips, odometerKm, on
           ) : history.slice(0, 5).map((event) => (
             <div key={event.id} className="flex items-center justify-between gap-3 rounded-lg border border-border px-2 py-1.5 text-xs">
               <span className="font-medium">{event.label}</span>
-              <span className="text-muted-foreground">{event.serviced_at} / {Number(event.odometer_km).toLocaleString()} km</span>
+              <span className="text-muted-foreground">{event.serviced_at} / {formatDistanceScope(Number(event.odometer_km), units, 0)}</span>
             </div>
           ))}
         </div>

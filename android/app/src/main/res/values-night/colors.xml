@@ -6,4 +6,7 @@
     <color name="roadsage_native_surface">#111827</color>
     <color name="roadsage_native_text_primary">#F8FAFC</color>
     <color name="roadsage_native_text_secondary">#CBD5E1</color>
+    <color name="roadsage_widget_border">#334155</color>
+    <color name="roadsage_widget_secondary_surface">#1E293B</color>
+    <color name="roadsage_widget_on_primary">#0F172A</color>
 </resources>

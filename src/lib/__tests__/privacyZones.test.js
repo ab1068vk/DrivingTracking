@@ -40,6 +40,7 @@ import {
   redactRoutePointForPrivacyStorage,
   savePrivacyZonesToStorage,
   sanitizeKinematics,
+  sanitizeTripForPrivacyStorage,
   sweepExpiredPrivacyZones,
   syncZonesToNative,
   upsertPrivacyZone,
@@ -259,6 +260,21 @@ describe('privacyZones', () => {
     expect(stored.latitude).toBeUndefined();
     expect(stored.longitude).toBeUndefined();
     expect(redactRoutePointForPrivacyStorage(point(43.6532, -79.38), [zone])).toEqual(point(43.6532, -79.38));
+  });
+
+  it('removes retired voice marker coordinate data even when no privacy zone is configured', () => {
+    const stored = sanitizeTripForPrivacyStorage({
+      id: 'legacy-voice-marker-trip',
+      route_points: [point(43.6532, -79.38)],
+      voice_speed_limit_markers: [{ lat: 43.65, lng: -79.38, limit_kmh: 50 }],
+      voice_speed_limit_marker_count: 1,
+      voice_speed_limit_marker_reviewed_at: '2026-01-01T12:00:00.000Z',
+    }, { privacy_zones: [] });
+
+    expect(stored).not.toHaveProperty('voice_speed_limit_markers');
+    expect(stored).not.toHaveProperty('voice_speed_limit_marker_count');
+    expect(stored).not.toHaveProperty('voice_speed_limit_marker_reviewed_at');
+    expect(stored.route_points).toHaveLength(1);
   });
 
   it('keeps privacy storage stubs when route points are cleaned', () => {

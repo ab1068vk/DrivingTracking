@@ -37,7 +37,7 @@ import {
 } from '@/lib/trackingDiagnostics';
 import { activeTripStore } from '@/lib/trackingStore';
 import useLocalSettings from '@/hooks/useLocalSettings';
-import { formatDateTime } from '@/lib/tripEngine';
+import { formatDateTime, formatDistance, formatSpeed } from '@/lib/tripEngine';
 import { buildLocalFeatureTestTrips, LOCAL_TEST_TRIP_PREFIX } from '@/lib/localTestTrips';
 import { getBuildIntegrityInfo } from '@/lib/buildIntegrity';
 import {
@@ -71,11 +71,11 @@ const typeIcon = {
   traffic_stop: Clock,
 };
 
-function EventRow({ event }) {
+function EventRow({ event, units = 'metric' }) {
   const Icon = typeIcon[event.type] || Activity;
   const metricBits = [
     event.reason ? `reason: ${String(event.reason).replace(/_/g, ' ')}` : null,
-    event.speed_kmh != null ? `${Math.round(event.speed_kmh)} km/h` : null,
+    event.speed_kmh != null ? formatSpeed(event.speed_kmh, units) : null,
     event.stopped_seconds != null && event.stopped_seconds > 0 ? `stopped ${Math.round(event.stopped_seconds)}s` : null,
     event.drift_m != null && event.drift_m > 0 ? `drift ${Math.round(event.drift_m)}m` : null,
   ].filter(Boolean);
@@ -256,6 +256,7 @@ export default function Diagnostics() {
 
   const parkingTimeline = useMemo(() => buildParkingTimeline(latestTrip), [latestTrip]);
   const settings = useLocalSettings();
+  const units = settings.units || 'metric';
   const backgroundAutoEnabled = settings.tracking_mode === 'background_auto' && !settings.tracking_paused;
   const osrmLastReachable = settings.osrm_last_reachable_at ? relativeAge(settings.osrm_last_reachable_at) : 'never';
   const motionDiagnostics = useMemo(() => buildMotionSensorDiagnostics({
@@ -558,11 +559,11 @@ export default function Diagnostics() {
         <div>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="font-semibold">Latest Parking Timeline</h2>
-            {latestTrip && <span className="text-xs text-muted-foreground">{latestTrip.distance_km?.toFixed?.(1) || latestTrip.distance_km || 0} km</span>}
+            {latestTrip && <span className="text-xs text-muted-foreground">{formatDistance(Number(latestTrip.distance_km) || 0, units)}</span>}
           </div>
           <div className="space-y-2">
             {parkingTimeline.length > 0 ? (
-              parkingTimeline.map((event, index) => <EventRow key={`${event.type}-${event.timestamp}-${index}`} event={event} />)
+              parkingTimeline.map((event, index) => <EventRow key={`${event.type}-${event.timestamp}-${index}`} event={event} units={units} />)
             ) : (
               <div className="rounded-2xl border border-border bg-card p-4 text-sm text-muted-foreground">
                 No completed trip timeline yet.
@@ -584,7 +585,7 @@ export default function Diagnostics() {
           </div>
           <div className="space-y-2">
             {combinedEvents.length > 0 ? (
-              combinedEvents.map((event) => <EventRow key={event.id} event={event} />)
+              combinedEvents.map((event) => <EventRow key={event.id} event={event} units={units} />)
             ) : (
               <div className="rounded-2xl border border-border bg-card p-4 text-sm text-muted-foreground">
                 No diagnostic decisions recorded yet. Start or auto-detect a trip to populate this log.

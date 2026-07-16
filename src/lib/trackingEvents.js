@@ -19,7 +19,6 @@ const EVENT_METRIC_KEYS = Object.freeze({
   aggressive_overtake: 'overtake_event_count',
   phone_use: 'phone_use_window_count',
   possible_crash: 'possible_crash_count',
-  voice_speed_limit_marker: 'speed_limit_sources',
   route_gap: 'gps_point_count',
   privacy_gap: 'gps_point_count',
 });
@@ -40,7 +39,6 @@ const EVENT_LABELS = Object.freeze({
   aggressive_overtake: 'Overtake pattern recorded',
   phone_use: 'Phone-use window detected',
   possible_crash: 'Possible incident signal recorded',
-  voice_speed_limit_marker: 'Voice speed marker recorded',
   route_gap: 'Route gap recorded',
   privacy_gap: 'Privacy gap recorded',
 });
@@ -61,7 +59,6 @@ const THRESHOLD_NOTES = Object.freeze({
   aggressive_overtake: 'Acceleration and straight-road gates matched the beta overtake detector.',
   phone_use: 'Foreground app evidence or GPS proxy evidence overlapped a moving trip window.',
   possible_crash: 'Impact-like motion and post-event movement signals were recorded by the incident workflow.',
-  voice_speed_limit_marker: 'Voice speed marker was stored for speed-limit review.',
   route_gap: 'Timestamp gap or route-gap marker exceeded the retained-route continuity threshold.',
   privacy_gap: 'Privacy masking redacted or replaced route/event location detail.',
 });
@@ -82,7 +79,6 @@ const SOURCE_FALLBACKS = Object.freeze({
   aggressive_overtake: 'gps_events',
   possible_crash: 'device_motion_imu',
   phone_use: 'phone_use_usage_access',
-  voice_speed_limit_marker: 'gps_events',
   route_gap: 'gps',
   privacy_gap: 'gps',
 });
@@ -125,10 +121,6 @@ const formatValue = (event = {}) => {
     return seconds == null ? 'threshold exceeded' : `${Math.round(seconds)} s`;
   }
   if (event.type === 'speeding') return formatSpeed(event.speed_kmh ?? event.value);
-  if (event.type === 'voice_speed_limit_marker') {
-    const limit = finiteNumber(event.limit_kmh ?? event.speed_limit_kmh ?? event.value);
-    return limit == null ? 'marker recorded' : `${Math.round(limit)} km/h`;
-  }
   if (event.type === 'route_gap' || event.type === 'privacy_gap') return event.valueLabel || 'gap recorded';
   const value = finiteNumber(event.value ?? event.accel_ms2 ?? event.lateral_g);
   if (value == null) return 'event recorded';
@@ -259,18 +251,6 @@ const normalizeEvent = (event = {}, index = 0, trip = {}, routePoints = []) => {
   };
 };
 
-const voiceMarkerEvents = (trip = {}) => (
-  (Array.isArray(trip.voice_speed_limit_markers) ? trip.voice_speed_limit_markers : []).map((marker, index) => ({
-    ...marker,
-    type: 'voice_speed_limit_marker',
-    timestamp: marker.timestamp || marker.created_at || marker.recorded_at || marker.startTime,
-    value: marker.limit_kmh ?? marker.speed_limit_kmh ?? marker.spoken_limit_kmh,
-    source: marker.source || 'gps_events',
-    point_index: marker.point_index ?? marker.route_point_index ?? null,
-    id: marker.id || `voice-marker-${index}`,
-  }))
-);
-
 const phoneEvidenceEvents = (trip = {}) => ([
   ...(Array.isArray(trip.phone_use_events) ? trip.phone_use_events : []),
   ...(Array.isArray(trip.phone_proxy_events) ? trip.phone_proxy_events : []),
@@ -343,7 +323,6 @@ export function normalizeTrackingEventRows(trip = {}, options = {}) {
   const mergedEvents = uniqueEvents([
     ...(Array.isArray(trip.driving_events) ? trip.driving_events : []),
     ...phoneEvidenceEvents(trip),
-    ...voiceMarkerEvents(trip),
   ]);
   const maskedEvents = settings ? maskEventsForPrivacy(mergedEvents, settings) : mergedEvents;
   return [

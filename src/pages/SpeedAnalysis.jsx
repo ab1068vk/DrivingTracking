@@ -23,6 +23,7 @@ import {
   getTripComponentScore,
   prefetchLocalKnowledge,
 } from '@/lib/tripEngine';
+import { convertSpeedKmh, speedUnitLabel } from '@/lib/unitFormatting';
 import { buildPlaybackTimeline, prepareMapRoutePoints, SPEED_BANDS } from '@/lib/mapPlaybackInsights';
 import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
@@ -165,7 +166,7 @@ const percentile = (values, pct) => {
   return sorted[low] + (sorted[high] - sorted[low]) * (index - low);
 };
 
-function buildSpeedAnalytics(trip = {}) {
+function buildSpeedAnalytics(trip = {}, units = 'metric') {
   const points = prepareMapRoutePoints(cleanPoints(trip.route_points), { maxPoints: 1200 });
   const events = Array.isArray(trip.driving_events) ? trip.driving_events : [];
   const timeline = buildPlaybackTimeline(points, events);
@@ -223,7 +224,7 @@ function buildSpeedAnalytics(trip = {}) {
       id: band.id,
       label: band.label,
       color: band.color,
-      range: next ? `${band.min}-${next.min - 1} km/h` : `${band.min}+ km/h`,
+      range: next ? `${Math.round(convertSpeedKmh(band.min, units))}-${Math.round(convertSpeedKmh(next.min - 1, units))} ${speedUnitLabel(units)}` : `${Math.round(convertSpeedKmh(band.min, units))}+ ${speedUnitLabel(units)}`,
       distanceKm: segments.reduce((sum, segment) => sum + (Number(segment.distanceKm) || 0), 0),
       durationSeconds: segments.reduce((sum, segment) => sum + (Number(segment.durationSeconds) || 0), 0),
     };
@@ -236,18 +237,18 @@ function buildSpeedAnalytics(trip = {}) {
   const speedInsightRows = [
     fastestPoint ? {
       label: 'Fastest point',
-      value: `${Math.round(fastestPoint.speed_kmh)} km/h`,
+      value: formatSpeed(fastestPoint.speed_kmh, units),
       detail: fastestPoint.timestamp ? formatDateTime(fastestPoint.timestamp) : 'Time unavailable',
     } : null,
     violations.length > 0 ? {
       label: 'Largest limit gap',
-      value: `${Math.round(maxOverLimit)} km/h over`,
+      value: `${formatSpeed(maxOverLimit, units)} over`,
       detail: `${violations.length} over-limit segment${violations.length === 1 ? '' : 's'}`,
     } : null,
     strongestAcceleration ? {
       label: strongestAcceleration.accelMs2 >= 0 ? 'Sharpest acceleration' : 'Sharpest braking',
       value: `${Math.abs(strongestAcceleration.accelMs2).toFixed(1)} m/s2`,
-      detail: `${Math.round(Math.abs(strongestAcceleration.speedDeltaKmh))} km/h change`,
+      detail: `${formatSpeed(Math.abs(strongestAcceleration.speedDeltaKmh), units)} change`,
     } : null,
     timeline.stops?.length ? {
       label: 'Longest stop',
@@ -325,7 +326,7 @@ export default function SpeedAnalysis() {
     [speedLimitLocalKnowledgeResults, trip]
   );
   const speedTrip = localSpeedKnowledge.trip;
-  const analytics = useMemo(() => buildSpeedAnalytics(speedTrip || {}), [speedTrip]);
+  const analytics = useMemo(() => buildSpeedAnalytics(speedTrip || {}, units), [speedTrip, units]);
   const limitIntelligence = useMemo(
     () => summarizeTripSpeedLimitIntelligence(speedTrip || {}),
     [speedTrip]
@@ -472,7 +473,7 @@ export default function SpeedAnalysis() {
             <div className="mt-2 space-y-2 text-xs text-muted-foreground">
               {localSpeedKnowledge.rules.length ? localSpeedKnowledge.rules.slice(0, 5).map((rule) => (
                 <div key={rule.key} className="flex items-center justify-between gap-3">
-                  <span>{Math.round(rule.limitKmh)} km/h - {rule.label}</span>
+                  <span>{formatSpeed(rule.limitKmh, units)} - {rule.label}</span>
                   <span className="font-semibold text-foreground">{rule.count} point{rule.count === 1 ? '' : 's'}</span>
                 </div>
               )) : limitIntelligence.recommendations.map((recommendation) => (
@@ -551,7 +552,7 @@ export default function SpeedAnalysis() {
                       contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
                       formatter={(value, name, item) => {
                         const label = item?.dataKey === 'limit' ? 'Speed limit' : 'Actual speed';
-                        return [`${Math.round(Number(value) || 0)} km/h`, label];
+                        return [formatSpeed(Number(value) || 0, units), label];
                       }}
                     />
                     <Line type="monotone" dataKey="speed" stroke="#2563eb" strokeWidth={2.5} dot={false} name="Actual speed" />

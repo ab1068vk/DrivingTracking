@@ -10,7 +10,7 @@ import {
   ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap, Car, MapPin,
   CornerUpRight, AlertTriangle, Moon, Trash2, Fuel, Leaf, Milestone,
   Building, Shuffle, Home, Waves, Shield, ShieldCheck, Focus, TimerReset, Tag,
-  ParkingSquare, Droplets, GitBranch, Route, Smartphone, Pencil, Save, Star, Info, Mic,
+  ParkingSquare, Droplets, GitBranch, Route, Smartphone, Pencil, Save, Star, Info,
   StickyNote, X
 } from 'lucide-react';
 import ScoreRing from '@/components/ScoreRing';
@@ -149,43 +149,6 @@ const SCORE_AFFECTING_EVENT_FEEDBACK_TYPES = new Set([
   'idle',
   'phone_use',
 ]);
-
-const voiceSpeedMarkerKey = (marker = {}, index = 0) => String(
-  marker.id ||
-  marker.marker_id ||
-  [
-    marker.timestamp || marker.timestamp_ms || 'voice-marker',
-    marker.lat,
-    marker.lng,
-    marker.speed_limit_kmh ?? marker.limitKmh,
-    index,
-  ].join(':')
-);
-
-const voiceSpeedMarkerLimit = (marker = {}) => {
-  const limit = Number(marker.speed_limit_kmh ?? marker.limitKmh ?? marker.limit_kmh);
-  return Number.isFinite(limit) && limit > 0 ? Math.round(limit) : null;
-};
-
-const publicVoiceSpeedMarker = (marker = {}) => (
-  Number.isFinite(Number(marker.lat)) &&
-  Number.isFinite(Number(marker.lng)) &&
-  marker.masked_for_privacy !== true &&
-  marker.privacy_gap !== true
-);
-
-const voiceSpeedMarkerEvent = (marker = {}, index = 0) => ({
-  ...marker,
-  type: 'voice_speed_limit_marker',
-  severity: 'low',
-  lat: Number(marker.lat),
-  lng: Number(marker.lng),
-  timestamp: marker.timestamp || (marker.timestamp_ms ? new Date(marker.timestamp_ms).toISOString() : null),
-  speed_limit_kmh: voiceSpeedMarkerLimit(marker),
-  speed_limit_source: marker.source || 'voice_user_estimate',
-  value: voiceSpeedMarkerLimit(marker),
-  markerIndex: index,
-});
 
 const uniqueTripEvents = (events = []) => {
   const seen = new Set();
@@ -665,100 +628,6 @@ export default function TripDetail() {
     speedLimitReviewMutation.mutate(result);
   }, [speedLimitReviewMutation, trip?.id]);
 
-  const voiceSpeedMarkerMutation = useMutation({
-    /**
-     * @param {{ marker: Record<string, any>, source: string }} variables
-     */
-    mutationFn: async ({ marker, source }) => {
-      const limitKmh = voiceSpeedMarkerLimit(marker);
-      const lat = Number(marker?.lat);
-      const lng = Number(marker?.lng);
-      if (!limitKmh || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-        throw new Error('Voice speed marker is missing a usable location or limit.');
-      }
-      const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
-      const saved = await knowledge.saveUserCorrection(
-        lat,
-        lng,
-        limitKmh,
-        'Saved from voice speed marker after trip review',
-        null,
-        privacyZones,
-        source,
-        {
-          lat,
-          lng,
-          contextLabel: 'Voice marker during this trip',
-          directionLabel: Number.isFinite(Number(marker.heading)) ? 'Driven heading near marker' : '',
-          directionMode: 'both',
-          directionBearing: Number.isFinite(Number(marker.heading)) ? Number(marker.heading) : undefined,
-          distanceM: 0,
-        }
-      );
-      if (!saved) throw new Error('Could not save this speed marker.');
-      const savedCorrection = /** @type {Record<string, any>} */ (saved);
-
-      const markerKey = voiceSpeedMarkerKey(marker);
-      const reviewedAt = new Date().toISOString();
-      const markers = (Array.isArray(trip?.voice_speed_limit_markers) ? trip.voice_speed_limit_markers : [])
-        .map((item, index) => (
-          voiceSpeedMarkerKey(item, index) === markerKey
-            ? {
-              ...item,
-              review_status: 'saved',
-              reviewed_at: reviewedAt,
-              saved_source: source,
-              saved_correction_id: savedCorrection.id || savedCorrection.correctionId || null,
-            }
-            : item
-        ));
-      const patchedTrip = await tripService.update(id, {
-        voice_speed_limit_markers: markers,
-        voice_speed_limit_marker_reviewed_at: reviewedAt,
-      });
-      const refreshedTrip = await refreshTripForLocalSpeedKnowledge(patchedTrip, localSettings.get());
-      return { updatedTrip: refreshedTrip, correction: saved, source };
-    },
-    onSuccess: (result) => {
-      const updatedTrip = result?.updatedTrip;
-      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
-      qc.invalidateQueries({ queryKey: ['trip', id] });
-      invalidateTripLists();
-      setSpeedLimitKnowledgeRevision((value) => value + 1);
-      setFeedbackStatus(result?.source === 'user_confirmed_posted_sign'
-        ? 'Voice marker saved as a posted sign and this trip was re-scored locally.'
-        : 'Voice marker saved as a local estimate and this trip was re-scored locally.');
-      setTimeout(() => setFeedbackStatus(''), 6000);
-    },
-    onError: (error) => {
-      setFeedbackStatus(error?.message || 'Could not save that voice speed marker.');
-      setTimeout(() => setFeedbackStatus(''), 6000);
-    },
-  });
-  const ignoreVoiceSpeedMarker = useCallback(async (marker) => {
-    const markerKey = voiceSpeedMarkerKey(marker);
-    const reviewedAt = new Date().toISOString();
-    const markers = (Array.isArray(trip?.voice_speed_limit_markers) ? trip.voice_speed_limit_markers : [])
-      .map((item, index) => (
-        voiceSpeedMarkerKey(item, index) === markerKey
-          ? { ...item, review_status: 'ignored', reviewed_at: reviewedAt }
-          : item
-      ));
-    try {
-      const updatedTrip = await tripService.update(id, {
-        voice_speed_limit_markers: markers,
-        voice_speed_limit_marker_reviewed_at: reviewedAt,
-      });
-      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
-      qc.invalidateQueries({ queryKey: ['trip', id] });
-      invalidateTripLists();
-      setFeedbackStatus('Voice speed marker ignored for this trip.');
-      setTimeout(() => setFeedbackStatus(''), 6000);
-    } catch (error) {
-      setFeedbackStatus('Could not ignore that voice speed marker.');
-      setTimeout(() => setFeedbackStatus(''), 6000);
-    }
-  }, [id, qc, trip?.voice_speed_limit_markers]);
   const feedbackRescoreMutation = useMutation({
     mutationFn: () => tripService.rescoreById(id, { reason: 'event_feedback_manual' }),
     onSuccess: (result) => {
@@ -1254,16 +1123,6 @@ export default function TripDetail() {
   const rawDrivingEvents = uniqueTripEvents([...(trip.driving_events || []), ...laneChangeEvents]);
   const displayEvents = mergePhoneUseEventsIntoDrivingEvents(rawDrivingEvents, displayPhoneUse)
     .filter((event) => event.type !== 'near_miss');
-  const voiceSpeedMarkers = (Array.isArray(trip.voice_speed_limit_markers) ? trip.voice_speed_limit_markers : [])
-    .map((marker, index) => ({
-      ...marker,
-      markerKey: voiceSpeedMarkerKey(marker, index),
-      markerIndex: index,
-      limitKmh: voiceSpeedMarkerLimit(marker),
-    }))
-    .filter((marker) => marker.limitKmh && publicVoiceSpeedMarker(marker));
-  const pendingVoiceSpeedMarkers = voiceSpeedMarkers.filter((marker) => marker.review_status !== 'saved' && marker.review_status !== 'ignored');
-  const voiceSpeedMarkerEvents = voiceSpeedMarkers.map(voiceSpeedMarkerEvent);
   const eventRows = displayEvents.map((event, index) => ({ event, originalIndex: index }));
   const phoneProxyDiagnosticRows = (displayPhoneUse.phone_proxy_events || [])
     .filter((event) => !displayEvents.some((candidate) => (
@@ -1310,8 +1169,8 @@ export default function TripDetail() {
   }, { accurate: 0, wrong: 0 });
   const mapDisplayEvents = displayEvents.filter((event) => !isGpsPhoneUseProxyEvent(event));
   const mapEvents = settings.phone_use_show_on_map === false
-    ? [...mapDisplayEvents.filter((event) => event.type !== 'phone_use'), ...voiceSpeedMarkerEvents]
-    : [...mapDisplayEvents, ...voiceSpeedMarkerEvents];
+    ? mapDisplayEvents.filter((event) => event.type !== 'phone_use')
+    : mapDisplayEvents;
   const fatigueChartData = Array.isArray(trip.segment_scores) && trip.segment_scores.length === 3
     ? [
       { label: 'First', score: trip.segment_scores[0] },
@@ -1391,7 +1250,7 @@ export default function TripDetail() {
     {
       label: 'Limit source',
       value: hasPostedSpeedLimitEvidence ? 'Posted' : effectiveSpeedLimits.length ? 'Estimated' : 'Learning',
-      detail: effectiveSpeedLimits.length ? `${effectiveSpeedLimits.join(', ')} km/h used` : 'Get road data for limits',
+      detail: effectiveSpeedLimits.length ? `${effectiveSpeedLimits.map((value) => formatSpeed(value, units)).join(', ')} used` : 'Get road data for limits',
     },
   ];
   const renderEventFeedbackControls = (evt, key, feedback, { diagnostic = false } = {}) => {
@@ -1457,12 +1316,12 @@ export default function TripDetail() {
       ? new Date(evt.timestamp || evt.startTime).toLocaleTimeString()
       : 'Time unknown';
     const eventValueText = evt.type === 'possible_crash'
-      ? `${Math.round(evt.speed_before_kmh || 0)} km/h before - ${evt.peak_linear_ms2 || 0} m/s2 peak`
+      ? `${formatSpeed(evt.speed_before_kmh || 0, units)} before - ${evt.peak_linear_ms2 || 0} m/s² peak`
       : evt.type === 'phone_use'
-        ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${Math.round(evt.speed_kmh || 0)} km/h`
+        ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${formatSpeed(evt.speed_kmh || 0, units)}`
         : evt.type === 'lane_change_detected'
-          ? `${Math.round(evt.speed_kmh || 0)} km/h${Number.isFinite(Number(evt.lateral_g)) ? ` - ${Number(evt.lateral_g).toFixed(2)} g lateral` : ''}`
-        : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
+          ? `${formatSpeed(evt.speed_kmh || 0, units)}${Number.isFinite(Number(evt.lateral_g)) ? ` - ${Number(evt.lateral_g).toFixed(2)} g lateral` : ''}`
+        : evt.type === 'speeding' ? formatSpeed(evt.value || 0, units) : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : 'm/s²'}`;
     const inferredTypes = ['lane_change_detected', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use'];
     const confidenceText = evt.source === 'android_usage_access'
       ? 'Measured phone activity'
@@ -1778,7 +1637,7 @@ export default function TripDetail() {
                 </span>
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
-                {describeOsmSpeedLimitStatus(speedLimitContext)} {effectiveSpeedLimits.length ? `Effective posted/estimated values: ${effectiveSpeedLimits.join(', ')} km/h.` : 'GPS fallback thresholds fill gaps.'}
+                {describeOsmSpeedLimitStatus(speedLimitContext)} {effectiveSpeedLimits.length ? `Effective posted/estimated values: ${effectiveSpeedLimits.map((value) => formatSpeed(value, units)).join(', ')}.` : 'GPS fallback thresholds fill gaps.'}
               </div>
               {speedLimitContext.error && (
                 <div className="mt-1 text-xs text-orange-600 dark:text-orange-300">{speedLimitContext.error}</div>
@@ -1917,7 +1776,7 @@ export default function TripDetail() {
                 <div className="rounded-2xl bg-secondary/50 p-3">
                   <Gauge className="mb-2 h-4 w-4 text-blue-500" />
                   <div className="font-grotesk text-2xl font-bold">{phoneUseInsights.avgSpeedKmh || avgPhoneUseSpeed || '-'}</div>
-                  <div className="text-xs text-muted-foreground">avg km/h during detection</div>
+                  <div className="text-xs text-muted-foreground">average speed during detection</div>
                 </div>
                 <div className="rounded-2xl bg-secondary/50 p-3">
                   <Focus className="mb-2 h-4 w-4 text-violet-500" />
@@ -1935,7 +1794,7 @@ export default function TripDetail() {
                 <div className="rounded-xl border border-red-200 bg-red-50 p-3 dark:border-red-800/60 dark:bg-red-950/30">
                   <div className="text-xs font-semibold uppercase text-red-700 dark:text-red-300">Highest-risk moment</div>
                   <div className="mt-1 text-sm font-semibold text-red-800 dark:text-red-200">
-                    {phoneUseInsights.worstEvent.activityLabel || 'Foreground app activity'} for {Math.round(phoneUseInsights.worstEvent.durationSeconds || 0)}s at {Math.round(phoneUseInsights.worstEvent.speedKmh || 0)} km/h
+                    {phoneUseInsights.worstEvent.activityLabel || 'Foreground app activity'} for {Math.round(phoneUseInsights.worstEvent.durationSeconds || 0)}s at {formatSpeed(phoneUseInsights.worstEvent.speedKmh || 0, units)}
                   </div>
                   {phoneUseInsights.worstEvent.contextLabels?.length > 0 && (
                     <div className="mt-1 text-xs text-red-700 dark:text-red-300">
@@ -1959,7 +1818,7 @@ export default function TripDetail() {
                         </span>
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">
-                        {Math.round(event.durationSeconds)} seconds · {Math.round(event.speedKmh)} km/h
+                        {Math.round(event.durationSeconds)} seconds · {formatSpeed(event.speedKmh, units)}
                         {event.offsetSeconds != null ? ` · ${formatDuration(event.offsetSeconds)} into trip` : ''}
                       </div>
                       {event.contextLabels?.length > 0 && (
@@ -2224,97 +2083,6 @@ export default function TripDetail() {
             </Suspense>
           </div>
         )}
-        {voiceSpeedMarkers.length > 0 && (
-          <div className="mt-4 rounded-2xl border border-border bg-secondary/30 p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  <Mic className="h-4 w-4 text-primary" />
-                  Voice speed markers
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  These were spoken during the drive and saved as pending review. Confirm them while parked to add real saved road speeds.
-                </p>
-              </div>
-              <Link
-                to="/speed-limits"
-                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-secondary"
-              >
-                <MapPin className="h-3.5 w-3.5" />
-                Saved road speeds
-              </Link>
-            </div>
-            <div className="mt-3 grid gap-2">
-              {voiceSpeedMarkers.map((marker) => {
-                const saved = marker.review_status === 'saved';
-                const ignored = marker.review_status === 'ignored';
-                const disabled = voiceSpeedMarkerMutation.isPending || saved || ignored;
-                return (
-                  <div key={marker.markerKey} className="rounded-xl border border-border bg-background/70 p-3 text-xs">
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-full bg-primary px-2 py-0.5 font-semibold text-primary-foreground">
-                            {marker.limitKmh} km/h
-                          </span>
-                          <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold text-muted-foreground">
-                            {saved ? 'Saved' : ignored ? 'Ignored' : 'Pending review'}
-                          </span>
-                          {marker.posted_phrase_detected && (
-                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
-                              Posted phrase heard
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-1 text-muted-foreground">
-                          {formatDateTime(marker.timestamp || marker.timestamp_ms)} near {Number(marker.lat).toFixed(5)}, {Number(marker.lng).toFixed(5)}
-                        </div>
-                        {marker.transcript && (
-                          <div className="mt-1 text-muted-foreground">
-                            Heard: "{marker.transcript}"
-                          </div>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 lg:w-[24rem]">
-                        <button
-                          type="button"
-                          disabled={disabled}
-                          onClick={() => voiceSpeedMarkerMutation.mutate({ marker, source: 'user_confirmed_posted_sign' })}
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 font-semibold text-white hover:bg-emerald-700 disabled:opacity-55"
-                        >
-                          <ShieldCheck className="h-3.5 w-3.5" />
-                          Save sign
-                        </button>
-                        <button
-                          type="button"
-                          disabled={disabled}
-                          onClick={() => voiceSpeedMarkerMutation.mutate({ marker, source: 'user_entered_estimate' })}
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 font-semibold text-foreground hover:bg-secondary disabled:opacity-55"
-                        >
-                          <Gauge className="h-3.5 w-3.5" />
-                          Estimate
-                        </button>
-                        <button
-                          type="button"
-                          disabled={voiceSpeedMarkerMutation.isPending || saved || ignored}
-                          onClick={() => ignoreVoiceSpeedMarker(marker)}
-                          className="inline-flex items-center justify-center rounded-xl border border-border bg-card px-3 py-2 font-semibold text-muted-foreground hover:bg-secondary disabled:opacity-55"
-                        >
-                          Ignore
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            {pendingVoiceSpeedMarkers.length === 0 && (
-              <div className="mt-3 rounded-xl bg-background/70 px-3 py-2 text-xs font-medium text-muted-foreground">
-                All voice markers for this trip have been reviewed.
-              </div>
-            )}
-          </div>
-        )}
       </motion.div>
 
       <motion.div
@@ -2451,7 +2219,7 @@ export default function TripDetail() {
         message="Something went wrong while preparing this trip's score summary. Reload to try again."
         resetKey={trip.id}
       >
-        <TripScoreOverview trip={trip} speedLimitSourceBreakdown={speedLimitSourceBreakdown} />
+        <TripScoreOverview trip={trip} speedLimitSourceBreakdown={speedLimitSourceBreakdown} units={units} />
       </SectionErrorBoundary>
       <motion.section
         initial={{ opacity: 0, y: 16 }}
@@ -2641,7 +2409,7 @@ export default function TripDetail() {
                         <div className="mt-0.5">{row.detail}</div>
                         {row.limits.length > 0 && (
                           <div className="mt-0.5">
-                            Limits used: {row.limits.join(', ')} km/h
+                            Limits used: {row.limits.map((value) => formatSpeed(value, units)).join(', ')}
                           </div>
                         )}
                       </div>
@@ -2672,7 +2440,7 @@ export default function TripDetail() {
             {speedZoneSummary.map((zone) => (
               <div key={zone.inferredZone} className="flex items-center justify-between rounded-xl bg-secondary/50 p-3">
                 <div>
-                  <div className="text-sm font-semibold">{zone.inferredZoneKmh} km/h inferred</div>
+                  <div className="text-sm font-semibold">{formatSpeed(zone.inferredZoneKmh, units)} inferred</div>
                   <div className="text-xs text-muted-foreground capitalize">{zone.confidence} confidence</div>
                 </div>
                 <div className="text-sm font-semibold">{formatDistance(zone.distanceKm, units)}</div>
@@ -2691,7 +2459,7 @@ export default function TripDetail() {
                   />
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  {data.limit_source === 'openstreetmap' ? 'OSM maxspeed' : data.limit_source === 'osm_highway_default' ? `OSM road-type estimate${speedLimitDefaultCountryText ? ` (${speedLimitDefaultCountries.join(', ')} profile)` : ''} - not proof of the posted speed limit` : data.limit_source === 'region_default_estimate' ? 'Regional default estimate - not proof of the posted speed limit; check posted signs' : 'Inferred - may not reflect actual limit'} {data.inferred_limit_kmh} km/h, max excess {data.max_excess_kmh} km/h, score {formatScoreWithProvenance(data.score, trip.score_provenance)}{data.limit_source === 'inferred' ? ' (half-weight penalty)' : ''}
+                  {data.limit_source === 'openstreetmap' ? 'OSM maxspeed' : data.limit_source === 'osm_highway_default' ? `OSM road-type estimate${speedLimitDefaultCountryText ? ` (${speedLimitDefaultCountries.join(', ')} profile)` : ''} - not proof of the posted speed limit` : data.limit_source === 'region_default_estimate' ? 'Regional default estimate - not proof of the posted speed limit; check posted signs' : 'Inferred - may not reflect actual limit'} {formatSpeed(data.inferred_limit_kmh, units)}, max excess {formatSpeed(data.max_excess_kmh, units)}, score {formatScoreWithProvenance(data.score, trip.score_provenance)}{data.limit_source === 'inferred' ? ' (half-weight penalty)' : ''}
                 </div>
               </div>
             ))}
@@ -2856,7 +2624,7 @@ export default function TripDetail() {
               </span>
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
-              {trip.climb_distance_km ?? 0} km climbing, {trip.descent_distance_km ?? 0} km descending. Use engine braking on descents rather than braking repeatedly.
+              {formatDistance(trip.climb_distance_km ?? 0, units)} climbing, {formatDistance(trip.descent_distance_km ?? 0, units)} descending. Use engine braking on descents rather than braking repeatedly.
             </div>
             <div role="alert" className="mt-2 flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
@@ -3114,10 +2882,10 @@ export default function TripDetail() {
               };
               const cfg = labels[evt.type] || { label: evt.type, icon: '⚠', color: 'text-foreground' };
               const eventValueText = evt.type === 'possible_crash'
-                ? `${Math.round(evt.speed_before_kmh || 0)} km/h before - ${evt.peak_linear_ms2 || 0} m/s2 peak`
+                ? `${formatSpeed(evt.speed_before_kmh || 0, units)} before - ${evt.peak_linear_ms2 || 0} m/s² peak`
                 : evt.type === 'phone_use'
-                  ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${Math.round(evt.speed_kmh || 0)} km/h`
-                  : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : evt.type === 'speeding' ? 'km/h' : 'm/s2'}`;
+                  ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${formatSpeed(evt.speed_kmh || 0, units)}`
+                  : evt.type === 'speeding' ? formatSpeed(evt.value || 0, units) : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : 'm/s²'}`;
               const inferredTypes = ['heading_deviation', 'heading_deviation_legacy', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use', 'close_proximity', 'aggressive_overtake'];
               const confidenceText = evt.source === 'android_usage_access'
                 ? 'Measured phone activity'
@@ -3703,7 +3471,7 @@ function PostTripCalibrationSurvey({ trip, status, labelCount, isPending, error,
   );
 }
 
-function TripScoreOverview({ trip, speedLimitSourceBreakdown = null }) {
+function TripScoreOverview({ trip, speedLimitSourceBreakdown = null, units = 'metric' }) {
   const overallScore = getTripComponentScore(trip, 'overall');
   const unavailableOverallScore = overallScore.value == null;
   const scoreProvenance = trip.score_provenance;
@@ -3832,7 +3600,7 @@ function TripScoreOverview({ trip, speedLimitSourceBreakdown = null }) {
                 {topSpeedLimitSourceRows.map((row) => (
                   <span
                     key={row.key}
-                    title={`${row.detail} ${row.limits.length ? `Limits used: ${row.limits.join(', ')} km/h.` : ''}`}
+                    title={`${row.detail} ${row.limits.length ? `Limits used: ${row.limits.map((value) => formatSpeed(value, units)).join(', ')}.` : ''}`}
                     className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-1 font-semibold text-foreground"
                   >
                     <span className={`h-2 w-2 rounded-full ${row.tone}`} />

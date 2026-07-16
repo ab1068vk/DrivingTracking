@@ -1,11 +1,12 @@
 // @ts-check
+import { convertPerDistanceRate, distanceUnitLabel, formatDistanceMeters, speedUnitLabel } from '@/lib/unitFormatting';
 import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { limitedTripSummaryQueryOptions, tripService, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Car, Play, Square, Navigation, Gauge,
+  Car, Play, Square, Navigation, Gauge, CalendarDays, Route, ChevronDown,
   AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame, TrafficCone, X, Clock,
   ParkingSquare, CheckCircle2, Shield, Trash2
 } from 'lucide-react';
@@ -68,7 +69,6 @@ import {
 import { isDriverMetricEligible } from '@/lib/phoneUseSummary';
 import ScoreRing from '@/components/ScoreRing';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
-import StatCard from '@/components/StatCard';
 import TripCard from '@/components/TripCard';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LiveCoachOverlay from '@/components/LiveCoachOverlay';
@@ -90,6 +90,7 @@ import { checkDangerZoneProximity, invalidateDangerZoneCache, loadDangerZones } 
 import { computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
 import { buildHabitProfile } from '@/lib/habitProfile';
 import { computePreTripRisk } from '@/lib/preTripRisk';
+import { buildDashboardActivityStats } from '@/lib/dashboardStats';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import {
   buildDashboardTrackingExplanation,
@@ -267,33 +268,33 @@ function annotatePointWithResolvedSpeedLimit(point = {}, resolved = null) {
   };
 }
 
-function speedLimitBadgeForResolved(resolved) {
+function speedLimitBadgeForResolved(resolved, units = 'metric') {
   const tier = resolved?.tier || 'UNKNOWN';
   const limit = Number(resolved?.limitKmh);
-  const roundedLimit = Number.isFinite(limit) ? Math.round(limit) : null;
+  const displayLimit = Number.isFinite(limit) ? formatSpeed(limit, units) : null;
   const badgeByTier = {
     POSTED: {
-      text: roundedLimit == null ? '— km/h' : `${roundedLimit}`,
+      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : displayLimit,
       className: 'border-emerald-200/70 bg-emerald-400/20 text-emerald-50',
     },
     MAP_ESTIMATED: {
-      text: roundedLimit == null ? '— km/h' : `~${roundedLimit} (road type)`,
+      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `~${displayLimit} (road type)`,
       className: 'border-amber-200/70 bg-amber-400/20 text-amber-50',
     },
     LEARNED_LOCAL: {
-      text: roundedLimit == null ? '— km/h' : `${roundedLimit} (this road)`,
+      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `${displayLimit} (this road)`,
       className: 'border-amber-200/70 bg-amber-300/15 text-amber-50',
     },
     REGION_DEFAULT: {
-      text: roundedLimit == null ? '— km/h' : `~${roundedLimit} (regional estimate)`,
+      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `~${displayLimit} (regional estimate)`,
       className: 'border-dashed border-amber-200/70 bg-amber-400/15 text-amber-50',
     },
     GPS_INFERRED: {
-      text: roundedLimit == null ? '— km/h' : `~${roundedLimit} (estimated)`,
+      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `~${displayLimit} (estimated)`,
       className: 'border-dashed border-slate-200/60 bg-slate-400/15 text-slate-50',
     },
     UNKNOWN: {
-      text: '— km/h',
+      text: `— ${speedUnitLabel(units)}`,
       className: 'border-slate-200/40 bg-slate-500/20 text-slate-100',
     },
   };
@@ -378,13 +379,7 @@ function readinessPlannerTone(riskLevel) {
 function formatWatchDistance(distanceM, units = 'metric') {
   const meters = Number(distanceM);
   if (!Number.isFinite(meters)) return null;
-  if (units === 'imperial') {
-    const feet = meters * 3.28084;
-    if (feet < 1000) return `${Math.round(feet)} ft`;
-    return `${(feet / 5280).toFixed(1)} mi`;
-  }
-  if (meters < 1000) return `${Math.round(meters)} m`;
-  return `${(meters / 1000).toFixed(1)} km`;
+  return formatDistanceMeters(meters, units);
 }
 
 function eventTypeLabel(type) {
@@ -440,9 +435,9 @@ function speedRuleName(record = {}) {
   return String(record.roadName || record.contextLabel || record.directionLabel || 'Saved road area').trim();
 }
 
-function speedRuleLimitLabel(record = {}) {
+function speedRuleLimitLabel(record = {}, units = 'metric') {
   const limit = Number(record.limitKmh);
-  return Number.isFinite(limit) && limit > 0 ? `${Math.round(limit)} km/h` : 'speed rule';
+  return Number.isFinite(limit) && limit > 0 ? formatSpeed(limit, units) : 'speed rule';
 }
 
 function speedRuleExpiryLabel(expiresAt, nowMs = Date.now()) {
@@ -477,7 +472,7 @@ function buildLocalSpeedPlanner(data = {}, { currentLocation = null, nowMs = Dat
     const distanceLabel = formatWatchDistance(distanceM, units);
     const confidenceLabel = speedLimitConfidenceLabel(evidence).toLowerCase();
     const name = speedRuleName(correction);
-    const limit = speedRuleLimitLabel(correction);
+    const limit = speedRuleLimitLabel(correction, units);
 
     if (isNearby) {
       nearbyRuleCount += 1;
@@ -680,6 +675,7 @@ export default function Dashboard() {
   const [pendingManualForegroundStartOptions, setPendingManualForegroundStartOptions] = useState(null);
   const [hazardMessage, setHazardMessage] = useState(null);
   const [readinessDismissed, setReadinessDismissed] = useState(false);
+  const [activityPeriod, setActivityPeriod] = useState('all_time');
   const [dismissedScoreReviewFingerprint, setDismissedScoreReviewFingerprint] = useState('');
   const [scoreReviewDismissalLoaded, setScoreReviewDismissalLoaded] = useState(false);
   const [dismissedSpeedLimitReviewFingerprint, setDismissedSpeedLimitReviewFingerprint] = useState('');
@@ -1503,10 +1499,10 @@ export default function Dashboard() {
         ));
         if (!isCandidateTrip && hasLiveSpeedEvidence(tripBeforePoint, routePointsForLiveContext, point)) {
           checkAndSpeakSpeedAlert(speed, resolved, latestSettings, () => {
-            const badge = speedLimitBadgeForResolved(resolved);
+            const badge = speedLimitBadgeForResolved(resolved, latestSettings.units || 'metric');
             const alertLabel = resolved?.tier === 'POSTED' ? 'Speed warning' : 'Speed check';
             setHazardMessage({
-              body: `${alertLabel}: ${Math.round(speed)} km/h over ${badge.text}`,
+              body: `${alertLabel}: ${formatSpeed(speed, latestSettings.units || 'metric')} over ${badge.text}`,
               at: Date.now(),
             });
           }, { voiceMuted: webViewVoiceMuted });
@@ -1894,7 +1890,7 @@ export default function Dashboard() {
     if (candidate) {
       recordTrackingDiagnostic({
         type: 'candidate_started',
-        title: 'Candidate started: speed >= 5 km/h for 2 seconds',
+        title: 'Candidate started after the sustained-speed threshold was met for 2 seconds',
         reason: triggerReason || 'sustained_gps_movement',
         trip_state: TRIP_STATES.CANDIDATE,
         speed_kmh: Math.round(initialPoint?.speed_kmh || 0),
@@ -3058,12 +3054,10 @@ export default function Dashboard() {
     peakStress,
     scoreTrend,
     tips,
-    weekDistance,
     weeklyGoals,
   } = useMemo(() => {
     const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
     const weekTrips = analyticsDriverCompletedTrips.filter(t => new Date(t.start_time) >= weekAgo);
-    const weekDistance = weekTrips.reduce((s, t) => s + (t.distance_km || 0), 0);
     const scoredTrips = analyticsDriverCompletedTrips.slice(0, 10)
       .map((trip) => ({ trip, component: getTripComponentScore(trip, 'overall') }))
       .filter(({ component }) => component.value != null);
@@ -3102,10 +3096,16 @@ export default function Dashboard() {
       peakStress: calculatePeakHourStress(analyticsDriverCompletedTrips),
       scoreTrend: analyticsDriverCompletedTrips.slice(0, 10).reverse().map((t, i) => ({ i, score: getTripComponentScore(t, 'overall').value })),
       tips: buildScoreTips(analyticsDriverCompletedTrips),
-      weekDistance,
       weeklyGoals: calculateWeeklyDrivingGoals(analyticsDriverCompletedTrips, settings),
     };
   }, [analyticsCompletedTrips.length, analyticsDriverCompletedTrips, parkedLocation, settings]);
+  const dashboardActivity = useMemo(
+    () => buildDashboardActivityStats(analyticsCompletedTrips, {
+      periodDays: activityPeriod === 'all_time' ? null : 7,
+    }),
+    [activityPeriod, analyticsCompletedTrips]
+  );
+  const isAllTimeActivity = activityPeriod === 'all_time';
   const latestTrip = completedTrips[0];
   const activeSpeedLimitReview = speedLimitReviewSummary || speedLimitConflictReview;
   const activeSpeedLimitReviewFingerprint = activeSpeedLimitReview?.fingerprint || '';
@@ -3732,7 +3732,7 @@ export default function Dashboard() {
                 ? resolveEffectiveSpeedLimitForIndex(routePointsForBadge, routePointsForBadge.length - 1, thresholds, { settings })
                 : null;
               const resolved = createTierAwareSpeedLimitContext(speedLimitContext, settings);
-              const badge = speedLimitBadgeForResolved(resolved);
+              const badge = speedLimitBadgeForResolved(resolved, units);
               const liveSpeedReady = hasLiveSpeedEvidence(activeTrip, routePointsForBadge, currentLocation);
               const speedWarning = liveSpeedReady
                 ? shouldWarnForSpeed({ speedKmh: spd, candidate: resolved, settings })
@@ -4019,24 +4019,56 @@ export default function Dashboard() {
         </SectionErrorBoundary>
       )}
       {/* Stats Grid */}
-      <div className="grid grid-cols-2 gap-3">
-        <StatCard
-          icon={Navigation}
-          label="This Week"
-          value={formatDistance(weekDistance, units)}
-          gradient="bg-gradient-to-br from-blue-500 to-indigo-600"
-          index={0}
-          className="cyber-stat-card cyber-stat-card-blue"
-        />
-        <StatCard
-          icon={Car}
-          label="Total Trips"
-          value={totalTrips}
-          gradient="bg-gradient-to-br from-emerald-400 to-green-600"
-          index={1}
-          className="cyber-stat-card cyber-stat-card-green"
-        />
-      </div>
+      <section className="rounded-3xl border border-border bg-card p-4 shadow-sm" aria-labelledby="dashboard-activity-heading">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 id="dashboard-activity-heading" className="font-semibold">
+              {isAllTimeActivity ? 'All-time totals' : 'Your last 7 days'}
+            </h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {isAllTimeActivity ? 'Everything recorded on this device' : 'Recent driving activity'}
+            </p>
+          </div>
+          <div className="flex rounded-xl bg-secondary p-1" role="group" aria-label="Dashboard totals period">
+            {[
+              { id: 'all_time', label: 'All time' },
+              { id: 'seven_days', label: '7 days' },
+            ].map((period) => (
+              <button
+                key={period.id}
+                type="button"
+                onClick={() => setActivityPeriod(period.id)}
+                aria-pressed={activityPeriod === period.id}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${activityPeriod === period.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {period.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          {[
+            { label: 'Distance', value: formatDistance(dashboardActivity.distanceKm, units), detail: 'completed trips', icon: Navigation },
+            { label: 'Time driving', value: formatDuration(Math.round(dashboardActivity.drivingSeconds)), detail: 'recorded time', icon: Clock },
+            { label: 'Trips', value: dashboardActivity.tripCount, detail: isAllTimeActivity ? 'all time' : 'last 7 days', icon: Car },
+            {
+              label: 'Active days',
+              value: isAllTimeActivity ? dashboardActivity.activeDays : `${dashboardActivity.activeDays}/7`,
+              detail: dashboardActivity.activeDays ? `${dashboardActivity.tripsPerActiveDay.toFixed(1)} trips / active day` : 'no driving days',
+              icon: CalendarDays,
+            },
+            { label: 'Average trip', value: formatDistance(dashboardActivity.averageTripKm, units), detail: 'typical distance', icon: Route },
+            { label: 'Longest trip', value: formatDistance(dashboardActivity.longestTripKm, units), detail: isAllTimeActivity ? 'all time' : 'last 7 days', icon: Gauge },
+          ].map(({ label, value, detail, icon: Icon }) => (
+            <div key={label} className="min-w-0 rounded-2xl bg-secondary/45 p-3">
+              <Icon className="mb-2 h-4 w-4 text-primary" />
+              <div className="truncate font-grotesk text-xl font-bold">{value}</div>
+              <div className="mt-0.5 text-xs font-semibold">{label}</div>
+              <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{detail}</div>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {completedTrips.length > 0 && (
         <div className="cyber-baseline-panel bg-card border border-border rounded-3xl p-5 shadow-sm">
@@ -4094,7 +4126,7 @@ export default function Dashboard() {
           </div>
           {weeklyGoals.some((goal) => goal.status === 'building_evidence') && (
             <div className="mb-3 rounded-xl bg-primary/5 px-3 py-2 text-[11px] font-medium text-muted-foreground">
-              Goals activate after {weeklyGoals[0]?.evidence?.minimum_trips || 3} trips and {weeklyGoals[0]?.evidence?.minimum_distance_km || 25} km. Until then, Road Sage is building evidence—not awarding easy completions.
+              Goals activate after {weeklyGoals[0]?.evidence?.minimum_trips || 3} trips and {formatDistance(weeklyGoals[0]?.evidence?.minimum_distance_km || 25, units)}. Until then, Road Sage is building evidence—not awarding easy completions.
             </div>
           )}
           <div className="space-y-2">
@@ -4123,8 +4155,13 @@ export default function Dashboard() {
                     <span className="font-medium">{goal.label}</span>
                     <span className={statusClass}>
                       {!goal.qualified
-                        ? `${goal.evidence.trips}/${goal.evidence.minimum_trips} trips · ${goal.evidence.distance_km}/${goal.evidence.minimum_distance_km} km`
-                        : `${goal.value}/${goal.target}${goal.unit ? ` ${goal.unit}` : goal.direction === 'over' ? '+' : ''}`}
+                        ? `${goal.evidence.trips}/${goal.evidence.minimum_trips} trips · ${formatDistance(goal.evidence.distance_km, units)}/${formatDistance(goal.evidence.minimum_distance_km, units)}`
+                        : goal.unit === 'km'
+                          ? `${formatDistance(goal.value, units)}/${formatDistance(goal.target, units)}`
+                          : String(goal.unit).includes('100 km')
+                            ? `${convertPerDistanceRate(goal.value, units)?.toFixed(1)}/${convertPerDistanceRate(goal.target, units)?.toFixed(1)} per 100 ${distanceUnitLabel(units)}`
+                            : `${goal.value}/${goal.target}${goal.unit ? ` ${goal.unit}` : goal.direction === 'over' ? '+' : ''}`
+                      }
                     </span>
                   </div>
                   <div className="h-2 bg-secondary rounded-full overflow-hidden">
@@ -4377,11 +4414,14 @@ function DashboardRiskPanel({
       : 'No local speed warnings need attention right now.'
     : 'No saved local speed rules yet. Saved road speeds will appear here before a drive.';
 
+  const readinessRangeText = preTripRisk.readinessRange
+    ? `${preTripRisk.readinessRange.low}-${preTripRisk.readinessRange.high}`
+    : 'withheld';
   return (
-    <div className="bg-card border border-border rounded-3xl p-4 shadow-sm">
-      <div className="flex items-start gap-4">
+    <div className="rounded-2xl border border-border bg-card p-3 shadow-sm">
+      <div className="flex items-start gap-3">
         <div
-          className="grid h-16 w-16 flex-shrink-0 place-items-center rounded-2xl text-center text-xs font-bold text-white"
+          className="grid h-12 w-12 flex-shrink-0 place-items-center rounded-xl text-center text-[11px] font-bold text-white"
           style={{
             background: plannerTone.color,
           }}
@@ -4402,7 +4442,7 @@ function DashboardRiskPanel({
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="mt-2 grid gap-3 lg:grid-cols-[minmax(0,1fr)_190px]">
+          <div className="mt-1 grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px]">
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`rounded-full border px-2.5 py-1 text-xs font-bold ${plannerTone.className}`}>
@@ -4412,24 +4452,32 @@ function DashboardRiskPanel({
                   {readinessEvidence} evidence
                 </span>
               </div>
-              <div className="mt-2 break-words text-xl font-grotesk font-bold">{plannerTone.headline}</div>
-              <p className="mt-1 break-words text-sm text-muted-foreground">{plannerTone.guidance}</p>
+              <div className="mt-1 break-words text-base font-grotesk font-bold">{plannerTone.headline}</div>
+              <p className="mt-0.5 line-clamp-1 break-words text-xs text-muted-foreground">{plannerTone.guidance}</p>
               {preTripRisk.primaryConcern !== 'Insufficient readiness evidence' && (
                 <p className="mt-1 break-words text-xs font-medium text-muted-foreground">
                   Main reason: {preTripRisk.primaryConcern}
                 </p>
               )}
             </div>
-            <div className="rounded-2xl bg-secondary/50 p-4">
-              <div className="text-xs font-semibold text-muted-foreground">Readiness</div>
-              <div className="mt-1 font-grotesk text-2xl font-bold">{scoreText}</div>
-              <div className="mt-1 text-[11px] capitalize text-muted-foreground">
-                {preTripRisk.riskLevel === 'unavailable' ? 'score withheld until core signals exist' : `${preTripRisk.riskLevel} risk`}
+            <div className="rounded-xl bg-secondary/50 p-2.5">
+              <div className="text-[11px] font-semibold text-muted-foreground">Likely range</div>
+              <div className="font-grotesk text-lg font-bold capitalize">{readinessRangeText}</div>
+              <div className="text-[11px] capitalize text-muted-foreground">
+                {preTripRisk.riskLevel === 'unavailable'
+                  ? 'core evidence needed'
+                  : `${preTripRisk.dataQuality.confidenceScore}% confidence - ${preTripRisk.riskLevel} risk`}
               </div>
             </div>
           </div>
 
-          <div className="mt-4 grid gap-3 lg:grid-cols-4">
+          <details className="group mt-3 border-t border-border pt-2">
+            <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-semibold text-primary marker:content-none">
+              Advanced readiness details
+              <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="mt-3">
+          <div className="grid gap-3 lg:grid-cols-4">
             <div className="rounded-2xl border border-border bg-secondary/35 p-3 text-xs">
               <div className="flex items-center gap-2 font-semibold">
                 <CheckCircle2 className="h-4 w-4 text-primary" />
@@ -4560,6 +4608,8 @@ function DashboardRiskPanel({
               </div>
             )
           )}
+            </div>
+          </details>
         </div>
       </div>
     </div>

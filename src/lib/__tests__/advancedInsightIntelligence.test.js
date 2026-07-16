@@ -194,6 +194,30 @@ describe('advanced insight intelligence', () => {
     expect(progress.tripIds).not.toContain('excluded-route');
   });
 
+  it('counts privacy-masked trips in a local matched experiment', () => {
+    const experiment = {
+      ...createComparableExperiment({
+        id: 'harsh_brakes',
+        title: 'Harsh braking reset',
+        metricKey: 'harsh_brakes_count',
+        baseline: 20,
+        target: 14,
+      }, [trip({ id: 'baseline', startTime: '2026-06-01T08:00:00.000Z', harshBrakes: 2 })]),
+      startedAt: '2026-07-01T00:00:00.000Z',
+      targetTrips: 1,
+    };
+    const protectedTrip = {
+      ...trip({ id: 'protected-match', startTime: '2026-07-02T08:00:00.000Z', harshBrakes: 0 }),
+      privacy_zone_touched: true,
+    };
+
+    expect(buildComparableExperimentProgress(experiment, [protectedTrip])).toMatchObject({
+      tripCount: 1,
+      complete: true,
+      currentValue: 0,
+    });
+  });
+
   it('preserves exact event evidence and returns cited local answers', () => {
     const event = {
       type: 'harsh_brake',

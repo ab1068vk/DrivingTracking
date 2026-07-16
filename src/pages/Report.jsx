@@ -20,6 +20,13 @@ import {
   formatEstimatedScore,
 } from '@/lib/scoreDisplay';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import {
+  convertDistanceKm,
+  convertPerDistanceRate,
+  distanceUnitLabel,
+  formatDistanceScope,
+  formatPerDistanceRate,
+} from '@/lib/unitFormatting';
 import { formatCurrencyAmount } from '@/lib/currency';
 import { computeUBIReport } from '@/lib/ubiReport';
 import { notifyExportSaved } from '@/lib/notificationService';
@@ -269,8 +276,8 @@ export default function Reports() {
   }];
   efficiencyBandsData[0].city = Math.max(0, 100 - efficiencyBandsData[0].cityCrawl - efficiencyBandsData[0].cruise - efficiencyBandsData[0].highSpeed);
   const peakComparisonData = [
-    { label: 'Peak', rate: peakHourStress.peak_trips_event_rate },
-    { label: 'Off-peak', rate: peakHourStress.off_peak_trips_event_rate },
+      { label: 'Peak', rate: convertPerDistanceRate(peakHourStress.peak_trips_event_rate, units) },
+      { label: 'Off-peak', rate: convertPerDistanceRate(peakHourStress.off_peak_trips_event_rate, units) },
   ];
   const ubiReport = computeUBIReport(trips, settings, vehicles);
   const ubiRadarData = Object.values(ubiReport.categories).map((item) => ({
@@ -329,7 +336,7 @@ export default function Reports() {
     });
     return Object.values(map).map(d => ({
       ...d,
-      distance: Math.round(d.distance * 10) / 10,
+      distance: Math.round(convertDistanceKm(d.distance, units) * 10) / 10,
       avgScore: d.scoreDistance > 0 ? Math.round(d.score / d.scoreDistance) : null,
       avgSviScore: d.sviCount > 0 ? Math.round(d.svi / d.sviCount) : null,
     }));
@@ -572,7 +579,7 @@ export default function Reports() {
                   {[
                     { icon: TrendingUp, label: 'Avg score', value: formatEstimatedScore(summary.avg_score), sub: previousTrips.length ? `${formatSignedNumber(reportInsights.scoreDelta, ' pts')} vs prior` : 'Need prior period' },
                     { icon: Navigation, label: 'Distance', value: formatDistance(summary.total_distance_km, units), sub: previousTrips.length ? distanceDeltaLabel : `${summary.total_trips} trips` },
-                    { icon: Activity, label: 'Events / 100 km', value: reportInsights.eventRate == null ? '-' : reportInsights.eventRate.toFixed(1), sub: reportInsights.eventRateDelta == null ? 'Rate unlocks with prior' : `${formatSignedNumber(reportInsights.eventRateDelta, '')} vs prior` },
+                    { icon: Activity, label: `Events / 100 ${distanceUnitLabel(units)}`, value: reportInsights.eventRate == null ? '-' : convertPerDistanceRate(reportInsights.eventRate, units).toFixed(1), sub: reportInsights.eventRateDelta == null ? 'Rate unlocks with prior' : `${formatSignedNumber(convertPerDistanceRate(reportInsights.eventRateDelta, units), '')} vs prior` },
                     { icon: ShieldCheck, label: 'Clean trips', value: formatPercent(reportInsights.cleanTripPercent), sub: `${reportInsights.confidence} confidence` },
                   ].map(({ icon: Icon, label, value, sub }) => (
                     <div key={label} className="rounded-2xl border border-border bg-secondary/30 p-3">
@@ -742,7 +749,7 @@ export default function Reports() {
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <div>
                     <p className="font-bold uppercase tracking-wide">{UBI_INSURANCE_NOTICE}</p>
-                    <p className="mt-1">Add at least {ubiReport.minimumDistanceKm ?? 50} km of trips before rate-based score-card grades are shown. Even after that threshold, this remains an internal coaching estimate.</p>
+                    <p className="mt-1">Add at least {formatDistanceScope(ubiReport.minimumDistanceKm ?? 50, units, 0)} of trips before rate-based score-card grades are shown. Even after that threshold, this remains an internal coaching estimate.</p>
                   </div>
                 </div>
               )}
@@ -760,7 +767,7 @@ export default function Reports() {
               )}
               {!ubiReport.insufficientData && ubiReport.assumptions && (
                 <p className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
-                  Mileage score assumes {ubiReport.assumptions.optimalAnnualKm.toLocaleString()} km/year as the optimal annual distance. Adjust the UBI mileage assumption in Settings if your region or use case differs.
+                  Mileage score assumes {formatDistanceScope(ubiReport.assumptions.optimalAnnualKm, units, 0)}/year as the optimal annual distance. Adjust the UBI mileage assumption in Settings if your region or use case differs.
                 </p>
               )}
               {!ubiReport.insufficientData && (
@@ -1029,9 +1036,9 @@ export default function Reports() {
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
           >
             <h2 className="font-semibold mb-1">Peak Vs Off-Peak</h2>
-            <p className="text-xs text-muted-foreground mb-4">Risk event rate per km by traffic window</p>
+            <p className="text-xs text-muted-foreground mb-4">Risk event rate per {distanceUnitLabel(units)} by traffic window</p>
             {peakHourStress.insufficient_data && (
-              <p className="mb-3 text-xs text-muted-foreground">Not enough eligible trip distance yet. Trips under 0.5 km are excluded.</p>
+              <p className="mb-3 text-xs text-muted-foreground">Not enough eligible trip distance yet. Trips under {formatDistance(0.5, units)} are excluded.</p>
             )}
             <DeferredRecharts height={150}>
               {({ ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip }) => (
@@ -1041,7 +1048,7 @@ export default function Reports() {
                     <XAxis dataKey="label" tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} />
                     <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" tickLine={false} axisLine={false} />
                     <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }} />
-                    <Bar dataKey="rate" fill="#f97316" radius={[4, 4, 0, 0]} name="Events/km" />
+                    <Bar dataKey="rate" fill="#f97316" radius={[4, 4, 0, 0]} name={`Events/${distanceUnitLabel(units)}`} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -1181,7 +1188,7 @@ export default function Reports() {
                 <p className="mt-1 text-xs text-muted-foreground">
                   {reportInsights.eventRate == null
                     ? 'Event density unlocks once distance is available.'
-                    : `${reportInsights.eventRate.toFixed(1)} events per 100 km in this period.`}
+                    : `${formatPerDistanceRate(reportInsights.eventRate, units, { suffix: 'events' })} in this period.`}
                 </p>
               </div>
               {topRisk?.count > 0 && (
@@ -1200,7 +1207,7 @@ export default function Reports() {
                     <div className="flex justify-between text-xs mb-1">
                       <span className="text-muted-foreground">{label}</span>
                       <span className="font-semibold" style={{ color }}>
-                        {count}{rate != null ? ` (${rate.toFixed(1)}/100 km)` : ''}
+                        {count}{rate != null ? ` (${formatPerDistanceRate(rate, units)})` : ''}
                       </span>
                     </div>
                     <div className="h-2 bg-secondary rounded-full overflow-hidden">

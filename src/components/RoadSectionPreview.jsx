@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, Clock3, Compass, Map, Route } from 'lucide-reac
 import { isPublicPoint } from '@/lib/roadSectionIdentity';
 import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { formatDistanceMeters } from '@/lib/unitFormatting';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; OpenStreetMap contributors';
@@ -126,12 +127,12 @@ export default function RoadSectionPreview({
   legacyApproximate = false,
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const settings = useLocalSettings();
+  const units = settings.units || 'metric';
   if (!identity) return null;
   const hasSection = identity.sectionPoints?.length > 1;
   const distanceText = identity.distanceM > 0
-    ? identity.distanceM >= 1000
-      ? `${(identity.distanceM / 1000).toFixed(1)} km shown`
-      : `${identity.distanceM} m shown`
+    ? `${formatDistanceMeters(identity.distanceM, units)} shown`
     : null;
 
   return (

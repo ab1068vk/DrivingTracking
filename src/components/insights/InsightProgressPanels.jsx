@@ -173,19 +173,9 @@ export function DataConfidence({ quality }) {
       <PanelHeader
         eyebrow="Trust layer"
         title="Data confidence"
-        description={quality.privacySafeSnapshot
-          ? 'Stored trip evidence is loaded below. Protected time, day, baseline, and improvement trends remain disabled.'
-          : 'Coverage and exclusions are shown so a precise-looking number never hides weak evidence.'}
+        description="Coverage and exclusions are shown so a precise-looking number never hides weak evidence."
         icon={Database}
       />
-      {quality.privacySafeSnapshot && (
-        <div className="mt-4 rounded-2xl border border-primary/20 bg-primary/5 p-4 text-sm">
-          <div className="font-semibold">{quality.availableEligibleTrips} existing trips are available</div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            Scores, event rates, component evidence, and masked routes can be inspected without using privacy-zone-touched days for historical trend claims.
-          </div>
-        </div>
-      )}
       <div className="mt-5 space-y-4">
         {rows.map((row) => (
           <div key={row.label}>
@@ -202,14 +192,12 @@ export function DataConfidence({ quality }) {
       <div className="mt-5 grid grid-cols-2 gap-2">
         <MiniMetric label="Scoring evidence" value={String(quality.scoringConfidence || 'unknown').replace(/_/g, ' ')} />
         <MiniMetric label="Score version" value={quality.scoringVersion || 'mixed'} />
-        <MiniMetric label="Trend-protected trips" value={quality.privacyExcludedTrips} />
+        <MiniMetric label="Privacy-protected included" value={quality.privacyProtectedTrips || 0} />
         <MiniMetric label="Passenger exclusions" value={quality.passengerExcludedTrips} />
       </div>
       <div className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
-        {quality.privacySafeSnapshot
-          ? 'Analysis remains local. Stored summaries and privacy-masked routes are shown, while protected historical trend categories stay excluded.'
-          : 'Analysis remains local. Privacy-touched days and passenger trips are excluded from driver trends.'}
+        Analysis remains local. Privacy-protected trips use stored scores, events, and public route portions; masked coordinates remain unavailable.
       </div>
     </section>
   );

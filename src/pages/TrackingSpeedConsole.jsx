@@ -6,11 +6,12 @@ import {
   CheckCircle2,
   Gauge,
   MapPinned,
-  Mic,
   Pencil,
   ShieldCheck,
   SlidersHorizontal,
 } from 'lucide-react';
+import useLocalSettings from '@/hooks/useLocalSettings';
+import { formatSpeed } from '@/lib/tripEngine';
 import { tripService } from '@/api/trips';
 import { readSpeedKnowledgeData } from '@/lib/speedKnowledgeRepository';
 import {
@@ -25,12 +26,14 @@ const formatDate = (value) => {
     : 'source unavailable';
 };
 
-const formatLimit = (value) => {
+const formatLimit = (value, units = 'metric') => {
   const limit = Number(value);
-  return Number.isFinite(limit) && limit > 0 ? `${Math.round(limit)} km/h` : 'source unavailable';
+  return Number.isFinite(limit) && limit > 0 ? formatSpeed(limit, units) : 'source unavailable';
 };
 
 export default function TrackingSpeedConsole() {
+  const settings = useLocalSettings();
+  const units = settings.units || 'metric';
   const { data: trips = [], isLoading: tripsLoading } = useQuery({
     queryKey: ['tracking-speed-console-trips'],
     queryFn: () => tripService.list({ sort: '-start_time', limit: 100 }),
@@ -71,12 +74,11 @@ export default function TrackingSpeedConsole() {
       </header>
 
       <main className="min-h-0 flex-1 overflow-auto">
-        <section className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-6">
+        <section className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-5">
           <MetricStrip label="Saved rules" value={consoleData.counts.savedRuleCount} icon={Gauge} />
           <MetricStrip label="Posted sources" value={consoleData.counts.postedSourceCount} icon={ShieldCheck} />
           <MetricStrip label="Estimated sources" value={consoleData.counts.estimatedSourceCount} icon={AlertTriangle} />
           <MetricStrip label="Learned cells" value={consoleData.counts.learnedCellCount} icon={MapPinned} />
-          <MetricStrip label="Voice markers" value={consoleData.counts.pendingVoiceMarkerCount} icon={Mic} />
           <MetricStrip label="Review queue" value={consoleData.counts.pendingReviewCount} icon={SlidersHorizontal} />
         </section>
 
@@ -118,7 +120,7 @@ export default function TrackingSpeedConsole() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="font-semibold">{row.roadName}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">{row.sourceLabel} / {formatLimit(row.limitKmh)} / {row.confidenceLabel}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">{row.sourceLabel} / {formatLimit(row.limitKmh, units)} / {row.confidenceLabel}</div>
                     </div>
                     <span className="rounded-sm bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
                       {row.expiry?.label || row.recommendation?.action || 'Review'}
@@ -162,7 +164,7 @@ export default function TrackingSpeedConsole() {
                       <Td>{row.verifiedCoveragePercent}%</Td>
                       <Td>{row.estimatedCoveragePercent}%</Td>
                       <Td>{row.lowConfidencePointCount}</Td>
-                      <Td>{row.thresholdExceededPointCount} point{row.thresholdExceededPointCount === 1 ? '' : 's'} / max {Math.round(row.maxOverKmh || 0)} km/h</Td>
+                      <Td>{row.thresholdExceededPointCount} point{row.thresholdExceededPointCount === 1 ? '' : 's'} / max {formatSpeed(row.maxOverKmh || 0, units)} over</Td>
                       <Td>
                         <div className="flex flex-wrap gap-2">
                           <Link className="rounded-sm border border-border px-2 py-1 font-semibold hover:bg-secondary" to={row.reviewHref}>Review</Link>
@@ -181,7 +183,7 @@ export default function TrackingSpeedConsole() {
             <div className="space-y-3 text-sm">
               <Note icon={CheckCircle2} title="Posted signs override app estimates" text="User-confirmed posted signs and observed posted data are separated from estimates and learned rules." />
               <Note icon={AlertTriangle} title="Threshold exceeded" text={`Sample language: ${speedThresholdStatus({ speed_kmh: 68, speed_limit_kmh: 60 })}.`} />
-              <Note icon={SlidersHorizontal} title="Existing edit flow" text="Rule edits, voice marker review, imports, exports, and rescore actions remain in Saved Road Speeds." />
+              <Note icon={SlidersHorizontal} title="Existing edit flow" text="Rule edits, imports, exports, and rescore actions remain in Saved Road Speeds." />
               <Note icon={Gauge} title="Source confidence" text="Estimated and learned sources stay visible as source-confidence telemetry, not posted-sign evidence." />
             </div>
           </Panel>

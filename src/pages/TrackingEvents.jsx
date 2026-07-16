@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { limitedTripSummaryQueryOptions, tripDetailQueryOptions } from '@/api/trips';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { formatDistance, formatSpeed } from '@/lib/tripEngine';
 import {
   filterTrackingEventRows,
   formatTrackingEventTime,
@@ -21,12 +22,12 @@ import {
 
 const SUMMARY_LIMIT = 50;
 
-const formatTripLabel = (trip = {}) => {
+const formatTripLabel = (trip = {}, units = 'metric') => {
   const date = trip.start_time ? new Date(trip.start_time) : null;
   const when = date && Number.isFinite(date.getTime())
     ? new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date)
     : 'Trip time unavailable';
-  const distance = Number.isFinite(Number(trip.distance_km)) ? `${Number(trip.distance_km).toFixed(1)} km` : 'distance unavailable';
+  const distance = Number.isFinite(Number(trip.distance_km)) ? formatDistance(Number(trip.distance_km), units) : 'distance unavailable';
   return `${when} / ${distance}`;
 };
 
@@ -34,6 +35,7 @@ const compactValue = (value) => (value == null || value === '' ? 'source unavail
 
 export default function TrackingEvents() {
   const settings = useLocalSettings();
+  const units = settings.units || 'metric';
   const [selectedTripId, setSelectedTripId] = useState('');
   const [selectedRowId, setSelectedRowId] = useState('');
   const [filters, setFilters] = useState({
@@ -111,7 +113,7 @@ export default function TrackingEvents() {
             >
               {!summaries.length && <option value="">No completed trips</option>}
               {summaries.map((trip) => (
-                <option key={trip.id} value={trip.id}>{formatTripLabel(trip)}</option>
+                <option key={trip.id} value={trip.id}>{formatTripLabel(trip, units)}</option>
               ))}
             </select>
           </label>
@@ -257,7 +259,7 @@ export default function TrackingEvents() {
                       <>
                         <InspectorRow label="Point index" value={selectedRow.relatedRoutePoint.index} />
                         <InspectorRow label="Point time" value={formatTrackingEventTime(selectedRow.relatedRoutePoint.timestamp)} />
-                        <InspectorRow label="Point speed" value={selectedRow.relatedRoutePoint.speedKmh == null ? 'source unavailable' : `${Math.round(selectedRow.relatedRoutePoint.speedKmh)} km/h`} />
+                        <InspectorRow label="Point speed" value={selectedRow.relatedRoutePoint.speedKmh == null ? 'source unavailable' : formatSpeed(selectedRow.relatedRoutePoint.speedKmh, units)} />
                         <InspectorRow label="Delta" value={`${selectedRow.relatedRoutePoint.deltaSeconds}s`} />
                         <InspectorRow label="Coordinates" value={selectedRow.relatedRoutePoint.privacyStatus === 'privacy masked' ? 'privacy masked' : 'available on map surface'} />
                       </>

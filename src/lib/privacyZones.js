@@ -1267,14 +1267,26 @@ function redactCoordinateFieldsForPrivacy(value = {}, zone, extra = {}) {
  */
 export function sanitizeTripForPrivacyStorage(trip = {}, settings = localSettings.get()) {
   if (!trip || typeof trip !== 'object') return trip;
+  const {
+    voice_speed_limit_markers: retiredVoiceSpeedMarkers,
+    voice_speed_limit_marker_count: retiredVoiceSpeedMarkerCount,
+    voice_speed_limit_marker_reviewed_at: retiredVoiceSpeedMarkerReviewedAt,
+    ...retainedTrip
+  } = trip;
+  const retiredMarkerDataRemoved = (
+    retiredVoiceSpeedMarkers !== undefined ||
+    retiredVoiceSpeedMarkerCount !== undefined ||
+    retiredVoiceSpeedMarkerReviewedAt !== undefined
+  );
+  const storageTrip = retiredMarkerDataRemoved ? retainedTrip : trip;
   const zones = getPrivacyZones(settings);
-  if (!zones.length) return trip;
+  if (!zones.length) return storageTrip;
 
-  const sourceRoutePoints = Array.isArray(trip.route_points) ? trip.route_points : null;
+  const sourceRoutePoints = Array.isArray(storageTrip.route_points) ? storageTrip.route_points : null;
   const routePoints = sourceRoutePoints
     ? sourceRoutePoints.map((point) => redactRoutePointForPrivacyStorage(point, zones))
-    : trip.route_points;
-  const sourceDrivingEvents = Array.isArray(trip.driving_events) ? trip.driving_events : null;
+    : storageTrip.route_points;
+  const sourceDrivingEvents = Array.isArray(storageTrip.driving_events) ? storageTrip.driving_events : null;
   const drivingEvents = sourceDrivingEvents
     ? sourceDrivingEvents.map((event) => {
       const zone = isPointInPrivacyZone(event, zones, ZONE_EVENT_GUARD_M);
@@ -1282,25 +1294,25 @@ export function sanitizeTripForPrivacyStorage(trip = {}, settings = localSetting
         ? redactCoordinateFieldsForPrivacy(event, zone, { privacy_event_redacted: true })
         : event;
     })
-    : trip.driving_events;
+    : storageTrip.driving_events;
 
   const routePointsRawCount = sourceRoutePoints
-    ? Number(trip.route_points_raw_count) || sourceRoutePoints.length
+    ? Number(storageTrip.route_points_raw_count) || sourceRoutePoints.length
     : null;
   const routePointsMapCount = sourceRoutePoints
     ? routePoints.filter((point) => finiteNumber(point?.lat) != null && finiteNumber(point?.lng) != null).length
     : null;
   const routePointsChanged = Boolean(sourceRoutePoints) && (
     routePoints.some((point, index) => point !== sourceRoutePoints[index]) ||
-    trip.route_points_raw_count !== routePointsRawCount ||
-    trip.route_points_map_count !== routePointsMapCount
+    storageTrip.route_points_raw_count !== routePointsRawCount ||
+    storageTrip.route_points_map_count !== routePointsMapCount
   );
   const drivingEventsChanged = Boolean(sourceDrivingEvents) && drivingEvents.some((event, index) => event !== sourceDrivingEvents[index]);
 
-  if (!routePointsChanged && !drivingEventsChanged) return trip;
+  if (!routePointsChanged && !drivingEventsChanged) return storageTrip;
 
   return {
-    ...trip,
+    ...storageTrip,
     ...(Array.isArray(routePoints) ? {
       route_points: routePoints,
       route_points_raw_count: routePointsRawCount,
@@ -1317,7 +1329,6 @@ export function sanitizeTripForPrivacyStorage(trip = {}, settings = localSetting
 export async function sanitizeTripForPrivacyStorageAsync(trip = {}, settings = localSettings.get()) {
   if (!trip || typeof trip !== 'object') return trip;
   const zones = await getHydratedPrivacyZones(settings);
-  if (!zones.length) return trip;
   return sanitizeTripForPrivacyStorage(trip, { ...settings, privacy_zones: zones });
 }
 

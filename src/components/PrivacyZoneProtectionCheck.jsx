@@ -1,5 +1,7 @@
 // @ts-check
 import { CheckCircle2, EyeOff, MapPin, Route, Shield } from 'lucide-react';
+import useLocalSettings from '@/hooks/useLocalSettings';
+import { formatDistanceMeters } from '@/lib/unitFormatting';
 
 const validPoint = (point) => {
   const lat = Number(point?.lat);
@@ -23,13 +25,6 @@ const distanceBetweenM = (a, b) => {
 const routeLengthM = (points = []) => points.reduce((sum, point, index) => (
   index === 0 ? sum : sum + distanceBetweenM(points[index - 1], point)
 ), 0);
-
-const formatDistance = (meters) => {
-  const value = Number(meters);
-  if (!Number.isFinite(value) || value <= 0) return '0 m';
-  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)} km`;
-  return `${Math.round(value)} m`;
-};
 
 const durationLabel = (durationDays) => {
   if (durationDays === 'permanent' || durationDays == null || durationDays === '') return 'Permanent until deleted';
@@ -57,7 +52,7 @@ const schematicPoints = (points = []) => {
   }));
 };
 
-function ProtectionDiagram({ type, hasLocation, waypoints, distanceM }) {
+function ProtectionDiagram({ type, hasLocation, waypoints, distanceM, units = 'metric' }) {
   const routePoints = schematicPoints(waypoints);
   const routePath = svgPathForPoints(routePoints);
   const bufferWidth = Math.min(24, Math.max(10, distanceM / 14));
@@ -101,7 +96,7 @@ function ProtectionDiagram({ type, hasLocation, waypoints, distanceM }) {
               />
             ))}
             <text x="50" y="10" textAnchor="middle" className="fill-slate-700 text-[4px] font-bold dark:fill-slate-100">
-              {Math.round(distanceM)} m protected on each side
+              {formatDistanceMeters(distanceM, units)} protected on each side
             </text>
           </>
         ) : hasLocation ? (
@@ -111,7 +106,7 @@ function ProtectionDiagram({ type, hasLocation, waypoints, distanceM }) {
             <circle cx="50" cy="50" r="4" fill="#1d4ed8" stroke="white" strokeWidth="1.5" />
             <line x1="50" y1="50" x2="78" y2="50" stroke="#1d4ed8" strokeWidth="1.4" strokeDasharray="3 2" />
             <text x="64" y="47" textAnchor="middle" className="fill-slate-700 text-[4px] font-bold dark:fill-slate-100">
-              {Math.round(distanceM)} m
+              {formatDistanceMeters(distanceM, units)}
             </text>
             <text x="50" y="59" textAnchor="middle" className="fill-slate-700 text-[3.5px] font-semibold dark:fill-slate-100">
               center
@@ -145,6 +140,8 @@ export default function PrivacyZoneProtectionCheck({
   durationDays = 'permanent',
 }) {
   const normalizedLocation = validPoint(location);
+  const settings = useLocalSettings();
+  const units = settings.units || 'metric';
   const normalizedWaypoints = Array.isArray(waypoints) ? waypoints.map(validPoint).filter(Boolean) : [];
   const safeDistanceM = Math.round(Math.max(1, Number(distanceM) || 150));
   const isCorridor = type === 'corridor';
@@ -170,17 +167,18 @@ export default function PrivacyZoneProtectionCheck({
         hasLocation={Boolean(normalizedLocation)}
         waypoints={normalizedWaypoints}
         distanceM={safeDistanceM}
+        units={units}
       />
 
       <div className="grid gap-2 sm:grid-cols-2">
         <EvidenceRow label={isCorridor ? 'Corridor buffer' : 'Circle radius'}>
           {isCorridor
-            ? `${formatDistance(safeDistanceM)} protected on each side, about ${formatDistance(safeDistanceM * 2)} total width with rounded ends.`
-            : `${formatDistance(safeDistanceM)} protected in every direction from the center point.`}
+            ? `${formatDistanceMeters(safeDistanceM, units)} protected on each side, about ${formatDistanceMeters(safeDistanceM * 2, units)} total width with rounded ends.`
+            : `${formatDistanceMeters(safeDistanceM, units)} protected in every direction from the center point.`}
         </EvidenceRow>
         <EvidenceRow label={isCorridor ? 'Local route evidence' : 'Local point evidence'}>
           {isCorridor
-            ? `${normalizedWaypoints.length} local route point${normalizedWaypoints.length === 1 ? '' : 's'} checked${routeMeters > 0 ? ` across about ${formatDistance(routeMeters)}` : ''}. Exact corridor waypoints are discarded after save.`
+            ? `${normalizedWaypoints.length} local route point${normalizedWaypoints.length === 1 ? '' : 's'} checked${routeMeters > 0 ? ` across about ${formatDistanceMeters(routeMeters, units)}` : ''}. Exact corridor waypoints are discarded after save.`
             : geometryReady ? 'A local GPS point is available. The exact coordinate is not shown in this check.' : 'No local GPS point is available yet.'}
         </EvidenceRow>
         <EvidenceRow label="Saved data">

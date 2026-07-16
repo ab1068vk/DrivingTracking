@@ -8,4 +8,29 @@
     <string name="capacitor_background_geolocation_notification_channel_name">Trip Tracking</string>
     <string name="capacitor_background_geolocation_notification_icon">drawable/ic_stat_drivesense</string>
     <string name="capacitor_background_geolocation_notification_color">#0F766E</string>
+    <string name="where_i_parked_widget_title">Where I parked</string>
+    <string name="where_i_parked_widget_description">Shows when your last privacy-safe parking location was saved and opens directions to it.</string>
+    <string name="where_i_parked_saved_title">Parked %1$s</string>
+    <string name="where_i_parked_saved_detail">Location stays hidden until you choose Directions.</string>
+    <string name="where_i_parked_empty_title">No saved parking spot</string>
+    <string name="where_i_parked_empty_detail">A spot appears after Road Sage confirms the end of a parked trip.</string>
+    <string name="where_i_parked_driving_title">Trip recording</string>
+    <string name="where_i_parked_driving_detail">Your parking spot will update after this trip ends.</string>
+    <string name="where_i_parked_open_app">Open app</string>
+    <string name="where_i_parked_directions">Directions</string>
+    <string name="where_i_parked_refresh">Refresh parked location</string>
+    <string name="where_i_parked_recently">recently</string>
+    <string name="where_i_parked_just_now">just now</string>
+    <plurals name="where_i_parked_minutes_ago">
+        <item quantity="one">%d minute ago</item>
+        <item quantity="other">%d minutes ago</item>
+    </plurals>
+    <plurals name="where_i_parked_hours_ago">
+        <item quantity="one">%d hour ago</item>
+        <item quantity="other">%d hours ago</item>
+    </plurals>
+    <plurals name="where_i_parked_days_ago">
+        <item quantity="one">%d day ago</item>
+        <item quantity="other">%d days ago</item>
+    </plurals>
 </resources>

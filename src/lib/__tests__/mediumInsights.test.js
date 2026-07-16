@@ -5,6 +5,7 @@ import {
   buildMaintenanceReminders,
   buildRiskHotspots,
   buildRouteComparisons,
+  buildTripCalendarMonth,
   buildWeeklyDriverSummary,
   COMMUTE_MATCH_RADIUS_M,
   routeKeyForTrip,
@@ -61,6 +62,23 @@ describe('mediumInsights', () => {
     expect(routeKeyForTrip({ route_points: [{ lat: 'bad', lng: -79 }, point(43.7, -79.4)] })).toBeNull();
   });
 
+  it('builds protected route keys only from retained outside-zone points', () => {
+    const publicStart = point(43.653, -79.38);
+    const publicEnd = point(43.7, -79.42);
+    const expected = routeKeyForTrip({ route_points: [publicStart, publicEnd] });
+    const protectedKey = routeKeyForTrip({
+      privacy_zone_touched: true,
+      route_points: [
+        { lat: null, lng: null, masked_for_privacy: true, privacy_gap: true, privacy_zone_id: 'home' },
+        publicStart,
+        publicEnd,
+        { lat: 43.71, lng: -79.43, privacy_boundary: true, privacy_zone_id: 'work' },
+      ],
+    });
+
+    expect(protectedKey).toBe(expected);
+  });
+
   it('does not claim weekly improvement when there is no previous week baseline', () => {
     const summary = buildWeeklyDriverSummary([
       trip({ start_time: new Date().toISOString(), braking_efficiency_score: 90 }),
@@ -90,6 +108,24 @@ describe('mediumInsights', () => {
     ]);
 
     expect(summary.biggest_improvement).toBe('more trips needed');
+  });
+
+  it('uses the available score from a privacy-masked trip in the local calendar', () => {
+    const calendar = buildTripCalendarMonth([
+      trip({
+        id: 'protected-calendar-trip',
+        start_time: '2026-05-12T08:30:00.000Z',
+        privacy_zone_touched: true,
+      }),
+    ], new Date('2026-05-15T12:00:00.000Z'));
+    const day = calendar.days.find((row) => row.trip_count === 1);
+
+    expect(day).toMatchObject({
+      trip_count: 1,
+      privacy_protected: false,
+      avg_score: 84,
+    });
+    expect(calendar.drive_days).toBe(1);
   });
 
   it('builds a ranked driver brief from trend, event density, and route evidence', () => {

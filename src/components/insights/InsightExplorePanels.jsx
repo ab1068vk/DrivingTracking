@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { ArrowRight, MapPinned, Navigation } from 'lucide-react';
 import { formatDistance } from '@/lib/tripEngine';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { formatPerDistanceRate } from '@/lib/unitFormatting';
 import { Notice, PanelHeader } from '@/components/insights/InsightPrimitives';
 
 const hotspotColors = {
@@ -196,7 +197,7 @@ export function ContextExplorer({ analysis, type, onTypeChange, units, onOpenTri
                 />
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
-                {row.detail}{row.eventRate != null ? ` / ${row.eventRate}/100 km` : ''}
+                {row.detail}{row.eventRate != null ? ` · ${formatPerDistanceRate(row.eventRate, units)}` : ''}
               </div>
             </button>
           ))}

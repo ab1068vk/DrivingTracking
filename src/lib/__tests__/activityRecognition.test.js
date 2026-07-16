@@ -21,6 +21,13 @@ describe('activityRecognition auto-stop logic', () => {
         duration_seconds: 615,
         speed_kmh: 47,
         route_point_count: 92,
+        gps_fix_ready: true,
+        gps_accuracy_m: 8,
+        avg_speed_kmh: 36,
+        max_speed_kmh: 72,
+        route_preview: [{ lat: 43.65, lng: -79.38, speed_kmh: 47 }],
+        live_events: [{ type: 'harsh_brake', title: 'Braking threshold exceeded' }],
+        live_event_counts: { harsh_brake: 1 },
       },
     })).toMatchObject({
       id: 'native-live',
@@ -30,7 +37,16 @@ describe('activityRecognition auto-stop logic', () => {
       duration_seconds: 615,
       speed_kmh: 47,
       route_point_count: 92,
+      gps_fix_ready: true,
+      gps_accuracy_m: 8,
+      avg_speed_kmh: 36,
+      max_speed_kmh: 72,
+      live_event_counts: { harsh_brake: 1 },
     });
+    expect(normalizeNativeActiveTrip({
+      recordingActive: true,
+      activeTrip: { route_preview: [{ lat: 'not-a-coordinate', lng: -79.38 }] },
+    })?.route_preview[0]).toMatchObject({ lat: null, lng: -79.38, masked_for_privacy: true });
   });
 
   it('does not report stale native status as an active recording', () => {

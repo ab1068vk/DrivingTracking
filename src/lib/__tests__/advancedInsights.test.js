@@ -98,7 +98,7 @@ describe('advanced insights', () => {
     expect(insights.dataQuality.passengerExcludedTrips).toBe(1);
   });
 
-  it('loads existing privacy-touched trips as a protected evidence snapshot', () => {
+  it('includes privacy-masked trips in local trend evidence', () => {
     const trips = [
       trip({
         id: 'private-evidence-1',
@@ -123,24 +123,23 @@ describe('advanced insights', () => {
     });
 
     expect(insights).toMatchObject({
-      privacySafeSnapshot: true,
+      privacySafeSnapshot: false,
       comparisonAvailable: false,
       currentScore: 85,
       currentEventRate: 5,
     });
     expect(insights.currentTrips).toHaveLength(2);
     expect(insights.previousTrips).toHaveLength(0);
-    expect(insights.primaryFinding.headline).toContain('Loaded 2 stored trips');
     expect(insights.scoreMovement.find((row) => row.id === 'safety')).toMatchObject({
       current: 83,
       previous: null,
     });
-    expect(insights.contexts.every((row) => ['road', 'vehicle'].includes(row.type))).toBe(true);
     expect(insights.dataQuality).toMatchObject({
-      privacyExcludedTrips: 2,
+      privacyExcludedTrips: 0,
+      privacyProtectedTrips: 2,
       availableEligibleTrips: 2,
-      trendEligibleTrips: 0,
-      privacySafeSnapshot: true,
+      trendEligibleTrips: 2,
+      privacySafeSnapshot: false,
       scoredTrips: 2,
     });
   });
@@ -175,7 +174,7 @@ describe('advanced insights', () => {
     });
   });
 
-  it('labels latest-trip fallback when the selected period has no drives', () => {
+  it('keeps the selected period strict when it has no drives', () => {
     const insights = buildAdvancedInsights([
       trip({ id: 'older-1', start_time: '2026-01-10T08:00:00.000Z' }),
       trip({ id: 'older-2', start_time: '2026-01-11T08:00:00.000Z' }),
@@ -184,7 +183,22 @@ describe('advanced insights', () => {
       periodDays: 7,
     });
 
-    expect(insights.periodFallback).toBe(true);
-    expect(insights.currentTrips.map((row) => row.id)).toEqual(['older-2', 'older-1']);
+    expect(insights.periodEmpty).toBe(true);
+    expect(insights.periodFallback).toBe(false);
+    expect(insights.currentTrips).toEqual([]);
+    expect(insights.primaryFinding.headline).toBe('No eligible trips in the last 7 days');
+  });
+
+  it('changes the selected trips across the 7, 30, and 90 day filters', () => {
+    const now = new Date('2026-07-13T12:00:00.000Z');
+    const trips = [
+      trip({ id: 'five-days', start_time: '2026-07-08T12:00:00.000Z' }),
+      trip({ id: 'twenty-days', start_time: '2026-06-23T12:00:00.000Z' }),
+      trip({ id: 'sixty-days', start_time: '2026-05-14T12:00:00.000Z' }),
+    ];
+
+    expect(buildAdvancedInsights(trips, {}, { now, periodDays: 7 }).currentTrips).toHaveLength(1);
+    expect(buildAdvancedInsights(trips, {}, { now, periodDays: 30 }).currentTrips).toHaveLength(2);
+    expect(buildAdvancedInsights(trips, {}, { now, periodDays: 90 }).currentTrips).toHaveLength(3);
   });
 });

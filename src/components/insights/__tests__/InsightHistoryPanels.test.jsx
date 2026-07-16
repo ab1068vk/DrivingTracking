@@ -29,4 +29,21 @@ describe('InsightHistoryPanels', () => {
     expect(html).toContain('Weekly goals');
     expect(html).toContain('Road type breakdown');
   });
+
+  it('opens on the latest trip month when the current month has no trips', () => {
+    const latestTripDate = new Date();
+    latestTripDate.setMonth(latestTripDate.getMonth() - 2);
+    const html = renderToStaticMarkup(
+      <InsightHistoryPanels trips={[{
+        id: 'older-history-trip',
+        status: 'completed',
+        start_time: latestTripDate.toISOString(),
+        distance_km: 4,
+        score_overall: 82,
+      }]} settings={{}} units='metric' onOpenTrip={() => {}} />
+    );
+
+    expect(html).toContain('1 trip');
+    expect(html).toContain(latestTripDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }));
+  });
 });

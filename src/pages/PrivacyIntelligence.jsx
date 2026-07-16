@@ -32,10 +32,6 @@ import { authenticateDevice } from '@/lib/biometricGate';
 import { loadPrivacyIntelligence } from '@/lib/privacyIntelligence';
 import { clearTransmissionLog } from '@/lib/transmissionLog';
 import { exportAuditCheckpoint, verifyCheckpoint } from '@/lib/hashChainLog';
-import {
-  downloadPrivacyReport as savePrivacyReportDownload,
-  PRIVACY_REPORT_PASSWORD_MIN_LENGTH,
-} from '@/lib/privacyReport';
 import { dismissPrivacyZoneSuggestion } from '@/lib/privacyZoneSuggestions';
 import { purgeExistingGpsForHeightenedPrivacy } from '@/lib/privacyZones';
 import { logSystemFailure } from '@/lib/systemLog';
@@ -429,43 +425,9 @@ export function OverviewTab({ data, onOpenTab, onOpenSettings }) {
   const postureRegressionFindings = data?.protectionSummary?.postureRegressionFindings || [];
   const compoundRiskFindings = score.compoundRiskFindings || [];
   const [showThreatModel, setShowThreatModel] = useState(false);
-  const [reportError, setReportError] = useState('');
-  const [reportSuccess, setReportSuccess] = useState('');
-  const [reportPassword, setReportPassword] = useState('');
-  const [reportPasswordConfirm, setReportPasswordConfirm] = useState('');
-  const [exportingReport, setExportingReport] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(() => (
     globalThis.localStorage?.getItem(V2_BANNER_KEY) === 'true'
   ));
-  const downloadPrivacyReport = useCallback(async () => {
-    if (reportPassword.length < PRIVACY_REPORT_PASSWORD_MIN_LENGTH) {
-      setReportError(`Choose a report password with at least ${PRIVACY_REPORT_PASSWORD_MIN_LENGTH} characters.`);
-      return;
-    }
-    if (reportPassword !== reportPasswordConfirm) {
-      setReportError('Report passwords do not match.');
-      return;
-    }
-    setExportingReport(true);
-    setReportError('');
-    setReportSuccess('');
-    try {
-      const result = await savePrivacyReportDownload(data, reportPassword);
-      setReportPassword('');
-      setReportPasswordConfirm('');
-      setReportSuccess(result?.native
-        ? `Encrypted report saved to Downloads as ${result.filename}.`
-        : `Encrypted report downloaded as ${result.filename}.`);
-    } catch (reportExportError) {
-      logSystemFailure('privacy_report_export_failed', reportExportError, {
-        has_data: Boolean(data),
-        encrypted: true,
-      });
-      setReportError(reportExportError?.message || 'Privacy Report could not be exported.');
-    } finally {
-      setExportingReport(false);
-    }
-  }, [data, reportPassword, reportPasswordConfirm]);
   return (
     <div className="min-w-0 space-y-4 overflow-hidden">
       {!bannerDismissed && (
@@ -585,50 +547,6 @@ export function OverviewTab({ data, onOpenTab, onOpenSettings }) {
             <p key={finding.id} className="mt-2 break-words text-xs font-semibold opacity-90">{finding.detail}</p>
           ))}
           <p className="mt-2 break-words text-xs opacity-75">Local evidence only. Unknown checks are not evidence of safety.</p>
-          <form
-            className="mt-4 space-y-2 rounded-2xl bg-background/60 p-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              downloadPrivacyReport();
-            }}
-          >
-            <div>
-              <div className="text-xs font-semibold">Password-protected report</div>
-              <p className="mt-1 text-[11px] opacity-75">Exports an encrypted summary with a local integrity signature. Raw coordinates, addresses, tokens, and privacy-zone geometry are excluded.</p>
-            </div>
-            <label className="block text-[11px] font-semibold">
-              Report password
-              <input
-                type="password"
-                value={reportPassword}
-                onChange={(event) => setReportPassword(event.target.value)}
-                autoComplete="new-password"
-                className="mt-1 h-9 w-full rounded-xl border border-input bg-background px-3 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
-                minLength={PRIVACY_REPORT_PASSWORD_MIN_LENGTH}
-              />
-            </label>
-            <label className="block text-[11px] font-semibold">
-              Confirm password
-              <input
-                type="password"
-                value={reportPasswordConfirm}
-                onChange={(event) => setReportPasswordConfirm(event.target.value)}
-                autoComplete="new-password"
-                className="mt-1 h-9 w-full rounded-xl border border-input bg-background px-3 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
-                minLength={PRIVACY_REPORT_PASSWORD_MIN_LENGTH}
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={exportingReport}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50"
-            >
-              <Download className="h-4 w-4" />
-              {exportingReport ? 'Encrypting report...' : 'Export encrypted report'}
-            </button>
-          </form>
-          {reportError && <p className="mt-2 text-xs font-medium text-red-700 dark:text-red-200">{reportError}</p>}
-          {reportSuccess && <p className="mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-200">{reportSuccess}</p>}
         </section>
 
         <section className="grid min-w-0 gap-3 sm:grid-cols-2">

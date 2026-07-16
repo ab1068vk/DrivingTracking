@@ -8,7 +8,6 @@ const rootDir = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))
 const checkedFiles = [
   'src/pages/PrivacyIntelligence.jsx',
   'src/lib/privacyIntelligence.js',
-  'src/lib/privacyReport.js',
   'src/lib/dataBackup.js',
   'src/lib/exportCommitment.js',
   'src/lib/exportIntegrity.js',

@@ -7,6 +7,7 @@ import {
   nearestTelemetrySample,
   summarizeTripTelemetry,
 } from '@/lib/trackingTelemetryAnalytics';
+import { convertSpeedKmh, speedUnitLabel } from '@/lib/unitFormatting';
 
 const timeLabel = (seconds) => {
   const value = Math.max(0, Math.round(Number(seconds) || 0));
@@ -15,16 +16,26 @@ const timeLabel = (seconds) => {
 const valueLabel = (value, suffix, digits = 1) => Number.isFinite(Number(value))
   ? `${Number(value).toFixed(digits)} ${suffix}` : 'Unavailable';
 
-export default function TrackingTelemetryCharts({ trip, comparisonTrip = null, selectedTimestamp = null, onSelectTimestamp }) {
+export default function TrackingTelemetryCharts({ trip, comparisonTrip = null, selectedTimestamp = null, onSelectTimestamp, units = 'metric' }) {
   const [showLimit, setShowLimit] = useState(true);
   const [showJerk, setShowJerk] = useState(true);
   const [showIntervals, setShowIntervals] = useState(true);
-  const series = useMemo(() => buildTripTelemetrySeries(trip), [trip]);
-  const summary = useMemo(() => summarizeTripTelemetry(trip, series), [series, trip]);
+  const rawSeries = useMemo(() => buildTripTelemetrySeries(trip), [trip]);
+  const series = useMemo(() => rawSeries.map((row) => ({
+    ...row,
+    speedKmh: convertSpeedKmh(row.speedKmh, units),
+    speedLimitKmh: convertSpeedKmh(row.speedLimitKmh, units),
+  })), [rawSeries, units]);
+  const summary = useMemo(() => summarizeTripTelemetry(trip, rawSeries), [rawSeries, trip]);
   const comparison = useMemo(
-    () => comparisonTrip ? buildNormalizedComparison(trip, comparisonTrip) : [],
-    [comparisonTrip, trip]
+    () => (comparisonTrip ? buildNormalizedComparison(trip, comparisonTrip) : []).map((row) => ({
+      ...row,
+      primarySpeedKmh: convertSpeedKmh(row.primarySpeedKmh, units),
+      comparisonSpeedKmh: convertSpeedKmh(row.comparisonSpeedKmh, units),
+    })),
+    [comparisonTrip, trip, units]
   );
+  const speedUnit = speedUnitLabel(units);
   const selected = useMemo(
     () => nearestTelemetrySample(series, selectedTimestamp),
     [selectedTimestamp, series]
@@ -66,8 +77,8 @@ export default function TrackingTelemetryCharts({ trip, comparisonTrip = null, s
 
     {selected && <div className="grid gap-2 border-b border-border bg-blue-500/5 px-3 py-2 text-xs sm:grid-cols-2 lg:grid-cols-5">
       <Cursor label="Cursor" value={timeLabel(selected.elapsedSeconds)} />
-      <Cursor label="Speed" value={valueLabel(selected.speedKmh, 'km/h', 0)} />
-      <Cursor label="Limit" value={valueLabel(selected.speedLimitKmh, 'km/h', 0)} />
+      <Cursor label="Speed" value={valueLabel(selected.speedKmh, speedUnit, 0)} />
+      <Cursor label="Limit" value={valueLabel(selected.speedLimitKmh, speedUnit, 0)} />
       <Cursor label="Acceleration" value={valueLabel(selected.accelerationMs2, 'm/s²')} />
       <Cursor label="Evidence" value={selected.observationLabel || selected.accelerationSource || 'route sample'} />
     </div>}
@@ -78,8 +89,8 @@ export default function TrackingTelemetryCharts({ trip, comparisonTrip = null, s
           <ComposedChart data={series} onClick={selectChartPoint} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
             <XAxis dataKey="elapsedSeconds" tickFormatter={timeLabel} minTickGap={28} />
-            <YAxis unit=" km/h" width={62} />
-            <Tooltip labelFormatter={timeLabel} formatter={(value, name) => [valueLabel(value, 'km/h', 0), name]} />
+            <YAxis unit={` ${speedUnit}`} width={62} />
+            <Tooltip labelFormatter={timeLabel} formatter={(value, name) => [valueLabel(value, speedUnit, 0), name]} />
             <Area type="monotone" dataKey="speedKmh" name="Vehicle speed" stroke="#2563eb" fill="#2563eb" fillOpacity={0.12} connectNulls={false} />
             {showLimit && <Line type="stepAfter" dataKey="speedLimitKmh" name="Recorded limit" stroke="#f97316" strokeWidth={2} dot={false} connectNulls={false} />}
             {selected && <ReferenceLine x={selected.elapsedSeconds} stroke="#0f172a" strokeDasharray="4 3" />}

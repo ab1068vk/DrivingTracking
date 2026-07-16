@@ -19,6 +19,7 @@ import {
 import MapErrorBoundary from '@/components/MapErrorBoundary';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import usePrivacyZonesRevision from '@/hooks/usePrivacyZonesRevision';
+import { convertSpeedKmh, speedUnitLabel } from '@/lib/unitFormatting';
 import usePlaybackScreenAwake from '@/hooks/usePlaybackScreenAwake';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -57,11 +58,11 @@ const EVENT_LABELS = {
   possible_crash: '!!',
 };
 
-const speedBandRangeLabel = (band, index) => {
+const speedBandRangeLabel = (band, index, units = 'metric') => {
   const next = SPEED_BANDS[index + 1];
-  if (!next) return `${band.label} ${band.min}+ km/h`;
-  if (band.min === 0) return `${band.label} <${next.min} km/h`;
-  return `${band.label} ${band.min}-${next.min - 1} km/h`;
+  if (!next) return `${band.label} ${Math.round(convertSpeedKmh(band.min, units))}+ ${speedUnitLabel(units)}`;
+  if (band.min === 0) return `${band.label} <${Math.round(convertSpeedKmh(next.min, units))} ${speedUnitLabel(units)}`;
+  return `${band.label} ${Math.round(convertSpeedKmh(band.min, units))}-${Math.round(convertSpeedKmh(next.min - 1, units))} ${speedUnitLabel(units)}`;
 };
 
 const privacyZonePopupHtml = (zone) => (
@@ -75,15 +76,15 @@ const formatEventTime = (value) => {
     : null;
 };
 
-const eventPopupHtml = (event) => {
+const eventPopupHtml = (event, units = 'metric') => {
   const limit = event.speed_limit_kmh ?? event.inferred_zone_kmh ?? event.actualLimitKmh;
   const rows = [
     ['Severity', titleCase(event.severity || event.confidence_level || 'medium')],
     ['Time', formatEventTime(event.timestamp || event.startTime)],
-    ['Speed', Number.isFinite(Number(event.speed_kmh)) ? `${Math.round(Number(event.speed_kmh))} km/h` : null],
-    ['Limit', Number.isFinite(Number(limit)) ? `${Math.round(Number(limit))} km/h` : null],
+    ['Speed', Number.isFinite(Number(event.speed_kmh)) ? formatSpeed(Number(event.speed_kmh), units) : null],
+    ['Limit', Number.isFinite(Number(limit)) ? formatSpeed(Number(limit), units) : null],
     ['Over by', Number.isFinite(Number(event.speed_kmh)) && Number.isFinite(Number(limit))
-      ? `${Math.max(0, Math.round(Number(event.speed_kmh) - Number(limit)))} km/h`
+      ? formatSpeed(Math.max(0, Number(event.speed_kmh) - Number(limit)), units)
       : null],
     ['Duration', Number.isFinite(Number(event.durationS ?? event.duration_seconds)) ? `${Math.round(Number(event.durationS ?? event.duration_seconds))}s` : null],
     ['Value', Number.isFinite(Number(event.value)) ? Number(event.value).toFixed(event.type === 'sharp_turn' ? 2 : 1) : null],
@@ -377,6 +378,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
 
   const privacySettings = useLocalSettings();
   const heightenedPrivacy = privacySettings?.[HEIGHTENED_PRIVACY_MODE_KEY] === true;
+  const units = privacySettings.units || 'metric';
   const privacyZonesRevision = usePrivacyZonesRevision();
   settingsRef.current = privacySettings;
   const privacyZonesKey = JSON.stringify(privacySettings.privacy_zones || []);
@@ -543,6 +545,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
                 label: segment.band.label,
                 speedKmh: segment.speedKmh,
                 speedLimitKmh: segment.speedLimitKmh,
+                units,
               }))
               .on('click', () => setSelectedSegmentId(segment.id))
               .addTo(map);
@@ -574,7 +577,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
                   lineJoin: 'round',
                 }
               )
-                .bindPopup(`Comparison: ${Math.round(segment.speedKmh)} km/h`)
+                .bindPopup(`Comparison: ${formatSpeed(segment.speedKmh, units)}`)
                 .addTo(map);
             });
             secondaryPoints.forEach((point) => {
@@ -628,7 +631,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
               className: '', iconSize: [32, 32], iconAnchor: [16, 16],
             });
             window.L.marker([eventPoint.lat, eventPoint.lng], { icon })
-              .bindPopup(eventPopupHtml(evt))
+              .bindPopup(eventPopupHtml(evt, units))
               .addTo(map);
           });
 
@@ -909,7 +912,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
             <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-normal text-muted-foreground">
               <Gauge className="h-3 w-3" /> Speed
             </div>
-            <div className="font-grotesk text-lg font-bold">{Math.round(currentPt?.speed_kmh || 0)} km/h</div>
+            <div className="font-grotesk text-lg font-bold">{formatSpeed(currentPt?.speed_kmh || 0, units)}</div>
           </div>
           <div className="rounded-xl border border-border bg-card px-3 py-2 shadow">
             <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-normal text-muted-foreground">
@@ -953,7 +956,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
         {SPEED_BANDS.map((band, index) => (
           <span key={band.id} className="flex items-center gap-1 whitespace-nowrap">
             <span className="h-2 w-2 rounded-full" style={{ backgroundColor: band.color }} />
-            {speedBandRangeLabel(band, index)}
+            {speedBandRangeLabel(band, index, units)}
           </span>
         ))}
       </div>
@@ -1054,7 +1057,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
 
         <div className="ml-auto text-xs text-muted-foreground">
           {currentPt && (
-            <span>{Math.round(currentPt.speed_kmh || 0)} km/h - sample {currentIdx + 1}/{totalPoints}</span>
+            <span>{formatSpeed(currentPt.speed_kmh || 0, units)} - sample {currentIdx + 1}/{totalPoints}</span>
           )}
         </div>
       </div>
@@ -1070,7 +1073,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
         </div>
         <div>
           <div className="text-muted-foreground">Max speed</div>
-          <div className="font-semibold">{Math.round(displayMaxSpeedKmh)} km/h</div>
+          <div className="font-semibold">{formatSpeed(displayMaxSpeedKmh, units)}</div>
         </div>
         <div>
           <div className="text-muted-foreground">Route data</div>
@@ -1093,11 +1096,11 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <div>
               <div className="text-muted-foreground">Speed</div>
-              <div className="font-semibold">{Math.round(selectedSegment.speedKmh)} km/h</div>
+              <div className="font-semibold">{formatSpeed(selectedSegment.speedKmh, units)}</div>
             </div>
             <div>
               <div className="text-muted-foreground">Limit</div>
-              <div className="font-semibold">{selectedSegment.speedLimitKmh ? `${Math.round(selectedSegment.speedLimitKmh)} km/h` : '-'}</div>
+              <div className="font-semibold">{selectedSegment.speedLimitKmh ? formatSpeed(selectedSegment.speedLimitKmh, units) : '-'}</div>
             </div>
             <div>
               <div className="text-muted-foreground">Distance</div>
@@ -1111,7 +1114,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
           {(selectedSegment.roadName || selectedSegment.overLimitKmh > 0) && (
             <div className="mt-2 rounded-xl bg-secondary/60 px-3 py-2 text-muted-foreground">
               {selectedSegment.roadName || 'Matched segment'}
-              {selectedSegment.overLimitKmh > 0 ? ` - ${Math.round(selectedSegment.overLimitKmh)} km/h over` : ''}
+              {selectedSegment.overLimitKmh > 0 ? ` - ${formatSpeed(selectedSegment.overLimitKmh, units)} over` : ''}
             </div>
           )}
         </div>
@@ -1144,12 +1147,12 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
                 : row.higherWins
                   ? row.current >= row.other
                   : row.current <= row.other;
-              const otherText = row.speed ? formatSpeed(row.other) : row.other;
+              const otherText = row.speed ? formatSpeed(row.other, units) : row.other;
               return (
                 <div key={row.label} className="grid grid-cols-3 items-center gap-2 text-xs">
                   <span className="text-muted-foreground">{row.label}</span>
                   <span className={`font-semibold ${currentWins === true ? 'text-emerald-600' : currentWins === false ? 'text-red-600' : ''}`}>
-                    {row.speed ? formatSpeed(row.current) : row.current}
+                    {row.speed ? formatSpeed(row.current, units) : row.current}
                   </span>
                   <span className={currentWins === false ? 'text-emerald-600 font-semibold' : currentWins === true ? 'text-red-600 font-semibold' : 'font-semibold'}>
                     {otherText} {currentWins === true ? '▼' : currentWins === false ? '▲' : ''}

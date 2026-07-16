@@ -3,9 +3,10 @@ import {
   ShieldAlert, Sparkles, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { formatPerDistanceRate } from '@/lib/unitFormatting';
 import { MiniMetric, Notice, PanelHeader, signed } from '@/components/insights/InsightPrimitives';
 
-export function MatchedComparisonPanel({ matched, onOpenTrip }) {
+export function MatchedComparisonPanel({ matched, onOpenTrip, units = 'metric' }) {
   const tone = matched.scoreDelta > 0
     ? 'text-emerald-600 dark:text-emerald-400'
     : matched.scoreDelta < 0 ? 'text-orange-600 dark:text-orange-400' : 'text-foreground';
@@ -38,7 +39,7 @@ export function MatchedComparisonPanel({ matched, onOpenTrip }) {
               </div>
               <div className="text-right">
                 <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Event density</div>
-                <div className="mt-1 text-lg font-bold">{signed(matched.eventRateDelta, '/100 km')}</div>
+                <div className="mt-1 text-lg font-bold">{formatPerDistanceRate(matched.eventRateDelta, units, { digits: 1 })}</div>
               </div>
             </div>
           </div>

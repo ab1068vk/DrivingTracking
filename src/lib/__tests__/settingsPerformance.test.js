@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const settingsSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
+const settingsSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const hookSource = readFileSync(new URL('../../hooks/useLocalSettings.jsx', import.meta.url), 'utf8');
 const dialogSource = readFileSync(new URL('../../components/ui/dialog.jsx', import.meta.url), 'utf8');
 const alertDialogSource = readFileSync(new URL('../../components/ui/alert-dialog.jsx', import.meta.url), 'utf8');

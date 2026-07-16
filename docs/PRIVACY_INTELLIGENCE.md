@@ -1735,7 +1735,6 @@ Important UI copy and behavior:
 - V2 banner: "Privacy Intelligence now checks protection status from local evidence."
 - Score card label: "Local evidence posture."
 - Score disclaimer: "Local evidence only. Unknown checks are not evidence of safety."
-- Overview can export a Privacy Report JSON with a local integrity signature containing the current score, summaries, five user-facing recommendations, audit status, and an embedded checkpoint.
 - Action plan claim can explicitly say "Treat this as local transparency, not a security assurance."
 - Audit tab says local verification can reveal local history changes, but it cannot stop local rewrites.
 - Zones tab explains that counts come from redacted records saved with each trip and refreshing the page does not increment them.
@@ -1902,29 +1901,6 @@ Sensitivity behavior:
 - `high`: purges matching saved raw GPS when saved and blocks the entire OSRM request when any route segment touches the zone, regardless of general OSRM consent.
 
 The editor intentionally has no address-search or remote-geocoder path. It accepts current location, parked location, local frequent-stop suggestions, or locally stored trip geometry. The authenticated preview uses OpenStreetMap street tiles with an in-dialog provider disclosure, so the tile provider can receive the viewed tile area and normal network metadata while labels and typed addresses remain local.
-
-## Privacy Report Export
-
-`src/lib/privacyReport.js` builds the shareable report payload and wraps it with the existing `signExport()` local integrity envelope. It does not introduce another signing format.
-
-The payload contains:
-
-```txt
-format
-version
-header
-generatedAt
-score, including capNote when the web ceiling applies
-protectionSummary
-recommendations[0..4], including riskIfMissing and userAction
-zoneSummary
-drivingReadout highlights
-audit.chainResult
-audit.signatureStatus
-auditCheckpoint
-```
-
-The header reuses the safe product wording from this document. The embedded `auditCheckpoint` can be passed to `verifyCheckpoint()` later while the local export envelope can be checked with `verifyExport()` on the same trust boundary.
 
 `OutboundPrivacyReadout`:
 
@@ -2120,7 +2096,7 @@ privacyVerificationWarnings
 
 Done in Phase 3: Cap the web runtime score at 89 after normal computation, risk-weight same-status recommendations, and retain one encrypted score snapshot per local day for trend reporting.
 
-Done in Phase 4: Add user guidance for every review-status control, a locally integrity-signed Privacy Report with an embedded checkpoint, the request-obfuscation decoy tooltip, and distinct OSRM disabled/current-consent evidence.
+Done in Phase 4: Add user guidance for every review-status control, the request-obfuscation decoy tooltip, and distinct OSRM disabled/current-consent evidence.
 
 Done in Phase 5: Add mixed-status component coverage for all five tabs plus authentication rejection, success, and background timeout behavior.
 

@@ -9,6 +9,7 @@ import {
 import { tripService } from '@/api/trips';
 import TripPlayback from '@/components/TripPlayback';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { formatDistance, formatSpeed } from '@/lib/tripEngine';
 import {
   buildCompareReplayData,
   buildReplayTripOptions,
@@ -29,13 +30,9 @@ const formatDate = (value) => {
     : 'source unavailable';
 };
 
-const formatDistance = (value) => {
-  const number = Number(value);
-  return Number.isFinite(number) ? `${number.toFixed(1)} km` : 'source unavailable';
-};
-
 export default function TrackingReplayPro() {
   const settings = useLocalSettings();
+  const units = settings.units || 'metric';
   const [primaryTripId, setPrimaryTripId] = useState('');
   const [secondaryTripId, setSecondaryTripId] = useState('');
   const [playbackMode, setPlaybackMode] = useState('real_time');
@@ -93,6 +90,7 @@ export default function TrackingReplayPro() {
               label="Primary trip"
               value={effectivePrimaryId}
               options={options}
+              units={units}
               onChange={(value) => {
                 setPrimaryTripId(value);
                 if (value === effectiveSecondaryId) setSecondaryTripId('');
@@ -102,6 +100,7 @@ export default function TrackingReplayPro() {
               label="Comparison trip"
               value={effectiveSecondaryId}
               options={options.filter((option) => option.id !== effectivePrimaryId)}
+              units={units}
               onChange={setSecondaryTripId}
             />
           </div>
@@ -133,13 +132,13 @@ export default function TrackingReplayPro() {
         <aside className="min-h-0 border-b border-border bg-card/70 xl:border-b-0 xl:border-r">
           <PaneHeader icon={GitCompare} title="Drives being compared" detail={`${availableOptions.length} replayable trips`} />
           <div className="space-y-3 overflow-y-auto p-3 text-sm">
-            <TripSummary title="Primary" trip={primaryTrip} available={compareData.primaryAvailable} reason={compareData.primaryUnavailableReason} />
-            <TripSummary title="Comparison" trip={secondaryTrip} available={compareData.secondaryAvailable} reason={compareData.secondaryUnavailableReason} />
+            <TripSummary title="Primary" trip={primaryTrip} available={compareData.primaryAvailable} reason={compareData.primaryUnavailableReason} units={units} />
+            <TripSummary title="Comparison" trip={secondaryTrip} available={compareData.secondaryAvailable} reason={compareData.secondaryUnavailableReason} units={units} />
             <div className="rounded-md border border-border bg-background/70 p-3 text-xs">
               <div className="font-semibold">Similarity</div>
               <div className="mt-2 grid gap-1 text-muted-foreground">
-                <div>Start delta: {compareData.routeSimilarity.startDeltaM ?? 'unavailable'} m</div>
-                <div>End delta: {compareData.routeSimilarity.endDeltaM ?? 'unavailable'} m</div>
+                <div>Start delta: {compareData.routeSimilarity.startDeltaM == null ? 'unavailable' : formatDistance(compareData.routeSimilarity.startDeltaM / 1000, units)}</div>
+                <div>End delta: {compareData.routeSimilarity.endDeltaM == null ? 'unavailable' : formatDistance(compareData.routeSimilarity.endDeltaM / 1000, units)}</div>
                 <div>Distance delta: {compareData.routeSimilarity.distanceDeltaPct ?? 'unavailable'}%</div>
               </div>
             </div>
@@ -215,7 +214,7 @@ export default function TrackingReplayPro() {
                 {compareData.speedLimitSourceRows.slice(0, 8).map((row) => (
                   <div key={row.id} className="rounded-md bg-background/70 px-2 py-1.5">
                     <div className="font-semibold">{row.source}</div>
-                    <div className="text-muted-foreground">{row.limitKmh == null ? 'limit unavailable' : `${Math.round(row.limitKmh)} km/h`} at {Math.round(row.offsetSeconds)}s</div>
+                    <div className="text-muted-foreground">{row.limitKmh == null ? 'limit unavailable' : formatSpeed(row.limitKmh, units)} at {Math.round(row.offsetSeconds)}s</div>
                   </div>
                 ))}
                 {!compareData.speedLimitSourceRows.length && <EmptyText text="No speed-source changes recorded." />}
@@ -230,7 +229,7 @@ export default function TrackingReplayPro() {
   );
 }
 
-function TripSelect({ label, value, options, onChange }) {
+function TripSelect({ label, value, options, onChange, units = 'metric' }) {
   return (
     <label className="grid min-w-0 gap-1 font-semibold text-muted-foreground">
       {label}
@@ -242,7 +241,7 @@ function TripSelect({ label, value, options, onChange }) {
         {!options.length && <option value="">No replayable trip</option>}
         {options.map((option) => (
           <option key={option.id} value={option.id} disabled={!option.available}>
-            {formatDate(option.startTime)} / {formatDistance(option.distanceKm)}{option.available ? '' : ' / blocked'}
+            {formatDate(option.startTime)} / {formatDistance(option.distanceKm, units)}{option.available ? '' : ' / blocked'}
           </option>
         ))}
       </select>
@@ -250,14 +249,14 @@ function TripSelect({ label, value, options, onChange }) {
   );
 }
 
-function TripSummary({ title, trip, available, reason }) {
+function TripSummary({ title, trip, available, reason, units = 'metric' }) {
   return (
     <div className="rounded-md border border-border bg-background/70 p-3 text-xs">
       <div className="font-semibold">{title}</div>
       <div className="mt-2 grid gap-1 text-muted-foreground">
         <div>{trip?.nickname || trip?.tag || trip?.id || 'No trip selected'}</div>
         <div>{formatDate(trip?.start_time)}</div>
-        <div>{formatDistance(trip?.distance_km)}</div>
+        <div>{trip?.distance_km == null ? 'source unavailable' : formatDistance(Number(trip.distance_km), units)}</div>
         <div>{available ? 'replay available' : reason}</div>
       </div>
     </div>

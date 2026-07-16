@@ -78,30 +78,126 @@ export function getTripDisplayName(trip = {}) {
  * @param {any} trip
  * @param {any} vehicle
  */
-export function buildTripSearchText(trip = {}, vehicle = null) {
-  const tags = normalizeTripTags(trip).map(getTripTagLabel);
-  const scores = [
-    trip.score_overall,
-    trip.score_safety,
-    trip.score_smoothness,
-    trip.score_eco,
-  ].filter((score) => score != null);
-  const dates = [
-    trip.start_time ? new Date(trip.start_time).toLocaleDateString() : '',
-    trip.start_time ? new Date(trip.start_time).toLocaleString() : '',
-  ];
+const searchableNumberForms = (value, digits = 1) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return [];
+  return [...new Set([
+    String(numeric),
+    numeric.toFixed(digits),
+    String(Math.round(numeric)),
+  ])];
+};
+
+const tripDateSearchTokens = (value) => {
+  const date = value ? new Date(value) : null;
+  if (!date || !Number.isFinite(date.getTime())) return [];
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const paddedMonth = String(month).padStart(2, '0');
+  const paddedDay = String(day).padStart(2, '0');
+  const monthLong = new Intl.DateTimeFormat(undefined, { month: 'long' }).format(date);
+  const monthShort = new Intl.DateTimeFormat(undefined, { month: 'short' }).format(date);
+  const weekdayLong = new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(date);
 
   return [
+    date.toLocaleDateString(),
+    date.toLocaleString(),
+    new Intl.DateTimeFormat(undefined, {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }).format(date),
+    monthLong,
+    monthShort,
+    weekdayLong,
+    `${year}-${paddedMonth}-${paddedDay}`,
+    `${month}/${day}/${year}`,
+    `${day}/${month}/${year}`,
+    `${monthLong} ${day}`,
+    `${day} ${monthLong}`,
+  ];
+};
+
+/**
+ * Build a token-rich search record so users can combine place, calendar,
+ * distance, duration, score, event, tag, and vehicle terms in any order.
+ * @param {any} trip
+ * @param {any} vehicle
+ */
+export function buildTripSearchText(trip = {}, vehicle = null) {
+  const tags = normalizeTripTags(trip).map(getTripTagLabel);
+  const distanceKm = Number(trip.distance_km);
+  const distanceMiles = Number.isFinite(distanceKm) ? distanceKm * 0.621371 : null;
+  const durationSeconds = Number(trip.duration_seconds);
+  const durationMinutes = Number.isFinite(durationSeconds) ? durationSeconds / 60 : null;
+  const durationHours = Number.isFinite(durationSeconds) ? durationSeconds / 3600 : null;
+  const speedKmh = Number(trip.avg_running_speed_kmh ?? trip.avg_speed_kmh);
+  const distanceTokens = searchableNumberForms(distanceKm).flatMap((value) => [
+    `${value} km`, `${value}km`, `distance ${value}`, `${value} kilometres`, `${value} kilometers`,
+  ]);
+  const mileTokens = searchableNumberForms(distanceMiles).flatMap((value) => [
+    `${value} mi`, `${value}mi`, `${value} miles`,
+  ]);
+  const durationTokens = [
+    ...searchableNumberForms(durationMinutes).flatMap((value) => [
+      `${value} min`, `${value} minutes`, `duration ${value}`,
+    ]),
+    ...searchableNumberForms(durationHours).flatMap((value) => [
+      `${value} hr`, `${value} hours`,
+    ]),
+  ];
+  const speedTokens = searchableNumberForms(speedKmh).flatMap((value) => [
+    `${value} km/h`, `${value} kmh`, `speed ${value}`,
+  ]);
+  const scoreTokens = [
+    ['overall', trip.score_overall],
+    ['safety', trip.score_safety],
+    ['smoothness', trip.score_smoothness],
+    ['eco', trip.score_eco],
+  ].flatMap(([label, value]) => searchableNumberForms(value, 0).flatMap((number) => [
+    number,
+    `${label} ${number}`,
+    `${label} score ${number}`,
+    `score ${number}`,
+  ]));
+  const eventTokens = [
+    ['harsh brake', trip.harsh_brakes_count],
+    ['rapid acceleration', trip.rapid_accel_count],
+    ['sharp turn', trip.sharp_turns_count],
+    ['speeding', trip.speeding_events_count],
+    ['phone use', trip.phone_use_window_count],
+  ].flatMap(([label, value]) => searchableNumberForms(value, 0).flatMap((number) => [
+    `${number} ${label}`,
+    `${label} ${number}`,
+  ]));
+
+  return [
+    trip.id,
     trip.nickname,
     trip.notes,
     trip.start_address,
     trip.end_address,
+    trip.road_type,
+    trip.dominant_road_type,
+    trip.status,
+    trip.is_favorite ? 'favorite starred' : '',
+    trip.night_driving ? 'night evening' : '',
+    trip.privacy_mode === 'summary_only' ? 'private privacy summary only' : '',
     vehicle?.name,
     vehicle?.make,
     vehicle?.model,
+    vehicle?.year,
+    vehicle?.license_plate,
     ...tags,
-    ...scores,
-    ...dates,
+    ...tripDateSearchTokens(trip.start_time),
+    ...distanceTokens,
+    ...mileTokens,
+    ...durationTokens,
+    ...speedTokens,
+    ...scoreTokens,
+    ...eventTokens,
   ].filter(Boolean).join(' ').toLowerCase();
 }
 

@@ -17,6 +17,7 @@ class DriveSenseNativeTripStore {
     private static final String KEY_COMPLETED_TRIPS = "completed_trips";
     private static final String KEY_SERVICE_ENABLED = "service_enabled";
     private static final String KEY_ACTIVE_TRIP_STATUS = "active_trip_status";
+    private static final String KEY_WIDGET_TRIP_ACTIVE = "widget_trip_active";
     private static final String KEY_DIAGNOSTIC_EVENTS = "diagnostic_events";
     private static final String KEY_LAST_PARKED = "last_parked_location";
     private static final String SHARED_LAST_PARKED_KEY = "drivesense_last_parked";
@@ -60,15 +61,24 @@ class DriveSenseNativeTripStore {
             return;
         }
         try {
+            boolean wasActive = prefs(context).getBoolean(KEY_WIDGET_TRIP_ACTIVE, false);
+            boolean isActive = status.optBoolean("active", false);
             String encrypted = DriveSensePayloadCrypto.encryptForStorage(status.toString(), ACTIVE_TRIP_STATUS_CONTEXT);
-            prefs(context).edit().putString(KEY_ACTIVE_TRIP_STATUS, encrypted).apply();
+            prefs(context).edit()
+                .putString(KEY_ACTIVE_TRIP_STATUS, encrypted)
+                .putBoolean(KEY_WIDGET_TRIP_ACTIVE, isActive)
+                .apply();
+            if (wasActive != isActive) WhereIParkedWidgetProvider.refreshAll(context);
         } catch (Exception ignored) {}
     }
 
     static void clearActiveTripStatus(Context context) {
+        boolean wasActive = prefs(context).getBoolean(KEY_WIDGET_TRIP_ACTIVE, false);
         if (!SecureDeleteHelper.overwriteAndRemovePreference(prefs(context), KEY_ACTIVE_TRIP_STATUS)) {
             prefs(context).edit().remove(KEY_ACTIVE_TRIP_STATUS).apply();
         }
+        prefs(context).edit().putBoolean(KEY_WIDGET_TRIP_ACTIVE, false).apply();
+        if (wasActive) WhereIParkedWidgetProvider.refreshAll(context);
     }
 
     static JSONArray getCompletedTrips(Context context) {
@@ -237,6 +247,7 @@ class DriveSenseNativeTripStore {
             parked.put("source", source);
             String encrypted = DriveSensePayloadCrypto.encryptForStorage(parked.toString(), LAST_PARKED_CONTEXT);
             prefs(context).edit().putString(KEY_LAST_PARKED, encrypted).apply();
+            WhereIParkedWidgetProvider.refreshAll(context);
         } catch (Exception ignored) {}
     }
 
@@ -254,6 +265,7 @@ class DriveSenseNativeTripStore {
         )) {
             sharedPreferences.edit().remove(SHARED_LAST_PARKED_KEY).apply();
         }
+        WhereIParkedWidgetProvider.refreshAll(context);
     }
 
     static String newTripId() {

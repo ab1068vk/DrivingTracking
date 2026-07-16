@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { Gauge, Navigation, Activity } from 'lucide-react';
 import { getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { convertDistanceKm, distanceUnitLabel } from '@/lib/unitFormatting';
 import DeferredRecharts from '@/components/DeferredRecharts';
 
 function ScoreBar({ label, value, max, color, evidence = null }) {
@@ -46,7 +47,7 @@ const tripsForVehicle = (vehicle, trips = []) => trips.filter((trip) => (
   )
 ));
 
-export default function VehicleCompare({ vehicles, trips }) {
+export default function VehicleCompare({ vehicles, trips, units = 'metric' }) {
   const stats = useMemo(() => {
     return vehicles.map((v, i) => {
       const vTrips = tripsForVehicle(v, trips);
@@ -54,12 +55,12 @@ export default function VehicleCompare({ vehicles, trips }) {
       const weightedScore = count ? distanceWeightedScore(vTrips) : null;
       const avgScore = weightedScore == null ? null : Math.round(weightedScore);
       const scoredCount = vTrips.filter((trip) => getTripComponentScore(trip, 'overall').value != null).length;
-      const totalKm = Math.round(vTrips.reduce((s, t) => s + (t.distance_km || 0), 0));
+      const totalKm = Number((convertDistanceKm(vTrips.reduce((s, t) => s + (t.distance_km || 0), 0), units) ?? 0).toFixed(1));
       const harshBrakes = vTrips.reduce((s, t) => s + (t.harsh_brakes_count || 0), 0);
       const color = v.color || CHART_COLORS[i % CHART_COLORS.length];
       return { id: v.id, name: v.name, avgScore, totalKm, harshBrakes, count, scoredCount, color };
     }).filter(s => s.count > 0);
-  }, [vehicles, trips]);
+  }, [vehicles, trips, units]);
 
   if (stats.length < 2) {
     return (
@@ -108,7 +109,7 @@ export default function VehicleCompare({ vehicles, trips }) {
       <div className="bg-card border border-border rounded-2xl p-4">
         <div className="flex items-center gap-2 mb-4">
           <Navigation className="w-4 h-4 text-primary" />
-          <span className="font-semibold text-sm">Total Distance (km)</span>
+          <span className="font-semibold text-sm">Total Distance ({distanceUnitLabel(units)})</span>
         </div>
         <div className="space-y-3">
           {stats.map(s => (

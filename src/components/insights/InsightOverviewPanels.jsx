@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { formatDistance } from '@/lib/tripEngine';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
+import { distanceUnitLabel, formatPerDistanceRate } from '@/lib/unitFormatting';
 import {
   DeltaBadge, MethodNote, Notice, PanelHeader, signed, toneStyles,
 } from '@/components/insights/InsightPrimitives';
@@ -67,8 +68,8 @@ export function PriorityFinding({
           <HeroMetric
             icon={AlertTriangle}
             label="Risk density"
-            value={analysis.currentEventRate == null ? '-' : analysis.currentEventRate}
-            detail={analysis.currentEventRate == null ? 'Distance needed' : `events per 100 km / ${formatDistance(analysis.riskRate.distance_km, units)}`}
+            value={formatPerDistanceRate(analysis.currentEventRate, units, { empty: '-' })}
+            detail={analysis.currentEventRate == null ? 'Distance needed' : `Based on ${formatDistance(analysis.riskRate.distance_km, units)} of eligible driving`}
           />
           <HeroMetric
             icon={ShieldCheck}
@@ -156,13 +157,13 @@ export function ScoreMovementPanel({ analysis }) {
     </section>
   );
 }
-export function EventMovementPanel({ analysis, onOpenTrip }) {
+export function EventMovementPanel({ analysis, onOpenTrip, units = 'metric' }) {
   return (
     <section className="rounded-3xl border border-border bg-card p-5 shadow-sm">
       <PanelHeader
         eyebrow="Why"
         title="Normalized risk drivers"
-        description="Event rates are normalized per 100 km so longer weeks do not automatically look worse."
+        description={`Event rates are normalized per 100 ${distanceUnitLabel(units)} so longer weeks do not automatically look worse.`}
         icon={Gauge}
       />
       <div className="mt-5 space-y-2">
@@ -177,7 +178,7 @@ export function EventMovementPanel({ analysis, onOpenTrip }) {
             <div className="min-w-0">
               <div className="text-sm font-semibold">{row.label}</div>
               <div className="mt-0.5 text-xs text-muted-foreground">
-                {row.currentCount} events / {row.currentRate == null ? 'rate unavailable' : `${row.currentRate}/100 km`}
+                {row.currentCount} events · {formatPerDistanceRate(row.currentRate, units, { empty: 'rate unavailable' })}
               </div>
             </div>
             <div className="flex items-center gap-2">

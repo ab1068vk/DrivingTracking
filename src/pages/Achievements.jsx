@@ -11,6 +11,12 @@ import {
 import { limitedTripSummaryQueryOptions, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { formatDistance } from '@/lib/tripEngine';
+import {
+  convertDistanceKm,
+  convertPerDistanceRate,
+  distanceUnitLabel,
+} from '@/lib/unitFormatting';
 import { calculateAchievementBadges } from '@/lib/tripInsights';
 import {
   buildDriverProgression,
@@ -71,10 +77,22 @@ const formatDate = (value) => {
   return Number.isNaN(date.getTime()) ? 'Recorded history' : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
-function RequirementRow({ item }) {
+function RequirementRow({ item, units }) {
   const digits = String(item.unit).includes('100') ? 2 : 1;
-  const current = formatNumber(item.value, digits);
-  const target = formatNumber(item.target, digits);
+  let displayValue = item.value;
+  let displayTarget = item.target;
+  let displayUnit = item.unit;
+  if (item.unit === 'km') {
+    displayValue = convertDistanceKm(item.value, units);
+    displayTarget = convertDistanceKm(item.target, units);
+    displayUnit = distanceUnitLabel(units);
+  } else if (String(item.unit).includes('100 km')) {
+    displayValue = convertPerDistanceRate(item.value, units);
+    displayTarget = convertPerDistanceRate(item.target, units);
+    displayUnit = String(item.unit).replace('100 km', `100 ${distanceUnitLabel(units)}`);
+  }
+  const current = formatNumber(displayValue, digits);
+  const target = formatNumber(displayTarget, digits);
   return (
     <div className="rounded-xl border border-border/70 bg-background/60 p-3">
       <div className="flex items-start justify-between gap-3">
@@ -85,7 +103,7 @@ function RequirementRow({ item }) {
           <span className="text-sm font-medium">{item.label}</span>
         </div>
         <span className={`whitespace-nowrap text-xs font-semibold ${item.met ? 'text-emerald-600 dark:text-emerald-300' : 'text-muted-foreground'}`}>
-          {current}{item.unit ? ` ${item.unit}` : ''} {item.direction === 'max' ? '≤' : '≥'} {target}
+          {current}{displayUnit ? ` ${displayUnit}` : ''} {item.direction === 'max' ? '≤' : '≥'} {target}
         </span>
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary">
@@ -185,7 +203,7 @@ function MasteryCard({ track, index, onOpen }) {
   );
 }
 
-function ProgressionDetail({ selection }) {
+function ProgressionDetail({ selection, units }) {
   if (!selection) return null;
   const isMission = selection.type === 'mission';
   const item = selection.item;
@@ -211,7 +229,7 @@ function ProgressionDetail({ selection }) {
           <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/70 bg-secondary/30 p-3 text-xs">
             <div><span className="text-muted-foreground">Evidence</span><div className="mt-1 font-semibold">{item.evidence.confidence}</div></div>
             <div><span className="text-muted-foreground">{item.id === 'focus' ? 'Usage Access measured' : 'Metric measured'}</span><div className="mt-1 font-semibold">{item.evidence.measuredTrips}/{item.evidence.totalTrips} trips</div></div>
-            <div><span className="text-muted-foreground">Distance</span><div className="mt-1 font-semibold">{item.evidence.distanceKm} km</div></div>
+            <div><span className="text-muted-foreground">Distance</span><div className="mt-1 font-semibold">{formatDistance(item.evidence.distanceKm, units)}</div></div>
             <div><span className="text-muted-foreground">Source</span><div className="mt-1 font-semibold">{item.evidence.source}</div></div>
           </div>
         </div>
@@ -226,7 +244,7 @@ function ProgressionDetail({ selection }) {
         </div>
       </div>
       <div className="space-y-2">
-        {requirements.map((itemRequirement) => <RequirementRow key={itemRequirement.id} item={itemRequirement} />)}
+        {requirements.map((itemRequirement) => <RequirementRow key={itemRequirement.id} item={itemRequirement} units={units} />)}
       </div>
       <p className="text-xs leading-relaxed text-muted-foreground">
         Progress uses qualifying trips, normalized event rates, and available measurement coverage. Permanent mastery remains unlocked after it is earned; Current Form can still rise or fall.
@@ -278,6 +296,7 @@ function MissionPicker({ progression, selectedIds, onToggle, onSave }) {
 export default function Achievements() {
   const settings = useLocalSettings();
   const reduceMotion = useReducedMotion();
+  const units = settings.units || 'metric';
   const [selection, setSelection] = useState(null);
   const [missionPickerOpen, setMissionPickerOpen] = useState(false);
   const [selectedMissionIds, setSelectedMissionIds] = useState([]);
@@ -465,7 +484,7 @@ export default function Achievements() {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="font-grotesk text-xl font-bold">{progression.eligibility.eligibleTrips}/{progression.eligibility.completedTrips} qualifying trips</div>
-                      <div className="mt-1 text-xs text-muted-foreground">{progression.eligibility.distanceKm.toLocaleString()} km evidence · {progression.eligibility.excludedTrips} excluded low-evidence trip{progression.eligibility.excludedTrips === 1 ? '' : 's'}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">{formatDistance(progression.eligibility.distanceKm, units)} evidence · {progression.eligibility.excludedTrips} excluded low-evidence trip{progression.eligibility.excludedTrips === 1 ? '' : 's'}</div>
                     </div>
                     <CircleGauge className="h-7 w-7 text-primary" />
                   </div>
@@ -480,7 +499,7 @@ export default function Achievements() {
                 <CircleGauge className={`mt-0.5 h-5 w-5 flex-none ${progression.eligibility.eligibleTrips === 0 ? 'text-orange-600 dark:text-orange-300' : 'text-primary'}`} />
                 <div className="min-w-0 flex-1">
                   <h2 className="text-sm font-semibold">{progression.eligibility.eligibleTrips === 0 ? 'Why your existing trips are not qualifying' : 'Trips excluded from progression'}</h2>
-                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">A trip is counted when it is completed, at least {progression.eligibility.minimumTripKm} km, at least {Math.ceil(progression.eligibility.minimumTripSeconds / 60)} minutes, and has a usable overall score.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">A trip is counted when it is completed, at least {formatDistance(progression.eligibility.minimumTripKm, units)}, at least {Math.ceil(progression.eligibility.minimumTripSeconds / 60)} minutes, and has a usable overall score.</p>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                     {progression.eligibility.exclusionReasons.filter((reason) => reason.count > 0).map((reason) => <div key={reason.id} className="rounded-xl bg-background/70 p-3"><div className="text-sm font-semibold">{reason.count} · {reason.label}</div><p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{reason.detail}</p></div>)}
                   </div>
@@ -571,7 +590,7 @@ export default function Achievements() {
       )}
 
       <Dialog open={Boolean(selection)} onOpenChange={(open) => !open && setSelection(null)}>
-        <DialogContent className="max-w-xl"><ProgressionDetail selection={selection} /></DialogContent>
+        <DialogContent className="max-w-xl"><ProgressionDetail selection={selection} units={units} /></DialogContent>
       </Dialog>
       <Dialog open={missionPickerOpen} onOpenChange={setMissionPickerOpen}>
         <DialogContent className="max-w-2xl"><MissionPicker progression={progression} selectedIds={selectedMissionIds} onToggle={toggleMission} onSave={saveMissionSelection} /></DialogContent>

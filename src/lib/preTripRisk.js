@@ -5,6 +5,8 @@ import { clamp } from '@/lib/mathUtils';
 import { scoringValue } from '@/lib/scoringConstants';
 
 const RISK_CONSTANTS = scoringValue('PRE_TRIP_READINESS_POLICY');
+const LAST_TRIP_OUTCOME_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const RECENT_REST_MAX_AGE_MINUTES = 12 * 60;
 
 /**
  * Provisional pre-trip readiness signal weights. These are product heuristics,
@@ -72,6 +74,7 @@ const recentRestRisk = (lastTrip, nowMs) => {
   if (!Number.isFinite(endMs) || endMs <= 0 || endMs > nowMs) return null;
 
   const minutesSinceLastTrip = (nowMs - endMs) / 60000;
+  if (minutesSinceLastTrip > RECENT_REST_MAX_AGE_MINUTES) return null;
   if (minutesSinceLastTrip < 15) return 80;
   if (minutesSinceLastTrip < 30) return 60;
   if (minutesSinceLastTrip < 60) return 35;
@@ -199,6 +202,20 @@ const profileBucketHasTrips = (bucket, minimumTrips) => (
   Number(bucket.tripCount) >= minimumTrips &&
   finiteRisk(bucket.riskScore)
 );
+const stabilizedProfileRisk = (bucket, profile, minimumTrips) => {
+  const rawRisk = nullableRisk(bucket?.riskScore);
+  if (rawRisk == null) return null;
+
+  const anchorRisk = clamp(100 - (Number(profile?.allTimeAvgScore) || 70), 0, 100);
+  const tripCount = Math.max(minimumTrips, Number(bucket?.tripCount) || 0);
+  const sampleReliability = clamp(tripCount / (tripCount + 4), 0.35, 0.9);
+  const variation = Math.max(0, Number(bucket?.stdDev) || 0);
+  const consistencyReliability = 1 - clamp(variation / 50, 0, 0.35);
+  const reliability = sampleReliability * consistencyReliability;
+
+  return clamp(Math.round(anchorRisk + (rawRisk - anchorRisk) * reliability), 0, 100);
+};
+
 
 /**
  * Compute trip readiness risk from historical trips, current fatigue, and route context.
@@ -233,6 +250,12 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
   ));
   const lastTrip = sorted[0] || null;
   const profileTimeBucket = habitProfile?.timeBuckets?.[currentBucket];
+  const lastTripEndMs = lastTrip
+    ? new Date(lastTrip.end_time || lastTrip.endedAt || lastTrip.start_time || lastTrip.startedAt || 0).getTime()
+    : Number.NaN;
+  const lastTripIsCurrent = Number.isFinite(lastTripEndMs)
+    && lastTripEndMs <= nowMs
+    && nowMs - lastTripEndMs <= LAST_TRIP_OUTCOME_MAX_AGE_MS;
   const profileDayEntry = habitProfile?.dayOfWeek?.[currentDow];
   const hasProfileTimeRisk = habitProfile && profileBucketHasTrips(profileTimeBucket, RISK_CONSTANTS.MIN_TRIPS_FOR_BUCKET);
   const hasProfileDayRisk = habitProfile && profileBucketHasTrips(profileDayEntry, RISK_CONSTANTS.MIN_TRIPS_FOR_DAY);
@@ -246,7 +269,7 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
     ? 100 - legacyDayEntry.avgScore
     : null;
   const baselineTrendRisk = declineRiskFromDelta(baseline.delta);
-  const lastTripScore = lastTrip
+  const lastTripScore = lastTrip && lastTripIsCurrent
     ? nullableRisk(lastTrip.score_overall ?? lastTrip.overall_score ?? lastTrip.score)
     : null;
   const weatherRisk = nullableRisk(context.weatherRiskScore ?? context.weather_context?.riskScore);
@@ -257,12 +280,12 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
   const restRisk = recentRestRisk(lastTrip, nowMs);
   const fatigueRisk = dailyFatigueRisk(dailyFatigueState);
   const timeOfDayRisk = hasProfileTimeRisk
-    ? profileTimeBucket.riskScore
+    ? stabilizedProfileRisk(profileTimeBucket, habitProfile, RISK_CONSTANTS.MIN_TRIPS_FOR_BUCKET)
     : hasLegacyTimeRisk
       ? legacyTimeRisk
       : null;
   const dayOfWeekRisk = hasProfileDayRisk
-    ? profileDayEntry.riskScore
+    ? stabilizedProfileRisk(profileDayEntry, habitProfile, RISK_CONSTANTS.MIN_TRIPS_FOR_DAY)
     : hasLegacyDayRisk
       ? legacyDayRisk
       : null;
@@ -331,8 +354,13 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
     clampedSignals.timeOfDay == null ? 'timeOfDay' : null,
     clampedSignals.recentTrend == null ? 'recentTrend' : null,
   ].filter(Boolean);
+  const availableWeight = availableSignalKeys.reduce((sum, key) => sum + (weights[key] || 0), 0);
+  const actualUserWeight = actualUserSignalKeys.reduce((sum, key) => sum + (weights[key] || 0), 0);
   const fallbackGateTriggered = fallbackSignalKeys.length > 1;
-  const hasCoreReadinessEvidence = missingCoreSignals.length === 0 && !fallbackGateTriggered;
+  const hasCoreReadinessEvidence = missingCoreSignals.length === 0
+    && !fallbackGateTriggered
+    && actualUserSignalKeys.length >= 3
+    && availableWeight >= 0.45;
   const weightedCompositeRisk = hasCoreReadinessEvidence ? weightedRisk(clampedSignals, weights) : null;
   const gateFloor = hasCoreReadinessEvidence ? riskFloorFromSignalGates(clampedSignals, habitProfile) : 0;
   const compositeRisk = weightedCompositeRisk == null && gateFloor <= 0
@@ -346,18 +374,51 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
         ? 'moderate'
         : 'low';
   const availableSignals = Object.entries(clampedSignals).filter(([, value]) => value != null);
-  const primaryKey = availableSignals.sort((a, b) => b[1] - a[1])[0]?.[0] || null;
-  const topSignals = Object.entries(clampedSignals)
+  const rankedSignals = Object.entries(clampedSignals)
     .filter(([, value]) => value != null)
     .map(([key, value]) => ({
       key,
       value: Math.round(value),
+      contribution: Math.round(value * (weights[key] || 0) * 10) / 10,
       label: SIGNAL_LABELS[key],
       tip: SIGNAL_TIPS[key],
     }))
     .filter((signal) => signal.value >= 25)
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 3);
+    .sort((a, b) => b.contribution - a.contribution || b.value - a.value);
+  const primaryKey = rankedSignals[0]?.key
+    || availableSignals.sort((a, b) => (
+      b[1] * (weights[b[0]] || 0) - a[1] * (weights[a[0]] || 0)
+    ))[0]?.[0]
+    || null;
+  const topSignals = rankedSignals.slice(0, 3);
+  const sampleConfidence = clamp(completed.filter((trip) => (
+    nullableRisk(trip.score_overall ?? trip.overall_score ?? trip.score) != null
+  )).length / RISK_CONSTANTS.FULL_CALIBRATION_TRIPS, 0, 1);
+  const confidenceScore = compositeRisk == null
+    ? 0
+    : Math.round(100 * clamp(
+      availableWeight * 0.35
+      + actualUserWeight * 0.35
+      + Math.max(Number(habitProfile?.confidence) || 0, sampleConfidence) * 0.3,
+      0,
+      1
+    ));
+  const readinessEvidence = compositeRisk == null
+    ? 'unavailable'
+    : confidenceScore >= 75
+      ? 'high'
+      : confidenceScore >= 50
+        ? 'developing'
+        : 'low';
+  const uncertaintyMargin = compositeRisk == null
+    ? null
+    : clamp(Math.round(14 - confidenceScore / 10), 4, 12);
+  const readinessRange = compositeRisk == null
+    ? null
+    : {
+        low: clamp(100 - compositeRisk - uncertaintyMargin, 0, 100),
+        high: clamp(100 - compositeRisk + uncertaintyMargin, 0, 100),
+      };
 
   return {
     compositeRisk,
@@ -365,12 +426,16 @@ export function computePreTripRisk(trips = [], settings = {}, dailyFatigueState 
     riskLevel,
     primaryConcern: SIGNAL_LABELS[primaryKey] || 'Insufficient readiness evidence',
     tipText: SIGNAL_TIPS[primaryKey] || 'Start only when you feel ready and GPS has a clear signal.',
+    readinessRange,
     topSignals,
     signals: clampedSignals,
     habitProfile,
     dataQuality: {
       confidence: habitProfile?.confidence ?? 0,
-      readinessEvidence: compositeRisk == null ? 'unavailable' : availableSignals.length >= 6 ? 'high' : availableSignals.length >= 3 ? 'developing' : 'low',
+      readinessEvidence,
+      confidenceScore,
+      availableWeight: Math.round(availableWeight * 100),
+      actualUserWeight: Math.round(actualUserWeight * 100),
       availableSignalCount: availableSignals.length,
       actualUserSignalCount: actualUserSignalKeys.length,
       actualUserSignalKeys,

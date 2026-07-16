@@ -647,7 +647,6 @@ const EVENT_COLORS = {
   near_miss: '#dc2626',
   close_proximity: '#dc2626',
   phone_use: '#dc2626',
-  voice_speed_limit_marker: '#2563eb',
   possible_crash: '#991b1b',
 };
 ```

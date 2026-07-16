@@ -187,13 +187,27 @@ describe('preTripRisk', () => {
     expect(state.topSignals[0].key).toBe('recentRest');
     vi.useRealTimers();
   });
+
+  it('does not treat an old trip as current outcome or rest evidence', () => {
+    const oldTrip = trip(25);
+    const state = computePreTripRisk(
+      [oldTrip],
+      {},
+      { fatigueLevel: 'low' },
+      { now: new Date(2026, 6, 15, 12) },
+      profile()
+    );
+
+    expect(state.signals.lastTripOutcome).toBeNull();
+    expect(state.signals.recentRest).toBeNull();
+  });
 });
 
 describe('computePreTripRisk - with habitProfile', () => {
-  it('uses personalised time bucket risk when data is sufficient', () => {
+  it('stabilizes a small personal time bucket toward the driver baseline', () => {
     const state = computePreTripRisk([], {}, { fatigueLevel: 'low' }, { now: new Date(2026, 0, 10, 23) }, profile());
 
-    expect(state.signals.timeOfDay).toBe(80);
+    expect(state.signals.timeOfDay).toBe(46);
     expect(state.dataQuality.sufficientTimeData).toBe(true);
   });
 
@@ -263,5 +277,20 @@ describe('computePreTripRisk - with habitProfile', () => {
 
     expect(noProfile.riskLevel).toBe(baseline.riskLevel);
     expect(noProfile.compositeRisk).toBe(baseline.compositeRisk);
+  });
+
+  it('reports an uncertainty range and evidence coverage with a score', () => {
+    const state = computePreTripRisk(
+      Array.from({ length: 10 }, (_, i) => trip(86, i)),
+      {},
+      { fatigueLevel: 'low' },
+      { now: new Date(2026, 0, 10, 12) },
+      profile()
+    );
+
+    expect(state.readinessRange.low).toBeLessThan(state.readinessScore);
+    expect(state.readinessRange.high).toBeGreaterThan(state.readinessScore);
+    expect(state.dataQuality.confidenceScore).toBeGreaterThan(0);
+    expect(state.dataQuality.availableWeight).toBeGreaterThan(0);
   });
 });

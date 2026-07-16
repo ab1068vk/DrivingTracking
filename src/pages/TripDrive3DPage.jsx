@@ -7,6 +7,7 @@ import { AlertTriangle, ArrowLeft, CalendarDays, Gauge, Map, Route, Timer } from
 import { tripDetailQueryOptions } from '@/api/trips';
 import { formatDateTime, formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { buildPlaybackTimeline, prepareMapRoutePoints } from '@/lib/mapPlaybackInsights';
+import useLocalSettings from '@/hooks/useLocalSettings';
 import { getTripDisplayName } from '@/lib/tripMetadata';
 import { recordSystemEvent } from '@/lib/systemLog';
 
@@ -29,6 +30,8 @@ function unavailableReason(trip = {}) {
 }
 
 export default function TripDrive3DPage({ embeddedTrip = null, embeddedLoading = false }) {
+  const settings = useLocalSettings();
+  const units = settings.units || 'metric';
   const { id } = useParams();
   const navigate = useNavigate();
   const queryId = id || embeddedTrip?.id || '';
@@ -146,7 +149,7 @@ export default function TripDrive3DPage({ embeddedTrip = null, embeddedLoading =
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card p-3 text-xs text-muted-foreground">
-        <span>{timeline.stats.stopCount} stops - {timeline.stats.violationCount} over-limit segments - {Math.round(timeline.stats.avgSpeedKmh || 0)} km/h average</span>
+        <span>{timeline.stats.stopCount} stops - {timeline.stats.violationCount} over-limit segments - {formatSpeed(timeline.stats.avgSpeedKmh || 0, units)} average including stops</span>
         <Link to={`/trips/${trip.id}`} className="font-semibold text-primary">
           Open full trip details
         </Link>

@@ -26,6 +26,7 @@ import {
 import { limitedTripSummaryQueryOptions, tripDetailQueryOptions, tripSummaryQueryOptions } from '@/api/trips';
 import { formatDistance } from '@/lib/tripEngine';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { formatPerDistanceRate } from '@/lib/unitFormatting';
 import {
   analyzeDayOfWeek,
   analyzeTimeOfDay,
@@ -731,11 +732,11 @@ export default function DrivingCoach() {
                 <Stat value={evidenceAudit.eventReady ? `${evidenceAudit.eventReady} trips` : 'Not measured'} label="event evidence" />
                 <Stat value={evidenceAudit.routeReady ? `${evidenceAudit.routeReady} trips` : 'No route key'} label="route evidence" />
               </div>
-              {(evidenceAudit.missingCoachMeasurements > 0 || evidenceAudit.excludedDriver > 0 || evidenceAudit.excludedPrivacy > 0) && (
+              {(evidenceAudit.missingCoachMeasurements > 0 || evidenceAudit.excludedDriver > 0 || evidenceAudit.privacyProtected > 0) && (
                 <div className="mt-4 space-y-1 rounded-2xl border border-amber-500/25 bg-amber-500/5 p-4 text-xs text-muted-foreground">
                   {evidenceAudit.missingCoachMeasurements > 0 && <p><span className="font-semibold text-foreground">{evidenceAudit.missingCoachMeasurements} historical trips:</span> no reliable score or Coach event measurement; excluded, never counted as 0.</p>}
                   {evidenceAudit.excludedDriver > 0 && <p><span className="font-semibold text-foreground">{evidenceAudit.excludedDriver} trips:</span> passenger or manually excluded from driver metrics.</p>}
-                  {evidenceAudit.excludedPrivacy > 0 && <p><span className="font-semibold text-foreground">{evidenceAudit.excludedPrivacy} trips from privacy-protected days:</span> excluded only from cross-trip Coach trends because at least one trip that day touched a privacy zone. They remain in Trip History.</p>}
+                  {evidenceAudit.privacyProtected > 0 && <p><span className="font-semibold text-foreground">{evidenceAudit.privacyProtected} privacy-protected trips:</span> included using stored scores, events, and route points outside your configured privacy-zone radius. Protected coordinates remain excluded.</p>}
                 </div>
               )}
             </section>
@@ -994,7 +995,7 @@ export default function DrivingCoach() {
                 {(coach.risk_patterns || []).map((pattern) => (
                   <div key={pattern.key} className="rounded-2xl bg-secondary/50 p-4">
                     <div className="font-semibold">{pattern.label}</div>
-                    <div className="mt-2 font-grotesk text-2xl font-bold">{pattern.events_per_100km ?? '-'} / 100 km</div>
+                    <div className="mt-2 font-grotesk text-2xl font-bold">{formatPerDistanceRate(pattern.events_per_100km, units, { empty: '-' })}</div>
                     <div className="mt-1 text-xs text-muted-foreground">{pattern.share_percent}% of recorded risk events</div>
                   </div>
                 ))}

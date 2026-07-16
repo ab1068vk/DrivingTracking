@@ -37,12 +37,6 @@ const trip = {
     lng: -79.38,
     source: 'gps_events',
   }],
-  voice_speed_limit_markers: [{
-    id: 'voice-1',
-    timestamp: '2026-07-09T12:03:00.000Z',
-    limit_kmh: 40,
-    source: 'voice_user_estimate',
-  }],
 };
 
 describe('tracking export lab builders', () => {

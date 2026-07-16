@@ -38,6 +38,7 @@ import { maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZo
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import usePrivacyZonesRevision from '@/hooks/usePrivacyZonesRevision';
+import { convertSpeedKmh, speedUnitLabel } from '@/lib/unitFormatting';
 import usePlaybackScreenAwake from '@/hooks/usePlaybackScreenAwake';
 
 const SPEEDS = [1, 2, 4, 8];
@@ -53,7 +54,6 @@ const EVENT_COLORS = {
   near_miss: '#dc2626',
   close_proximity: '#dc2626',
   phone_use: '#dc2626',
-  voice_speed_limit_marker: '#2563eb',
   possible_crash: '#991b1b',
 };
 const LAT_METERS = 111320;
@@ -766,7 +766,7 @@ function addProceduralEnvironment(scene, models = [], projection, quality = REND
   scene.add(buildings, trees);
 }
 
-function createSpeedLimitTexture(limit) {
+function createSpeedLimitTexture(limit, units = 'metric') {
   const canvas = document.createElement('canvas');
   canvas.width = 128;
   canvas.height = 128;
@@ -783,16 +783,16 @@ function createSpeedLimitTexture(limit) {
   ctx.font = 'bold 42px Inter, Arial, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(String(Math.round(limit)), 64, 58);
+  ctx.fillText(String(Math.round(convertSpeedKmh(limit, units))), 64, 58);
   ctx.font = 'bold 18px Inter, Arial, sans-serif';
-  ctx.fillText('km/h', 64, 88);
+  ctx.fillText(speedUnitLabel(units), 64, 88);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
 
-function addSpeedLimitSign(scene, from, to, limit, index, objectScale = 1) {
-  const texture = createSpeedLimitTexture(limit);
+function addSpeedLimitSign(scene, from, to, limit, index, objectScale = 1, units = 'metric') {
+  const texture = createSpeedLimitTexture(limit, units);
   if (!texture) return;
   const scale = Math.max(0.01, Number(objectScale) || 1);
   const heading = vectorHeading(from, to);
@@ -1068,7 +1068,7 @@ function addStopMarker(scene, projection, stop, index) {
   scene.add(marker);
 }
 
-function buildReplayChapters(timeline = {}) {
+function buildReplayChapters(timeline = {}, units = 'metric') {
   const segments = Array.isArray(timeline.segments) ? timeline.segments : [];
   const events = Array.isArray(timeline.events) ? timeline.events : [];
   const stops = Array.isArray(timeline.stops) ? timeline.stops : [];
@@ -1092,7 +1092,7 @@ function buildReplayChapters(timeline = {}) {
     chapters.push({
       kind: 'speed',
       label: 'Fastest',
-      detail: `${Math.round(fastest.speedKmh)} km/h`,
+      detail: formatSpeed(fastest.speedKmh, units),
       offsetSeconds: fastest.startOffsetSeconds || 0,
       color: fastest.color || '#f97316',
       cameraMode: 'chase',
@@ -1104,7 +1104,7 @@ function buildReplayChapters(timeline = {}) {
     chapters.push({
       kind: 'limit',
       label: 'Over limit',
-      detail: `${Math.round(firstViolation.overLimitKmh)} km/h over`,
+      detail: `${formatSpeed(firstViolation.overLimitKmh, units)} over`,
       offsetSeconds: firstViolation.startOffsetSeconds || 0,
       color: '#ef4444',
       cameraMode: 'cinematic',
@@ -1187,6 +1187,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
 
   const settings = useLocalSettings();
   usePrivacyZonesRevision();
+  const units = settings.units || 'metric';
   const heightenedPrivacy = settings?.[HEIGHTENED_PRIVACY_MODE_KEY] === true;
   const privacySettings = useMemo(() => ({
     privacy_zones: settings.privacy_zones,
@@ -1234,7 +1235,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
       },
     };
   }, [points.length, positionIndex, sourceTimeline]);
-  const replayChapters = useMemo(() => buildReplayChapters(timeline), [timeline]);
+  const replayChapters = useMemo(() => buildReplayChapters(timeline, units), [timeline, units]);
   const projection = useMemo(() => buildProjection(points), [points]);
   const durationSeconds = positionIndex.durationSeconds || timeline.stats.durationSeconds || Math.max(1, points.length - 1);
   const playbackPosition = useMemo(
@@ -1507,7 +1508,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
         limit > 0 &&
         (lastSignLimit !== Math.round(limit) || index - lastSignIndex > 18)
       ) {
-        addSpeedLimitSign(scene, from, to, limit, index, objectScale);
+        addSpeedLimitSign(scene, from, to, limit, index, objectScale, units);
         lastSignLimit = Math.round(limit);
         lastSignIndex = index;
       }
@@ -2206,13 +2207,13 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
             <div className="flex min-w-0 items-center gap-1 text-[8px] font-semibold uppercase tracking-normal text-slate-300 sm:text-[10px]">
               <Gauge className="h-3 w-3" /> Speed
             </div>
-            <div className="truncate font-grotesk text-sm font-bold sm:text-lg">{formatSpeed(currentSpeedKmh)}</div>
+            <div className="truncate font-grotesk text-sm font-bold sm:text-lg">{formatSpeed(currentSpeedKmh, units)}</div>
           </div>
           <div className="min-w-0 rounded-lg border border-white/10 bg-slate-950/78 px-2 py-1.5 text-white shadow backdrop-blur sm:rounded-xl sm:px-3 sm:py-2">
             <div className="flex min-w-0 items-center gap-1 text-[8px] font-semibold uppercase tracking-normal text-slate-300 sm:text-[10px]">
               <Route className="h-3 w-3" /> Traveled
             </div>
-            <div className="truncate font-grotesk text-sm font-bold sm:text-lg">{formatDistance(currentDistanceKm)}</div>
+            <div className="truncate font-grotesk text-sm font-bold sm:text-lg">{formatDistance(currentDistanceKm, units)}</div>
           </div>
           <div className="min-w-0 rounded-lg border border-white/10 bg-slate-950/78 px-2 py-1.5 text-white shadow backdrop-blur sm:rounded-xl sm:px-3 sm:py-2">
             <div className="flex min-w-0 items-center gap-1 text-[8px] font-semibold uppercase tracking-normal text-slate-300 sm:text-[10px]">
@@ -2356,7 +2357,7 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
               {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
             </button>
             <div className="ml-auto text-xs text-slate-300">
-              {formatDuration(Math.round(elapsedSeconds))} / {formatDuration(durationSeconds)} - {formatDistance(routeDistanceKm)}
+              {formatDuration(Math.round(elapsedSeconds))} / {formatDuration(durationSeconds)} - {formatDistance(routeDistanceKm, units)}
             </div>
         </div>
         <div className="mt-2 sm:mt-3">
@@ -2396,11 +2397,11 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
               <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5" title="How quickly the recorded speed is changing">
                 {Math.abs(currentDynamics.accelerationKmhPerSecond) < 0.1
                   ? 'Speed steady'
-                  : `Speed ${currentDynamics.accelerationKmhPerSecond > 0 ? '+' : ''}${currentDynamics.accelerationKmhPerSecond.toFixed(1)} km/h/s`}
+                  : `Speed ${currentDynamics.accelerationKmhPerSecond > 0 ? '+' : ''}${convertSpeedKmh(currentDynamics.accelerationKmhPerSecond, units).toFixed(1)} ${speedUnitLabel(units)}/s`}
               </span>
               {currentDynamics.overLimitKmh > 0 && (
                 <span className="shrink-0 rounded-full bg-red-500/25 px-2 py-0.5 text-red-100">
-                  {Math.round(currentDynamics.overLimitKmh)} over
+                  {formatSpeed(currentDynamics.overLimitKmh, units)} over
                 </span>
               )}
               {measuredFps != null && (

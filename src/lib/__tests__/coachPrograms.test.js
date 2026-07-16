@@ -294,6 +294,34 @@ describe('coach evidence semantics', () => {
     });
   });
 
+  it('uses privacy-masked trip evidence instead of excluding the whole day', () => {
+    const protectedTrip = {
+      ...trip({ id: 'protected', start: '2026-06-02T08:00:00.000Z' }),
+      privacy_zone_touched: true,
+      route_key: null,
+      route_points: [
+        { lat: null, lng: null, masked_for_privacy: true, privacy_gap: true, privacy_zone_id: 'home' },
+        { lat: 43.653, lng: -79.38 },
+        { lat: 43.66, lng: -79.39 },
+      ],
+    };
+    const sameDayPublic = trip({ id: 'same-day-public', start: '2026-06-02T18:00:00.000Z' });
+    const audit = buildCoachEvidenceAudit(
+      [protectedTrip, sameDayPublic],
+      [protectedTrip, sameDayPublic]
+    );
+
+    expect(audit).toMatchObject({
+      driverEligible: 2,
+      trendEligible: 2,
+      scoreReady: 2,
+      eventReady: 2,
+      routeReady: 2,
+      excludedPrivacy: 0,
+      privacyProtected: 1,
+    });
+  });
+
   it('does not invent a recommendation from trips with no Coach measurements', () => {
     const unmeasured = [
       { id: 'u1', status: 'completed', start_time: '2026-06-01T08:00:00.000Z', distance_km: 10 },

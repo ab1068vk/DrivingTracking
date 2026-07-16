@@ -5,7 +5,7 @@ const finiteNumber = (value) => {
 };
 
 export function trackingTripEventCount(trip = {}) {
-  const collections = [trip.driving_events, trip.phone_use_events, trip.voice_speed_limit_markers];
+  const collections = [trip.driving_events, trip.phone_use_events];
   const retainedCount = collections.reduce(
     (total, collection) => total + (Array.isArray(collection) ? collection.length : 0),
     0

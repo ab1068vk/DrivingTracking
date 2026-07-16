@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Bell,
   CheckCircle2,
-  Mic,
   Radio,
   ShieldCheck,
   SlidersHorizontal,
@@ -59,7 +58,7 @@ const yieldToPaint = () => new Promise((resolve) => {
 
 const alertLogRows = (systemLogs = [], nativeDiagnostics = {}) => {
   const webRows = (Array.isArray(systemLogs) ? systemLogs : [])
-    .filter((event) => /voice_alert|voice_speed_marker/i.test(`${event.operation || ''} ${event.title || ''}`))
+    .filter((event) => /voice_alert/i.test(`${event.operation || ''} ${event.title || ''}`))
     .slice(0, 8)
     .map((event) => ({
       id: event.id,
@@ -70,7 +69,7 @@ const alertLogRows = (systemLogs = [], nativeDiagnostics = {}) => {
       timestamp: event.timestamp,
     }));
   const nativeRows = (nativeDiagnostics.events || [])
-    .filter((event) => /voice_alert|voice_speed_marker|phone_use|speed/i.test(`${event.type || ''} ${event.title || ''}`))
+    .filter((event) => /voice_alert|phone_use|speed/i.test(`${event.type || ''} ${event.title || ''}`))
     .slice(0, 8)
     .map((event, index) => ({
       id: `native-${index}-${event.timestamp || event.type || 'event'}`,
@@ -118,12 +117,6 @@ export default function TrackingAlertsLab() {
     () => alertLogRows(systemLogs, nativeDiagnostics),
     [nativeDiagnostics, systemLogs]
   );
-  const markerStatus = settings.voice_speed_markers_enabled === true
-    ? nativeDiagnostics.events.some((event) => /voice_speed_marker/i.test(`${event.type || ''}`))
-      ? 'listener evidence recorded'
-      : 'enabled; no recent listener evidence'
-    : 'disabled';
-
   const runTestAlert = async () => {
     setTesting(true);
     setTestStatus('test alert queued');
@@ -166,11 +159,10 @@ export default function TrackingAlertsLab() {
       </header>
 
       <main className="min-h-0 flex-1 overflow-auto">
-        <section className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-5">
+        <section className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-4">
           <Metric label="Delivery status" value={delivery.label} detail={delivery.detail} icon={Volume2} />
           <Metric label="Delivery owner" value={delivery.status === 'native' ? 'native' : 'webview'} detail={delivery.status} icon={Radio} />
           <Metric label="Wording style" value={style} detail={`setting: ${settings.voice_alert_style || 'mode_default'}`} icon={SlidersHorizontal} />
-          <Metric label="Speed marker listener" value={markerStatus} detail={isAndroid() ? 'Android diagnostics' : 'Android only'} icon={Mic} />
           <Metric label="Test status" value={testStatus || 'source unavailable'} detail="Existing speech path" icon={Bell} />
         </section>
 
@@ -259,7 +251,6 @@ export default function TrackingAlertsLab() {
             <div className="space-y-3 text-sm">
               <Note icon={ShieldCheck} title="Native owner preserved" text="Android native trips mute WebView speech and keep background speech in the native service." />
               <Note icon={CheckCircle2} title="Cooldowns preserved" text="This view reads existing speed-tier cooldowns; it does not reset or replace shared cooldown tracking." />
-              <Note icon={Mic} title="Marker listener" text="Voice speed marker testing still uses the existing Android speech-recognition entry point." />
             </div>
           </Panel>
         </section>

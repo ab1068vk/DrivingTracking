@@ -318,7 +318,6 @@ export const DEFAULT_SETTINGS = {
   live_coaching_enabled: true,
   voice_alerts_enabled: true,
   voice_alert_style: DEFAULT_VOICE_ALERT_STYLE,
-  voice_speed_markers_enabled: false,
   sensor_fusion_enabled: true,
   crash_detection_enabled: true,
   emergency_workflow_enabled: false,
@@ -472,7 +471,6 @@ export function migrateDefaultSettings(parsed = {}) {
   }
 
   if (version < 16) {
-    merged.voice_speed_markers_enabled = false;
   }
 
   const experienceModeChanged = !Object.prototype.hasOwnProperty.call(parsed, 'experience_mode') ||

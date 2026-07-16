@@ -10,16 +10,17 @@ import {
 } from 'lucide-react';
 import { limitedTripSummaryQueryOptions, tripDetailQueryOptions } from '@/api/trips';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { formatDistance } from '@/lib/tripEngine';
 import { buildTrackingEvidenceConsoleData } from '@/lib/trackingEvidence';
 
 const SUMMARY_LIMIT = 50;
 
-const formatTripLabel = (trip = {}) => {
+const formatTripLabel = (trip = {}, units = 'metric') => {
   const date = trip.start_time ? new Date(trip.start_time) : null;
   const when = date && Number.isFinite(date.getTime())
     ? new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date)
     : 'Trip time unavailable';
-  const distance = Number.isFinite(Number(trip.distance_km)) ? `${Number(trip.distance_km).toFixed(1)} km` : 'distance unavailable';
+  const distance = Number.isFinite(Number(trip.distance_km)) ? formatDistance(Number(trip.distance_km), units) : 'distance unavailable';
   return `${when} / ${distance}`;
 };
 
@@ -31,6 +32,7 @@ const rowTone = (row = {}) => {
 
 export default function TrackingEvidenceConsole() {
   const settings = useLocalSettings();
+  const units = settings.units || 'metric';
   const [selectedTripId, setSelectedTripId] = useState('');
   const [tab, setTab] = useState('metrics');
   const [selectedRowId, setSelectedRowId] = useState('');
@@ -87,7 +89,7 @@ export default function TrackingEvidenceConsole() {
             >
               {!summaries.length && <option value="">No completed trips</option>}
               {summaries.map((trip) => (
-                <option key={trip.id} value={trip.id}>{formatTripLabel(trip)}</option>
+                <option key={trip.id} value={trip.id}>{formatTripLabel(trip, units)}</option>
               ))}
             </select>
           </label>

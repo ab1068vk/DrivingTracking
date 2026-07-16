@@ -224,7 +224,7 @@ export function buildSpeedSourceAuditCsv(options = {}) {
 
 export function buildVoiceAlertLogRows({ systemLogs = [], nativeDiagnostics = {} } = {}) {
   const webRows = (Array.isArray(systemLogs) ? systemLogs : [])
-    .filter((event) => /voice_alert|voice_speed_marker/i.test(`${event.operation || ''} ${event.title || ''}`))
+    .filter((event) => /voice_alert/i.test(`${event.operation || ''} ${event.title || ''}`))
     .map((event, index) => ({
       row_id: `voice-web-${index + 1}`,
       source: event.source || 'web',
@@ -234,7 +234,7 @@ export function buildVoiceAlertLogRows({ systemLogs = [], nativeDiagnostics = {}
       timestamp: event.timestamp || UNAVAILABLE,
     }));
   const nativeRows = (Array.isArray(nativeDiagnostics?.events) ? nativeDiagnostics.events : [])
-    .filter((event) => /voice_alert|voice_speed_marker|phone_use|speed/i.test(`${event.type || ''} ${event.title || ''}`))
+    .filter((event) => /voice_alert|phone_use|speed/i.test(`${event.type || ''} ${event.title || ''}`))
     .map((event, index) => ({
       row_id: `voice-android-${index + 1}`,
       source: 'android',

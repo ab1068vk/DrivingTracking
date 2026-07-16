@@ -904,7 +904,6 @@ export function buildSpeedZoneReviewItems(sections = [], {
     const sectionPoints = cleanGeometry(section?.sectionPoints || []);
     if (
       section?.saved ||
-      section?.voiceSpeedMarker ||
       !tripId ||
       !Number.isFinite(limit) ||
       limit <= 0 ||

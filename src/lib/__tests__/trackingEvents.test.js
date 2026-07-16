@@ -94,13 +94,9 @@ describe('tracking event normalization', () => {
     expect(usage.dataSourceNote).toBe('Android Usage Access evidence recorded for the trip.');
   });
 
-  it('adds voice markers, route gaps, and privacy gaps as technical log rows', () => {
+  it('adds route gaps and privacy gaps as technical log rows', () => {
     const rows = normalizeTrackingEventRows({
       ...baseTrip,
-      voice_speed_limit_markers: [{
-        timestamp: '2026-01-01T12:01:30.000Z',
-        limit_kmh: 60,
-      }],
       route_points: [
         ...baseTrip.route_points,
         {
@@ -114,7 +110,6 @@ describe('tracking event normalization', () => {
       ],
     });
 
-    expect(rows.some((row) => row.type === 'voice_speed_limit_marker' && row.label === 'Voice speed marker recorded')).toBe(true);
     expect(rows.some((row) => row.type === 'route_gap' && row.scoringStatus === 'diagnostic / not scored')).toBe(true);
     expect(rows.some((row) => row.type === 'privacy_gap' && row.privacyStatus === 'privacy masked')).toBe(true);
   });

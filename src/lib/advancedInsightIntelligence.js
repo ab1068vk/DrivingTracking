@@ -1,5 +1,4 @@
 import { isDriverMetricEligible } from '@/lib/phoneUseSummary';
-import { excludePrivacyTouchedDaysFromTrends } from '@/lib/privateTripMode';
 import { scoringValue } from '@/lib/scoringConstants';
 import { routeKeyForTrip } from '@/lib/mediumInsights';
 import { buildHabitProfile, getTimeBucket } from '@/lib/habitProfile';
@@ -291,7 +290,7 @@ const isComparable = (trip, profile) => {
 
 export function buildComparableExperimentProgress(experiment, trips = []) {
   if (!experiment?.startedAt) return null;
-  const afterStart = excludePrivacyTouchedDaysFromTrends(trips).filter((trip) => (
+  const afterStart = (Array.isArray(trips) ? trips : []).filter((trip) => (
     trip.status === 'completed' && isDriverMetricEligible(trip)
     && timestamp(trip) > new Date(experiment.startedAt).getTime()
   )).sort((a, b) => timestamp(a) - timestamp(b));
@@ -344,7 +343,7 @@ export function buildComparableExperimentProgress(experiment, trips = []) {
 
 export function buildAdvancedInsightIntelligence(analysis, settings = {}, options = {}) {
   const allTrips = options.allTrips || [...analysis.currentTrips, ...analysis.previousTrips];
-  const driverHistory = excludePrivacyTouchedDaysFromTrends(allTrips).filter((trip) => (
+  const driverHistory = (Array.isArray(allTrips) ? allTrips : []).filter((trip) => (
     trip.status === 'completed' && isDriverMetricEligible(trip)
   ));
   const habitProfile = buildHabitProfile(driverHistory);

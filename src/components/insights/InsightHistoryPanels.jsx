@@ -19,17 +19,34 @@ const weekTripsFor = (trips) => {
   return trips.filter((trip) => new Date(trip.start_time).getTime() >= start.getTime());
 };
 
+const initialCalendarMonthOffset = (trips) => {
+  const now = new Date();
+  const completedDates = trips
+    .filter((trip) => trip.status === 'completed')
+    .map((trip) => new Date(trip.start_time || trip.end_time || trip.created_at || 0))
+    .filter((date) => Number.isFinite(date.getTime()))
+    .sort((left, right) => right.getTime() - left.getTime());
+  if (!completedDates.length) return 0;
+  const hasCurrentMonth = completedDates.some((date) => (
+    date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth()
+  ));
+  if (hasCurrentMonth) return 0;
+  const latest = completedDates[0];
+  return (latest.getFullYear() - now.getFullYear()) * 12 + latest.getMonth() - now.getMonth();
+};
+
 export function InsightHistoryPanels({ trips = [], settings = {}, units = 'metric', onOpenTrip }) {
-  const [monthOffset, setMonthOffset] = useState(0);
+  const [monthOffset, setMonthOffset] = useState(() => initialCalendarMonthOffset(trips));
   const monthDate = useMemo(() => {
     const date = new Date();
+    date.setDate(1);
     date.setMonth(date.getMonth() + monthOffset);
     return date;
   }, [monthOffset]);
   const drivers = useMemo(() => trips.filter(isDriverMetricEligible), [trips]);
   const routes = useMemo(() => buildRouteComparisons(drivers), [drivers]);
   const commutes = useMemo(() => buildCommuteDetections(drivers), [drivers]);
-  const calendar = useMemo(() => buildTripCalendarMonth(drivers, monthDate), [drivers, monthDate]);
+  const calendar = useMemo(() => buildTripCalendarMonth(trips, monthDate), [trips, monthDate]);
   const roads = useMemo(() => buildRoadTypeBreakdown(drivers), [drivers]);
   const goals = useMemo(() => buildGoalStatus(weekTripsFor(drivers), settings), [drivers, settings]);
   const phone = useMemo(() => summarizePhoneUseAcrossTrips(trips), [trips]);
@@ -52,7 +69,7 @@ function HistorySummary({ calendar, routes, commutes, goals }) {
 
 function CalendarPanel({ calendar, units, setMonthOffset }) {
   return <section className='rounded-3xl border border-border bg-card p-5 shadow-sm'>
-    <PanelHeader eyebrow='History' title='Trip calendar' description='Drive days, distance, and scores. Privacy-touched days remain excluded.' icon={CalendarDays} action={
+    <PanelHeader eyebrow='History' title='Trip calendar' description='All completed drives and available scores are shown. Privacy-zone coordinates remain masked.' icon={CalendarDays} action={
       <div className='flex gap-1' aria-label='Calendar month controls'>
         <MonthButton onClick={() => setMonthOffset((value) => value - 1)}>Previous</MonthButton>
         <MonthButton onClick={() => setMonthOffset(0)}>Today</MonthButton>
@@ -61,7 +78,7 @@ function CalendarPanel({ calendar, units, setMonthOffset }) {
     } />
     <div className='mt-5 flex justify-between gap-2 text-sm'><strong>{calendar.label}</strong><span className='text-muted-foreground'>{calendar.drive_days} days / {formatDistance(calendar.total_distance_km, units)}</span></div>
     <div className='mt-3 grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-muted-foreground'>{dayInitials.map((day, index) => <div key={`${day}-${index}`}>{day}</div>)}</div>
-    <div className='mt-1 grid grid-cols-7 gap-1'>{calendar.days.map((day) => <CalendarDay key={day.key} day={day} />)}</div>
+    <div className='mt-1 grid grid-cols-7 gap-1'>{calendar.days.map((day) => <CalendarDay key={day.key} day={day} units={units} />)}</div>
   </section>;
 }
 
@@ -69,9 +86,11 @@ function MonthButton({ onClick, children }) {
   return <button type='button' onClick={onClick} className='rounded-full border border-border px-3 py-1.5 text-xs font-semibold hover:bg-secondary'>{children}</button>;
 }
 
-function CalendarDay({ day }) {
+function CalendarDay({ day, units }) {
   const tone = getScoreColor(day.avg_score);
-  const title = day.trip_count ? `${day.trip_count} trips, ${day.distance_km} km, average score ${formatEstimatedScore(day.avg_score)}` : 'No trips';
+  const title = day.trip_count
+    ? `${day.trip_count} trips, ${formatDistance(day.distance_km, units)}, average score ${formatEstimatedScore(day.avg_score)}`
+    : 'No trips';
   return <div title={title} className={`min-h-16 rounded-xl border border-border p-2 ${day.inMonth ? 'bg-background' : 'bg-secondary/20 opacity-40'}`}>
     <div className='text-[11px] font-semibold'>{day.date.getDate()}</div>
     {day.trip_count > 0 && <div className='mt-1'><div className={`h-1.5 rounded-full ${tone.bg}`} /><div className='mt-1 text-[10px] text-muted-foreground'>{day.trip_count} trip{day.trip_count === 1 ? '' : 's'}</div><div className='text-[10px] font-semibold'>{formatEstimatedScore(day.avg_score)}</div></div>}

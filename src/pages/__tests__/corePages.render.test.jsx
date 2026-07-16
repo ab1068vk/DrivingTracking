@@ -400,15 +400,83 @@ describe('core page component renders', () => {
     const html = renderToStaticMarkup(<TrackingOverview />);
 
     expect(html).toContain('Recording active');
+    expect(html).toContain('Live drive telemetry');
+    expect(html).toContain('Drive');
+    expect(html).toContain('Route');
+    expect(html).toContain('Signals');
+    expect(html).toContain('Speed unavailable');
     expect(html).toContain('Route points retained');
     expect(html).toContain('Score estimate');
+    expect(html).toContain('~88');
     expect(html).toContain('trip-1');
     expect(html).toContain('Route retention');
     expect(html).toContain('100%');
   });
 
+  it('renders each advanced live telemetry cockpit view from a deterministic snapshot', async () => {
+    const { LiveTrackingCockpit } = await import('@/pages/TrackingOverview');
+    const snapshot = {
+      state: 'recording',
+      gps: { tone: 'good', label: 'GPS ±7 m', key: 'strong', accuracyM: 7, fixAgeSeconds: 1 },
+      updateAgeSeconds: 1,
+      currentSpeedKmh: 48,
+      speedLimitKmh: 50,
+      speedLimitSource: 'user_confirmed_posted_sign',
+      speedDeltaKmh: -2,
+      routePreview: [
+        { lat: 43.65, lng: -79.38, speed_kmh: 30 },
+        { lat: 43.651, lng: -79.379, speed_kmh: 48 },
+      ],
+      eventCounts: { harsh_brake: 1 },
+      events: [{ title: 'Braking threshold exceeded', timestamp: new Date().toISOString(), speedKmh: 42 }],
+      latestEvent: { title: 'Braking threshold exceeded', timestamp: new Date().toISOString(), speedKmh: 42 },
+      possibleIncidentActive: false,
+      durationSeconds: 300,
+      distanceKm: 3.25,
+      averageSpeedKmh: 39,
+      maxSpeedKmh: 71,
+      stoppedSeconds: 22,
+      routePointCount: 90,
+      routeMaskedCount: 0,
+      routeGapCount: 1,
+      gapSeconds: 3,
+      headingDeg: 32,
+      altitudeM: 92,
+      accelerationMs2: -1.2,
+      lateralG: 0.1,
+      headingRateDegS: 2,
+      linearMotionMagnitudeMs2: 1.3,
+      rotationMagnitudeDegS: 3,
+      activityType: 'in_vehicle',
+      activityConfidence: 90,
+      motionSampleCount: 400,
+      linearAccelerationSensorReady: true,
+      gyroscopeSensorReady: true,
+      maxDriftSinceStopM: 2,
+    };
+    const props = { snapshot, onViewChange: vi.fn(), nativeActive: true, ending: false, onEnd: vi.fn() };
+
+    const drive = renderToStaticMarkup(<LiveTrackingCockpit {...props} view="drive" />);
+    const route = renderToStaticMarkup(<LiveTrackingCockpit {...props} view="route" />);
+    const signals = renderToStaticMarkup(<LiveTrackingCockpit {...props} view="signals" />);
+    const imperialDrive = renderToStaticMarkup(<LiveTrackingCockpit {...props} units="imperial" view="drive" />);
+
+    expect(drive).toContain('Current speed');
+    expect(drive).toContain('Braking threshold exceeded');
+    expect(drive).toContain('3.3 km');
+    expect(drive).toContain('39 km/h');
+    expect(imperialDrive).toContain('2.0 mi');
+    expect(imperialDrive).toContain('30');
+    expect(imperialDrive).toContain('mph');
+    expect(route).toContain('API-free route view');
+    expect(route).toContain('It does not require map tiles, routing services, or a paid API.');
+    expect(signals).toContain('GPS evidence');
+    expect(signals).toContain('Motion evidence');
+    expect(signals).toContain('Recorder state');
+  });
+
   it('renders TrackingOverview trip-loading error with an in-place retry', async () => {
-    queryData.set(JSON.stringify(['trip-summaries', 'limited', 30]), new Error('Local store unavailable'));
+    queryData.set(JSON.stringify(['trip-summaries']), new Error('Local store unavailable'));
     const { default: TrackingOverview } = await import('@/pages/TrackingOverview');
     const html = renderToStaticMarkup(<TrackingOverview />);
 
@@ -540,10 +608,6 @@ describe('core page component renders', () => {
           confidence: 0.7,
         },
       ],
-      voice_speed_limit_markers: [{
-        timestamp: '2026-01-01T12:08:00.000Z',
-        limit_kmh: 50,
-      }],
     };
     setTripSummaries([eventTrip]);
     queryData.set(JSON.stringify(['trip', 'trip-1']), eventTrip);
@@ -555,7 +619,6 @@ describe('core page component renders', () => {
     expect(html).toContain('Phone-use window detected');
     expect(html).toContain('GPS diagnostic proxy');
     expect(html).toContain('diagnostic / not scored');
-    expect(html).toContain('Voice speed marker recorded');
     expect(html).toContain('Why Detected');
   });
 
@@ -566,11 +629,6 @@ describe('core page component renders', () => {
         { lat: 43.65, lng: -79.38, speed_kmh: 42, speed_limit_kmh: 50, speed_limit_source: 'openstreetmap' },
         { lat: 43.651, lng: -79.381, speed_kmh: 72, speed_limit_kmh: 60, speed_limit_source: 'region_default_estimate' },
       ],
-      voice_speed_limit_markers: [{
-        id: 'voice-1',
-        limit_kmh: 50,
-        source: 'voice_user_estimate',
-      }],
     };
     queryData.set(JSON.stringify(['tracking-speed-console-trips']), [speedTrip]);
     queryData.set(JSON.stringify(['tracking-speed-console-knowledge']), {
@@ -591,7 +649,6 @@ describe('core page component renders', () => {
     expect(html).toContain('Posted signs override app estimates');
     expect(html).toContain('Your confirmed posted sign');
     expect(html).toContain('Local learned estimate');
-    expect(html).toContain('Voice marker estimate');
     expect(html).toContain('/speed-limits?view=review');
     expect(html).toContain('/trips/trip-1/speed');
     expect(html).toContain('threshold exceeded');
@@ -1143,5 +1200,82 @@ describe('core page component renders', () => {
     expect(html).toContain('13.4 km');
     expect(html).toContain('17m');
     expect(html).toContain('Avg score');
+  });
+  it('renders only 30 Trip cards per page with Map-style arrow controls', async () => {
+    setTripSummaries(Array.from({ length: 57 }, (_, index) => ({
+      ...sampleTrip,
+      id: 'paged-trip-' + index,
+      start_time: new Date(Date.UTC(2026, 6, 14, 12, index)).toISOString(),
+    })));
+    const { default: TripHistory, TRIP_HISTORY_PAGE_SIZE } = await import('@/pages/TripHistory');
+    const html = renderToStaticMarkup(<TripHistory />);
+
+    expect(TRIP_HISTORY_PAGE_SIZE).toBe(30);
+    expect((html.match(/<article>/g) || [])).toHaveLength(30);
+    expect(html).toContain('Showing');
+    expect(html).toContain('of <b class="text-foreground">57</b> matching trips');
+    expect(html).toContain('aria-label="Previous 30 trips"');
+    expect(html).toContain('aria-label="Next 30 trips"');
+    expect(html).toContain('1 / 2');
+  });
+
+  it('matches combined month, date, distance, duration, score, event, and vehicle searches', async () => {
+    const { matchesTripSearchText } = await import('@/pages/TripHistory');
+    const { buildTripSearchText } = await import('@/lib/tripMetadata');
+    const indexed = buildTripSearchText({
+      id: 'smart-search-trip',
+      status: 'completed',
+      start_time: '2026-07-14T18:30:00.000Z',
+      start_address: 'Toronto',
+      end_address: 'Mississauga',
+      distance_km: 20.4,
+      duration_seconds: 1500,
+      avg_speed_kmh: 49,
+      score_overall: 88,
+      harsh_brakes_count: 2,
+      notes: 'School pickup',
+    }, {
+      name: 'Family SUV',
+      make: 'Honda',
+      model: 'CR-V',
+    });
+
+    expect(matchesTripSearchText(indexed, 'july 14 20 km')).toBe(true);
+    expect(matchesTripSearchText(indexed, 'score 88 toronto')).toBe(true);
+    expect(matchesTripSearchText(indexed, '25 minutes 2 harsh brake')).toBe(true);
+    expect(matchesTripSearchText(indexed, 'family suv school pickup')).toBe(true);
+    expect(matchesTripSearchText(indexed, 'august 90 km')).toBe(false);
+  });
+  it('filters trips by practical calendar ranges with inclusive custom dates', async () => {
+    const { matchesTripDateFilter } = await import('@/pages/TripHistory');
+    const now = new Date();
+    const old = new Date(now);
+    old.setDate(old.getDate() - 40);
+
+    expect(matchesTripDateFilter({ start_time: now.toISOString() }, 'today')).toBe(true);
+    expect(matchesTripDateFilter({ start_time: now.toISOString() }, 'last_7')).toBe(true);
+    expect(matchesTripDateFilter({ start_time: old.toISOString() }, 'last_30')).toBe(false);
+    expect(matchesTripDateFilter(
+      { start_time: '2026-04-10T18:30:00.000Z' },
+      'exact_day',
+      '2026-04-10'
+    )).toBe(true);
+    expect(matchesTripDateFilter(
+      { start_time: '2026-04-11T18:30:00.000Z' },
+      'exact_day',
+      '2026-04-10'
+    )).toBe(false);
+    expect(matchesTripDateFilter(
+      { start_time: '2026-04-10T18:30:00.000Z' },
+      'custom',
+      '2026-04-10',
+      '2026-04-10'
+    )).toBe(true);
+    expect(matchesTripDateFilter(
+      { start_time: '2026-04-12T18:30:00.000Z' },
+      'custom',
+      '2026-04-10',
+      '2026-04-11'
+    )).toBe(false);
   });
 });

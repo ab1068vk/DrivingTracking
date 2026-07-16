@@ -2,14 +2,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useVirtualizer } from '@tanstack/react-virtual';
 import { limitedTripSummaryQueryOptions, tripDetailQueryOptions, tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
-import { Search, Filter, Car, Tag, Star, CalendarDays, TrendingUp } from 'lucide-react';
+import { Search, Car, Tag, Star, CalendarDays, TrendingUp, X, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react';
 import TripCard from '@/components/TripCard';
 import SpeedLimitConflictReview from '@/components/SpeedLimitConflictReview';
 import { useLocalSettingSelector } from '@/hooks/useLocalSettings';
-import { formatDistance, formatDuration, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
+import { formatDistance, formatDuration, getTripComponentScore } from '@/lib/tripEngine';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import {
@@ -20,7 +19,6 @@ import {
   normalizeTripTags,
 } from '@/lib/tripMetadata';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
-import DeferredRecharts from '@/components/DeferredRecharts';
 import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
 import { PageHeader } from '@/components/PageChrome';
 
@@ -35,22 +33,24 @@ const SORT_OPTIONS = [
 
 const QUICK_FILTERS = [
   { id: 'all', label: 'All Trips' },
-  { id: 'this_week', label: 'This Week' },
-  { id: 'this_month', label: 'This Month' },
-  { id: 'best', label: 'Best Trips' },
-  { id: 'worst', label: 'Worst Trips' },
-  { id: 'night', label: 'Night Drives' },
-  { id: 'high_risk', label: 'High Risk' },
   { id: 'favorites', label: 'Favorites' },
+  { id: 'high_risk', label: 'Needs Attention' },
+  { id: 'night', label: 'Night' },
+  { id: 'best', label: 'Best Trips' },
+  { id: 'worst', label: 'Low Score' },
 ];
 
-const SCORE_SPARKLINES = [
-  { key: 'score_overall', label: 'Overall' },
-  { key: 'score_safety', label: 'Safety' },
-  { key: 'score_smoothness', label: 'Smooth' },
-  { key: 'score_eco', label: 'Eco' },
+const DATE_FILTERS = [
+  { id: 'all', label: 'Any date' },
+  { id: 'today', label: 'Today' },
+  { id: 'last_7', label: 'Last 7 days' },
+  { id: 'last_30', label: 'Last 30 days' },
+  { id: 'this_month', label: 'This month' },
+  { id: 'exact_day', label: 'Exact day' },
+  { id: 'custom', label: 'Date range' },
 ];
 
+export const TRIP_HISTORY_PAGE_SIZE = 30;
 export const SCORE_DELTA_MIN_PREVIOUS_TRIPS = 3;
 
 const scoreValue = (trip, key = 'overall') => getTripComponentScore(trip, key).value;
@@ -111,10 +111,9 @@ export function buildTripHistorySummary(trips = [], units = 'metric') {
   };
 }
 
-const startOfWeek = () => {
+const startOfToday = () => {
   const date = new Date();
   date.setHours(0, 0, 0, 0);
-  date.setDate(date.getDate() - date.getDay());
   return date.getTime();
 };
 
@@ -126,15 +125,58 @@ const startOfMonth = () => {
 };
 
 const matchesQuickFilter = (trip, filter) => {
-  const start = new Date(trip.start_time).getTime();
-  if (!Number.isFinite(start)) return false;
-  if (filter === 'this_week') return start >= startOfWeek();
-  if (filter === 'this_month') return start >= startOfMonth();
   if (filter === 'best') return (scoreValue(trip) ?? Number.NEGATIVE_INFINITY) >= 85;
   if (filter === 'worst') return (scoreValue(trip) ?? Number.POSITIVE_INFINITY) < 60;
   if (filter === 'night') return trip.night_driving || normalizeTripTags(trip).includes('night');
   if (filter === 'high_risk') return isHighRiskTrip(trip);
   if (filter === 'favorites') return trip.is_favorite === true;
+  return true;
+};
+
+const parseLocalDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value + 'T00:00:00');
+  return Number.isFinite(date.getTime()) ? date : null;
+};
+
+export const matchesTripSearchText = (indexedText = '', query = '') => {
+  const haystack = String(indexedText || '').toLowerCase();
+  const tokens = String(query || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return tokens.every((token) => haystack.includes(token));
+};
+
+export const matchesTripDateFilter = (trip, filter = 'all', dateFrom = '', dateTo = '') => {
+  const start = new Date(trip?.start_time).getTime();
+  if (!Number.isFinite(start)) return false;
+  const today = startOfToday();
+  const tomorrowDate = new Date(today);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrow = tomorrowDate.getTime();
+  const daysAgo = (days) => {
+    const date = new Date(today);
+    date.setDate(date.getDate() - days);
+    return date.getTime();
+  };
+  if (filter === 'today') return start >= today && start < tomorrow;
+  if (filter === 'last_7') return start >= daysAgo(6) && start < tomorrow;
+  if (filter === 'last_30') return start >= daysAgo(29) && start < tomorrow;
+  if (filter === 'this_month') return start >= startOfMonth() && start < tomorrow;
+  if (filter === 'exact_day') {
+    const exactDate = parseLocalDate(dateFrom);
+    if (!exactDate) return true;
+    const exactStart = exactDate.getTime();
+    exactDate.setDate(exactDate.getDate() + 1);
+    return start >= exactStart && start < exactDate.getTime();
+  }
+  if (filter === 'custom') {
+    const from = parseLocalDate(dateFrom)?.getTime();
+    const toDate = parseLocalDate(dateTo);
+    if (from != null && start < from) return false;
+    if (toDate) {
+      toDate.setDate(toDate.getDate() + 1);
+      if (start >= toDate.getTime()) return false;
+    }
+  }
   return true;
 };
 
@@ -144,6 +186,10 @@ export default function TripHistory() {
   const [isFilterPending, startFilterTransition] = useTransition();
   const [sortBy, setSortBy] = useState('date_desc');
   const [filterBy, setFilterBy] = useState('all');
+  const [dateFilter, setDateFilter] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [page, setPage] = useState(0);
   const [selectedTag, setSelectedTag] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
   const [presetName, setPresetName] = useState('');
@@ -203,19 +249,7 @@ export default function TripHistory() {
     onSuccess: invalidateTrips,
   });
 
-  const recentChronological = useMemo(
-    () => [...completed]
-      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
-      .slice(-5),
-    [completed]
-  );
-  const sparklineData = useMemo(() => recentChronological.map((trip, index) => ({
-    index,
-    score_overall: getTripComponentScore(trip, 'overall').value,
-    score_safety: getTripComponentScore(trip, 'safety').value,
-    score_smoothness: getTripComponentScore(trip, 'smoothness').value,
-    score_eco: getTripComponentScore(trip, 'eco').value,
-  })), [recentChronological]);
+
   const improvement = useMemo(() => calculateRecentBrakingImprovement(completed), [completed]);
   const tripsByRecentOrder = useMemo(
     () => [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()),
@@ -226,9 +260,11 @@ export default function TripHistory() {
   const sorted = useMemo(() => {
     const filtered = completed.filter((trip) => {
       if (!matchesQuickFilter(trip, filterBy)) return false;
+      if (!matchesTripDateFilter(trip, dateFilter, dateFrom, dateTo)) return false;
       if (selectedTag !== 'all' && !normalizeTripTags(trip).includes(selectedTag)) return false;
       if (normalizedSearch) {
-        if (!tripSearchIndex.get(String(trip.id))?.includes(normalizedSearch)) return false;
+        const indexedText = tripSearchIndex.get(String(trip.id)) || '';
+        if (!matchesTripSearchText(indexedText, normalizedSearch)) return false;
       }
       return true;
     });
@@ -244,19 +280,26 @@ export default function TripHistory() {
         default: return 0;
       }
     });
-  }, [completed, filterBy, normalizedSearch, selectedTag, sortBy, tripSearchIndex]);
-  const tripVirtualizer = useVirtualizer({
-    count: sorted.length,
-    getScrollElement: () => tripListRef.current,
-    estimateSize: () => 190,
-    overscan: 5,
-  });
-  const virtualTrips = tripVirtualizer.getVirtualItems();
+  }, [completed, dateFilter, dateFrom, dateTo, filterBy, normalizedSearch, selectedTag, sortBy, tripSearchIndex]);
+  const pageCount = Math.max(1, Math.ceil(sorted.length / TRIP_HISTORY_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageStart = safePage * TRIP_HISTORY_PAGE_SIZE;
+  const pageTrips = sorted.slice(pageStart, pageStart + TRIP_HISTORY_PAGE_SIZE);
+  const pageEnd = pageStart + pageTrips.length;
   const historySummary = useMemo(() => buildTripHistorySummary(sorted, units), [sorted, units]);
   const activeFilterLabel = QUICK_FILTERS.find((option) => option.id === filterBy)?.label || 'Custom filter';
+  const exactDateLabel = dateFrom
+    ? parseLocalDate(dateFrom)?.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    : null;
+  const activeDateLabel = dateFilter === 'exact_day'
+    ? exactDateLabel || 'Choose a day'
+    : dateFilter === 'custom'
+      ? [dateFrom, dateTo].filter(Boolean).join(' – ') || 'Choose a date range'
+      : DATE_FILTERS.find((option) => option.id === dateFilter)?.label || 'Any date';
   const activeTagLabel = selectedTag === 'all'
     ? 'All tags'
     : TRIP_TAG_OPTIONS.find((option) => option.id === selectedTag)?.label || 'Selected tag';
+  const hasActiveFilters = Boolean(searchInput) || filterBy !== 'all' || dateFilter !== 'all' || selectedTag !== 'all' || sortBy !== 'date_desc';
   const setTripSearch = (value) => {
     setSearchInput(value);
     startFilterTransition(() => {
@@ -265,17 +308,27 @@ export default function TripHistory() {
   };
   const setTripSort = (value) => startFilterTransition(() => setSortBy(value));
   const setTripFilter = (value) => startFilterTransition(() => setFilterBy(value));
+  const setTripDateFilter = (value) => startFilterTransition(() => setDateFilter(value));
   const setTripTag = (value) => startFilterTransition(() => setSelectedTag(value));
   const handleTripIntent = useCallback((trip) => {
     if (!trip?.id) return;
     qc.prefetchQuery(tripDetailQueryOptions(trip.id)).catch(() => {});
   }, [qc]);
+  const changePage = (nextPage) => {
+    setPage(Math.max(0, Math.min(pageCount - 1, nextPage)));
+    requestAnimationFrame(() => {
+      tripListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
 
   const clearFilters = () => {
     setSearchInput('');
     startFilterTransition(() => {
       setSearch('');
       setFilterBy('all');
+      setDateFilter('all');
+      setDateFrom('');
+      setDateTo('');
       setSelectedTag('all');
       setSortBy('date_desc');
     });
@@ -299,8 +352,12 @@ export default function TripHistory() {
   }, [savedFilters, savedFiltersLoaded]);
 
   useEffect(() => {
-    tripVirtualizer.scrollToIndex(0, { align: 'start' });
-  }, [filterBy, search, selectedTag, sortBy, tripVirtualizer]);
+    setPage(0);
+  }, [dateFilter, dateFrom, dateTo, filterBy, search, selectedTag, sortBy]);
+
+  useEffect(() => {
+    if (page > pageCount - 1) setPage(Math.max(0, pageCount - 1));
+  }, [page, pageCount]);
 
   const saveCurrentFilter = () => {
     const name = presetName.trim();
@@ -311,6 +368,9 @@ export default function TripHistory() {
       search: searchInput,
       sortBy,
       filterBy,
+      dateFilter,
+      dateFrom,
+      dateTo,
       selectedTag,
     };
     setSavedFilters((current) => [preset, ...current.filter((item) => item.name.toLowerCase() !== name.toLowerCase())].slice(0, 8));
@@ -323,6 +383,9 @@ export default function TripHistory() {
       setSearch(preset.search || '');
       setSortBy(preset.sortBy || 'date_desc');
       setFilterBy(preset.filterBy || 'all');
+      setDateFilter(preset.dateFilter || 'all');
+      setDateFrom(preset.dateFrom || '');
+      setDateTo(preset.dateTo || '');
       setSelectedTag(preset.selectedTag || 'all');
     });
   };
@@ -336,7 +399,7 @@ export default function TripHistory() {
   }
 
   return (
-    <div className="space-y-5 pb-4">
+    <div className="space-y-3 pb-4">
       <PageHeader
         title="Trip History"
         description={`${sorted.length} of ${completed.length} completed trips`}
@@ -351,207 +414,240 @@ export default function TripHistory() {
       {reviewSpeedLimitConflicts && (
         <SpeedLimitConflictReview reviewMode />
       )}
+      <section aria-label="Find and filter trips" className="space-y-3 rounded-2xl border border-border bg-card p-3 shadow-sm sm:p-4">
+        <div>
+          <div className="relative">
+            <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="search"
+              aria-label="Search trip history"
+              placeholder="Search place, month, date, km, score, notes, events…"
+              value={searchInput}
+              onChange={(event) => setTripSearch(event.target.value)}
+              className="h-11 w-full rounded-xl border border-border bg-background pl-10 pr-4 text-sm outline-none transition-colors focus:border-primary"
+            />
+          </div>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            Combine terms in any order—for example “July 14”, “20 km”, “score 85”, “night Toronto”, or a vehicle name.
+          </p>
+        </div>
 
-      <div className="relative">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <input
-          type="text"
-          aria-label="Search trip history"
-          placeholder="Search location, vehicle, tag, note, score, or date"
-          value={searchInput}
-          onChange={event => setTripSearch(event.target.value)}
-          className="w-full pl-10 pr-4 py-3 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary transition-colors"
-        />
-      </div>
+        <div role="toolbar" aria-label="Trip history filters" className="grid grid-cols-2 gap-2 lg:grid-cols-[1fr_1fr_1fr_auto]">
+          <label className="min-w-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Date
+            <select
+              aria-label="Filter trips by date"
+              value={dateFilter}
+              onChange={(event) => setTripDateFilter(event.target.value)}
+              className="mt-1 h-10 w-full rounded-xl border border-border bg-background px-3 text-xs font-medium text-foreground outline-none focus:border-primary"
+            >
+              {DATE_FILTERS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>
+          </label>
+          <label className="min-w-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Trip type
+            <select
+              aria-label="Filter trips by type"
+              value={filterBy}
+              onChange={(event) => setTripFilter(event.target.value)}
+              className="mt-1 h-10 w-full rounded-xl border border-border bg-background px-3 text-xs font-medium text-foreground outline-none focus:border-primary"
+            >
+              {QUICK_FILTERS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>
+          </label>
+          <label className="min-w-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Sort
+            <select
+              aria-label="Sort trips"
+              value={sortBy}
+              onChange={(event) => setTripSort(event.target.value)}
+              className="mt-1 h-10 w-full rounded-xl border border-border bg-background px-3 text-xs font-medium text-foreground outline-none focus:border-primary"
+            >
+              {SORT_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => setShowFilters((value) => !value)}
+            aria-expanded={showFilters}
+            className={`mt-4 inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-semibold transition-colors lg:mt-4 ${
+              showFilters || selectedTag !== 'all'
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-border bg-background text-muted-foreground hover:border-primary/50'
+            }`}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Tags & saved
+          </button>
+        </div>
+
+        {dateFilter === 'exact_day' && (
+          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
+            <label className="text-xs font-semibold text-foreground">
+              Choose one day
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(event) => setDateFrom(event.target.value)}
+                className="mt-1.5 h-10 w-full rounded-xl border border-border bg-background px-3 text-sm text-foreground sm:max-w-xs"
+              />
+            </label>
+            <p className="mt-1.5 text-[11px] text-muted-foreground">Only trips recorded on this calendar day will be shown.</p>
+          </div>
+        )}
+
+        {dateFilter === 'custom' && (
+          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-foreground">
+              <CalendarDays className="h-3.5 w-3.5" />
+              Choose a date range
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-[11px] font-medium text-muted-foreground">
+                From
+                <input
+                  type="date"
+                  value={dateFrom}
+                  max={dateTo || undefined}
+                  onChange={(event) => setDateFrom(event.target.value)}
+                  className="mt-1 h-10 w-full rounded-xl border border-border bg-background px-2 text-xs text-foreground"
+                />
+              </label>
+              <label className="text-[11px] font-medium text-muted-foreground">
+                To
+                <input
+                  type="date"
+                  value={dateTo}
+                  min={dateFrom || undefined}
+                  onChange={(event) => setDateTo(event.target.value)}
+                  className="mt-1 h-10 w-full rounded-xl border border-border bg-background px-2 text-xs text-foreground"
+                />
+              </label>
+            </div>
+          </div>
+        )}
+
+        {showFilters && (
+          <div className="space-y-4 rounded-xl border border-border bg-secondary/20 p-3">
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                <Tag className="h-3.5 w-3.5" />
+                Trip tags
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTripTag('all')}
+                  aria-pressed={selectedTag === 'all'}
+                  className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+                    selectedTag === 'all' ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-background text-muted-foreground'
+                  }`}
+                >
+                  All tags
+                </button>
+                {TRIP_TAG_OPTIONS.map((option) => (
+                  <button
+                    type="button"
+                    key={option.id}
+                    onClick={() => setTripTag(option.id)}
+                    aria-pressed={selectedTag === option.id}
+                    className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+                      selectedTag === option.id ? 'border-primary bg-primary text-primary-foreground' : option.className
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t border-border pt-3">
+              <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                <Star className="h-3.5 w-3.5" />
+                Saved filters
+              </div>
+              <div className="flex gap-2">
+                <input
+                  value={presetName}
+                  onChange={(event) => setPresetName(event.target.value)}
+                  placeholder="Name this filter"
+                  className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary"
+                />
+                <button
+                  type="button"
+                  onClick={saveCurrentFilter}
+                  disabled={!presetName.trim()}
+                  className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-40"
+                >
+                  Save
+                </button>
+              </div>
+              {savedFilters.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {savedFilters.map((preset) => (
+                    <span key={preset.id} className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-1 text-xs">
+                      <button type="button" onClick={() => applySavedFilter(preset)} className="font-medium hover:text-primary">
+                        {preset.name}
+                      </button>
+                      <button type="button" onClick={() => removeSavedFilter(preset.id)} className="flex h-7 w-7 items-center justify-center text-muted-foreground hover:text-red-500" aria-label={`Delete ${preset.name} filter`}>
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
 
       {improvement && (
-        <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-300">
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-300">
           <TrendingUp className="h-4 w-4" />
           <span className="font-semibold">{improvement.message}</span>
         </div>
       )}
 
       {completed.length > 0 && (
-        <section aria-label="Filtered trip history snapshot" className="rounded-2xl border border-border bg-card p-3">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <section aria-label="Filtered trip history snapshot" className="rounded-2xl border border-border bg-card p-3 shadow-sm sm:p-4">
+          <span className="sr-only">{historySummary.count} matching trips</span>
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Filtered snapshot</div>
-              <div className="text-sm font-semibold">{historySummary.count} matching trips</div>
+              <div className="mt-0.5 text-[11px] text-muted-foreground">All completed trips matching the search and filters above.</div>
             </div>
-            <div className="rounded-full bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground">
-              {activeFilterLabel} / {activeTagLabel}
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="rounded-xl bg-secondary/50 px-2 py-3">
-              <div className="text-xs text-muted-foreground">Distance</div>
-              <div className="font-grotesk text-lg font-bold">{historySummary.totalDistanceLabel}</div>
-            </div>
-            <div className="rounded-xl bg-secondary/50 px-2 py-3">
-              <div className="text-xs text-muted-foreground">Duration</div>
-              <div className="font-grotesk text-lg font-bold">{historySummary.totalDurationLabel}</div>
-            </div>
-            <div className="rounded-xl bg-secondary/50 px-2 py-3">
-              <div className="text-xs text-muted-foreground">Avg score</div>
-              <div className="font-grotesk text-lg font-bold">{historySummary.averageScoreLabel}</div>
+            <div className="flex flex-wrap items-center justify-end gap-1.5">
+              <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">{activeDateLabel}</span>
+              {filterBy !== 'all' && <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">{activeFilterLabel}</span>}
+              {selectedTag !== 'all' && <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">{activeTagLabel}</span>}
+              {hasActiveFilters && (
+                <button type="button" onClick={clearFilters} className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-muted-foreground hover:bg-secondary" aria-label="Clear all trip filters">
+                  <X className="h-3.5 w-3.5" />
+                  Clear
+                </button>
+              )}
             </div>
           </div>
-          {(historySummary.favoriteCount > 0 || historySummary.nightCount > 0) && (
-            <div className="mt-3 text-xs text-muted-foreground">
-              Includes {historySummary.favoriteCount} favorites and {historySummary.nightCount} night drives in the current view.
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="rounded-xl bg-secondary/50 px-3 py-2.5">
+              <div className="text-[11px] text-muted-foreground">Matching trips</div>
+              <div className="font-grotesk text-xl font-bold">{historySummary.count}</div>
             </div>
-          )}
+            <div className="rounded-xl bg-secondary/50 px-3 py-2.5">
+              <div className="text-[11px] text-muted-foreground">Matching distance</div>
+              <div className="font-grotesk text-xl font-bold">{historySummary.totalDistanceLabel}</div>
+            </div>
+            <div className="rounded-xl bg-secondary/50 px-3 py-2.5">
+              <div className="text-[11px] text-muted-foreground">Drive time</div>
+              <div className="font-grotesk text-xl font-bold">{historySummary.totalDurationLabel}</div>
+            </div>
+            <div className="rounded-xl bg-secondary/50 px-3 py-2.5">
+              <div className="text-[11px] text-muted-foreground">Avg score</div>
+              <div className="font-grotesk text-xl font-bold">{historySummary.averageScoreLabel}</div>
+            </div>
+          </div>
         </section>
       )}
-
-      {sparklineData.length > 1 && (
-        <div className="grid grid-cols-2 gap-2">
-          {SCORE_SPARKLINES.map((score) => {
-            const latest = sparklineData[sparklineData.length - 1]?.[score.key];
-            const scoreColor = latest == null ? 'text-muted-foreground' : getScoreColor(latest).color;
-            const color = scoreColor.includes('green')
-              ? '#22c55e'
-              : scoreColor.includes('blue')
-                ? '#3b82f6'
-                : scoreColor.includes('yellow')
-                  ? '#eab308'
-                  : scoreColor.includes('orange')
-                    ? '#f97316'
-                    : '#ef4444';
-            return (
-              <div
-                key={score.key}
-                className="flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2"
-              >
-                <div>
-                  <div className="text-xs font-semibold">{score.label}</div>
-                  <div className="text-[10px] text-muted-foreground">last 5 trips</div>
-                </div>
-                <div className="h-8 w-20">
-                  <DeferredRecharts height={32}>
-                    {({ ResponsiveContainer, LineChart, Line }) => (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={sparklineData}>
-                          <Line type="monotone" dataKey={score.key} stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    )}
-                  </DeferredRecharts>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <div role="toolbar" aria-label="Trip history filters" className="flex gap-2 overflow-x-auto pb-1 thin-scrollbar">
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            aria-expanded={showFilters}
-            className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium border transition-all ${
-            showFilters ? 'bg-primary text-primary-foreground border-primary' : 'bg-card text-muted-foreground border-border hover:border-primary/50'
-          }`}
-        >
-          <Filter className="w-3.5 h-3.5" />
-          Filter
-        </button>
-
-        <select
-          aria-label="Sort trips"
-          value={sortBy}
-          onChange={event => setTripSort(event.target.value)}
-          className="flex-shrink-0 bg-card border border-border rounded-xl text-xs font-medium px-3 py-2 text-muted-foreground outline-none"
-        >
-          {SORT_OPTIONS.map(option => (
-            <option key={option.id} value={option.id}>{option.label}</option>
-          ))}
-        </select>
-
-        {QUICK_FILTERS.map(option => (
-          <button
-            key={option.id}
-            onClick={() => setTripFilter(option.id)}
-            aria-pressed={filterBy === option.id}
-            className={`flex-shrink-0 px-3 py-2 rounded-xl text-xs font-medium border transition-all ${
-              filterBy === option.id
-                ? 'bg-primary text-primary-foreground border-primary'
-                : 'bg-card text-muted-foreground border-border hover:border-primary/50'
-            }`}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-
-      {showFilters && (
-        <div className="space-y-4 rounded-2xl border border-border bg-card p-3">
-          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-            <Tag className="h-3.5 w-3.5" />
-            Tags
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setTripTag('all')}
-              aria-pressed={selectedTag === 'all'}
-              className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
-                selectedTag === 'all' ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground'
-              }`}
-            >
-              All tags
-            </button>
-            {TRIP_TAG_OPTIONS.map(option => (
-              <button
-                key={option.id}
-                onClick={() => setTripTag(option.id)}
-                aria-pressed={selectedTag === option.id}
-                className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
-                  selectedTag === option.id ? 'border-primary bg-primary text-primary-foreground' : option.className
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="border-t border-border pt-3">
-            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-              <Star className="h-3.5 w-3.5" />
-              Saved filters
-            </div>
-            <div className="flex gap-2">
-              <input
-                value={presetName}
-                onChange={(event) => setPresetName(event.target.value)}
-                placeholder="Name this filter"
-                className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary"
-              />
-              <button
-                type="button"
-                onClick={saveCurrentFilter}
-                disabled={!presetName.trim()}
-                className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-40"
-              >
-                Save
-              </button>
-            </div>
-            {savedFilters.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {savedFilters.map((preset) => (
-                  <span key={preset.id} className="inline-flex items-center gap-1 rounded-full border border-border bg-secondary/50 px-2 py-1 text-xs">
-                    <button type="button" onClick={() => applySavedFilter(preset)} className="font-medium hover:text-primary">
-                      {preset.name}
-                    </button>
-                    <button type="button" onClick={() => removeSavedFilter(preset.id)} className="min-h-9 min-w-9 text-muted-foreground hover:text-red-500" aria-label={`Delete ${preset.name} filter`}>
-                      x
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {isLoading && (
         <div className="space-y-3">
           {[1, 2, 3].map(i => (
@@ -586,50 +682,83 @@ export default function TripHistory() {
       </div>
 
       {!isLoading && sorted.length > 0 && (
-        <div
-          ref={tripListRef}
-          className="max-h-[72vh] overflow-y-auto pr-1 thin-scrollbar"
-          aria-label="Virtualized trip history list"
-        >
-          <div
-            className="relative w-full"
-            style={{ height: `${tripVirtualizer.getTotalSize()}px` }}
-          >
-            {virtualTrips.map((virtualItem) => {
-              const trip = sorted[virtualItem.index];
-              if (!trip) return null;
-              return (
-                <div
-                  key={trip.id}
-                  ref={tripVirtualizer.measureElement}
-                  data-index={virtualItem.index}
-                  className="absolute left-0 top-0 w-full pb-3"
-                  style={{ transform: `translateY(${virtualItem.start}px)` }}
-                >
-                  <TripCard
-                    trip={trip}
-                    units={units}
-                    index={virtualItem.index}
-                    scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
-                    onToggleFavorite={(target) => updateTripMut.mutate({
-                      id: target.id,
-                      patch: { is_favorite: target.is_favorite !== true },
-                    })}
-                    onIntent={handleTripIntent}
-                  />
-                </div>
-              );
-            })}
+        <section ref={tripListRef} className="scroll-mt-24 space-y-2" aria-label="Paginated trip history">
+          <TripPageControls
+            page={safePage}
+            pageCount={pageCount}
+            start={pageStart + 1}
+            end={pageEnd}
+            total={sorted.length}
+            onPageChange={changePage}
+          />
+          <div className="space-y-2">
+            {pageTrips.map((trip, index) => (
+              <TripCard
+                key={trip.id}
+                trip={trip}
+                compact
+                units={units}
+                index={pageStart + index}
+                scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
+                onToggleFavorite={(target) => updateTripMut.mutate({
+                  id: target.id,
+                  patch: { is_favorite: target.is_favorite !== true },
+                })}
+                onIntent={handleTripIntent}
+              />
+            ))}
           </div>
-        </div>
+          {pageCount > 1 && (
+            <TripPageControls
+              page={safePage}
+              pageCount={pageCount}
+              start={pageStart + 1}
+              end={pageEnd}
+              total={sorted.length}
+              onPageChange={changePage}
+              compact
+            />
+          )}
+        </section>
       )}
-
       {completed.some((trip) => trip.is_favorite) && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Star className="h-3.5 w-3.5 text-amber-500" />
           Favorited trips stay searchable and can be filtered for repeat-route comparisons.
         </div>
       )}
+    </div>
+  );
+}
+function TripPageControls({ page, pageCount, start, end, total, onPageChange, compact = false }) {
+  return (
+    <div className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 ${compact ? 'py-2' : 'py-2.5'} text-xs`}>
+      <span className="text-muted-foreground">
+        Showing <b className="text-foreground">{start}–{end}</b> of <b className="text-foreground">{total}</b> matching trips
+      </span>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => onPageChange(page - 1)}
+          disabled={page === 0}
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-background transition-colors hover:border-primary/40 disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="Previous 30 trips"
+          title="Previous 30 trips"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <span className="min-w-16 text-center font-semibold text-foreground">{page + 1} / {pageCount}</span>
+        <button
+          type="button"
+          onClick={() => onPageChange(page + 1)}
+          disabled={page >= pageCount - 1}
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-background transition-colors hover:border-primary/40 disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="Next 30 trips"
+          title="Next 30 trips"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
     </div>
   );
 }

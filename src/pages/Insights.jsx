@@ -266,10 +266,10 @@ function InsightSummaryView({
       onStartExperiment={startExperiment}
       onOpenTrip={openTrip}
     />
-    {analysis.periodFallback && <div className='rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-200'>No drives were recorded in the selected window. This summary is using your latest {analysis.currentTrips.length} eligible trips instead.</div>}
+    {analysis.periodEmpty && <div className='rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-200'>No eligible drives were recorded in the selected {analysis.periodDays}-day window. Choose a longer range or open History to review older trips.</div>}
     <section className='grid gap-5 xl:grid-cols-[1.12fr_0.88fr]'>
       <ScoreMovementPanel analysis={analysis} />
-      <EventMovementPanel analysis={analysis} onOpenTrip={openTrip} />
+      <EventMovementPanel analysis={analysis} onOpenTrip={openTrip} units={units} />
     </section>
     <section className={`grid gap-5 ${analysis.signature ? 'xl:grid-cols-[1.08fr_0.92fr]' : ''}`}>
       <ExperimentPanel candidate={analysis.experimentCandidate} experiment={activeExperiment} progress={experimentProgress} onStart={startExperiment} onCancel={cancelExperiment} onOpenTrip={openTrip} />
@@ -287,10 +287,10 @@ function InsightExploreView({
 }) {
   return <>
     <section className={`grid gap-5 ${analysis.privacySafeSnapshot ? '' : 'xl:grid-cols-2'}`}>
-      {!analysis.privacySafeSnapshot && <MatchedComparisonPanel matched={intelligence.matched} onOpenTrip={openTrip} />}
+      {!analysis.privacySafeSnapshot && <MatchedComparisonPanel matched={intelligence.matched} onOpenTrip={openTrip} units={units} />}
       <AttributionLedgerPanel attribution={intelligence.attribution} onOpenTrip={openTrip} />
     </section>
-    <GeographicInvestigationWorkspace intelligence={intelligence} hotspots={analysis.hotspots} trips={analysis.currentTrips} onOpenTrip={openTrip} onOpenFullMap={openMap} />
+    <GeographicInvestigationWorkspace intelligence={intelligence} hotspots={analysis.hotspots} trips={analysis.currentTrips} onOpenTrip={openTrip} onOpenFullMap={openMap} units={units} />
     <ContextExplorer analysis={analysis} type={contextType} onTypeChange={setContextType} units={units} onOpenTrip={openTrip} />
     {(!analysis.privacySafeSnapshot || intelligence.changePoint || intelligence.forecast.readinessScore != null) && <ChangeForecastPanel changePoint={intelligence.changePoint} forecast={intelligence.forecast} onOpenTrip={openTrip} />}
     <AskYourDrivesPanel analysis={analysis} intelligence={intelligence} onOpenTrip={openTrip} />

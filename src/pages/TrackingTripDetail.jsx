@@ -97,6 +97,7 @@ export default function TrackingTripDetail() {
       <TrackingTelemetryCharts
         trip={trip}
         comparisonTrip={comparisonQuery.data || null}
+        units={units}
         selectedTimestamp={selectedTimestamp}
         onSelectTimestamp={setSelectedTimestamp}
       />

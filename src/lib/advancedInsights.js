@@ -1,5 +1,5 @@
 import { isDriverMetricEligible, summarizePhoneUseAcrossTrips } from '@/lib/phoneUseSummary';
-import { excludePrivacyTouchedDaysFromTrends } from '@/lib/privateTripMode';
+import { tripTouchesPrivacyZoneForTrend } from '@/lib/privateTripMode';
 import { scoringValue } from '@/lib/scoringConstants';
 import {
   buildDriverSignature, buildDrivingCoachInsights, calculateDrivingConsistency,
@@ -181,38 +181,28 @@ export function buildAdvancedInsights(trips = [], settings = {}, options = {}) {
   const completed = trips.filter((trip) => trip.status === 'completed');
   const eligibleCompleted = completed.filter(isDriverMetricEligible)
     .sort((a, b) => tripTime(b) - tripTime(a));
-  const privacyAware = excludePrivacyTouchedDaysFromTrends(completed);
-  const drivers = privacyAware.filter(isDriverMetricEligible).sort((a, b) => tripTime(b) - tripTime(a));
-  const privacySafeSnapshot = drivers.length === 0 && eligibleCompleted.length > 0;
+  // Privacy-zone coordinates and events are already masked before these local
+  // summaries are built. Keep their remaining evidence in Insights.
+  const drivers = eligibleCompleted;
+  const privacyProtectedTrips = drivers.filter(tripTouchesPrivacyZoneForTrend).length;
+  const privacySafeSnapshot = false;
   const start = now.getTime() - periodDays * DAY_MS;
   let current = drivers.filter((trip) => tripTime(trip) >= start && tripTime(trip) <= now.getTime());
   let previous = drivers.filter((trip) => tripTime(trip) >= start - periodDays * DAY_MS && tripTime(trip) < start);
-  let periodFallback = false;
-  if (!current.length && drivers.length) {
-    periodFallback = true;
-    current = drivers.slice(0, Math.min(10, drivers.length));
-    previous = drivers.slice(current.length, current.length * 2);
-  }
-  if (privacySafeSnapshot) {
-    current = eligibleCompleted.slice(0, Math.min(12, eligibleCompleted.length));
-    previous = [];
-  }
-  const phone = summarizePhoneUseAcrossTrips(completed);
-  const briefDrivers = privacySafeSnapshot ? current : drivers;
-  const brief = buildDriverInsightBrief(completed, settings, {
+  const periodEmpty = current.length === 0;
+  const phone = summarizePhoneUseAcrossTrips(current);
+  const brief = buildDriverInsightBrief(current, settings, {
     now,
-    driverTrips: briefDrivers,
+    driverTrips: current,
     phoneUseSummary: phone,
   });
-  const coach = buildDrivingCoachInsights(current.length ? current : drivers, settings);
+  const coach = buildDrivingCoachInsights(current, settings);
   const baseline = computePersonalBaseline(drivers);
-  const signature = buildDriverSignature(drivers);
+  const signature = buildDriverSignature(current);
   const consistency = calculateDrivingConsistency(current);
-  const peak = calculatePeakHourStress(drivers);
-  const routes = buildRouteComparisons(drivers);
-  const contexts = contextsFor(current).filter((row) => (
-    !privacySafeSnapshot || ['road', 'vehicle'].includes(row.type)
-  ));
+  const peak = calculatePeakHourStress(current);
+  const routes = buildRouteComparisons(current);
+  const contexts = contextsFor(current);
   const scoreRows = scoreMovement(current, previous);
   const eventRows = eventMovement(current, previous);
   const hotspots = buildRiskHotspots(current);
@@ -231,9 +221,9 @@ export function buildAdvancedInsights(trips = [], settings = {}, options = {}) {
   let headline = brief.headline;
   let explanation = coach?.coach_brief?.why || 'Road Sage is still building a comparable personal baseline.';
   let tone = 'neutral';
-  if (privacySafeSnapshot) {
-    headline = `Loaded ${current.length} stored trip${current.length === 1 ? '' : 's'} in privacy-safe snapshot mode`;
-    explanation = 'Every eligible day touched a privacy zone. Road Sage now shows stored trip scores, event rates, and privacy-masked routes while keeping time, day, baseline, and improvement trends disabled.';
+  if (periodEmpty) {
+    headline = `No eligible trips in the last ${periodDays} days`;
+    explanation = 'Choose a longer range or record another drive. Older trips stay in History and are no longer substituted into the selected range.';
     tone = 'neutral';
   } else if (comparison && scoreDelta != null && Math.abs(scoreDelta) >= 3) {
     headline = `Your score is ${Math.abs(scoreDelta)} points ${scoreDelta > 0 ? 'higher' : 'lower'} than the prior ${periodDays} days`;
@@ -258,12 +248,12 @@ export function buildAdvancedInsights(trips = [], settings = {}, options = {}) {
   const routeTrips = current.filter((trip) => trip.route_replay_available || (num(trip.route_points_map_count) || 0) > 1).length;
   const scoredTrips = current.filter((trip) => num(trip.score_overall) != null).length;
   return {
-    periodDays, periodFallback, currentTrips: current, previousTrips: previous, currentScore, previousScore, scoreDelta, privacySafeSnapshot,
+    periodDays, periodEmpty, periodFallback: false, currentTrips: current, previousTrips: previous, currentScore, previousScore, scoreDelta, privacySafeSnapshot,
     currentEventRate: currentRate, previousEventRate: previousRate, eventRateDelta: rateDelta,
     comparisonAvailable: comparison, confidence,
     primaryFinding: {
       headline, explanation, tone,
-      evidence: [`${current.length} ${privacySafeSnapshot ? 'stored' : 'driver'} trip${current.length === 1 ? '' : 's'}`, `${distance(current)} km`, `${privacySafeSnapshot ? 'privacy-safe snapshot' : `${confidence} confidence`}`],
+      evidence: [`${current.length} driver trip${current.length === 1 ? '' : 's'}`, `${distance(current)} km`, `${confidence} confidence`],
       action: brief.actions[0] || null,
     },
     scoreMovement: scoreRows, eventMovement: eventRows, topEvent, evidenceTrips, routes,
@@ -276,7 +266,8 @@ export function buildAdvancedInsights(trips = [], settings = {}, options = {}) {
       scoredTrips, scoredCoveragePct: current.length ? Math.round(scoredTrips / current.length * 100) : 0,
       routeTrips, routeCoveragePct: current.length ? Math.round(routeTrips / current.length * 100) : 0,
       phoneCoveragePct: phone.coveragePct || 0, phoneMeasuredTrips: phone.measuredTrips || 0,
-      privacyExcludedTrips: Math.max(0, completed.length - privacyAware.length),
+      privacyExcludedTrips: 0,
+      privacyProtectedTrips,
       passengerExcludedTrips: Math.max(0, completed.length - eligibleCompleted.length),
       availableEligibleTrips: eligibleCompleted.length,
       trendEligibleTrips: drivers.length,
@@ -289,7 +280,7 @@ export function buildAdvancedInsights(trips = [], settings = {}, options = {}) {
 
 export function buildInsightExperimentProgress(experiment, trips = []) {
   if (!experiment?.startedAt) return null;
-  const measured = excludePrivacyTouchedDaysFromTrends(trips).filter((trip) => (
+  const measured = (Array.isArray(trips) ? trips : []).filter((trip) => (
     trip.status === 'completed' && isDriverMetricEligible(trip) && tripTime(trip) > new Date(experiment.startedAt).getTime()
   )).sort((a, b) => tripTime(a) - tripTime(b)).slice(0, Math.max(1, Number(experiment.targetTrips) || 3));
   const targetTrips = Math.max(1, Number(experiment.targetTrips) || 3);

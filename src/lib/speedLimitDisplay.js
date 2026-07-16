@@ -5,10 +5,6 @@ export function speedLimitSourceLabel(source, { short = false } = {}) {
     case 'user_entered_estimate':
     case 'user_correction':
       return short ? 'User estimate' : 'Your saved estimate';
-    case 'voice_user_posted_sign':
-      return short ? 'Voice sign' : 'Voice marker for a posted sign';
-    case 'voice_user_estimate':
-      return short ? 'Voice estimate' : 'Voice marker estimate';
     case 'openstreetmap':
       return short ? 'OSM maxspeed' : 'OpenStreetMap posted limit';
     case 'osm_highway_default':

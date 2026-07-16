@@ -1,6 +1,5 @@
 import { buildDangerZones } from '@/lib/dangerZoneEngine';
 import { routeKeyForTrip } from '@/lib/commuteMatching';
-import { excludePrivacyTouchedDaysFromTrends } from '@/lib/privateTripMode';
 import { buildVehicleMaintenancePlan } from '@/lib/vehicleMaintenance';
 export { COMMUTE_MATCH_RADIUS_M, routeKeyForTrip } from '@/lib/commuteMatching';
 
@@ -106,7 +105,7 @@ const inferRouteLabel = (trips = []) => {
 
 export function buildRouteComparisons(trips = []) {
   const groups = new Map();
-  excludePrivacyTouchedDaysFromTrends(trips)
+  (Array.isArray(trips) ? trips : [])
     .filter((trip) => trip.status === 'completed')
     .forEach((trip) => {
       const key = routeKeyForTrip(trip);
@@ -186,22 +185,25 @@ export function buildTripCalendarMonth(trips = [], monthDate = new Date()) {
   const firstGridDay = startOfDay(monthStart);
   firstGridDay.setDate(firstGridDay.getDate() - firstGridDay.getDay());
   const days = [];
-  const completed = excludePrivacyTouchedDaysFromTrends(trips)
-    .filter((trip) => trip.status === 'completed');
+  const completed = trips.filter((trip) => trip.status === 'completed');
+  const trendCompleted = completed;
 
   for (let i = 0; i < 42; i++) {
-    const date = new Date(firstGridDay.getTime() + i * DAY_MS);
+    const date = new Date(firstGridDay);
+    date.setDate(firstGridDay.getDate() + i);
     const dayTrips = completed.filter((trip) => startOfDay(trip.start_time).getTime() === date.getTime());
-    const scores = dayTrips.map((trip) => Number(trip.score_overall)).filter(Number.isFinite);
+    const trendDayTrips = trendCompleted.filter((trip) => startOfDay(trip.start_time).getTime() === date.getTime());
+    const scores = trendDayTrips.map((trip) => Number(trip.score_overall)).filter(Number.isFinite);
     days.push({
       key: date.toISOString().slice(0, 10),
       date,
       inMonth: date.getMonth() === monthStart.getMonth(),
       trip_count: dayTrips.length,
       distance_km: Math.round(dayTrips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0) * 10) / 10,
-      avg_score: distanceWeightedScore(dayTrips) == null ? null : Math.round(distanceWeightedScore(dayTrips)),
+      avg_score: distanceWeightedScore(trendDayTrips) == null ? null : Math.round(distanceWeightedScore(trendDayTrips)),
       best_score: scores.length ? Math.max(...scores) : null,
       worst_score: scores.length ? Math.min(...scores) : null,
+      privacy_protected: false,
     });
   }
 
@@ -235,7 +237,7 @@ export function buildTripCalendarMonth(trips = [], monthDate = new Date()) {
 
 export function buildWeeklyDriverSummary(trips = [], settings = {}) {
   const weekStart = startOfWeek();
-  const trendTrips = excludePrivacyTouchedDaysFromTrends(trips);
+  const trendTrips = Array.isArray(trips) ? trips : [];
   const completed = trendTrips.filter((trip) => (
     trip.status === 'completed' &&
     new Date(trip.start_time).getTime() >= weekStart.getTime()
@@ -299,7 +301,7 @@ export function buildWeeklyDriverSummary(trips = [], settings = {}) {
 }
 
 export function buildGoalStatus(weekTrips = [], settings = {}) {
-  const trendTrips = excludePrivacyTouchedDaysFromTrends(weekTrips);
+  const trendTrips = Array.isArray(weekTrips) ? weekTrips : [];
   const harshBrakes = trendTrips.reduce((sum, trip) => sum + (trip.harsh_brakes_count || 0), 0);
   const weightedScore = distanceWeightedScore(trendTrips);
   const avgScore = weightedScore == null ? null : Math.round(weightedScore);
@@ -359,7 +361,7 @@ export function buildGoalStatus(weekTrips = [], settings = {}) {
 
 export function buildDriverInsightBrief(trips = [], settings = {}, options = {}) {
   const nowMs = options.now ? new Date(options.now).getTime() : Date.now();
-  const trendTrips = excludePrivacyTouchedDaysFromTrends(trips);
+  const trendTrips = Array.isArray(trips) ? trips : [];
   const completed = trendTrips
     .filter((trip) => trip.status === 'completed')
     .sort((a, b) => new Date(b.start_time || b.created_at || 0).getTime() - new Date(a.start_time || a.created_at || 0).getTime());

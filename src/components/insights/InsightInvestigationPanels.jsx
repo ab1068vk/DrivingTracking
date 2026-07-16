@@ -3,6 +3,8 @@ import {
   ArrowRight, Bot, Clock3, Crosshair, MapPinned, Search, ShieldCheck,
 } from 'lucide-react';
 import { answerDriveQuestion } from '@/lib/advancedInsightIntelligence';
+import { formatDistance, formatSpeed } from '@/lib/tripEngine';
+import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { Notice, PanelHeader } from '@/components/insights/InsightPrimitives';
 
 const typeLabel = (value) => String(value || 'event').replace(/_/g, ' ');
@@ -18,7 +20,7 @@ const questions = [
 ];
 
 export function GeographicInvestigationWorkspace({
-  intelligence, hotspots, trips = [], onOpenTrip, onOpenFullMap,
+  intelligence, hotspots, trips = [], onOpenTrip, onOpenFullMap, units = 'metric',
 }) {
   const evidence = intelligence.eventEvidence;
   const eventTypes = [...new Set(evidence.map((row) => row.type))];
@@ -152,9 +154,9 @@ export function GeographicInvestigationWorkspace({
                   <MapPinned className="h-5 w-5 text-primary" />
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-2">
-                  <EvidenceMetric label="Speed" value={selected.speedKmh == null ? 'Unavailable' : `${Math.round(selected.speedKmh)} km/h`} />
-                  <EvidenceMetric label="Limit evidence" value={selected.speedLimitKmh == null ? 'Unavailable' : `${Math.round(selected.speedLimitKmh)} km/h`} />
-                  <EvidenceMetric label="Trip score" value={selected.tripScore ?? 'Unavailable'} />
+                  <EvidenceMetric label="Speed" value={selected.speedKmh == null ? 'Unavailable' : formatSpeed(selected.speedKmh, units)} />
+                  <EvidenceMetric label="Limit evidence" value={selected.speedLimitKmh == null ? 'Unavailable' : formatSpeed(selected.speedLimitKmh, units)} />
+                  <EvidenceMetric label="Trip score" value={formatEstimatedScore(selected.tripScore, { empty: 'Unavailable' })} />
                   <EvidenceMetric label="Road" value={selected.roadName || selected.trip?.dominant_road_type || 'Unlabelled'} />
                 </div>
                 <button type="button" onClick={() => onOpenTrip(selected.tripId)} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">
@@ -174,7 +176,7 @@ export function GeographicInvestigationWorkspace({
                       })}
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground">
-                      {Number(selectedTrip.distance_km || 0).toFixed(1)} km / score {selectedTrip.score_overall ?? 'unavailable'}
+                      {formatDistance(Number(selectedTrip.distance_km) || 0, units)} / score {formatEstimatedScore(selectedTrip.score_overall, { empty: 'unavailable' })}
                     </div>
                   </div>
                   <MapPinned className="h-5 w-5 text-primary" />
@@ -207,7 +209,7 @@ export function GeographicInvestigationWorkspace({
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-semibold capitalize">{typeLabel(row.type)}</div>
                     <div className="mt-0.5 text-xs text-muted-foreground">
-                      {new Date(row.timestamp).toLocaleDateString()} / {row.speedKmh == null ? 'speed unavailable' : `${Math.round(row.speedKmh)} km/h`}
+                      {new Date(row.timestamp).toLocaleDateString()} / {row.speedKmh == null ? 'speed unavailable' : formatSpeed(row.speedKmh, units)}
                     </div>
                   </div>
                   <span className="rounded-full bg-secondary px-2 py-1 text-[10px] font-bold capitalize">{row.severity}</span>
@@ -234,7 +236,7 @@ export function GeographicInvestigationWorkspace({
                       {new Date(trip.start_time).toLocaleDateString()}
                     </div>
                     <div className="mt-0.5 text-xs text-muted-foreground">
-                      {Number(trip.distance_km || 0).toFixed(1)} km / score {trip.score_overall ?? 'unavailable'}
+                      {formatDistance(Number(trip.distance_km) || 0, units)} / score {formatEstimatedScore(trip.score_overall, { empty: 'unavailable' })}
                     </div>
                   </div>
                   <MapPinned className="h-4 w-4 text-muted-foreground" />

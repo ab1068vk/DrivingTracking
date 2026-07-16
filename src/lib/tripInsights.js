@@ -7,7 +7,6 @@ import {
   NIGHT_START_HOUR,
 } from '@/lib/appConstants';
 import { routeKeyForTrip as commuteRouteKeyForTrip } from '@/lib/commuteMatching';
-import { excludePrivacyTouchedDaysFromTrends } from '@/lib/privateTripMode';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
 import {
   CO2_KG_PER_LITER,
@@ -646,7 +645,7 @@ export function buildScoreTips(trips = []) {
 
 export function calculateWeeklyDrivingGoals(trips = [], settings = {}) {
   const weekStart = startOfWeek();
-  const weekTrips = excludePrivacyTouchedDaysFromTrends(trips).filter((trip) => (
+  const weekTrips = (Array.isArray(trips) ? trips : []).filter((trip) => (
     trip.status === 'completed' &&
     new Date(trip.start_time).getTime() >= weekStart.getTime()
   ));
@@ -718,7 +717,7 @@ export function calculateWeeklyDrivingGoals(trips = [], settings = {}) {
 }
 
 export function calculateNoHarshBrakeStreak(trips = []) {
-  const completed = excludePrivacyTouchedDaysFromTrends(trips).filter((trip) => trip.status === 'completed');
+  const completed = (Array.isArray(trips) ? trips : []).filter((trip) => trip.status === 'completed');
   if (!completed.length) return 0;
 
   const byDay = new Map();
@@ -751,7 +750,7 @@ export function calculateNoHarshBrakeStreak(trips = []) {
 }
 
 export function analyzeTimeOfDay(trips = []) {
-  const trendTrips = excludePrivacyTouchedDaysFromTrends(trips);
+  const trendTrips = Array.isArray(trips) ? trips : [];
   const buckets = [
     { id: 'morning', label: 'Morning', range: '5a-12p', from: 5, to: 12 },
     { id: 'afternoon', label: 'Afternoon', range: '12p-5p', from: 12, to: 17 },
@@ -867,7 +866,7 @@ const tripScoringVersion = (trip = {}) => (
 const hasCurrentScoringVersion = (trip = {}) => tripScoringVersion(trip) === SCORING_VERSION;
 
 export function computePersonalBaseline(completedTrips = []) {
-  const completed = excludePrivacyTouchedDaysFromTrends(completedTrips)
+  const completed = (Array.isArray(completedTrips) ? completedTrips : [])
     .filter((trip) => trip.status === 'completed' && Number(trip.score_overall) > 0)
     .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
   const avg = (items) => {
@@ -1021,7 +1020,7 @@ export function identifyCommutePatterns(completedTrips = []) {
   const groups = new Map();
   const mean = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 
-  excludePrivacyTouchedDaysFromTrends(completedTrips)
+  (Array.isArray(completedTrips) ? completedTrips : [])
     .filter((trip) => trip.status === 'completed' && Array.isArray(trip.route_points) && trip.route_points.length >= 2)
     .forEach((trip) => {
       const routeKey = commuteRouteKeyForTrip(trip);
@@ -1545,7 +1544,7 @@ function buildCoachBrief({
 }
 
 export function buildDrivingCoachInsights(trips = [], settings = {}) {
-  const completed = excludePrivacyTouchedDaysFromTrends(trips).filter((trip) => trip.status === 'completed');
+  const completed = (Array.isArray(trips) ? trips : []).filter((trip) => trip.status === 'completed');
   const riskRate = calculateRiskEventRate(completed);
   const speed = calculateSpeedDiscipline(completed, settings);
   const consistency = calculateDrivingConsistency(completed);

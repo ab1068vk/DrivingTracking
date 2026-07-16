@@ -220,6 +220,39 @@ export function normalizeNativeActiveTrip(status) {
     const number = Number(value);
     return Number.isFinite(number) ? number : fallback;
   };
+  const finiteOrNull = (value) => {
+    const number = Number(value);
+    return value == null || !Number.isFinite(number) ? null : number;
+  };
+  const routePreview = (Array.isArray(trip.route_preview) ? trip.route_preview : [])
+    .slice(-600)
+    .map((point) => ({
+      lat: finiteOrNull(point?.lat),
+      lng: finiteOrNull(point?.lng),
+      speed_kmh: finiteOrNull(point?.speed_kmh),
+      heading: finiteOrNull(point?.heading),
+      accuracy: finiteOrNull(point?.accuracy),
+      altitude: finiteOrNull(point?.altitude),
+      timestamp: typeof point?.timestamp === 'string' ? point.timestamp : null,
+      tracking_gap: point?.tracking_gap === true,
+      route_gap: point?.route_gap === true,
+      masked_for_privacy: point?.masked_for_privacy === true || finiteOrNull(point?.lat) == null || finiteOrNull(point?.lng) == null,
+      privacy_zone_id: typeof point?.privacy_zone_id === 'string' ? point.privacy_zone_id : null,
+    }));
+  const liveEvents = (Array.isArray(trip.live_events) ? trip.live_events : [])
+    .slice(-40)
+    .map((event, index) => ({
+      id: String(event?.id || `native-live-event-${index}`),
+      type: String(event?.type || 'observation'),
+      title: String(event?.title || 'Observation recorded'),
+      timestamp: typeof event?.timestamp === 'string' ? event.timestamp : null,
+      value: finiteOrNull(event?.value),
+      unit: typeof event?.unit === 'string' ? event.unit : null,
+      speed_kmh: finiteOrNull(event?.speed_kmh),
+    }));
+  const liveEventCounts = trip.live_event_counts && typeof trip.live_event_counts === 'object'
+    ? Object.fromEntries(Object.entries(trip.live_event_counts).map(([key, value]) => [String(key), Math.max(0, Math.round(finiteOr(value)))]))
+    : {};
   return {
     id: String(trip.id || 'native_active_trip'),
     native_recording: true,
@@ -232,11 +265,48 @@ export function normalizeNativeActiveTrip(status) {
     start_source: String(trip.start_source || 'native_auto'),
     distance_km: Math.max(0, finiteOr(trip.distance_km)),
     duration_seconds: Math.max(0, Math.round(finiteOr(trip.duration_seconds))),
+    wall_clock_duration_seconds: Math.max(0, Math.round(finiteOr(trip.wall_clock_duration_seconds))),
     speed_kmh: Math.max(0, finiteOr(trip.speed_kmh)),
+    avg_speed_kmh: Math.max(0, finiteOr(trip.avg_speed_kmh)),
+    avg_running_speed_kmh: Math.max(0, finiteOr(trip.avg_running_speed_kmh)),
+    max_speed_kmh: Math.max(0, finiteOr(trip.max_speed_kmh)),
+    moving_seconds: Math.max(0, Math.round(finiteOr(trip.moving_seconds))),
+    idle_seconds: Math.max(0, Math.round(finiteOr(trip.idle_seconds))),
+    stopped_seconds: Math.max(0, Math.round(finiteOr(trip.stopped_seconds))),
+    gap_seconds: Math.max(0, Math.round(finiteOr(trip.gap_seconds))),
+    route_gap_count: Math.max(0, Math.round(finiteOr(trip.route_gap_count))),
     route_point_count: Math.max(0, Math.round(finiteOr(trip.route_point_count))),
+    route_preview: routePreview,
+    route_preview_point_count: routePreview.length,
+    privacy_masked_point_count: Math.max(0, Math.round(finiteOr(trip.privacy_masked_point_count))),
     last_location_at: typeof trip.last_location_at === 'string' ? trip.last_location_at : null,
+    last_fix_age_seconds: finiteOrNull(trip.last_fix_age_seconds),
     updated_at: typeof trip.updated_at === 'string' ? trip.updated_at : null,
     permission_loss: trip.permission_loss === true,
+    gps_fix_ready: trip.gps_fix_ready === true,
+    gps_accuracy_m: finiteOrNull(trip.gps_accuracy_m),
+    heading_deg: finiteOrNull(trip.heading_deg),
+    altitude_m: finiteOrNull(trip.altitude_m),
+    speed_limit_kmh: finiteOrNull(trip.speed_limit_kmh),
+    speed_limit_source: typeof trip.speed_limit_source === 'string' ? trip.speed_limit_source : null,
+    speed_delta_kmh: finiteOrNull(trip.speed_delta_kmh),
+    longitudinal_acceleration_ms2: finiteOrNull(trip.longitudinal_acceleration_ms2),
+    lateral_g: finiteOrNull(trip.lateral_g),
+    heading_rate_deg_s: finiteOrNull(trip.heading_rate_deg_s),
+    motion_sample_count: Math.max(0, Math.round(finiteOr(trip.motion_sample_count))),
+    motion_sensor_ready: trip.motion_sensor_ready === true,
+    linear_acceleration_sensor_ready: trip.linear_acceleration_sensor_ready === true,
+    gyroscope_sensor_ready: trip.gyroscope_sensor_ready === true,
+    linear_motion_magnitude_ms2: finiteOrNull(trip.linear_motion_magnitude_ms2),
+    rotation_magnitude_deg_s: finiteOrNull(trip.rotation_magnitude_deg_s),
+    last_motion_at: typeof trip.last_motion_at === 'string' ? trip.last_motion_at : null,
+    activity_type: typeof trip.activity_type === 'string' ? trip.activity_type : 'unknown',
+    activity_confidence: finiteOrNull(trip.activity_confidence),
+    activity_updated_at: typeof trip.activity_updated_at === 'string' ? trip.activity_updated_at : null,
+    max_drift_since_stop_m: Math.max(0, finiteOr(trip.max_drift_since_stop_m)),
+    live_events: liveEvents,
+    live_event_counts: liveEventCounts,
+    possible_incident_active: trip.possible_incident_active === true,
   };
 }
 
@@ -260,37 +330,6 @@ export async function getNativeDiagnostics() {
     };
   } catch (error) {
     logSystemFailure('android_native_diagnostics_load', error);
-    throw error;
-  }
-}
-
-export async function testVoiceSpeedMarkerRecognition({ timeoutMs = 10000 } = {}) {
-  if (!isAndroid()) {
-    return { recognized: false, reason: 'android_only', transcript: '' };
-  }
-  try {
-    const result = await ActivityRecognition.testVoiceSpeedMarker({ timeoutMs });
-    const normalized = {
-      recognized: result?.recognized === true,
-      reason: result?.reason || '',
-      transcript: result?.transcript || '',
-      limitKmh: Number.isFinite(Number(result?.limitKmh)) ? Math.round(Number(result.limitKmh)) : null,
-      posted: result?.posted === true,
-    };
-    recordSystemEvent('voice_speed_marker_test_completed', {
-      recognized: normalized.recognized,
-      reason: normalized.reason,
-      limit_kmh: normalized.limitKmh,
-      posted: normalized.posted,
-    }, {
-      category: 'permission',
-      source: 'android',
-      severity: normalized.recognized ? 'info' : 'warn',
-      title: 'Voice speed marker test completed',
-    });
-    return normalized;
-  } catch (error) {
-    logSystemFailure('voice_speed_marker_test', error);
     throw error;
   }
 }

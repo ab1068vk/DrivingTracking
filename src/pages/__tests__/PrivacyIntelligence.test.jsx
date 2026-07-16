@@ -303,6 +303,8 @@ describe('Privacy Intelligence tabs', () => {
     expect(outputs[0]).toContain('6 private records hidden this week');
     expect(outputs[0]).toContain('Raw sharing happened with consent metadata');
     expect(outputs[0]).toContain('Next: Open protections: Error issue.');
+    expect(outputs[0]).not.toContain('Password-protected report');
+    expect(outputs[0]).not.toContain('Export encrypted report');
     expect(outputs[1]).toContain('Verified protection');
     expect(outputs[1]).toContain('Raw - consented');
     expect(outputs[1]).toContain('Blocked');

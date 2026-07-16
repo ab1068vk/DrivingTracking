@@ -7,10 +7,12 @@ import {
   calculateTripStats,
   detectDrivingEvents,
   EVENT_TYPES,
+  formatSpeed,
   reliablePointSpeed,
   resolveEffectiveSpeedLimitForIndex,
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
+import { speedUnitLabel } from '@/lib/unitFormatting';
 import {
   notifyHeadingDriftBetaWarning,
   notifyFatigueBreakReminder,
@@ -81,33 +83,33 @@ function createTierAwareSpeedLimitContext(context, settings = {}) {
   };
 }
 
-function speedLimitBadgeForResolved(resolved) {
+function speedLimitBadgeForResolved(resolved, units = 'metric') {
   const tier = resolved?.tier || 'UNKNOWN';
   const limit = Number(resolved?.limitKmh);
-  const roundedLimit = Number.isFinite(limit) ? Math.round(limit) : null;
+  const displayLimit = Number.isFinite(limit) ? formatSpeed(limit, units) : null;
   const badgeByTier = {
     POSTED: {
-      text: roundedLimit == null ? '— km/h' : `${roundedLimit}`,
+      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : displayLimit,
       className: 'border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-100',
     },
     MAP_ESTIMATED: {
-      text: roundedLimit == null ? '— km/h' : `~${roundedLimit} (road type)`,
+      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `~${displayLimit} (road type)`,
       className: 'border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100',
     },
     LEARNED_LOCAL: {
-      text: roundedLimit == null ? '— km/h' : `${roundedLimit} (this road)`,
+      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `${displayLimit} (this road)`,
       className: 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100',
     },
     REGION_DEFAULT: {
-      text: roundedLimit == null ? '— km/h' : `~${roundedLimit} (regional estimate)`,
+      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `~${displayLimit} (regional estimate)`,
       className: 'border-dashed border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100',
     },
     GPS_INFERRED: {
-      text: roundedLimit == null ? '— km/h' : `~${roundedLimit} (estimated)`,
+      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `~${displayLimit} (estimated)`,
       className: 'border-dashed border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100',
     },
     UNKNOWN: {
-      text: '— km/h',
+      text: `— ${speedUnitLabel(units)}`,
       className: 'border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100',
     },
   };
@@ -128,12 +130,12 @@ function buildTierAwareSpeedAlert(speed, resolved, settings = {}) {
     : null;
   if (warning.voice && !voiceText) return null;
 
-  const badge = speedLimitBadgeForResolved(resolved);
+  const badge = speedLimitBadgeForResolved(resolved, settings.units || 'metric');
   const displayLabel = resolved.tier === 'POSTED' ? 'Speed warning' : 'Speed check';
   return {
     text: (
       <>
-        <span className="block text-sm font-bold">{displayLabel}. {Math.round(speed)} km/h.</span>
+        <span className="block text-sm font-bold">{displayLabel}. {formatSpeed(speed, settings.units || 'metric')}.</span>
         <span className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${badge.className}`}>
           {badge.text}
         </span>

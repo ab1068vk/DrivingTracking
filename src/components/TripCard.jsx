@@ -20,6 +20,7 @@ export default function TripCard({
   trip,
   units = 'metric',
   index: _index = 0,
+  compact = false,
   scoreDelta = null,
   onToggleFavorite = null,
   onIntent = null,
@@ -54,6 +55,126 @@ export default function TripCard({
   const confirmedPhoneUseCount = trip.phone_use_score_available === true || trip.phone_use_score_status === 'android_usage_access'
     ? Math.max(Number(trip.phone_use_window_count) || 0, confirmedPhoneUseEvents.length)
     : 0;
+  const compactEventCount = (Number(trip.harsh_brakes_count) || 0)
+    + (Number(trip.rapid_accel_count) || 0)
+    + (Number(trip.sharp_turns_count) || 0)
+    + (Number(trip.speeding_events_count) || 0)
+    + confirmedPhoneUseCount;
+
+  if (compact) {
+    return (
+      <div className="cyber-trip-card render-lazy group relative rounded-xl border border-border bg-card p-3 transition-colors hover:border-primary/30">
+        <button
+          type="button"
+          onPointerDown={() => onIntent?.(trip)}
+          onMouseEnter={() => onIntent?.(trip)}
+          onFocus={() => onIntent?.(trip)}
+          onClick={openTrip}
+          aria-label={`Open trip: ${title}`}
+          className="cyber-trip-open-target absolute inset-0 cursor-pointer rounded-xl"
+        />
+        <div className="pointer-events-none relative flex min-w-0 items-start gap-2.5">
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="truncate text-sm font-semibold">{title}</div>
+              <span className="flex-shrink-0 text-[11px] text-muted-foreground">
+                {formatDate(trip.start_time)} · {formatTime(trip.start_time)}
+              </span>
+            </div>
+
+            {(trip.start_address || trip.end_address) && (
+              <div className="mt-1 truncate text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">{trip.start_address || 'Start'}</span>
+                <span className="mx-1.5">→</span>
+                <span>{trip.end_address || 'End'}</span>
+              </div>
+            )}
+
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <span className="inline-flex items-center gap-1"><Navigation className="h-3.5 w-3.5" /><b className="text-foreground">{formatDistance(trip.distance_km || 0, units)}</b></span>
+              <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" />{formatDuration(trip.duration_seconds)}</span>
+              <span className="inline-flex items-center gap-1"><Gauge className="h-3.5 w-3.5" />{formatSpeed(trip.avg_running_speed_kmh ?? trip.avg_speed_kmh ?? 0, units)}</span>
+              {compactEventCount > 0 && <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300"><AlertTriangle className="h-3.5 w-3.5" />{compactEventCount} event{compactEventCount === 1 ? '' : 's'}</span>}
+              {trip.notes && <span className="inline-flex items-center gap-1" title={trip.notes}><StickyNote className="h-3.5 w-3.5" />Note</span>}
+            </div>
+
+            {(privateTrip || routeDataExpired || speedLimitReviewRequired || replay3dAvailable || displayTags.length > 0 || unavailableScore || phoneUsePermissionRequired || trip._dpApplied) && (
+              <div className="mt-2 flex min-h-6 flex-wrap items-center gap-1.5">
+                {privateTrip && <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-900 dark:text-slate-200"><ShieldAlert className="h-3 w-3" />Private</span>}
+                {routeDataExpired && !privateTrip && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-950/30 dark:text-blue-300"><ShieldAlert className="h-3 w-3" />Summary only</span>}
+                {unavailableScore && <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Score unavailable</span>}
+                {phoneUsePermissionRequired && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">Phone signal off</span>}
+                {trip._dpApplied && <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">~ Privacy estimated</span>}
+                {displayTags.slice(0, 2).map((tagId) => {
+                  const option = getTripTagOption(tagId);
+                  return <span key={tagId} className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${option?.className || 'border-border bg-secondary text-muted-foreground'}`}>{option?.label || tagId}</span>;
+                })}
+                {speedLimitReviewRequired && (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      navigate(`/trips/${trip.id}?review=speed-limit-conflicts`);
+                    }}
+                    className="pointer-events-auto relative z-10 inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800"
+                    aria-label={`Review speed limits for ${title}`}
+                  >
+                    <AlertTriangle className="h-3 w-3" />Review speed
+                  </button>
+                )}
+                {replay3dAvailable && (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      navigate(`/3d-replay?tripId=${encodeURIComponent(String(trip.id))}`);
+                    }}
+                    className="pointer-events-auto relative z-10 inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary"
+                    aria-label={`Open 3D replay for ${title}`}
+                  >
+                    <Cuboid className="h-3 w-3" />3D
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-shrink-0 items-start gap-1">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleFavorite?.(trip);
+              }}
+              aria-label={trip.is_favorite ? `Remove ${title} from favorites` : `Add ${title} to favorites`}
+              className={`pointer-events-auto relative z-10 flex h-9 w-9 items-center justify-center rounded-lg ${
+                trip.is_favorite ? 'text-amber-500' : 'text-muted-foreground hover:bg-secondary'
+              }`}
+            >
+              <Star className={`h-4 w-4 ${trip.is_favorite ? 'fill-current' : ''}`} />
+            </button>
+            <div className="flex flex-col items-center gap-0.5">
+              <div
+                className={`cyber-trip-score flex h-11 w-11 items-center justify-center rounded-xl border ${bg}`}
+                title={unavailableScore ? scoreUnavailableMessage : lowScoreConfidence ? 'Score based on limited available evidence.' : buildScoreExplanation(trip, 'score_overall')}
+              >
+                <span className={`font-grotesk text-base font-bold ${color}`}>
+                  {formatScoreWithProvenance(overallScore.value, trip.score_provenance)}
+                </span>
+              </div>
+              {scoreDelta && !scoreDelta.insufficientBaseline && (
+                <span className={`text-[9px] font-semibold ${
+                  scoreDelta.direction === 'up' ? 'text-emerald-600' : scoreDelta.direction === 'down' ? 'text-red-600' : 'text-muted-foreground'
+                }`}>
+                  {scoreDelta.direction === 'up' ? '↑' : scoreDelta.direction === 'down' ? '↓' : '—'} last 5
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="cyber-trip-card render-lazy relative bg-card border border-border rounded-2xl p-4 hover:border-primary/30 transition-colors group">

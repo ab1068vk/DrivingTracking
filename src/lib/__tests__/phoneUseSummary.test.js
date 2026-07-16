@@ -265,4 +265,21 @@ describe('phone use summary', () => {
     expect(aggregate.worstRisk).toBe('medium');
     expect(aggregate.worstMoment.tripId).toBe('previous-driver');
   });
+
+  it('includes coordinate-free phone evidence from privacy-masked trips', () => {
+    const aggregate = summarizePhoneUseAcrossTrips([{
+      id: 'privacy-masked-phone-trip',
+      start_time: '2026-06-18T12:00:00.000Z',
+      duration_seconds: 600,
+      privacy_zone_touched: true,
+      phone_use_events: [phoneUseEvent({ durationS: 20 })],
+    }]);
+
+    expect(aggregate).toMatchObject({
+      totalTrips: 1,
+      measuredTrips: 1,
+      tripsWithConfirmedUse: 1,
+      totalSeconds: 20,
+    });
+  });
 });

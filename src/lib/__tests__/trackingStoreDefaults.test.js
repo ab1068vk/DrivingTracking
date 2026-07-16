@@ -125,7 +125,6 @@ describe('tracking store default settings', () => {
       speed_limit_lookup_enabled: false,
       map_matching_enabled: false,
       osrm_data_sharing_consented: false,
-      voice_speed_markers_enabled: false,
     });
     expect(sanitizeImportedSettings({
       heightened_privacy_mode: true,

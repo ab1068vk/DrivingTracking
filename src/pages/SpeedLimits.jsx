@@ -117,11 +117,6 @@ const mapDraftLimitForSection = (section = {}) => {
 };
 
 const mapDraftSourceForSection = (section = {}) => {
-  if (section.voiceSpeedMarker) {
-    return section.posted_phrase_detected || section.source === 'voice_user_posted_sign'
-      ? 'user_confirmed_posted_sign'
-      : 'user_entered_estimate';
-  }
   if (section.saved) return section.source || 'user_entered_estimate';
   return (section.observedSources || []).includes('user_confirmed_posted_sign')
     ? 'user_confirmed_posted_sign'
@@ -316,114 +311,6 @@ const sectionMidpoint = (points = []) => {
   return clean[Math.floor(clean.length / 2)] || null;
 };
 
-const voiceSpeedMarkerKey = (marker = {}, index = 0) => String(
-  marker.id ||
-  marker.marker_id ||
-  [
-    marker.timestamp || marker.timestamp_ms || 'voice-marker',
-    marker.lat,
-    marker.lng,
-    marker.speed_limit_kmh ?? marker.limitKmh,
-    index,
-  ].join(':')
-);
-
-const voiceSpeedMarkerLimit = (marker = {}) => {
-  const limit = Number(marker.speed_limit_kmh ?? marker.limitKmh ?? marker.limit_kmh);
-  return Number.isFinite(limit) && limit > 0 ? Math.round(limit) : null;
-};
-
-const isPendingVoiceSpeedMarker = (marker = {}) => (
-  marker.review_status !== 'saved' &&
-  marker.review_status !== 'ignored' &&
-  Number.isFinite(Number(marker.lat)) &&
-  Number.isFinite(Number(marker.lng)) &&
-  marker.masked_for_privacy !== true &&
-  marker.privacy_gap !== true &&
-  Boolean(voiceSpeedMarkerLimit(marker))
-);
-
-const publicRoutePoints = (trip = {}) => (Array.isArray(trip.route_points) ? trip.route_points : [])
-  .filter((point) => (
-    Number.isFinite(Number(point?.lat)) &&
-    Number.isFinite(Number(point?.lng)) &&
-    point.masked_for_privacy !== true &&
-    point.privacy_gap !== true
-  ))
-  .map((point, index) => ({ lat: Number(point.lat), lng: Number(point.lng), routeIndex: index }));
-
-const voiceMarkerRouteSection = (trip = {}, marker = {}) => {
-  const markerPoint = { lat: Number(marker.lat), lng: Number(marker.lng) };
-  const routePoints = publicRoutePoints(trip);
-  if (routePoints.length < 2) return [markerPoint];
-
-  let nearestIndex = 0;
-  let nearestDistanceM = Infinity;
-  routePoints.forEach((point, index) => {
-    const distanceM = distanceMeters(markerPoint, point);
-    if (distanceM < nearestDistanceM) {
-      nearestIndex = index;
-      nearestDistanceM = distanceM;
-    }
-  });
-  if (nearestDistanceM > 120) return [markerPoint];
-
-  let start = nearestIndex;
-  let end = nearestIndex;
-  while (
-    sectionLengthMeters(routePoints.slice(start, end + 1)) < 100 &&
-    end - start < 12 &&
-    (start > 0 || end < routePoints.length - 1)
-  ) {
-    if (start > 0) start -= 1;
-    if (sectionLengthMeters(routePoints.slice(start, end + 1)) >= 100) break;
-    if (end < routePoints.length - 1) end += 1;
-  }
-  const section = routePoints.slice(start, end + 1).map((point) => ({ lat: point.lat, lng: point.lng }));
-  return section.length >= 2 ? section : [markerPoint];
-};
-
-const buildVoiceSpeedMarkerSections = (trips = []) => (Array.isArray(trips) ? trips : []).flatMap((trip, tripIndex) => {
-  const markers = Array.isArray(trip?.voice_speed_limit_markers) ? trip.voice_speed_limit_markers : [];
-  return markers
-    .map((marker, markerIndex) => {
-      if (!isPendingVoiceSpeedMarker(marker)) return null;
-      const limitKmh = voiceSpeedMarkerLimit(marker);
-      const lat = Number(marker.lat);
-      const lng = Number(marker.lng);
-      const key = voiceSpeedMarkerKey(marker, markerIndex);
-      const sectionPoints = voiceMarkerRouteSection(trip, marker);
-      const markerTripLabel = tripLabel(trip);
-      return {
-        id: `voice-speed-${trip?.id || tripIndex}-${key}`,
-        sectionKey: `voice-speed-${trip?.id || tripIndex}-${key}`,
-        geohash: geohashEncode(lat, lng),
-        lat,
-        lng,
-        saved: false,
-        voiceSpeedMarker: true,
-        voiceTripId: trip?.id || null,
-        voiceMarkerKey: key,
-        voiceMarkerIndex: markerIndex,
-        source: marker.source || (marker.posted_phrase_detected ? 'voice_user_posted_sign' : 'voice_user_estimate'),
-        observedSources: [marker.source || (marker.posted_phrase_detected ? 'voice_user_posted_sign' : 'voice_user_estimate')],
-        observedLimitKmh: limitKmh,
-        effectiveLimitKmh: limitKmh,
-        sampleCount: sectionPoints.length,
-        sectionPoints,
-        roadName: marker.road_name || '',
-        contextLabel: `Voice marker from ${markerTripLabel}`,
-        note: marker.transcript ? `Voice marker heard: ${marker.transcript}` : 'Saved from a voice speed marker.',
-        transcript: marker.transcript || '',
-        posted_phrase_detected: marker.posted_phrase_detected === true,
-        directionBearing: Number.isFinite(Number(marker.heading)) ? Number(marker.heading) : undefined,
-        tripLabel: markerTripLabel,
-        timestamp: marker.timestamp || (marker.timestamp_ms ? new Date(marker.timestamp_ms).toISOString() : null),
-      };
-    })
-    .filter(Boolean);
-});
-
 const rowSearchText = (row = {}, conflict = null) => [
   row.geohash,
   row.roadName,
@@ -542,9 +429,6 @@ const mapSectionReasonText = (section = {}, addMode = false) => {
     return `Saved local rule from ${source}; this rule is used before trip-derived map evidence.`;
   }
   if (addMode) return 'New traced road section; it will become a saved local rule after saving.';
-  if (section.voiceSpeedMarker) {
-    return `Voice speed marker from ${section.tripLabel || 'a completed trip'}; review the route line, then save it as a posted sign or estimate.`;
-  }
   const points = Number(section.sampleCount || section.sectionPoints?.length || 0);
   const sampleText = points > 0 ? `${points} route sample${points === 1 ? '' : 's'}` : 'recorded route evidence';
   const observedLimit = Number(section.effectiveLimitKmh ?? section.observedLimitKmh);
@@ -679,10 +563,7 @@ export default function SpeedLimits() {
   const mapQueryPending = mapQuery !== deferredMapQuery;
   const ignoredUnsetSectionKeySet = useMemo(() => new Set(ignoredUnsetSectionKeys), [ignoredUnsetSectionKeys]);
   const excludedSpeedSectionKeySet = useMemo(() => new Set(excludedSpeedSectionKeys), [excludedSpeedSectionKeys]);
-  const rawMapSections = useMemo(() => ([
-    ...buildSpeedMapSections(mapTrips, rows),
-    ...buildVoiceSpeedMarkerSections(mapTrips),
-  ]), [mapTrips, rows]);
+  const rawMapSections = useMemo(() => buildSpeedMapSections(mapTrips, rows), [mapTrips, rows]);
   const mapSections = useMemo(() => rawMapSections.filter((section) => (
     !isSpeedSectionExcluded(section, excludedSpeedSectionKeySet) &&
     (
@@ -819,7 +700,6 @@ export default function SpeedLimits() {
     const observed = mapSections
       .filter((section) => (
         !section.saved &&
-        !section.voiceSpeedMarker &&
         Number(section.effectiveLimitKmh) > 0 &&
         (
           Number(section.sampleCount) >= 3 ||
@@ -834,17 +714,7 @@ export default function SpeedLimits() {
         detail: `Observed ${Math.round(Number(section.effectiveLimitKmh))} km/h from ${formatSourceList(section.observedSources)}`,
         section,
       }));
-    const voice = mapSections
-      .filter((section) => section.voiceSpeedMarker && !section.saved)
-      .slice(0, 6)
-      .map((section) => ({
-        key: `voice-${correctionKey(section)}`,
-        kind: 'voice',
-        title: section.roadName || `Voice marker ${formatSpeedLimit(section.effectiveLimitKmh)}`,
-        detail: `${formatSpeedLimit(section.effectiveLimitKmh)} spoken during ${section.tripLabel || 'a trip'}${section.transcript ? `; "${section.transcript}"` : ''}`,
-        section,
-      }));
-    return [...conflicts, ...voice, ...speedZoneReviewItems, ...reviewableSaved, ...unset, ...observed].slice(0, 12);
+    return [...conflicts, ...speedZoneReviewItems, ...reviewableSaved, ...unset, ...observed].slice(0, 12);
   }, [mapSections, speedZoneReviewItems]);
   const selectedSectionPointCount = selectedSection?.sectionPoints?.length || 0;
   const traceLengthM = useMemo(() => sectionLengthMeters(addPath), [addPath]);
@@ -1795,47 +1665,11 @@ export default function SpeedLimits() {
     }));
     setStatus(item.kind === 'conflict'
       ? 'Conflict selected. Choose Use observed or Keep saved to clear it.'
-      : item.kind === 'voice'
-        ? 'Voice speed marker selected. Review the route line and save it as a posted sign or estimate.'
       : item.kind === 'speedZone'
         ? `Trip speed zone ${item.zoneIndex} of ${item.zoneCount} selected. Save, adjust, or confirm this ${Math.round(Number(item.limitKmh))} km/h segment independently.`
       : item.kind === 'review'
         ? `${speedSectionAttentionLabel(item.section)} selected. Review the saved speed, source, timing, and traced road line before updating.`
       : 'Road section selected. Enter a posted sign or local estimate, then save.');
-  };
-
-  const markVoiceSpeedMarkerReviewed = async (section, correction, reviewStatus = 'saved') => {
-    if (!section?.voiceSpeedMarker || !section.voiceTripId || !section.voiceMarkerKey) return false;
-    const trip = mapTrips.find((item) => String(item?.id) === String(section.voiceTripId));
-    const markers = Array.isArray(trip?.voice_speed_limit_markers) ? trip.voice_speed_limit_markers : [];
-    if (!trip || markers.length === 0) return false;
-    const reviewedAt = new Date().toISOString();
-    let changed = false;
-    const nextMarkers = markers.map((marker, index) => {
-      if (voiceSpeedMarkerKey(marker, index) !== section.voiceMarkerKey) return marker;
-      changed = true;
-      return {
-        ...marker,
-        review_status: reviewStatus,
-        reviewed_at: reviewedAt,
-        saved_source: correction?.source || null,
-        saved_correction_id: correction?.id || correction?.ruleId || correction?.correctionId || null,
-      };
-    });
-    if (!changed) return false;
-    const patchedTrip = await tripService.update(section.voiceTripId, {
-      voice_speed_limit_markers: nextMarkers,
-      voice_speed_limit_marker_reviewed_at: reviewedAt,
-    });
-    setMapTrips((current) => current.map((item) => (
-      String(item?.id) === String(section.voiceTripId)
-        ? { ...item, ...(patchedTrip || {}), voice_speed_limit_markers: nextMarkers }
-        : item
-    )));
-    if (linkedTrip && String(linkedTrip.id) === String(section.voiceTripId)) {
-      setLinkedTrip({ ...linkedTrip, ...(patchedTrip || {}), voice_speed_limit_markers: nextMarkers });
-    }
-    return true;
   };
 
   const undoAddPoint = () => {
@@ -2108,11 +1942,7 @@ export default function SpeedLimits() {
         timeRule: timeRuleFromDraft(mapDraft),
         expiresAt: expiresAtFromDate(mapDraft.expiresAtDate),
       };
-      const voiceMarkerReviewed = selectedSection.voiceSpeedMarker
-        ? await markVoiceSpeedMarkerReviewed(selectedSection, correction).catch(() => false)
-        : false;
       const linkedGeometryLabel = linkedGeometryEdits.length ? ' and updated the linked split half' : '';
-      const voiceMarkerLabel = voiceMarkerReviewed ? ' and cleared the voice marker from pending review' : '';
       const beforeTrips = matchingTripsForCorrection(correction);
       const nextRow = {
         ...correction,
@@ -2131,7 +1961,7 @@ export default function SpeedLimits() {
       setMapEditorSnapshot(nextRow, mapDraft);
       setBusyGeohash(null);
       loadMapModel({ force: true });
-      setStatus(withUndo(`Saved ${Math.round(limitKmh)} km/h for this road section${linkedGeometryLabel}${voiceMarkerLabel}. Matching trip scores are updating in the background.`));
+      setStatus(withUndo(`Saved ${Math.round(limitKmh)} km/h for this road section${linkedGeometryLabel}. Matching trip scores are updating in the background.`));
       void (async () => {
         const afterKnowledge = await knowledge.exportData().catch(() => null);
         const updatedTrips = await withRecalculation(() => (
@@ -2141,8 +1971,8 @@ export default function SpeedLimits() {
         ));
         setStatus(withUndo(buildRecalculationStatus(
           updatedTrips
-            ? `Saved ${Math.round(limitKmh)} km/h for this road section${linkedGeometryLabel}${voiceMarkerLabel}. Recalculated ${updatedTrips.length} matching trip${updatedTrips.length === 1 ? '' : 's'} locally.`
-            : `Saved ${Math.round(limitKmh)} km/h for this road section${linkedGeometryLabel}${voiceMarkerLabel}, but matching trips could not be recalculated right now.`,
+            ? `Saved ${Math.round(limitKmh)} km/h for this road section${linkedGeometryLabel}. Recalculated ${updatedTrips.length} matching trip${updatedTrips.length === 1 ? '' : 's'} locally.`
+            : `Saved ${Math.round(limitKmh)} km/h for this road section${linkedGeometryLabel}, but matching trips could not be recalculated right now.`,
           beforeTrips,
           updatedTrips
         )));
