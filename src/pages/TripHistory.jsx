@@ -2,10 +2,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { limitedTripSummaryQueryOptions, tripDetailQueryOptions, tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { Search, Car, Tag, Star, CalendarDays, TrendingUp, X, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react';
 import TripCard from '@/components/TripCard';
+import {
+  PremiumFilteredSnapshot,
+  PremiumHistoryResultsPager,
+  PremiumHistorySearch,
+  getPremiumHistoryPageWindow,
+} from '@/components/PremiumTripHistoryPanels';
 import SpeedLimitConflictReview from '@/components/SpeedLimitConflictReview';
 import { useLocalSettingSelector } from '@/hooks/useLocalSettings';
 import { formatDistance, formatDuration, getTripComponentScore } from '@/lib/tripEngine';
@@ -195,9 +202,11 @@ export default function TripHistory() {
   const [presetName, setPresetName] = useState('');
   const [savedFilters, setSavedFilters] = useState([]);
   const [savedFiltersLoaded, setSavedFiltersLoaded] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
   const tripListRef = useRef(null);
   const location = useLocation();
   const units = useLocalSettingSelector((settings) => settings.units || 'metric');
+  const premiumVisuals = useLocalSettingSelector((settings) => settings.premium_visual_experience === true);
   const qc = useQueryClient();
   const reviewSpeedLimitConflicts = new URLSearchParams(location.search || '').get('review') === 'speed-limit-conflicts';
 
@@ -286,6 +295,18 @@ export default function TripHistory() {
   const pageStart = safePage * TRIP_HISTORY_PAGE_SIZE;
   const pageTrips = sorted.slice(pageStart, pageStart + TRIP_HISTORY_PAGE_SIZE);
   const pageEnd = pageStart + pageTrips.length;
+  const pageWindow = getPremiumHistoryPageWindow(sorted.length, premiumVisuals ? currentPage : 0);
+  const premiumTrips = useMemo(
+    () => sorted.slice(pageWindow.offset, pageWindow.end),
+    [pageWindow.end, pageWindow.offset, sorted]
+  );
+  const tripVirtualizer = useVirtualizer({
+    count: premiumVisuals ? premiumTrips.length : 0,
+    getScrollElement: () => tripListRef.current,
+    estimateSize: () => 190,
+    overscan: 5,
+  });
+  const virtualTrips = tripVirtualizer.getVirtualItems();
   const historySummary = useMemo(() => buildTripHistorySummary(sorted, units), [sorted, units]);
   const activeFilterLabel = QUICK_FILTERS.find((option) => option.id === filterBy)?.label || 'Custom filter';
   const exactDateLabel = dateFrom
@@ -353,11 +374,22 @@ export default function TripHistory() {
 
   useEffect(() => {
     setPage(0);
-  }, [dateFilter, dateFrom, dateTo, filterBy, search, selectedTag, sortBy]);
+    setCurrentPage(0);
+    if (premiumVisuals) tripVirtualizer.scrollToIndex(0, { align: 'start' });
+  }, [dateFilter, dateFrom, dateTo, filterBy, premiumVisuals, search, selectedTag, sortBy, tripVirtualizer]);
 
   useEffect(() => {
     if (page > pageCount - 1) setPage(Math.max(0, pageCount - 1));
   }, [page, pageCount]);
+
+  useEffect(() => {
+    if (currentPage !== pageWindow.page) setCurrentPage(pageWindow.page);
+  }, [currentPage, pageWindow.page]);
+
+  useEffect(() => {
+    if (!premiumVisuals) return;
+    tripVirtualizer.scrollToIndex(0, { align: 'start' });
+  }, [currentPage, premiumVisuals, tripVirtualizer]);
 
   const saveCurrentFilter = () => {
     const name = presetName.trim();
@@ -398,8 +430,75 @@ export default function TripHistory() {
     return <PageLoadingSkeleton title="Loading trip history" />;
   }
 
+  const premiumDateInputs = (
+    <>
+      {dateFilter === 'exact_day' && (
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
+          <label className="text-xs font-semibold text-foreground">
+            Choose one day
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(event) => setDateFrom(event.target.value)}
+              className="mt-1.5 h-10 w-full rounded-xl border border-border bg-background px-3 text-sm text-foreground sm:max-w-xs"
+            />
+          </label>
+        </div>
+      )}
+      {dateFilter === 'custom' && (
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-foreground">
+            <CalendarDays className="h-3.5 w-3.5" />
+            Choose a date range
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-[11px] font-medium text-muted-foreground">
+              From
+              <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(event) => setDateFrom(event.target.value)} className="mt-1 h-10 w-full rounded-xl border border-border bg-background px-2 text-xs text-foreground" />
+            </label>
+            <label className="text-[11px] font-medium text-muted-foreground">
+              To
+              <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)} className="mt-1 h-10 w-full rounded-xl border border-border bg-background px-2 text-xs text-foreground" />
+            </label>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  const premiumFilterDetails = showFilters ? (
+    <div className="premium-history-expanded-filters space-y-4 rounded-2xl border border-border bg-card p-3">
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+        <Tag className="h-3.5 w-3.5" /> Tags
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={() => setTripTag('all')} aria-pressed={selectedTag === 'all'} className={`rounded-full border px-2.5 py-1 text-xs font-medium ${selectedTag === 'all' ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground'}`}>All tags</button>
+        {TRIP_TAG_OPTIONS.map((option) => (
+          <button type="button" key={option.id} onClick={() => setTripTag(option.id)} aria-pressed={selectedTag === option.id} className={`rounded-full border px-2.5 py-1 text-xs font-medium ${selectedTag === option.id ? 'border-primary bg-primary text-primary-foreground' : option.className}`}>{option.label}</button>
+        ))}
+      </div>
+      <div className="border-t border-border pt-3">
+        <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground"><Star className="h-3.5 w-3.5" /> Saved filters</div>
+        <div className="flex gap-2">
+          <input value={presetName} onChange={(event) => setPresetName(event.target.value)} placeholder="Name this filter" className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary" />
+          <button type="button" onClick={saveCurrentFilter} disabled={!presetName.trim()} className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-40">Save</button>
+        </div>
+        {savedFilters.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {savedFilters.map((preset) => (
+              <span key={preset.id} className="inline-flex items-center gap-1 rounded-full border border-border bg-secondary/50 px-2 py-1 text-xs">
+                <button type="button" onClick={() => applySavedFilter(preset)} className="font-medium hover:text-primary">{preset.name}</button>
+                <button type="button" onClick={() => removeSavedFilter(preset.id)} className="min-h-9 min-w-9 text-muted-foreground hover:text-red-500" aria-label={`Delete ${preset.name} filter`}>x</button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  ) : null;
+
   return (
-    <div className="space-y-3 pb-4">
+    <div className={`space-y-5 pb-4 ${premiumVisuals ? 'premium-trip-history-on' : ''}`}>
       <PageHeader
         title="Trip History"
         description={`${sorted.length} of ${completed.length} completed trips`}
@@ -414,6 +513,27 @@ export default function TripHistory() {
       {reviewSpeedLimitConflicts && (
         <SpeedLimitConflictReview reviewMode />
       )}
+      {premiumVisuals ? (
+        <>
+          <PremiumHistorySearch
+            value={searchInput}
+            onChange={setTripSearch}
+            sortBy={sortBy}
+            onSortChange={setTripSort}
+            filterBy={filterBy}
+            onFilterChange={setTripFilter}
+            dateFilter={dateFilter}
+            onDateFilterChange={setTripDateFilter}
+            dateOptions={DATE_FILTERS}
+            sortOptions={SORT_OPTIONS}
+            quickFilters={QUICK_FILTERS}
+            showFilters={showFilters}
+            onToggleFilters={() => setShowFilters((visible) => !visible)}
+            expandedFilters={premiumFilterDetails}
+          />
+          {premiumDateInputs}
+        </>
+      ) : (
       <section aria-label="Find and filter trips" className="space-y-3 rounded-2xl border border-border bg-card p-3 shadow-sm sm:p-4">
         <div>
           <div className="relative">
@@ -600,15 +720,22 @@ export default function TripHistory() {
           </div>
         )}
       </section>
+      )}
 
-      {improvement && (
+      {!premiumVisuals && improvement && (
         <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-300">
           <TrendingUp className="h-4 w-4" />
           <span className="font-semibold">{improvement.message}</span>
         </div>
       )}
 
-      {completed.length > 0 && (
+      {completed.length > 0 && (premiumVisuals ? (
+        <PremiumFilteredSnapshot
+          summary={historySummary}
+          filterLabel={activeDateLabel === 'Any date' ? activeFilterLabel : activeDateLabel}
+          tagLabel={activeTagLabel}
+        />
+      ) : (
         <section aria-label="Filtered trip history snapshot" className="rounded-2xl border border-border bg-card p-3 shadow-sm sm:p-4">
           <span className="sr-only">{historySummary.count} matching trips</span>
           <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
@@ -647,7 +774,7 @@ export default function TripHistory() {
             </div>
           </div>
         </section>
-      )}
+      ))}
       {isLoading && (
         <div className="space-y-3">
           {[1, 2, 3].map(i => (
@@ -682,6 +809,34 @@ export default function TripHistory() {
       </div>
 
       {!isLoading && sorted.length > 0 && (
+        premiumVisuals ? (
+        <div ref={tripListRef} className="max-h-[72vh] overflow-y-auto pr-1 thin-scrollbar" aria-label="Virtualized trip history list">
+          <div className="relative w-full" style={{ height: `${tripVirtualizer.getTotalSize()}px` }}>
+            {virtualTrips.map((virtualItem) => {
+              const trip = premiumTrips[virtualItem.index];
+              if (!trip) return null;
+              return (
+                <div
+                  key={trip.id}
+                  ref={tripVirtualizer.measureElement}
+                  data-index={virtualItem.index}
+                  className="absolute left-0 top-0 w-full pb-3"
+                  style={{ transform: `translateY(${virtualItem.start}px)` }}
+                >
+                  <TripCard
+                    trip={trip}
+                    units={units}
+                    index={pageWindow.offset + virtualItem.index}
+                    scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
+                    onToggleFavorite={(target) => updateTripMut.mutate({ id: target.id, patch: { is_favorite: target.is_favorite !== true } })}
+                    onIntent={handleTripIntent}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        ) : (
         <section ref={tripListRef} className="scroll-mt-24 space-y-2" aria-label="Paginated trip history">
           <TripPageControls
             page={safePage}
@@ -720,6 +875,19 @@ export default function TripHistory() {
             />
           )}
         </section>
+        )
+      )}
+
+      {!isLoading && premiumVisuals && sorted.length > 0 && (
+        <PremiumHistoryResultsPager
+          start={pageWindow.start}
+          end={pageWindow.end}
+          total={sorted.length}
+          page={pageWindow.page}
+          pageCount={pageWindow.pageCount}
+          onPrevious={() => setCurrentPage((current) => Math.max(0, current - 1))}
+          onNext={() => setCurrentPage((current) => Math.min(pageWindow.pageCount - 1, current + 1))}
+        />
       )}
       {completed.some((trip) => trip.is_favorite) && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">

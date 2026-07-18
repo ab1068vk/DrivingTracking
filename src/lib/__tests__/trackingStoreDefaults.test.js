@@ -28,7 +28,7 @@ describe('tracking store default settings', () => {
     })).toMatchObject({
       changed: true,
       settings: {
-        settings_defaults_version: 18,
+        settings_defaults_version: 19,
         experience_mode: EXPERIENCE_MODES.COACHING,
       },
     });
@@ -38,12 +38,12 @@ describe('tracking store default settings', () => {
     })).toMatchObject({
       changed: true,
       settings: {
-        settings_defaults_version: 18,
+        settings_defaults_version: 19,
         experience_mode: EXPERIENCE_MODES.COACHING,
       },
     });
     expect(migrateDefaultSettings({
-      settings_defaults_version: 18,
+      settings_defaults_version: 19,
       experience_mode: EXPERIENCE_MODES.TRACKING,
       voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
     })).toMatchObject({
@@ -76,12 +76,12 @@ describe('tracking store default settings', () => {
     })).toMatchObject({
       changed: true,
       settings: {
-        settings_defaults_version: 18,
+        settings_defaults_version: 19,
         voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
       },
     });
     expect(migrateDefaultSettings({
-      settings_defaults_version: 18,
+      settings_defaults_version: 19,
       voice_alert_style: 'robot',
     })).toMatchObject({
       changed: true,
@@ -95,6 +95,33 @@ describe('tracking store default settings', () => {
     expect(sanitizeImportedSettings({ voice_alert_style: 'invalid' })).not.toHaveProperty('voice_alert_style');
     expect(validateSettingsPatch({ voice_alert_style: VOICE_ALERT_STYLES.COACHING })).toEqual({ valid: true, errors: [] });
     expect(validateSettingsPatch({ voice_alert_style: 'invalid' })).toMatchObject({ valid: false });
+  });
+
+  it('defaults premium visuals off and preserves an explicit preference', () => {
+    expect(DEFAULT_SETTINGS.premium_visual_experience).toBe(false);
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 18,
+    })).toMatchObject({
+      changed: true,
+      settings: {
+        settings_defaults_version: 19,
+        premium_visual_experience: false,
+      },
+    });
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 19,
+      experience_mode: EXPERIENCE_MODES.COACHING,
+      voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
+      premium_visual_experience: true,
+    })).toMatchObject({
+      changed: false,
+      settings: {
+        premium_visual_experience: true,
+      },
+    });
+    expect(sanitizeImportedSettings({ premium_visual_experience: true })).toMatchObject({
+      premium_visual_experience: true,
+    });
   });
 
   it('keeps external context auto-fetch off until the user approves it', () => {
@@ -119,7 +146,7 @@ describe('tracking store default settings', () => {
     expect(migrateDefaultSettings({
       settings_defaults_version: 13,
     }).settings).toMatchObject({
-      settings_defaults_version: 18,
+      settings_defaults_version: 19,
       heightened_privacy_mode: true,
       weather_context_enabled: false,
       speed_limit_lookup_enabled: false,
@@ -364,7 +391,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(18);
+    expect(legacySunset.settings_defaults_version).toBe(19);
     expect(legacySunset.raw_gps_retention_days).toBe(30);
     expect(legacyCustom.night_end_time).toBe('06:00');
     expect(legacyCustom.raw_gps_retention_days).toBe(30);

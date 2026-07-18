@@ -6,7 +6,7 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { calibrationLabelService } from '@/api/calibrationLabels';
 import {
-  Moon, Sun, Monitor, Cpu, Trash2, Download, Upload, Shield, ChevronRight, ArrowLeft, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff
+  Moon, Sun, Monitor, Cpu, Trash2, Download, Upload, Shield, ChevronRight, ArrowLeft, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff, Mic, Sparkles
 } from 'lucide-react';
 import {
   Dialog,
@@ -443,10 +443,11 @@ const SETTINGS_SECTIONS = [
     group: 'preferences',
     title: 'Appearance',
     icon: Monitor,
-    detail: 'Theme and unit preferences.',
-    keywords: 'theme dark light system units metric imperial kmh mph',
+    detail: 'Theme, premium visuals, and unit preferences.',
+    keywords: 'theme dark light system premium visuals units metric imperial kmh mph',
     searchItems: [
       { label: 'Theme', keywords: 'light dark system display' },
+      { label: 'Premium Visual Experience', keywords: 'dashboard rich visuals totals cards' },
       { label: 'Units', keywords: 'metric imperial kmh mph kilometers miles' },
     ],
   },
@@ -3575,6 +3576,38 @@ export default function Settings() {
               ))}
             </div>
           </div>
+
+          <button
+            type="button"
+            aria-pressed={cfg.premium_visual_experience === true}
+            onClick={() => updateCfg({ premium_visual_experience: cfg.premium_visual_experience !== true })}
+            className={`mt-3 flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition-all ${
+              cfg.premium_visual_experience === true
+                ? 'border-primary bg-primary/5 shadow-sm'
+                : 'border-border bg-card hover:border-primary/40 hover:bg-secondary/30'
+            }`}
+          >
+            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+              cfg.premium_visual_experience === true
+                ? 'bg-gradient-to-br from-cyan-500 via-blue-500 to-violet-600 text-white shadow-md'
+                : 'bg-secondary text-muted-foreground'
+            }`}>
+              <Sparkles className="h-5 w-5" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold">Premium Visual Experience</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                Rich trip launch, totals, and insight cards with layered color, illustrations, and theme-aware detail.
+              </span>
+            </span>
+            <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
+              cfg.premium_visual_experience === true
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-secondary text-muted-foreground'
+            }`}>
+              {cfg.premium_visual_experience === true ? 'On' : 'Off'}
+            </span>
+          </button>
 
           <div className="mt-3">
             <div className="text-sm font-medium mb-2 px-1">Units</div>

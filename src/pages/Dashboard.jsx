@@ -69,6 +69,14 @@ import {
 import { isDriverMetricEligible } from '@/lib/phoneUseSummary';
 import ScoreRing from '@/components/ScoreRing';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
+import PremiumTotalsCard, { PremiumBaselineCard } from '@/components/PremiumTotalsCard';
+import PremiumReadyToDriveCard from '@/components/PremiumReadyToDriveCard';
+import PremiumEventSummary from '@/components/PremiumEventSummary';
+import PremiumPreTripPlanner from '@/components/PremiumPreTripPlanner';
+import PremiumDrivingScoreCard from '@/components/PremiumDrivingScoreCard';
+import PremiumDrivingExposureCard from '@/components/PremiumDrivingExposureCard';
+import PremiumScoreTipsCard from '@/components/PremiumScoreTipsCard';
+import { PremiumWeeklyGoalsCard, PremiumWeeklyInsightCards } from '@/components/PremiumWeeklyDriverGoals';
 import TripCard from '@/components/TripCard';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LiveCoachOverlay from '@/components/LiveCoachOverlay';
@@ -3383,7 +3391,7 @@ export default function Dashboard() {
   ) : null;
 
   return (
-    <div className="cyber-dashboard space-y-6 pb-4">
+    <div className={`cyber-dashboard space-y-6 pb-4 ${settings.premium_visual_experience === true ? 'premium-dashboard-on' : ''}`}>
       {/* Header */}
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
         <h1 className="text-2xl font-grotesk font-bold">Dashboard</h1>
@@ -3907,8 +3915,24 @@ export default function Dashboard() {
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.96 }}
-            className="cyber-hero-panel bg-card border border-border rounded-3xl p-6 shadow-sm"
+            className={settings.premium_visual_experience === true
+              ? 'premium-ready-motion-shell'
+              : 'cyber-hero-panel bg-card border border-border rounded-3xl p-6 shadow-sm'}
           >
+            {settings.premium_visual_experience === true ? (
+              <PremiumReadyToDriveCard
+                androidManualBackgroundReady={androidManualBackgroundReady}
+                backgroundLocationReady={backgroundLocationReady}
+                foregroundLocationReady={foregroundLocationReady}
+                isAndroidManualMode={isAndroidManualMode}
+                notificationsReady={notificationsReady}
+                onEnableBackgroundTracking={() => handleTrackingSetupAction('background')}
+                onRefreshTrackingStatus={refreshTrackingStatusContext}
+                onStartPrivateTrip={() => handleStartTrip({ privateTrip: true })}
+                onStartTrip={() => handleStartTrip()}
+                startingTrip={startingTrip}
+              />
+            ) : (<>
             <div className="flex items-center gap-4">
               <div className="flex-1 min-w-0">
                 <div className="text-muted-foreground text-sm mb-1">Ready to drive?</div>
@@ -3995,6 +4019,7 @@ export default function Dashboard() {
                 </div>
               </div>
             </button>
+            </>)}
           </motion.div>
         )}
       </AnimatePresence>
@@ -4019,6 +4044,9 @@ export default function Dashboard() {
         </SectionErrorBoundary>
       )}
       {/* Stats Grid */}
+      {settings.premium_visual_experience === true ? (
+        <PremiumTotalsCard trips={analyticsCompletedTrips} units={units} />
+      ) : (
       <section className="rounded-3xl border border-border bg-card p-4 shadow-sm" aria-labelledby="dashboard-activity-heading">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -4069,8 +4097,17 @@ export default function Dashboard() {
           ))}
         </div>
       </section>
+      )}
 
       {completedTrips.length > 0 && (
+        settings.premium_visual_experience === true ? (
+          <PremiumBaselineCard
+            baseline={baseline}
+            baselineRangeLabel={baselineRangeLabel}
+            baselineText={baselineText}
+            peakStress={peakStress}
+          />
+        ) : (
         <div className="cyber-baseline-panel bg-card border border-border rounded-3xl p-5 shadow-sm">
           <div className="flex items-start justify-between">
             <div>
@@ -4115,10 +4152,14 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+        )
       )}
 
       {/* Driver goals */}
       {completedTrips.length > 0 && (
+        settings.premium_visual_experience === true ? (
+          <PremiumWeeklyGoalsCard goals={weeklyGoals} units={units} />
+        ) : (
         <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold text-base">Weekly Driver Goals</h2>
@@ -4175,10 +4216,17 @@ export default function Dashboard() {
             })}
           </div>
         </div>
+        )
       )}
 
       {/* Driver streak and fatigue */}
       {completedTrips.length > 0 && (
+        settings.premium_visual_experience === true ? (
+          <PremiumWeeklyInsightCards
+            fatigueRisk={fatigueRisk}
+            noHarshBrakeStreak={noHarshBrakeStreak}
+          />
+        ) : (
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-card border border-border rounded-2xl p-4">
             <Flame className="w-5 h-5 text-orange-500 mb-2" />
@@ -4191,9 +4239,13 @@ export default function Dashboard() {
             <div className="text-xs text-muted-foreground">estimated fatigue risk (driving-time proxy) - {fatigueRisk.long_trip_count} long drives this week</div>
           </div>
         </div>
+        )
       )}
 
       {dailyFatigue.tripCount >= 1 && (
+        settings.premium_visual_experience === true ? (
+          <PremiumDrivingExposureCard dailyFatigue={dailyFatigue} />
+        ) : (
         <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
@@ -4228,9 +4280,20 @@ export default function Dashboard() {
             </div>
           )}
         </div>
+        )
       )}
 
       {/* Score & Trend */}
+      {settings.premium_visual_experience === true ? (
+        <PremiumDrivingScoreCard
+          avgScore={avgScore}
+          evidence={avgScoreEvidence}
+          scoreTrend={scoreTrend}
+          tripCount={completedTrips.length}
+          isLoading={recentTripsLoaded === false}
+          showApproximateTag={OVERALL_SCORE_IS_APPROXIMATE}
+        />
+      ) : (
       <div className="cyber-score-panel bg-card border border-border rounded-3xl p-5 shadow-sm">
         <div className="flex items-start justify-between mb-4">
           <div>
@@ -4271,9 +4334,14 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+      )}
 
       {/* Coaching tips */}
-      {completedTrips.length > 0 && (
+      {settings.premium_visual_experience === true ? (
+        (completedTrips.length > 0 || recentTripsLoaded === false) && (
+          <PremiumScoreTipsCard tips={tips} isLoading={recentTripsLoaded === false} />
+        )
+      ) : completedTrips.length > 0 && (
         <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
           <h2 className="font-semibold text-base mb-3">Score Tips</h2>
           <div className="space-y-2">
@@ -4288,6 +4356,9 @@ export default function Dashboard() {
 
       {/* Quick event stats */}
       {completedTrips.length > 0 && (() => {
+        if (settings.premium_visual_experience === true) {
+          return <PremiumEventSummary trips={completedTrips} />;
+        }
         const hb = completedTrips.reduce((s, t) => s + (t.harsh_brakes_count || 0), 0);
         const ra = completedTrips.reduce((s, t) => s + (t.rapid_accel_count || 0), 0);
         const st = completedTrips.reduce((s, t) => s + (t.sharp_turns_count || 0), 0);
@@ -4417,6 +4488,43 @@ function DashboardRiskPanel({
   const readinessRangeText = preTripRisk.readinessRange
     ? `${preTripRisk.readinessRange.low}-${preTripRisk.readinessRange.high}`
     : 'withheld';
+
+  if (settings.premium_visual_experience === true) {
+    const watchZoneItems = watchZones.map((zone) => {
+      const distance = formatWatchDistance(zone.distanceM, units);
+      return {
+        key: zone.id || `${zone.lat}:${zone.lng}`,
+        title: eventTypeLabel(zone.dominantType),
+        detail: [
+          distance ? `${distance} away` : '',
+          zone.eventCount ? `${zone.eventCount} past events` : '',
+        ].filter(Boolean).join(' - '),
+      };
+    });
+
+    return (
+      <PremiumPreTripPlanner
+        actions={topPlannerActions}
+        historicalContextEnabled={historicalContextEnabled}
+        historyStatus={historyStatus}
+        localSpeedEmptyText={localSpeedEmptyText}
+        localSpeedItems={localSpeed.items}
+        onDismiss={onDismiss}
+        plannerTone={plannerTone}
+        predictiveRouteRisk={predictiveRouteRisk}
+        preTripRisk={preTripRisk}
+        readinessApproximate={READINESS_SCORE_IS_APPROXIMATE}
+        readinessEvidence={readinessEvidence}
+        routeRiskApproximate={ROUTE_RISK_IS_APPROXIMATE}
+        saferWindow={saferWindow}
+        scoreText={scoreText}
+        watchZoneEmptyText={currentLocation
+          ? 'No repeated-event areas are near your current position.'
+          : 'Turn on location to check nearby repeated-event areas before starting.'}
+        watchZoneItems={watchZoneItems}
+      />
+    );
+  }
   return (
     <div className="rounded-2xl border border-border bg-card p-3 shadow-sm">
       <div className="flex items-start gap-3">

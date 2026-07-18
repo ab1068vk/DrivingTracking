@@ -1278,4 +1278,29 @@ describe('core page component renders', () => {
       '2026-04-11'
     )).toBe(false);
   });
+
+  it('gates the premium trip-history surfaces behind the persisted appearance setting', async () => {
+    setTripSummaries([
+      sampleTrip,
+      { ...sampleTrip, id: 'trip-2', start_time: '2026-01-02T12:00:00.000Z' },
+    ]);
+    settings.premium_visual_experience = true;
+    const { default: TripHistory } = await import('@/pages/TripHistory');
+    const premiumHtml = renderToStaticMarkup(<TripHistory />);
+
+    expect(premiumHtml).toContain('premium-trip-history-on');
+    expect(premiumHtml).toContain('premium-history-filter');
+    expect(premiumHtml).toContain('premium-history-snapshot');
+    expect(premiumHtml).toContain('premium-history-results');
+    expect(premiumHtml).toContain('aria-label="Filter trips by date"');
+    expect(premiumHtml).toContain('aria-label="Filter trips by type"');
+    expect(premiumHtml).toContain('Showing <strong>1–2</strong> of <strong>2</strong> matching trips');
+    expect(premiumHtml.indexOf('aria-label="Virtualized trip history list"'))
+      .toBeLessThan(premiumHtml.indexOf('aria-label="Matching trip result pages"'));
+
+    settings.premium_visual_experience = false;
+    const standardHtml = renderToStaticMarkup(<TripHistory />);
+    expect(standardHtml).not.toContain('premium-trip-history-on');
+    expect(standardHtml).toContain('aria-label="Paginated trip history"');
+  });
 });
