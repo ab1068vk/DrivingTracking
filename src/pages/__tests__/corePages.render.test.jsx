@@ -1003,6 +1003,22 @@ describe('core page component renders', () => {
     expect(html).not.toContain('72 GPS readings - 0 map/playback points');
   });
 
+  it('loads the complete trip-summary history for map evidence and trip selection', async () => {
+    const summaries = Array.from({ length: 70 }, (_, index) => ({
+      ...sampleTrip,
+      id: `map-history-${index}`,
+      start_time: new Date(Date.UTC(2026, 0, 1, 12, index)).toISOString(),
+      route_replay_available: true,
+    }));
+    setTripSummaries(summaries.slice(0, 50));
+    queryData.set(JSON.stringify(['trip-summaries']), summaries);
+
+    const { default: MapScreen } = await import('@/pages/MapScreen');
+    const html = renderToStaticMarkup(<MapScreen />);
+
+    expect(html).toContain('Showing trips 1-30 of 70');
+  });
+
   it('renders Diagnostics recovery compatibility as read-only identity facts', async () => {
     queryData.set(JSON.stringify(['diagnostics-trips']), [sampleTrip]);
     const { buildRecoveryCompatibilitySnapshot, default: Diagnostics } = await import('@/pages/Diagnostics');

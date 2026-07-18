@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { limitedTripSummaryQueryOptions, tripDetailQueryOptions, tripQueryKeys } from '@/api/trips';
+import { tripDetailQueryOptions, tripQueryKeys, tripSummaryQueryOptions } from '@/api/trips';
 import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers, ChevronLeft, ChevronRight, Shield } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
@@ -42,7 +42,6 @@ const MAP_FILTERS = [
 
 const MAP_ROUTE_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#06b6d4', '#ef4444'];
 const TRIP_CARD_PAGE_SIZE = 30;
-const MAP_OVERVIEW_SUMMARY_LIMIT = 50;
 const MAP_OVERVIEW_ROUTE_LIMIT = 8;
 export const shouldShowStandardMapRouteSummary = (premiumVisuals, selectedTrip) => !(premiumVisuals && selectedTrip);
 const scheduleIdleWork = (callback) => {
@@ -114,6 +113,7 @@ export default function MapScreen() {
   const [parkingError, setParkingError] = useState(null);
   const [secondaryTripId, setSecondaryTripId] = useState('');
   const [dangerZones, setDangerZones] = useState([]);
+  const [dangerZonesReady, setDangerZonesReady] = useState(false);
   const [showDangerZones, setShowDangerZones] = useState(false);
   const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
   const [showRouteRisk, setShowRouteRisk] = useState(false);
@@ -138,7 +138,7 @@ export default function MapScreen() {
   const osrmConfigured = isOsrmMapMatchingConfigured(settings);
 
   const { data: completedSummaries = [], isLoading: tripsLoading } = useQuery({
-    ...limitedTripSummaryQueryOptions(MAP_OVERVIEW_SUMMARY_LIMIT),
+    ...tripSummaryQueryOptions(),
     select: (trips) => trips.filter(t => t.status === 'completed'),
   });
   const contextMutation = useMutation({
@@ -153,11 +153,10 @@ export default function MapScreen() {
     onSuccess: (updatedTrip) => {
       if (updatedTrip) {
         qc.setQueryData(tripQueryKeys.detail(updatedTrip.id), updatedTrip);
-        qc.setQueryData(tripQueryKeys.limitedSummaries(MAP_OVERVIEW_SUMMARY_LIMIT), (old = []) => (
+        qc.setQueryData(tripQueryKeys.summaries, (old = []) => (
           Array.isArray(old) ? old.map((trip) => String(trip.id) === String(updatedTrip.id) ? updatedTrip : trip) : old
         ));
       }
-      qc.invalidateQueries({ queryKey: tripQueryKeys.limitedSummaries(MAP_OVERVIEW_SUMMARY_LIMIT) });
       qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
       if (selectedTripId) qc.invalidateQueries({ queryKey: tripQueryKeys.detail(selectedTripId) });
       const hasSpeedLimits = (updatedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
@@ -397,15 +396,31 @@ export default function MapScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    const rebuildOverlays = async () => {
+    setDangerZonesReady(false);
+    const rebuildDangerZones = async () => {
+      const zones = buildRiskHotspots(completedSummaries);
+      await saveDangerZones(zones).catch(() => {});
+      if (!cancelled) {
+        setDangerZones(zones);
+        setDangerZonesReady(true);
+      }
+    };
+
+    const cancelScheduledWork = scheduleIdleWork(rebuildDangerZones);
+    return () => {
+      cancelled = true;
+      cancelScheduledWork();
+    };
+  }, [completedSummaries]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const rebuildRouteRisk = async () => {
       if (!overlaySourceTrips.length) {
-        setDangerZones((current) => (current.length ? [] : current));
         setRouteRiskIndex((current) => (current.size ? new Map() : current));
         return;
       }
 
-      const zones = buildRiskHotspots(overlaySourceTrips);
-      await saveDangerZones(zones);
       let index = await loadRouteRiskIndex(privacyZones);
       if (!index || index.size === 0) {
         index = buildRouteRiskIndex(overlaySourceTrips, privacyZones);
@@ -414,12 +429,11 @@ export default function MapScreen() {
         await saveRouteRiskIndex(index);
       }
       if (!cancelled) {
-        setDangerZones(zones);
         setRouteRiskIndex(index);
       }
     };
 
-    const cancelScheduledWork = scheduleIdleWork(rebuildOverlays);
+    const cancelScheduledWork = scheduleIdleWork(rebuildRouteRisk);
     return () => {
       cancelled = true;
       cancelScheduledWork();
@@ -765,9 +779,23 @@ export default function MapScreen() {
             Show on map
           </button>
         </div>
-        {visibleDangerZones.length === 0 ? (
+        {!dangerZonesReady || tripsLoading ? (
           <div className="rounded-2xl bg-secondary/50 p-4 text-sm text-muted-foreground">
-            No repeated event areas yet. The app will highlight a place here after the same area has repeated harsh brakes, speeding, or sharp turns.
+            Checking your completed trips for repeated driving-event locations...
+          </div>
+        ) : visibleDangerZones.length === 0 ? (
+          <div className="rounded-2xl bg-secondary/50 p-4 text-sm text-muted-foreground">
+            {dangerZones.length > 0 ? (
+              <>
+                {dangerZones.length} repeated driving-event area{dangerZones.length === 1 ? ' is' : 's are'} hidden because {dangerZones.length === 1 ? 'it is' : 'they are'} inside your privacy zones.
+              </>
+            ) : (
+              <>
+                {completedSummaries.length === 0
+                  ? 'No completed trips with event-location evidence are available yet.'
+                  : <>Checked all {completedSummaries.length} completed trip{completedSummaries.length === 1 ? '' : 's'}. No small map area has at least two scored harsh-braking, speeding, or sharp-turn events. The app groups event coordinates into roughly 80-metre cells; driving the same road more than once does not create an event area unless qualifying events also repeat there.</>}
+              </>
+            )}
           </div>
         ) : (
           <div className="grid gap-2 md:grid-cols-3">
