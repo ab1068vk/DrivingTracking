@@ -603,6 +603,7 @@ function TripMapContent({
   routeRiskSegments = EMPTY_ROUTE_RISK_SEGMENTS,
   showSpeedLimits = false,
   showIncompleteRouteWarning = true,
+  showRouteSummary = true,
   speedLimitKnowledgeResults = EMPTY_ROUTE_POINTS,
   rawPointCount = null,
   smoothRoute = true,
@@ -1405,7 +1406,7 @@ function TripMapContent({
           </div>
         </div>
       )}
-      {showInsights && hasRoute && (
+      {showRouteSummary && showInsights && hasRoute && (
         <button
           type="button"
           onClick={() => setShowInsights(false)}
@@ -1455,7 +1456,7 @@ function TripMapContent({
           )}
         </button>
       )}
-      {!showInsights && hasRoute && (
+      {showRouteSummary && !showInsights && hasRoute && (
         <button
           type="button"
           onClick={() => setShowInsights(true)}

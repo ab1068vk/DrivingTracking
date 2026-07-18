@@ -7437,6 +7437,12 @@ html[data-mobile-navigation-open="true"] .app-interaction-feedback__bar {
   }
 
   .premium-map-diagnostics {
+    --premium-map-cyan: 188 94% 44%;
+    --premium-map-blue: 214 94% 57%;
+    --premium-map-violet: 265 88% 64%;
+    --premium-map-amber: 31 96% 55%;
+    --premium-map-panel: 210 56% 98%;
+    --premium-map-panel-deep: 214 48% 95%;
     padding: 1rem;
     border-radius: 1.55rem;
   }
@@ -7762,6 +7768,12 @@ html[data-mobile-navigation-open="true"] .app-interaction-feedback__bar {
   .dark .premium-map-panel-art,
   .cyber-lab .premium-map-diagnostics-art,
   .cyber-lab .premium-map-panel-art { opacity: 0.64; mix-blend-mode: screen; }
+
+  .dark .premium-map-diagnostics,
+  .cyber-lab .premium-map-diagnostics {
+    --premium-map-panel: 218 61% 7%;
+    --premium-map-panel-deep: 220 66% 4%;
+  }
 
   .dark .premium-map-kicker,
   .cyber-lab .premium-map-kicker { color: hsl(188 94% 62%); }

@@ -1280,7 +1280,7 @@ describe('core page component renders', () => {
     )).toBe(false);
   });
 
-  it('keeps premium trip and map chrome theme-aware and distinguishable', async () => {
+  it('keeps premium map visuals scoped to the route diagnostics card', async () => {
     settings.premium_visual_experience = true;
 
     const { default: TripDetail } = await import('@/pages/TripDetail');
@@ -1288,11 +1288,20 @@ describe('core page component renders', () => {
     expect(tripHtml).toContain('premium-trip-detail-on');
     expect(tripHtml).toContain('trip-detail-identity');
 
-    const { default: MapScreen } = await import('@/pages/MapScreen');
+    const { default: MapScreen, shouldShowStandardMapRouteSummary } = await import('@/pages/MapScreen');
     const mapHtml = renderToStaticMarkup(<MapScreen />);
-    expect(mapHtml).toContain('app-page-header premium-map-heading');
+    expect(mapHtml).toContain('class="app-page-header"');
+    expect(mapHtml).not.toContain('premium-map-page');
+    expect(mapHtml).not.toContain('premium-map-heading');
+    expect(mapHtml).not.toContain('premium-map-tabs');
+    expect(mapHtml).not.toContain('premium-map-layers-card');
+    expect(mapHtml).not.toContain('premium-map-events-card');
+    expect(mapHtml).not.toContain('premium-map-trip-picker');
     expect(mapHtml.match(/data-map-tab="mode"/g)).toHaveLength(2);
     expect(mapHtml).toContain('data-map-tab="utility"');
+    expect(shouldShowStandardMapRouteSummary(true, sampleTrip)).toBe(false);
+    expect(shouldShowStandardMapRouteSummary(false, sampleTrip)).toBe(true);
+    expect(shouldShowStandardMapRouteSummary(true, null)).toBe(true);
   });
 
   it('gates the premium trip-history surfaces behind the persisted appearance setting', async () => {

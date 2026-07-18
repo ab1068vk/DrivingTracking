@@ -6,7 +6,7 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { calibrationLabelService } from '@/api/calibrationLabels';
 import {
-  Moon, Sun, Monitor, Cpu, Trash2, Download, Upload, Shield, ChevronRight, ArrowLeft, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff, Mic, Sparkles
+  Moon, Sun, Monitor, Cpu, Trash2, Download, Upload, Shield, ChevronRight, ArrowLeft, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff, Sparkles
 } from 'lucide-react';
 import {
   Dialog,
