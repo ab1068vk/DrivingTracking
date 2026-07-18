@@ -7,6 +7,12 @@ import { limitedTripSummaryQueryOptions, tripDetailQueryOptions, tripQueryKeys, 
 import { vehicleService } from '@/api/vehicles';
 import { Search, Filter, Car, Tag, Star, CalendarDays, TrendingUp } from 'lucide-react';
 import TripCard from '@/components/TripCard';
+import {
+  PremiumFilteredSnapshot,
+  PremiumHistoryResultsPager,
+  PremiumHistorySearch,
+  getPremiumHistoryPageWindow,
+} from '@/components/PremiumTripHistoryPanels';
 import SpeedLimitConflictReview from '@/components/SpeedLimitConflictReview';
 import { useLocalSettingSelector } from '@/hooks/useLocalSettings';
 import { formatDistance, formatDuration, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
@@ -149,9 +155,11 @@ export default function TripHistory() {
   const [presetName, setPresetName] = useState('');
   const [savedFilters, setSavedFilters] = useState([]);
   const [savedFiltersLoaded, setSavedFiltersLoaded] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
   const tripListRef = useRef(null);
   const location = useLocation();
   const units = useLocalSettingSelector((settings) => settings.units || 'metric');
+  const premiumVisuals = useLocalSettingSelector((settings) => settings.premium_visual_experience === true);
   const qc = useQueryClient();
   const reviewSpeedLimitConflicts = new URLSearchParams(location.search || '').get('review') === 'speed-limit-conflicts';
 
@@ -245,8 +253,12 @@ export default function TripHistory() {
       }
     });
   }, [completed, filterBy, normalizedSearch, selectedTag, sortBy, tripSearchIndex]);
+  const pageWindow = getPremiumHistoryPageWindow(sorted.length, premiumVisuals ? currentPage : 0);
+  const visibleTrips = useMemo(() => (
+    premiumVisuals ? sorted.slice(pageWindow.offset, pageWindow.end) : sorted
+  ), [pageWindow.end, pageWindow.offset, premiumVisuals, sorted]);
   const tripVirtualizer = useVirtualizer({
-    count: sorted.length,
+    count: visibleTrips.length,
     getScrollElement: () => tripListRef.current,
     estimateSize: () => 190,
     overscan: 5,
@@ -299,8 +311,18 @@ export default function TripHistory() {
   }, [savedFilters, savedFiltersLoaded]);
 
   useEffect(() => {
+    setCurrentPage(0);
     tripVirtualizer.scrollToIndex(0, { align: 'start' });
   }, [filterBy, search, selectedTag, sortBy, tripVirtualizer]);
+
+  useEffect(() => {
+    if (currentPage !== pageWindow.page) setCurrentPage(pageWindow.page);
+  }, [currentPage, pageWindow.page]);
+
+  useEffect(() => {
+    if (!premiumVisuals) return;
+    tripVirtualizer.scrollToIndex(0, { align: 'start' });
+  }, [currentPage, premiumVisuals, tripVirtualizer]);
 
   const saveCurrentFilter = () => {
     const name = presetName.trim();
@@ -335,8 +357,77 @@ export default function TripHistory() {
     return <PageLoadingSkeleton title="Loading trip history" />;
   }
 
+  const filterDetails = showFilters ? (
+    <div className={`space-y-4 rounded-2xl border border-border bg-card p-3 ${premiumVisuals ? 'premium-history-expanded-filters' : ''}`}>
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+        <Tag className="h-3.5 w-3.5" />
+        Tags
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => setTripTag('all')}
+          aria-pressed={selectedTag === 'all'}
+          className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+            selectedTag === 'all' ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground'
+          }`}
+        >
+          All tags
+        </button>
+        {TRIP_TAG_OPTIONS.map(option => (
+          <button
+            key={option.id}
+            onClick={() => setTripTag(option.id)}
+            aria-pressed={selectedTag === option.id}
+            className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+              selectedTag === option.id ? 'border-primary bg-primary text-primary-foreground' : option.className
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="border-t border-border pt-3">
+        <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+          <Star className="h-3.5 w-3.5" />
+          Saved filters
+        </div>
+        <div className="flex gap-2">
+          <input
+            value={presetName}
+            onChange={(event) => setPresetName(event.target.value)}
+            placeholder="Name this filter"
+            className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary"
+          />
+          <button
+            type="button"
+            onClick={saveCurrentFilter}
+            disabled={!presetName.trim()}
+            className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-40"
+          >
+            Save
+          </button>
+        </div>
+        {savedFilters.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {savedFilters.map((preset) => (
+              <span key={preset.id} className="inline-flex items-center gap-1 rounded-full border border-border bg-secondary/50 px-2 py-1 text-xs">
+                <button type="button" onClick={() => applySavedFilter(preset)} className="font-medium hover:text-primary">
+                  {preset.name}
+                </button>
+                <button type="button" onClick={() => removeSavedFilter(preset.id)} className="min-h-9 min-w-9 text-muted-foreground hover:text-red-500" aria-label={`Delete ${preset.name} filter`}>
+                  x
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  ) : null;
+
   return (
-    <div className="space-y-5 pb-4">
+    <div className={`space-y-5 pb-4 ${premiumVisuals ? 'premium-trip-history-on' : ''}`}>
       <PageHeader
         title="Trip History"
         description={`${sorted.length} of ${completed.length} completed trips`}
@@ -352,26 +443,48 @@ export default function TripHistory() {
         <SpeedLimitConflictReview reviewMode />
       )}
 
-      <div className="relative">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <input
-          type="text"
-          aria-label="Search trip history"
-          placeholder="Search location, vehicle, tag, note, score, or date"
+      {premiumVisuals ? (
+        <PremiumHistorySearch
           value={searchInput}
-          onChange={event => setTripSearch(event.target.value)}
-          className="w-full pl-10 pr-4 py-3 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary transition-colors"
+          onChange={setTripSearch}
+          sortBy={sortBy}
+          onSortChange={setTripSort}
+          filterBy={filterBy}
+          onFilterChange={setTripFilter}
+          sortOptions={SORT_OPTIONS}
+          quickFilters={QUICK_FILTERS}
+          showFilters={showFilters}
+          onToggleFilters={() => setShowFilters((visible) => !visible)}
+          expandedFilters={filterDetails}
         />
-      </div>
+      ) : (
+        <div className="relative">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <input
+            type="text"
+            aria-label="Search trip history"
+            placeholder="Search location, vehicle, tag, note, score, or date"
+            value={searchInput}
+            onChange={event => setTripSearch(event.target.value)}
+            className="w-full pl-10 pr-4 py-3 bg-card border border-border rounded-xl text-sm outline-none focus:border-primary transition-colors"
+          />
+        </div>
+      )}
 
-      {improvement && (
+      {!premiumVisuals && improvement && (
         <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-300">
           <TrendingUp className="h-4 w-4" />
           <span className="font-semibold">{improvement.message}</span>
         </div>
       )}
 
-      {completed.length > 0 && (
+      {completed.length > 0 && (premiumVisuals ? (
+        <PremiumFilteredSnapshot
+          summary={historySummary}
+          filterLabel={activeFilterLabel}
+          tagLabel={activeTagLabel}
+        />
+      ) : (
         <section aria-label="Filtered trip history snapshot" className="rounded-2xl border border-border bg-card p-3">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -402,9 +515,9 @@ export default function TripHistory() {
             </div>
           )}
         </section>
-      )}
+      ))}
 
-      {sparklineData.length > 1 && (
+      {!premiumVisuals && sparklineData.length > 1 && (
         <div className="grid grid-cols-2 gap-2">
           {SCORE_SPARKLINES.map((score) => {
             const latest = sparklineData[sparklineData.length - 1]?.[score.key];
@@ -444,6 +557,7 @@ export default function TripHistory() {
         </div>
       )}
 
+      {!premiumVisuals && (
       <div role="toolbar" aria-label="Trip history filters" className="flex gap-2 overflow-x-auto pb-1 thin-scrollbar">
           <button
             onClick={() => setShowFilters(!showFilters)}
@@ -482,75 +596,9 @@ export default function TripHistory() {
           </button>
         ))}
       </div>
-
-      {showFilters && (
-        <div className="space-y-4 rounded-2xl border border-border bg-card p-3">
-          <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-            <Tag className="h-3.5 w-3.5" />
-            Tags
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setTripTag('all')}
-              aria-pressed={selectedTag === 'all'}
-              className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
-                selectedTag === 'all' ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground'
-              }`}
-            >
-              All tags
-            </button>
-            {TRIP_TAG_OPTIONS.map(option => (
-              <button
-                key={option.id}
-                onClick={() => setTripTag(option.id)}
-                aria-pressed={selectedTag === option.id}
-                className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
-                  selectedTag === option.id ? 'border-primary bg-primary text-primary-foreground' : option.className
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="border-t border-border pt-3">
-            <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-              <Star className="h-3.5 w-3.5" />
-              Saved filters
-            </div>
-            <div className="flex gap-2">
-              <input
-                value={presetName}
-                onChange={(event) => setPresetName(event.target.value)}
-                placeholder="Name this filter"
-                className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-xs outline-none focus:border-primary"
-              />
-              <button
-                type="button"
-                onClick={saveCurrentFilter}
-                disabled={!presetName.trim()}
-                className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-40"
-              >
-                Save
-              </button>
-            </div>
-            {savedFilters.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {savedFilters.map((preset) => (
-                  <span key={preset.id} className="inline-flex items-center gap-1 rounded-full border border-border bg-secondary/50 px-2 py-1 text-xs">
-                    <button type="button" onClick={() => applySavedFilter(preset)} className="font-medium hover:text-primary">
-                      {preset.name}
-                    </button>
-                    <button type="button" onClick={() => removeSavedFilter(preset.id)} className="min-h-9 min-w-9 text-muted-foreground hover:text-red-500" aria-label={`Delete ${preset.name} filter`}>
-                      x
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
       )}
+
+      {!premiumVisuals && filterDetails}
 
       {isLoading && (
         <div className="space-y-3">
@@ -596,7 +644,7 @@ export default function TripHistory() {
             style={{ height: `${tripVirtualizer.getTotalSize()}px` }}
           >
             {virtualTrips.map((virtualItem) => {
-              const trip = sorted[virtualItem.index];
+              const trip = visibleTrips[virtualItem.index];
               if (!trip) return null;
               return (
                 <div
@@ -609,7 +657,7 @@ export default function TripHistory() {
                   <TripCard
                     trip={trip}
                     units={units}
-                    index={virtualItem.index}
+                    index={pageWindow.offset + virtualItem.index}
                     scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
                     onToggleFavorite={(target) => updateTripMut.mutate({
                       id: target.id,
@@ -622,6 +670,18 @@ export default function TripHistory() {
             })}
           </div>
         </div>
+      )}
+
+      {!isLoading && premiumVisuals && sorted.length > 0 && (
+        <PremiumHistoryResultsPager
+          start={pageWindow.start}
+          end={pageWindow.end}
+          total={sorted.length}
+          page={pageWindow.page}
+          pageCount={pageWindow.pageCount}
+          onPrevious={() => setCurrentPage((page) => Math.max(0, page - 1))}
+          onNext={() => setCurrentPage((page) => Math.min(pageWindow.pageCount - 1, page + 1))}
+        />
       )}
 
       {completed.some((trip) => trip.is_favorite) && (

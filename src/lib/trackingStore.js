@@ -47,7 +47,7 @@ let settingsCacheSerialized = '';
 let memorySettings = null;
 let activeTripMemory = null;
 let activeTripWriteQueue = Promise.resolve();
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 18;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 19;
 const SYSTEM_THEME_QUERY = '(prefers-color-scheme: dark)';
 let activeThemeMode = 'system';
 let systemThemeQueryList = null;
@@ -230,6 +230,7 @@ export const DEFAULT_SETTINGS = {
   units: 'metric',
   currencySymbol: '$',
   dark_mode: 'system',
+  premium_visual_experience: false,
   notifications_enabled: true,
   notification_permission_granted: false,
   trip_start_notification: true,

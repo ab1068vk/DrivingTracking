@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { limitedTripSummaryQueryOptions, tripDetailQueryOptions, tripQueryKeys } from '@/api/trips';
+import { tripDetailQueryOptions, tripQueryKeys, tripSummaryQueryOptions } from '@/api/trips';
 import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers, ChevronLeft, ChevronRight, Shield } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
@@ -32,6 +32,9 @@ import useLocalSettings from '@/hooks/useLocalSettings';
 import { TRIAGE_DISABLE_MAPS } from '@/lib/performanceTriage';
 import InlineLoadError from '@/components/InlineLoadError';
 import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
+import PremiumMapDiagnostics from '@/components/PremiumMapDiagnostics';
+import premiumMapLayers from '@/assets/premium-map-layers.png';
+import premiumMapEventRadar from '@/assets/premium-map-event-radar.png';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -41,7 +44,6 @@ const MAP_FILTERS = [
 
 const MAP_ROUTE_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#06b6d4', '#ef4444'];
 const TRIP_CARD_PAGE_SIZE = 30;
-const MAP_OVERVIEW_SUMMARY_LIMIT = 50;
 const MAP_OVERVIEW_ROUTE_LIMIT = 8;
 const scheduleIdleWork = (callback) => {
   if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
@@ -112,6 +114,7 @@ export default function MapScreen() {
   const [parkingError, setParkingError] = useState(null);
   const [secondaryTripId, setSecondaryTripId] = useState('');
   const [dangerZones, setDangerZones] = useState([]);
+  const [dangerZonesReady, setDangerZonesReady] = useState(false);
   const [showDangerZones, setShowDangerZones] = useState(false);
   const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
   const [showRouteRisk, setShowRouteRisk] = useState(false);
@@ -125,6 +128,7 @@ export default function MapScreen() {
   const overviewMapTripsRef = useRef({ key: '', trips: [] });
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
+  const premiumVisuals = settings.premium_visual_experience === true;
   const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
   const privacyZonesKey = useMemo(() => JSON.stringify(privacyZones.map((zone) => [
     zone.id,
@@ -135,7 +139,7 @@ export default function MapScreen() {
   const osrmConfigured = isOsrmMapMatchingConfigured(settings);
 
   const { data: completedSummaries = [], isLoading: tripsLoading } = useQuery({
-    ...limitedTripSummaryQueryOptions(MAP_OVERVIEW_SUMMARY_LIMIT),
+    ...tripSummaryQueryOptions(),
     select: (trips) => trips.filter(t => t.status === 'completed'),
   });
   const contextMutation = useMutation({
@@ -150,11 +154,10 @@ export default function MapScreen() {
     onSuccess: (updatedTrip) => {
       if (updatedTrip) {
         qc.setQueryData(tripQueryKeys.detail(updatedTrip.id), updatedTrip);
-        qc.setQueryData(tripQueryKeys.limitedSummaries(MAP_OVERVIEW_SUMMARY_LIMIT), (old = []) => (
+        qc.setQueryData(tripQueryKeys.summaries, (old = []) => (
           Array.isArray(old) ? old.map((trip) => String(trip.id) === String(updatedTrip.id) ? updatedTrip : trip) : old
         ));
       }
-      qc.invalidateQueries({ queryKey: tripQueryKeys.limitedSummaries(MAP_OVERVIEW_SUMMARY_LIMIT) });
       qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
       if (selectedTripId) qc.invalidateQueries({ queryKey: tripQueryKeys.detail(selectedTripId) });
       const hasSpeedLimits = (updatedTrip?.route_points || []).some((point) => Number.isFinite(Number(point.speed_limit_kmh)));
@@ -394,15 +397,31 @@ export default function MapScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    const rebuildOverlays = async () => {
+    setDangerZonesReady(false);
+    const rebuildDangerZones = async () => {
+      const zones = buildRiskHotspots(completedSummaries);
+      await saveDangerZones(zones).catch(() => {});
+      if (!cancelled) {
+        setDangerZones(zones);
+        setDangerZonesReady(true);
+      }
+    };
+
+    const cancelScheduledWork = scheduleIdleWork(rebuildDangerZones);
+    return () => {
+      cancelled = true;
+      cancelScheduledWork();
+    };
+  }, [completedSummaries]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const rebuildRouteRisk = async () => {
       if (!overlaySourceTrips.length) {
-        setDangerZones((current) => (current.length ? [] : current));
         setRouteRiskIndex((current) => (current.size ? new Map() : current));
         return;
       }
 
-      const zones = buildRiskHotspots(overlaySourceTrips);
-      await saveDangerZones(zones);
       let index = await loadRouteRiskIndex(privacyZones);
       if (!index || index.size === 0) {
         index = buildRouteRiskIndex(overlaySourceTrips, privacyZones);
@@ -411,12 +430,11 @@ export default function MapScreen() {
         await saveRouteRiskIndex(index);
       }
       if (!cancelled) {
-        setDangerZones(zones);
         setRouteRiskIndex(index);
       }
     };
 
-    const cancelScheduledWork = scheduleIdleWork(rebuildOverlays);
+    const cancelScheduledWork = scheduleIdleWork(rebuildRouteRisk);
     return () => {
       cancelled = true;
       cancelScheduledWork();
@@ -451,8 +469,8 @@ export default function MapScreen() {
   };
 
   return (
-    <div className="space-y-5 pb-4">
-      <div>
+    <div className={premiumVisuals ? 'space-y-5 pb-4 premium-map-page' : 'space-y-5 pb-4'}>
+      <div className={premiumVisuals ? 'premium-map-heading' : undefined}>
         <h1 className="text-2xl font-grotesk font-bold">Map</h1>
         <p className="text-muted-foreground text-sm mt-1">
           {selectedTrip
@@ -475,18 +493,20 @@ export default function MapScreen() {
         </p>
       </div>
 
-      <div className="flex gap-2">
-        <button onClick={() => setPlaybackMode(false)}
+      <div className={premiumVisuals ? 'flex gap-2 premium-map-tabs' : 'flex gap-2'}>
+        <button onClick={() => setPlaybackMode(false)} aria-pressed={!playbackMode}
           className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-all ${!playbackMode ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}>
+          {premiumVisuals && <MapPin className="w-3.5 h-3.5" aria-hidden="true" />}
           Map View
         </button>
-        <button onClick={() => setPlaybackMode(true)}
+        <button onClick={() => setPlaybackMode(true)} aria-pressed={playbackMode}
           className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-1.5 ${playbackMode ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}>
           <Play className="w-3.5 h-3.5" /> Playback
         </button>
         <button
           type="button"
           onClick={() => setShowLayerPanel(value => !value)}
+          aria-pressed={showLayerPanel}
           className={`px-3 py-2 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-1.5 ${
             showLayerPanel ? 'bg-card border-primary text-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
           }`}
@@ -519,14 +539,14 @@ export default function MapScreen() {
               <TripPlayback trip={selectedTrip} secondaryTrip={secondaryTrip} height="380px" />
             </>
           ) : (
-            <div className="rounded-2xl border border-border bg-secondary/30 flex items-center justify-center h-48">
+            <div className={premiumVisuals ? 'rounded-2xl border border-border bg-secondary/30 flex items-center justify-center h-48 premium-map-playback-empty' : 'rounded-2xl border border-border bg-secondary/30 flex items-center justify-center h-48'}>
               <p className="text-muted-foreground text-sm">Select a trip below to start playback</p>
             </div>
           )
         ) : (
-          <div className="rounded-2xl overflow-hidden border border-border shadow-sm relative">
+          <div className={premiumVisuals ? 'rounded-2xl overflow-hidden border border-border shadow-sm relative premium-map-canvas' : 'rounded-2xl overflow-hidden border border-border shadow-sm relative'}>
             {TRIAGE_DISABLE_MAPS ? (
-              <div className="flex h-[400px] items-center justify-center bg-secondary/30 text-sm text-muted-foreground">
+              <div className={`flex items-center justify-center bg-secondary/30 text-sm text-muted-foreground ${premiumVisuals && selectedTrip ? 'h-[500px]' : 'h-[400px]'}`}>
                 Map disabled for Phase 0 timing test
               </div>
             ) : <TripMap
@@ -542,9 +562,9 @@ export default function MapScreen() {
               showSpeedLimits={showSpeedLimits && Boolean(selectedTrip)}
               speedLimitKnowledgeResults={speedLimitLocalKnowledgeResults}
               rawPointCount={selectedTrip?.route_points_raw_count}
-              height="400px"
+              height={premiumVisuals && selectedTrip ? '500px' : '400px'}
             />}
-            {selectedTripId && selectedTripLoading && !selectedTripDetail && (
+            {selectedTripId && selectedTripLoading && !selectedTripDetail && !premiumVisuals && (
               <div className="absolute inset-x-3 bottom-3 z-10 rounded-2xl border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground shadow">
                 Loading route detail...
               </div>
@@ -557,7 +577,7 @@ export default function MapScreen() {
                 />
               </div>
             )}
-            <div className="absolute top-3 right-3 flex flex-col gap-2 z-10">
+            <div className={premiumVisuals ? 'absolute top-3 right-3 flex flex-col gap-2 z-10 premium-map-actions' : 'absolute top-3 right-3 flex flex-col gap-2 z-10'}>
               <button onClick={handleShowMyLocation}
                 className="w-10 h-10 bg-card rounded-xl border border-border shadow flex items-center justify-center hover:bg-secondary transition-colors"
                 title="Show my location">
@@ -570,7 +590,7 @@ export default function MapScreen() {
               </button>
             </div>
             {parkedLocation && (
-              <div className="absolute bottom-3 right-3 left-3 z-10 rounded-2xl border border-border bg-card p-3 text-xs shadow">
+              <div className={`absolute bottom-3 right-3 left-3 z-10 rounded-2xl border border-border bg-card p-3 text-xs shadow${premiumVisuals && selectedTrip ? ' premium-map-parked-with-diagnostics' : ''}`}>
                 <div className="font-semibold text-foreground">📍 Parked here · {relativeTime(parkedLocation.timestamp)}</div>
                 <div className="mt-1 line-clamp-2 text-muted-foreground">
                   {parkedLocationIsPrivate
@@ -583,11 +603,22 @@ export default function MapScreen() {
               <button
                 type="button"
                 onClick={() => navigate('/privacy-intelligence')}
-                className="absolute bottom-3 right-3 z-10 inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-primary shadow transition-colors hover:bg-secondary"
+                className={`absolute bottom-3 right-3 z-10 inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-primary shadow transition-colors hover:bg-secondary${premiumVisuals ? ` premium-map-privacy${selectedTrip ? ' premium-map-privacy-with-diagnostics' : ''}` : ''}`}
               >
                 <Shield className="h-3.5 w-3.5" />
                 Privacy
               </button>
+            )}
+            {premiumVisuals && selectedTrip && (
+              <div className="premium-map-diagnostics-overlay">
+                <PremiumMapDiagnostics
+                  trip={selectedTrip}
+                  units={units}
+                  loading={selectedTripLoading && !selectedTripDetail}
+                  onShowAll={() => setSelectedTripId(null)}
+                  overlay
+                />
+              </div>
             )}
           </div>
         )}
@@ -600,7 +631,14 @@ export default function MapScreen() {
         )}
       </div>
 
-      {selectedTrip && (
+      {selectedTrip && (premiumVisuals ? (playbackMode && (
+        <PremiumMapDiagnostics
+          trip={selectedTrip}
+          units={units}
+          loading={selectedTripLoading && !selectedTripDetail}
+          onShowAll={() => setSelectedTripId(null)}
+        />
+      )) : (
         <div className="bg-card border border-border rounded-2xl p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -617,10 +655,11 @@ export default function MapScreen() {
             </button>
           </div>
         </div>
-      )}
+      ))}
 
       {showLayerPanel && (
-        <div className="rounded-3xl border border-border bg-card p-4 shadow-sm">
+        <div className={premiumVisuals ? 'rounded-3xl border border-border bg-card p-4 shadow-sm premium-map-layers-card' : 'rounded-3xl border border-border bg-card p-4 shadow-sm'}>
+          {premiumVisuals && <img className="premium-map-panel-art" src={premiumMapLayers} alt="" aria-hidden="true" />}
           <div className="mb-3 flex items-center gap-2">
             <Layers className="h-4 w-4 text-primary" />
             <h2 className="font-semibold">Map layers</h2>
@@ -725,7 +764,8 @@ export default function MapScreen() {
         </div>
       )}
 
-      <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
+      <div className={premiumVisuals ? 'rounded-3xl border border-border bg-card p-5 shadow-sm premium-map-events-card' : 'rounded-3xl border border-border bg-card p-5 shadow-sm'}>
+        {premiumVisuals && <img className="premium-map-panel-art" src={premiumMapEventRadar} alt="" aria-hidden="true" />}
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
             <h2 className="font-semibold text-base">Repeated Driving-Event Areas</h2>
@@ -739,14 +779,28 @@ export default function MapScreen() {
             Show on map
           </button>
         </div>
-        {visibleDangerZones.length === 0 ? (
+        {!dangerZonesReady || tripsLoading ? (
           <div className="rounded-2xl bg-secondary/50 p-4 text-sm text-muted-foreground">
-            No repeated event areas yet. The app will highlight a place here after the same area has repeated harsh brakes, speeding, or sharp turns.
+            Checking your completed trips for repeated driving-event locations...
+          </div>
+        ) : visibleDangerZones.length === 0 ? (
+          <div className="rounded-2xl bg-secondary/50 p-4 text-sm text-muted-foreground">
+            {dangerZones.length > 0 ? (
+              <>
+                {dangerZones.length} repeated driving-event area{dangerZones.length === 1 ? ' is' : 's are'} hidden because {dangerZones.length === 1 ? 'it is' : 'they are'} inside your privacy zones.
+              </>
+            ) : (
+              <>
+                {completedSummaries.length === 0
+                  ? 'No completed trips with event-location evidence are available yet.'
+                  : <>Checked all {completedSummaries.length} completed trip{completedSummaries.length === 1 ? '' : 's'}. No small map area has at least two scored harsh-braking, speeding, or sharp-turn events. The app groups event coordinates into roughly 80-metre cells; driving the same road more than once does not create an event area unless qualifying events also repeat there.</>}
+              </>
+            )}
           </div>
         ) : (
           <div className="grid gap-2 md:grid-cols-3">
             {displayedDangerZones.map((zone) => (
-              <div key={zone.id} className="rounded-2xl bg-secondary/50 p-3 text-sm">
+              <div key={zone.id} className={premiumVisuals ? 'rounded-2xl bg-secondary/50 p-3 text-sm premium-map-event-tile' : 'rounded-2xl bg-secondary/50 p-3 text-sm'}>
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-semibold capitalize">{String(zone.dominantType || 'risk').replace(/_/g, ' ')}</span>
                   <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize ${
@@ -778,7 +832,7 @@ export default function MapScreen() {
         )}
       </div>
 
-      <div>
+      <div className={premiumVisuals ? 'premium-map-trip-picker' : undefined}>
         <div className="flex items-center justify-between mb-3 gap-3">
           <h2 className="font-semibold text-base">Select Trip</h2>
           <div className="flex items-center gap-1.5 overflow-x-auto thin-scrollbar">
@@ -902,7 +956,8 @@ export default function MapScreen() {
                 <button
                   key={trip.id}
                   onClick={() => setSelectedTripId(trip.id)}
-                  className={`w-full p-3 rounded-xl border text-sm text-left transition-all ${
+                  aria-pressed={selectedTripId === trip.id}
+                  className={`w-full p-3 rounded-xl border text-sm text-left transition-all ${premiumVisuals ? 'premium-map-trip-card ' : ''}${
                     selectedTripId === trip.id
                       ? 'border-primary bg-primary/5'
                       : 'border-border bg-card hover:border-primary/40'
@@ -927,7 +982,7 @@ export default function MapScreen() {
         )}
       </div>
 
-      <div className="bg-secondary/50 rounded-2xl p-4 text-xs text-muted-foreground">
+      <div className={premiumVisuals ? 'bg-secondary/50 rounded-2xl p-4 text-xs text-muted-foreground premium-map-about' : 'bg-secondary/50 rounded-2xl p-4 text-xs text-muted-foreground'}>
         <div className="font-medium text-foreground mb-1">About the Map</div>
         Map tiles provided by <strong>OpenStreetMap</strong> contributors via Leaflet. Event markers appear when a single trip is selected.
       </div>

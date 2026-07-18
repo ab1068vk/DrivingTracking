@@ -309,6 +309,7 @@ describe('core page component renders', () => {
     activeTripStore.get.mockReturnValue(null);
     queryData.clear();
     delete settings.advanced_safety_detection_enabled;
+    settings.premium_visual_experience = false;
     settings.experience_mode = 'coaching';
     settings.voice_alert_style = 'mode_default';
     settings.predictive_route_risk_enabled = true;
@@ -353,6 +354,87 @@ describe('core page component renders', () => {
     expect(html).toContain('trip-1');
     expect(html).toContain('data-evidence="low"');
     expect(html).toContain('approximate');
+  }, 10_000);
+
+  it('switches dashboard premium surfaces while preserving the standard trip launcher', async () => {
+    const { default: Dashboard } = await import('@/pages/Dashboard');
+
+    settings.premium_visual_experience = false;
+    const standardHtml = renderToStaticMarkup(<Dashboard />);
+    expect(standardHtml).toContain('class="cyber-hero-panel bg-card border border-border rounded-3xl p-6 shadow-sm"');
+    expect(standardHtml).not.toContain('class="premium-ready-card"');
+    expect(standardHtml).toContain('class="cyber-baseline-panel bg-card border border-border rounded-3xl p-5 shadow-sm"');
+    expect(standardHtml).not.toContain('class="premium-baseline-card"');
+    expect(standardHtml).toContain('<h2 class="font-semibold text-base mb-3">Event Summary</h2>');
+    expect(standardHtml).not.toContain('class="premium-event-summary"');
+    expect(standardHtml).toContain('class="cyber-score-panel bg-card border border-border rounded-3xl p-5 shadow-sm"');
+    expect(standardHtml).not.toContain('class="premium-driving-score"');
+    expect(standardHtml).toContain('<h2 class="font-semibold text-base mb-3">Score Tips</h2>');
+    expect(standardHtml).not.toContain('class="premium-score-tips"');
+
+    settings.premium_visual_experience = true;
+    const premiumHtml = renderToStaticMarkup(<Dashboard />);
+    expect(premiumHtml).toContain('class="premium-ready-card"');
+    expect(premiumHtml).toContain('aria-label="Start trip"');
+    expect(premiumHtml).toContain('Start Private Trip');
+    expect(premiumHtml).toContain('class="premium-baseline-card"');
+    expect(premiumHtml).toContain('class="premium-baseline-tile premium-baseline-week"');
+    expect(premiumHtml).not.toContain('class="cyber-baseline-panel bg-card border border-border rounded-3xl p-5 shadow-sm"');
+    expect(premiumHtml).toContain('class="premium-event-summary"');
+    expect(premiumHtml).not.toContain('<h2 class="font-semibold text-base mb-3">Event Summary</h2>');
+    expect(premiumHtml).toContain('class="premium-driving-score"');
+    expect(premiumHtml).toContain('Performance telemetry');
+    expect(premiumHtml).not.toContain('class="cyber-score-panel bg-card border border-border rounded-3xl p-5 shadow-sm"');
+    expect(premiumHtml).toContain('class="premium-score-tips"');
+    expect(premiumHtml).toContain('Smart driving. Higher score.');
+    expect(premiumHtml).not.toContain('<h2 class="font-semibold text-base mb-3">Score Tips</h2>');
+    expect(premiumHtml).toContain('class="premium-weekly-goals-card"');
+    expect(premiumHtml).toContain('lucide-disc3');
+    expect(premiumHtml).toContain('class="premium-weekly-insights"');
+    expect(premiumHtml.indexOf('class="premium-baseline-card"'))
+      .toBeLessThan(premiumHtml.indexOf('class="premium-weekly-goals-card"'));
+    expect(premiumHtml.indexOf('class="premium-weekly-goals-card"'))
+      .toBeLessThan(premiumHtml.indexOf('class="premium-weekly-insights"'));
+    expect(premiumHtml.indexOf('class="premium-weekly-insights"'))
+      .toBeLessThan(premiumHtml.indexOf('class="premium-driving-score"'));
+    expect(premiumHtml.indexOf('class="premium-driving-score"'))
+      .toBeLessThan(premiumHtml.indexOf('class="premium-score-tips"'));
+    expect(premiumHtml.indexOf('class="premium-score-tips"'))
+      .toBeLessThan(premiumHtml.indexOf('class="premium-event-summary"'));
+
+    setTripSummaries([]);
+    const premiumEmptyHtml = renderToStaticMarkup(<Dashboard />);
+    expect(premiumEmptyHtml).not.toContain('class="premium-weekly-goals-card"');
+    expect(premiumEmptyHtml).not.toContain('class="premium-weekly-insights"');
+  }, 10_000);
+
+  it('keeps the driving-time exposure card in place and gates only its premium presentation', async () => {
+    const now = Date.now();
+    setTripSummaries([{
+      ...sampleTrip,
+      id: 'today-exposure-trip',
+      duration_seconds: 1800,
+      start_time: new Date(now - 40 * 60_000).toISOString(),
+      end_time: new Date(now - 10 * 60_000).toISOString(),
+    }]);
+    const { default: Dashboard } = await import('@/pages/Dashboard');
+
+    settings.premium_visual_experience = false;
+    const standardHtml = renderToStaticMarkup(<Dashboard />);
+    expect(standardHtml).toContain('Driving-time exposure estimate');
+    expect(standardHtml).toContain('class="bg-card border border-border rounded-3xl p-5 shadow-sm"');
+    expect(standardHtml).not.toContain('class="premium-driving-exposure"');
+    expect(standardHtml).not.toContain('premium-driving-exposure-wheel.png');
+
+    settings.premium_visual_experience = true;
+    const premiumHtml = renderToStaticMarkup(<Dashboard />);
+    expect(premiumHtml).toContain('class="premium-driving-exposure"');
+    expect(premiumHtml).toContain('premium-driving-exposure-wheel.png');
+    expect(premiumHtml).not.toContain('Driving-time exposure estimate Â·');
+    expect(premiumHtml.indexOf('class="premium-weekly-insights"'))
+      .toBeLessThan(premiumHtml.indexOf('class="premium-driving-exposure"'));
+    expect(premiumHtml.indexOf('class="premium-driving-exposure"'))
+      .toBeLessThan(premiumHtml.indexOf('class="premium-driving-score"'));
   }, 10_000);
 
   it('renders the Driving Coach mission shell with secondary tools collapsed', async () => {
@@ -693,6 +775,26 @@ describe('core page component renders', () => {
     expect(html).toContain('not validated against collision or casualty outcomes');
   });
 
+  it('switches only the readiness planner to its premium presentation when premium visuals are enabled', async () => {
+    settings.premium_visual_experience = true;
+    setTripSummaries(Array.from({ length: 5 }, (_, index) => ({
+      ...sampleTrip,
+      id: `premium-planner-trip-${index + 1}`,
+      start_time: new Date(Date.now() - index * 3600000).toISOString(),
+    })));
+    const { default: Dashboard } = await import('@/pages/Dashboard');
+    const html = renderToStaticMarkup(<Dashboard />);
+
+    expect(html).toContain('class="premium-planner"');
+    expect(html).toContain('Pre-drive intelligence');
+    expect(html).toContain('aria-label="Dismiss readiness card"');
+    expect(html).toContain('Before you start');
+    expect(html).toContain('Better window');
+    expect(html).toContain('Saved speed checks');
+    expect(html).toContain('Watch road areas');
+    expect(html).not.toContain('class="bg-card border border-border rounded-3xl p-4 shadow-sm"');
+  });
+
   it('withholds historical context when completed history has no recorded distance', async () => {
     setTripSummaries(Array.from({ length: 5 }, (_, index) => ({
       ...sampleTrip,
@@ -945,6 +1047,44 @@ describe('core page component renders', () => {
     expect(html).not.toContain('72 GPS readings - 0 map/playback points');
   });
 
+  it('loads the complete trip-summary history for map evidence and trip selection', async () => {
+    const summaries = Array.from({ length: 70 }, (_, index) => ({
+      ...sampleTrip,
+      id: `map-history-${index}`,
+      start_time: new Date(Date.UTC(2026, 0, 1, 12, index)).toISOString(),
+      route_replay_available: true,
+    }));
+    setTripSummaries(summaries.slice(0, 50));
+    queryData.set(JSON.stringify(['trip-summaries']), summaries);
+
+    const { default: MapScreen } = await import('@/pages/MapScreen');
+    const html = renderToStaticMarkup(<MapScreen />);
+
+    expect(html).toContain('Showing trips 1-30 of 70');
+  });
+
+  it('gates the premium map page and illustrated cards behind the persisted appearance setting', async () => {
+    const { default: MapScreen } = await import('@/pages/MapScreen');
+
+    settings.premium_visual_experience = false;
+    const standardHtml = renderToStaticMarkup(<MapScreen />);
+    expect(standardHtml).not.toContain('premium-map-page');
+    expect(standardHtml).not.toContain('premium-map-layers.png');
+    expect(standardHtml).not.toContain('premium-map-event-radar.png');
+    expect(standardHtml).toContain('rounded-3xl border border-border bg-card p-4 shadow-sm');
+
+    settings.premium_visual_experience = true;
+    const premiumHtml = renderToStaticMarkup(<MapScreen />);
+    expect(premiumHtml).toContain('premium-map-page');
+    expect(premiumHtml).toContain('premium-map-canvas');
+    expect(premiumHtml).toContain('premium-map-layers-card');
+    expect(premiumHtml).toContain('premium-map-layers.png');
+    expect(premiumHtml).toContain('premium-map-events-card');
+    expect(premiumHtml).toContain('premium-map-event-radar.png');
+    expect(premiumHtml).toContain('premium-map-trip-card');
+    expect(premiumHtml).toContain('Map tiles provided by <strong>OpenStreetMap</strong> contributors via Leaflet.');
+  });
+
   it('renders Diagnostics recovery compatibility as read-only identity facts', async () => {
     queryData.set(JSON.stringify(['diagnostics-trips']), [sampleTrip]);
     const { buildRecoveryCompatibilitySnapshot, default: Diagnostics } = await import('@/pages/Diagnostics');
@@ -1143,5 +1283,36 @@ describe('core page component renders', () => {
     expect(html).toContain('13.4 km');
     expect(html).toContain('17m');
     expect(html).toContain('Avg score');
+  });
+
+  it('gates the premium trip-history surfaces behind the persisted appearance setting', async () => {
+    setTripSummaries([
+      sampleTrip,
+      {
+        ...sampleTrip,
+        id: 'trip-2',
+        start_time: '2026-01-02T12:00:00.000Z',
+      },
+    ]);
+    settings.premium_visual_experience = true;
+    const { default: TripHistory } = await import('@/pages/TripHistory');
+    const premiumHtml = renderToStaticMarkup(<TripHistory />);
+
+    expect(premiumHtml).toContain('premium-trip-history-on');
+    expect(premiumHtml).toContain('premium-history-filter');
+    expect(premiumHtml).toContain('premium-history-snapshot');
+    expect(premiumHtml).toContain('premium-history-results');
+    expect(premiumHtml).toContain('aria-label="Filter trips by date"');
+    expect(premiumHtml).toContain('aria-label="Filter trips by type"');
+    expect(premiumHtml).toContain('Showing <strong>1–2</strong> of <strong>2</strong> matching trips');
+    expect(premiumHtml).not.toContain('last 5 trips');
+    expect(premiumHtml.indexOf('aria-label="Virtualized trip history list"'))
+      .toBeLessThan(premiumHtml.indexOf('aria-label="Matching trip result pages"'));
+
+    settings.premium_visual_experience = false;
+    const standardHtml = renderToStaticMarkup(<TripHistory />);
+    expect(standardHtml).not.toContain('premium-trip-history-on');
+    expect(standardHtml).toContain('rounded-2xl border border-border bg-card p-3');
+    expect(standardHtml).toContain('last 5 trips');
   });
 });
