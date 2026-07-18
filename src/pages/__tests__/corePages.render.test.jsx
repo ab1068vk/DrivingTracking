@@ -309,6 +309,7 @@ describe('core page component renders', () => {
     activeTripStore.get.mockReturnValue(null);
     queryData.clear();
     delete settings.advanced_safety_detection_enabled;
+    settings.premium_visual_experience = false;
     settings.experience_mode = 'coaching';
     settings.voice_alert_style = 'mode_default';
     settings.predictive_route_risk_enabled = true;
@@ -1277,6 +1278,21 @@ describe('core page component renders', () => {
       '2026-04-10',
       '2026-04-11'
     )).toBe(false);
+  });
+
+  it('keeps premium trip and map chrome theme-aware and distinguishable', async () => {
+    settings.premium_visual_experience = true;
+
+    const { default: TripDetail } = await import('@/pages/TripDetail');
+    const tripHtml = renderToStaticMarkup(<TripDetail />);
+    expect(tripHtml).toContain('premium-trip-detail-on');
+    expect(tripHtml).toContain('trip-detail-identity');
+
+    const { default: MapScreen } = await import('@/pages/MapScreen');
+    const mapHtml = renderToStaticMarkup(<MapScreen />);
+    expect(mapHtml).toContain('app-page-header premium-map-heading');
+    expect(mapHtml.match(/data-map-tab="mode"/g)).toHaveLength(2);
+    expect(mapHtml).toContain('data-map-tab="utility"');
   });
 
   it('gates the premium trip-history surfaces behind the persisted appearance setting', async () => {

@@ -456,7 +456,7 @@ export default function MapScreen() {
 
   return (
     <div className={premiumVisuals ? 'space-y-5 pb-4 premium-map-page' : 'space-y-5 pb-4'}>
-      <div className={premiumVisuals ? 'premium-map-heading' : undefined}>
+      <div className={premiumVisuals ? 'app-page-header premium-map-heading' : 'app-page-header'}>
         <h1 className="text-2xl font-grotesk font-bold">Map</h1>
         <p className="text-muted-foreground text-sm mt-1">
           {selectedTrip
@@ -481,11 +481,13 @@ export default function MapScreen() {
 
       <div className={premiumVisuals ? 'flex gap-2 premium-map-tabs' : 'flex gap-2'}>
         <button onClick={() => setPlaybackMode(false)} aria-pressed={!playbackMode}
+          data-map-tab="mode"
           className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-all ${!playbackMode ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}>
           {premiumVisuals && <MapPin className="w-3.5 h-3.5" aria-hidden="true" />}
           Map View
         </button>
         <button onClick={() => setPlaybackMode(true)} aria-pressed={playbackMode}
+          data-map-tab="mode"
           className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-1.5 ${playbackMode ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}>
           <Play className="w-3.5 h-3.5" /> Playback
         </button>
@@ -493,6 +495,7 @@ export default function MapScreen() {
           type="button"
           onClick={() => setShowLayerPanel(value => !value)}
           aria-pressed={showLayerPanel}
+          data-map-tab="utility"
           className={`px-3 py-2 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-1.5 ${
             showLayerPanel ? 'bg-card border-primary text-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
           }`}

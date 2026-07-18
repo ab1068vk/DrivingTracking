@@ -3393,7 +3393,7 @@ export default function Dashboard() {
   return (
     <div className={`cyber-dashboard space-y-6 pb-4 ${settings.premium_visual_experience === true ? 'premium-dashboard-on' : ''}`}>
       {/* Header */}
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
+      <motion.div className="app-page-header" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
         <h1 className="text-2xl font-grotesk font-bold">Dashboard</h1>
         <p className="text-muted-foreground text-sm mt-1">
           {new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}

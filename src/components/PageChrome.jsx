@@ -11,7 +11,7 @@ export function PageHeader({
   status = null,
 }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="app-page-header flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
         {backTo && (
           <Link to={backTo} className="text-xs font-semibold text-primary hover:underline">
