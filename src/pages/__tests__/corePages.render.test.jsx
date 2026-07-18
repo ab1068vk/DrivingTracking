@@ -1336,8 +1336,12 @@ describe('core page component renders', () => {
     expect(premiumHtml).toContain('aria-label="Filter trips by date"');
     expect(premiumHtml).toContain('aria-label="Filter trips by type"');
     expect(premiumHtml).toContain('Showing <strong>1–2</strong> of <strong>2</strong> matching trips');
-    expect(premiumHtml.indexOf('aria-label="Virtualized trip history list"'))
-      .toBeLessThan(premiumHtml.indexOf('aria-label="Matching trip result pages"'));
+    expect(premiumHtml.match(/aria-label="Matching trip result pages"/g)).toHaveLength(2);
+    const firstPagerIndex = premiumHtml.indexOf('aria-label="Matching trip result pages"');
+    const tripListIndex = premiumHtml.indexOf('aria-label="Virtualized trip history list"');
+    const secondPagerIndex = premiumHtml.indexOf('aria-label="Matching trip result pages"', firstPagerIndex + 1);
+    expect(firstPagerIndex).toBeLessThan(tripListIndex);
+    expect(secondPagerIndex).toBeGreaterThan(tripListIndex);
 
     settings.premium_visual_experience = false;
     const standardHtml = renderToStaticMarkup(<TripHistory />);

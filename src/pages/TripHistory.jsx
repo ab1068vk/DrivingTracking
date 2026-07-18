@@ -810,6 +810,16 @@ export default function TripHistory() {
 
       {!isLoading && sorted.length > 0 && (
         premiumVisuals ? (
+        <section className="space-y-3" aria-label="Paginated premium trip history">
+          <PremiumHistoryResultsPager
+            start={pageWindow.start}
+            end={pageWindow.end}
+            total={sorted.length}
+            page={pageWindow.page}
+            pageCount={pageWindow.pageCount}
+            onPrevious={() => setCurrentPage((current) => Math.max(0, current - 1))}
+            onNext={() => setCurrentPage((current) => Math.min(pageWindow.pageCount - 1, current + 1))}
+          />
         <div ref={tripListRef} className="max-h-[72vh] overflow-y-auto pr-1 thin-scrollbar" aria-label="Virtualized trip history list">
           <div className="relative w-full" style={{ height: `${tripVirtualizer.getTotalSize()}px` }}>
             {virtualTrips.map((virtualItem) => {
@@ -836,6 +846,16 @@ export default function TripHistory() {
             })}
           </div>
         </div>
+          <PremiumHistoryResultsPager
+            start={pageWindow.start}
+            end={pageWindow.end}
+            total={sorted.length}
+            page={pageWindow.page}
+            pageCount={pageWindow.pageCount}
+            onPrevious={() => setCurrentPage((current) => Math.max(0, current - 1))}
+            onNext={() => setCurrentPage((current) => Math.min(pageWindow.pageCount - 1, current + 1))}
+          />
+        </section>
         ) : (
         <section ref={tripListRef} className="scroll-mt-24 space-y-2" aria-label="Paginated trip history">
           <TripPageControls
@@ -878,17 +898,6 @@ export default function TripHistory() {
         )
       )}
 
-      {!isLoading && premiumVisuals && sorted.length > 0 && (
-        <PremiumHistoryResultsPager
-          start={pageWindow.start}
-          end={pageWindow.end}
-          total={sorted.length}
-          page={pageWindow.page}
-          pageCount={pageWindow.pageCount}
-          onPrevious={() => setCurrentPage((current) => Math.max(0, current - 1))}
-          onNext={() => setCurrentPage((current) => Math.min(pageWindow.pageCount - 1, current + 1))}
-        />
-      )}
       {completed.some((trip) => trip.is_favorite) && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Star className="h-3.5 w-3.5 text-amber-500" />

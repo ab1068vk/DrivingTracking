@@ -53,6 +53,9 @@ describe('PremiumPreTripPlanner', () => {
     expect(html).toContain('data-risk="low"');
     expect(html).toContain('aria-label="Dismiss readiness card"');
     expect(html).toContain('aria-label="Readiness score 82/100"');
+    expect(html).toContain('<details class="premium-planner-details"><summary>');
+    expect(html).toContain('Advanced readiness details');
+    expect(html).not.toContain('<details class="premium-planner-details" open="">');
     expect(html).toContain('Before you start');
     expect(html).toContain('Better window');
     expect(html).toContain('Saved speed checks');

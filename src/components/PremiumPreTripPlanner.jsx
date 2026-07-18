@@ -2,6 +2,7 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   Clock3,
   Gauge,
   History,
@@ -193,6 +194,12 @@ export default function PremiumPreTripPlanner({
         </div>
       </div>
 
+      <details className="premium-planner-details">
+        <summary>
+          <span>Advanced readiness details</span>
+          <ChevronDown aria-hidden="true" />
+        </summary>
+        <div className="premium-planner-details-content">
       <div className="premium-planner-insights">
         {INSIGHT_CARDS.map((card) => (
           <InsightCard key={card.id} card={card} items={insightItems(card, insightProps)} />
@@ -278,6 +285,8 @@ export default function PremiumPreTripPlanner({
           </section>
         )
       )}
+        </div>
+      </details>
     </section>
   );
 }
