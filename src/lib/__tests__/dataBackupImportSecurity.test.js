@@ -15,6 +15,7 @@ import {
   parseDriveSenseBackup,
 } from '@/lib/dataBackup';
 import {
+  decryptBackupText,
   encryptBackupText,
   isEncryptedBackupEnvelope,
 } from '@/lib/backupEnvelopeEncryption';
@@ -64,7 +65,7 @@ describe('backup trip import sanitization', () => {
       text: vi.fn(),
     };
 
-    await expect(importDriveSenseBackup(file)).rejects.toThrow('50 MB or smaller');
+    await expect(importDriveSenseBackup(file)).rejects.toThrow('128 MB or smaller');
     expect(file.text).not.toHaveBeenCalled();
   });
 
@@ -84,6 +85,25 @@ describe('backup trip import sanitization', () => {
       vehicles: 0,
     });
     expect(file.text).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores trips in small batches instead of retaining another full import copy', async () => {
+    const { tripService } = await import('@/api/trips');
+    const file = {
+      size: 1024,
+      text: vi.fn(async () => JSON.stringify({
+        app: 'Road Sage',
+        version: BACKUP_VERSION,
+        vehicles: [],
+        trips: Array.from({ length: 10 }, (_, index) => ({
+          id: `trip-batch-${index}`,
+          status: 'completed',
+        })),
+      })),
+    };
+
+    await expect(importDriveSenseBackup(file)).resolves.toMatchObject({ trips: 10 });
+    expect(tripService.upsertMany.mock.calls.map(([batch]) => batch.length)).toEqual([4, 4, 2]);
   });
 
   it('sanitizes active trips from backup imports', () => {
@@ -369,6 +389,18 @@ describe('backup trip import sanitization', () => {
 
     const imported = await importDriveSenseBackup(file, { passphrase });
     expect(imported).toMatchObject({ trips: 1, vehicles: 0 });
+  });
+
+  it('stops decompression when an encrypted backup expands beyond its safe limit', async () => {
+    const passphrase = 'correct horse battery staple';
+    const encrypted = await encryptBackupText('x'.repeat(4096), passphrase);
+
+    await expect(decryptBackupText(encrypted, passphrase, {
+      maxDecompressedBytes: 128,
+    })).rejects.toMatchObject({
+      code: 'backup_decompressed_too_large',
+      message: expect.stringContaining('safe 256 MB import limit'),
+    });
   });
 
   it('verifies signed backup envelopes before importing data', async () => {
@@ -802,6 +834,31 @@ describe('backup speed knowledge', () => {
 });
 
 describe('backup export privacy', () => {
+  it('cancels between trip transforms without creating a download', async () => {
+    const controller = new AbortController();
+    const progress = [];
+
+    await expect(exportDriveSenseBackup({
+      trips: [
+        { id: 'trip-cancel-1', status: 'completed', route_points: [{ lat: 43.65, lng: -79.38 }] },
+        { id: 'trip-cancel-2', status: 'completed', route_points: [{ lat: 43.66, lng: -79.39 }] },
+      ],
+      vehicles: [],
+      settings: { privacy_zones: [] },
+      signal: controller.signal,
+      onProgress: (entry) => {
+        progress.push(entry);
+        if (entry.phase === 'protecting' && entry.completed === 1) controller.abort();
+      },
+    })).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(progress).toContainEqual(expect.objectContaining({
+      phase: 'protecting',
+      completed: 1,
+      total: 2,
+    }));
+  });
+
   it('logs full-backup exports from the actual signed payload shape', async () => {
     const values = new Map();
     vi.stubGlobal('localStorage', {

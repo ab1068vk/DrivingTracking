@@ -49,6 +49,17 @@ final class DriveSensePayloadCrypto {
         return generator.generateKey();
     }
 
+    private static SecretKey getExistingKey(int keyVersion) throws Exception {
+        KeyStore keyStore = KeyStore.getInstance(ANDROID_KEYSTORE);
+        keyStore.load(null);
+        String alias = aliasForVersion(keyVersion);
+        KeyStore.Entry existing = keyStore.getEntry(alias, null);
+        if (existing instanceof KeyStore.SecretKeyEntry) {
+            return ((KeyStore.SecretKeyEntry) existing).getSecretKey();
+        }
+        throw new IllegalStateException("Sensitive payload key is unavailable; encrypted data was not modified.");
+    }
+
     static String encrypt(String plaintext, String context) throws Exception {
         return encrypt(plaintext, context, 0);
     }
@@ -85,7 +96,7 @@ final class DriveSensePayloadCrypto {
         buffer.get(ciphertext);
 
         Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(keyVersion), new GCMParameterSpec(TAG_LENGTH_BITS, iv));
+        cipher.init(Cipher.DECRYPT_MODE, getExistingKey(keyVersion), new GCMParameterSpec(TAG_LENGTH_BITS, iv));
         if (context != null) {
             cipher.updateAAD(context.getBytes(StandardCharsets.UTF_8));
         }

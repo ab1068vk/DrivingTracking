@@ -54,6 +54,9 @@ describe('Settings interaction performance contracts', () => {
     expect(settingsSource).toContain("event.key !== 'Enter' && event.key !== ' '");
     expect(settingsSource).toContain('disabled={tripDeleteBusy}');
     expect(settingsSource).toContain('disabled={erasureBusy}');
+    expect(settingsSource).toContain('tripDeleteProgress.percent');
+    expect(settingsSource).toContain('erasureProgress.percent');
+    expect(settingsSource).toContain('Erasure cannot be cancelled safely after it starts.');
   });
 
   it('keeps shared dialogs inexpensive and touch-friendly', () => {

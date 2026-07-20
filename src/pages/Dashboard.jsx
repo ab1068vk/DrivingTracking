@@ -30,7 +30,15 @@ import {
   validateCandidateTrip,
   haversineDistance
 } from '@/lib/tripEngine';
-import { activeTripStore, getLastParkedLocation, localSettings, saveLastParkedLocation, SETTINGS_CHANGED_EVENT } from '@/lib/trackingStore';
+import { resolveParkedLocation } from '@/lib/parkedLocationResolver';
+import {
+  activeTripStore,
+  getLastParkedLocation,
+  localSettings,
+  saveLastParkedLocation,
+  suppressLastParkedLocation,
+  SETTINGS_CHANGED_EVENT,
+} from '@/lib/trackingStore';
 import { createDrivingTrackingService } from '@/lib/trackingService';
 import {
   scheduleLongTripReminder,
@@ -78,6 +86,7 @@ import PremiumDrivingExposureCard from '@/components/PremiumDrivingExposureCard'
 import PremiumScoreTipsCard from '@/components/PremiumScoreTipsCard';
 import { PremiumWeeklyGoalsCard, PremiumWeeklyInsightCards } from '@/components/PremiumWeeklyDriverGoals';
 import TripCard from '@/components/TripCard';
+import { getPremiumTripScoreDelta } from '@/lib/premiumTripPresentation';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LiveCoachOverlay from '@/components/LiveCoachOverlay';
 import InlineLoadError from '@/components/InlineLoadError';
@@ -841,6 +850,8 @@ export default function Dashboard() {
     data: completedTrips = [],
     refetch,
     isSuccess: recentTripsLoaded,
+    isError: recentTripsError,
+    error: recentTripError,
   } = useQuery({
     ...limitedTripSummaryQueryOptions(50),
     select: (trips) => trips.filter((trip) => trip.status === 'completed'),
@@ -2770,19 +2781,20 @@ export default function Dashboard() {
     }
     await invalidateDangerZoneCache();
     await invalidateRouteRiskIndex();
-    const parkedPoint = pts[pts.length - 1];
-    const endedStopped = completedTrip.parking_stop_detected ||
-      Number(completedTrip.parking_stop_duration_seconds || 0) > 0 ||
-      Number(parkedPoint?.speed_kmh || 0) < (thresholds.IDLE_SPEED_KMH ?? DEFAULT_THRESHOLDS.IDLE_SPEED_KMH);
-    if (parkedPoint && endedStopped) {
+    const parkedResolution = resolveParkedLocation(pts, { endTime });
+    if (parkedResolution.location) {
       const savedParkedLocation = await saveLastParkedLocation({
-        lat: parkedPoint.lat,
-        lng: parkedPoint.lng,
-        timestamp: parkedPoint.timestamp || endTime,
+        ...parkedResolution.location,
         tripId: savedTrip?.id || completedTrip.id,
-        source: completedTrip.parking_stop_detected ? 'parking_stop' : 'stopped_trip_end',
+        source: completedTrip.parking_stop_detected ? 'parking_stop' : 'trip_end',
       });
       setParkedLocation(savedParkedLocation);
+    } else {
+      await suppressLastParkedLocation({
+        timestamp: endTime,
+        source: parkedResolution.suppressionReason || 'trip_end_unavailable',
+      });
+      setParkedLocation(null);
     }
     await dispatchTripCompletedNotification(completedTrip, completedTrips, settings).catch((err) => {
       logError('post_trip_completed_notification', err, { tripId: savedTrip?.id || completedTrip.id });
@@ -4393,7 +4405,13 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {completedTrips.length === 0 ? (
+        {recentTripsError ? (
+          <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" role="alert">
+            <div className="font-semibold">Saved trips could not be opened</div>
+            <div className="mt-1 text-sm">{recentTripError?.message || 'Your saved trips were not deleted. Retry the local storage read.'}</div>
+            <button type="button" onClick={() => refetch()} className="mt-3 rounded-xl bg-amber-900 px-3 py-2 text-sm font-semibold text-white dark:bg-amber-200 dark:text-amber-950">Retry safely</button>
+          </div>
+        ) : completedTrips.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <div className="w-16 h-16 bg-secondary rounded-3xl flex items-center justify-center mb-4">
               <Car className="w-8 h-8 text-muted-foreground" />
@@ -4404,7 +4422,16 @@ export default function Dashboard() {
         ) : (
           <div className="space-y-3">
             {completedTrips.slice(0, 5).map((trip, i) => (
-              <TripCard key={trip.id} trip={trip} units={units} index={i} />
+              <TripCard
+                key={trip.id}
+                trip={trip}
+                units={units}
+                index={i}
+                premium={settings.premium_visual_experience === true}
+                scoreDelta={settings.premium_visual_experience === true
+                  ? getPremiumTripScoreDelta(trip, completedTrips)
+                  : null}
+              />
             ))}
           </div>
         )}

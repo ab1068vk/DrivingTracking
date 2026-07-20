@@ -1294,16 +1294,31 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         } catch (JSONException ignored) {}
 
         DriveSenseNativeTripStore.addCompletedTrip(this, trip);
-        JSONObject finalPoint = points.optJSONObject(points.length() - 1);
-        if (finalPoint != null && isParkedStopReason(reason)) {
+        JSONObject rawParkingEndpoint = points.optJSONObject(points.length() - 1);
+        boolean privateParkingEndpoint = rawParkingEndpoint != null && PrivacyZoneChecker.isInsidePrivacyZone(
+            this,
+            rawParkingEndpoint.optDouble("lat", Double.NaN),
+            rawParkingEndpoint.optDouble("lng", Double.NaN)
+        );
+        JSONObject parkedResolution = privateParkingEndpoint ? null : DriveSenseParkingResolver.resolve(points, endMs);
+        if (parkedResolution != null) {
             DriveSenseNativeTripStore.saveLastParkedLocation(
                 this,
-                finalPoint.optDouble("lat"),
-                finalPoint.optDouble("lng"),
+                parkedResolution.optDouble("lat"),
+                parkedResolution.optDouble("lng"),
                 endMs,
                 tripId,
-                tailTrim.removedPoints > 0 ? "native_trimmed_parked_tail" : "native_parking_stop"
+                tailTrim.removedPoints > 0
+                    ? "native_trimmed_parked_tail"
+                    : isParkedStopReason(reason) ? "native_parking_stop" : "native_trip_end",
+                parkedResolution
             );
+        } else {
+            // A completed newer trip with no trustworthy endpoint must not leave an
+            // older parking spot looking current. This also fails closed when the
+            // true endpoint is inside a privacy zone, even if a cluster candidate
+            // just outside the zone would otherwise look accurate.
+            DriveSenseNativeTripStore.clearLastParkedLocation(this);
         }
         candidateConfirmedMs = 0L;
         candidateNearParked = false;

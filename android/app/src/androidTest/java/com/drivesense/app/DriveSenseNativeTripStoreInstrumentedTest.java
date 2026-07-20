@@ -173,6 +173,101 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     }
 
     @Test
+    public void newerSharedParkedLocationWinsOverStaleNativeLocation() throws Exception {
+        DriveSenseNativeTripStore.saveLastParkedLocation(
+            context,
+            43.65,
+            -79.38,
+            Instant.parse("2026-07-17T18:00:00Z").toEpochMilli(),
+            "july-17-trip",
+            "native_parking_stop"
+        );
+        JSONObject newer = new JSONObject();
+        newer.put("lat", 43.7001);
+        newer.put("lng", -79.4101);
+        newer.put("timestamp", "2026-07-18T18:00:00Z");
+        newer.put("tripId", "july-18-trip");
+        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+            .edit()
+            .putString("drivesense_last_parked", newer.toString())
+            .commit();
+
+        JSONObject restored = DriveSenseNativeTripStore.getLastParkedLocation(context);
+
+        assertNotNull(restored);
+        assertEquals("july-18-trip", restored.getString("tripId"));
+        assertEquals(43.7001, restored.getDouble("lat"), 0.0001);
+        assertEquals(-79.4101, restored.getDouble("lng"), 0.0001);
+    }
+
+    @Test
+    public void newerSharedPrivacySuppressionHidesStaleNativeLocation() throws Exception {
+        DriveSenseNativeTripStore.saveLastParkedLocation(
+            context,
+            43.65,
+            -79.38,
+            Instant.parse("2026-07-17T18:00:00Z").toEpochMilli(),
+            "july-17-trip",
+            "native_parking_stop"
+        );
+        JSONObject suppression = new JSONObject();
+        suppression.put("suppressed", true);
+        suppression.put("timestamp", "2026-07-18T18:00:00Z");
+        suppression.put("source", "privacy_zone");
+        context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+            .edit()
+            .putString("drivesense_last_parked", suppression.toString())
+            .commit();
+
+        assertNull(DriveSenseNativeTripStore.getLastParkedLocation(context));
+    }
+
+    @Test
+    public void parkingResolverUsesStableStopInsteadOfNoisyFinalFix() throws Exception {
+        JSONArray points = new JSONArray()
+            .put(parkingPoint(43.6500, -79.3800, "2026-07-18T18:00:00Z", 35d, 8d))
+            .put(parkingPoint(43.6510, -79.3800, "2026-07-18T18:00:10Z", 18d, 8d))
+            .put(parkingPoint(43.65120, -79.38000, "2026-07-18T18:00:20Z", 4d, 7d))
+            .put(parkingPoint(43.65121, -79.38001, "2026-07-18T18:00:35Z", 0d, 6d))
+            .put(parkingPoint(43.65119, -79.38000, "2026-07-18T18:00:50Z", 0d, 8d))
+            .put(parkingPoint(43.65155, -79.38030, "2026-07-18T18:01:05Z", 0d, 55d));
+
+        JSONObject resolved = DriveSenseParkingResolver.resolve(
+            points,
+            Instant.parse("2026-07-18T18:01:05Z").toEpochMilli()
+        );
+
+        assertNotNull(resolved);
+        assertEquals("terminal_stop_cluster", resolved.getString("strategy"));
+        assertEquals("high", resolved.getString("confidence"));
+        assertTrue(Math.abs(resolved.getDouble("lat") - 43.6512) < 0.0001);
+        assertTrue(Math.abs(resolved.getDouble("lat") - 43.65155) > 0.0001);
+    }
+
+    @Test
+    public void parkingResolverRejectsNullIsland() throws Exception {
+        JSONArray points = new JSONArray()
+            .put(parkingPoint(0d, 0d, "2026-07-18T18:00:00Z", 0d, 5d));
+
+        assertNull(DriveSenseParkingResolver.resolve(points, System.currentTimeMillis()));
+    }
+
+    private static JSONObject parkingPoint(
+        double lat,
+        double lng,
+        String timestamp,
+        double speedKmh,
+        double accuracyM
+    ) throws Exception {
+        return new JSONObject()
+            .put("lat", lat)
+            .put("lng", lng)
+            .put("timestamp", timestamp)
+            .put("speed_kmh", speedKmh)
+            .put("accuracy", accuracyM);
+    }
+
+    @Test
     public void invalidLastParkedPayloadReturnsNull() {
         DriveSenseNativeTripStore.prefs(context)
             .edit()

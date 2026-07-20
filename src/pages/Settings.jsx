@@ -47,6 +47,12 @@ import {
 } from '@/lib/permissions';
 import { isAndroid } from '@/lib/nativePlatform';
 import {
+  addBackupExportCancelListener,
+  finishBackupExportProgressNotification,
+  startBackupExportProgressNotification,
+  updateBackupExportProgressNotification,
+} from '@/lib/nativeDownloads';
+import {
   BACKUP_SIGNATURE_INVALID_CODE,
   BACKUP_TOO_LARGE_MESSAGE,
   MAX_BACKUP_BYTES,
@@ -854,17 +860,20 @@ export default function Settings() {
   const [backupExportConfirm, setBackupExportConfirm] = useState('');
   const [backupExportPlaintext, setBackupExportPlaintext] = useState(false);
   const [backupExportBusy, setBackupExportBusy] = useState(false);
+  const [backupExportProgress, setBackupExportProgress] = useState({ percent: 0, label: '' });
   const [backupExportPasswordVisible, setBackupExportPasswordVisible] = useState(false);
   const [backupExportConfirmVisible, setBackupExportConfirmVisible] = useState(false);
   const [backupImportOpen, setBackupImportOpen] = useState(false);
   const [backupImportPassphrase, setBackupImportPassphrase] = useState('');
   const [backupImportError, setBackupImportError] = useState('');
   const [backupImportBusy, setBackupImportBusy] = useState(false);
+  const [backupImportProgress, setBackupImportProgress] = useState({ percent: 0, label: '' });
   const [backupImportPasswordVisible, setBackupImportPasswordVisible] = useState(false);
   const [pendingBackupImportFile, setPendingBackupImportFile] = useState(null);
   const [tripExportBusy, setTripExportBusy] = useState(false);
   const [portabilityExportBusy, setPortabilityExportBusy] = useState(false);
   const [erasureBusy, setErasureBusy] = useState(false);
+  const [erasureProgress, setErasureProgress] = useState({ percent: 0, label: '' });
   const [osrmEndpointDraft, setOsrmEndpointDraft] = useState(() => localSettings.get().osrm_map_matching_url || '');
   const [osrmHealthCheckState, setOsrmHealthCheckState] = useState('idle');
   const [integrity, setIntegrity] = useState(() => integrityStatusFromSettings(localSettings.get()));
@@ -875,10 +884,35 @@ export default function Settings() {
   const [dataRetentionBusy, setDataRetentionBusy] = useState(false);
   const [heightenedPrivacyBusy, setHeightenedPrivacyBusy] = useState(false);
   const [tripDeleteBusy, setTripDeleteBusy] = useState(false);
+  const [tripDeleteProgress, setTripDeleteProgress] = useState({ percent: 0, label: '' });
   const importInputRef = useRef(null);
   const corridorDraftExpiryRef = useRef(null);
   const dialogActionLocksRef = useRef(new Set());
+  const backupExportAbortRef = useRef(null);
+  const backupImportAbortRef = useRef(null);
+  const backupExportTaskRef = useRef(null);
+  const backupExportNotificationQueueRef = useRef(/** @type {Promise<any>} */ (Promise.resolve()));
   const qc = useQueryClient();
+
+  useEffect(() => {
+    let disposed = false;
+    let listenerHandle = null;
+    addBackupExportCancelListener(({ taskId }) => {
+      if (!taskId || backupExportTaskRef.current?.taskId !== taskId) return;
+      const controller = backupExportAbortRef.current;
+      if (controller && !controller.signal.aborted) controller.abort();
+      setBackupExportOpen(false);
+      setBackupExportPassphrase('');
+      setBackupExportConfirm('');
+    }).then((handle) => {
+      if (disposed) handle?.remove?.();
+      else listenerHandle = handle;
+    }).catch((error) => logSystemFailure('backup_export_cancel_listener', error));
+    return () => {
+      disposed = true;
+      listenerHandle?.remove?.();
+    };
+  }, []);
 
   const lockDialogAction = (key) => {
     if (dialogActionLocksRef.current.has(key)) return false;
@@ -1025,7 +1059,7 @@ export default function Settings() {
     staleTime: SETTINGS_HEAVY_QUERY_STALE_MS,
   });
 
-  const getSettingsTripsForExport = () => tripService.listAllForExport({ sort: '-start_time' });
+  const getSettingsTripsForExport = (options = {}) => tripService.listAllForExport({ sort: '-start_time', ...options });
 
   const getSettingsVehicles = () => qc.fetchQuery({
     queryKey: ['settings-vehicles'],
@@ -2658,11 +2692,18 @@ export default function Settings() {
       });
       if (!confirmed) return;
       setTripDeleteBusy(true);
+      setTripDeleteProgress({ percent: 2, label: 'Reading saved trips' });
       await yieldToPaint();
       const trips = await getSettingsTrips();
-      for (const t of trips) {
-        await tripService.delete(t.id);
+      const totalTrips = trips.length;
+      for (let index = 0; index < totalTrips; index += 1) {
+        await tripService.delete(trips[index].id);
+        setTripDeleteProgress({
+          percent: Math.round(5 + ((index + 1) / Math.max(1, totalTrips)) * 80),
+          label: `Deleting trips (${index + 1} of ${totalTrips})`,
+        });
       }
+      setTripDeleteProgress({ percent: 88, label: 'Clearing trip-related data' });
       await Promise.all([
         setJson(SAVED_FILTERS_KEY, []),
         calibrationLabelService.replaceLocalLabels([]),
@@ -2685,6 +2726,7 @@ export default function Settings() {
         cleared_native_completed_trips: isAndroid(),
       }, { category: 'storage', severity: 'warn', title: 'Trip history deleted' });
       await qc.invalidateQueries();
+      setTripDeleteProgress({ percent: 100, label: 'Trip deletion complete' });
       toast({
         title: 'Trips deleted',
         description: 'Trip records and local trip-derived caches were removed from this device.',
@@ -2698,6 +2740,7 @@ export default function Settings() {
       });
     } finally {
       setTripDeleteBusy(false);
+      setTripDeleteProgress({ percent: 0, label: '' });
       unlockDialogAction('delete-all-trips');
     }
   };
@@ -2776,6 +2819,7 @@ export default function Settings() {
       });
       if (!confirmed) return;
       setErasureBusy(true);
+      setErasureProgress({ percent: 1, label: 'Preparing secure erasure' });
       await yieldToPaint();
       recordSystemEvent('local_data_erasure_confirmed', {}, {
         category: 'storage',
@@ -2783,7 +2827,25 @@ export default function Settings() {
         title: 'Local data erasure confirmed',
         message: 'This entry is removed with the rest of local data if erasure succeeds.',
       });
-      const result = await eraseAllLocalDataAndDownloadReceiptFromSettings();
+      const result = await eraseAllLocalDataAndDownloadReceiptFromSettings({
+        onProgress: ({ phase, completed = 0, total = 1 }) => {
+          const ratio = Math.max(0, Math.min(1, completed / Math.max(1, total)));
+          const labels = {
+            trips: 'Erasing trip records',
+            speed_knowledge: 'Erasing saved road-speed data',
+            local_keys: 'Erasing local settings and private data',
+            native_trips: 'Erasing native trip records',
+            memory: 'Clearing in-memory settings',
+            signing: 'Creating erasure receipt',
+            saving_receipt: 'Saving erasure receipt',
+          };
+          setErasureProgress({
+            percent: Math.min(99, Math.round(2 + ratio * 97)),
+            label: labels[phase] || 'Erasing local data',
+          });
+        },
+      });
+      setErasureProgress({ percent: 100, label: 'Local data erased' });
       if (typeof window !== 'undefined') {
         await requestAppAlert(`${result.filename} was exported. Road Sage will now reload so erased in-memory data is not reused.`);
         window.location.reload();
@@ -2801,6 +2863,7 @@ export default function Settings() {
       });
     } finally {
       setErasureBusy(false);
+      setErasureProgress({ percent: 0, label: '' });
       unlockDialogAction('erase-all-local-data');
     }
   };
@@ -2835,18 +2898,91 @@ export default function Settings() {
     setBackupExportPlaintext(false);
     setBackupExportPasswordVisible(false);
     setBackupExportConfirmVisible(false);
+    setBackupExportProgress({ percent: 0, label: '' });
     setBackupExportOpen(true);
     recordSystemEvent('backup_export_dialog_opened', {
       default_output_format: 'encrypted',
     }, { category: 'storage', title: 'Backup export dialog opened' });
   };
 
+  const updateBackupExportProgress = (progress = {}) => {
+    const { phase, completed = 0, total = 0 } = /** @type {{phase?:string,completed?:number,total?:number}} */ (progress);
+    const ratio = total > 0 ? Math.max(0, Math.min(1, completed / total)) : 0;
+    const progressByPhase = {
+      loading: { start: 4, span: 28, label: total > 0 ? `Reading saved trips (${completed} of ${total})` : 'Reading saved trips' },
+      preparing: { start: 34, span: 2, label: 'Preparing backup details' },
+      protecting: { start: 36, span: 22, label: total > 0 ? `Protecting private trip data (${completed} of ${total})` : 'Protecting private trip data' },
+      signing: { start: 60, span: 5, label: 'Signing backup integrity' },
+      packaging: { start: 66, span: 5, label: 'Packaging backup' },
+      compressing: { start: 72, span: 8, label: 'Compressing backup' },
+      encrypting: { start: 81, span: 8, label: 'Encrypting backup' },
+      saving: { start: 90, span: 10, label: total > 0 ? 'Saving to Downloads' : 'Opening Downloads' },
+    };
+    const view = progressByPhase[phase] || progressByPhase.preparing;
+    const nextProgress = {
+      percent: Math.min(99, Math.round(view.start + view.span * ratio)),
+      label: view.label,
+    };
+    setBackupExportProgress(nextProgress);
+    const taskId = backupExportTaskRef.current?.taskId;
+    if (taskId) {
+      backupExportNotificationQueueRef.current = backupExportNotificationQueueRef.current
+        .catch(() => {})
+        .then(() => updateBackupExportProgressNotification({
+          taskId,
+          progress: nextProgress.percent,
+          label: nextProgress.label,
+        }))
+        .then((result) => {
+          if (result?.cancelled) backupExportAbortRef.current?.abort();
+        })
+        .catch((error) => logSystemFailure('backup_export_foreground_update', error));
+    }
+  };
+
+  const cancelActiveBackupExport = () => {
+    const controller = backupExportAbortRef.current;
+    if (controller && !controller.signal.aborted) {
+      controller.abort();
+      recordSystemEvent('backup_export_cancelled', {}, {
+        category: 'storage',
+        title: 'Backup export cancelled',
+      });
+    }
+    const task = backupExportTaskRef.current;
+    if (task?.taskId) {
+      backupExportTaskRef.current = null;
+      backupExportNotificationQueueRef.current
+        .catch(() => {})
+        .then(() => finishBackupExportProgressNotification({ taskId: task.taskId, status: 'cancelled' }));
+    }
+    setBackupExportOpen(false);
+    setBackupExportPassphrase('');
+    setBackupExportConfirm('');
+    setBackupExportPasswordVisible(false);
+    setBackupExportConfirmVisible(false);
+  };
+
   const performExportBackup = async () => {
     if (!backupExportReady || backupExportBusy || !lockDialogAction('backup-export')) return;
+    const controller = new AbortController();
+    let taskStatus = 'cancelled';
+    let taskFilename = '';
+    let taskErrorMessage = '';
+    backupExportAbortRef.current = controller;
     setBackupExportBusy(true);
+    setBackupExportProgress({ percent: 2, label: 'Starting backup' });
     try {
       await yieldToPaint();
       if (backupExportPlaintext && !await requireSensitiveAuthentication('Verify to export a readable backup')) return;
+      if (isAndroid() && cfgRef.current.notification_permission_granted !== true) {
+        await requestNotificationPermission().catch(() => false);
+      }
+      const backgroundTask = await startBackupExportProgressNotification({
+        label: 'Preparing backup',
+        progress: 2,
+      });
+      if (backgroundTask?.taskId) backupExportTaskRef.current = backgroundTask;
       recordSystemEvent('backup_export_confirmed', {
         output_format: backupExportPlaintext ? 'json' : 'encrypted',
         encrypted: !backupExportPlaintext,
@@ -2855,8 +2991,12 @@ export default function Settings() {
         severity: backupExportPlaintext ? 'warn' : 'info',
         title: backupExportPlaintext ? 'Readable backup export confirmed' : 'Encrypted backup export confirmed',
       });
+      updateBackupExportProgress({ phase: 'loading' });
       const [trips, vehicles] = await Promise.all([
-        getSettingsTripsForExport(),
+        getSettingsTripsForExport({
+          signal: controller.signal,
+          onProgress: (progress) => updateBackupExportProgress({ phase: 'loading', ...progress }),
+        }),
         getSettingsVehicles(),
       ]);
       const result = await exportDriveSenseBackupFromSettings({
@@ -2864,12 +3004,22 @@ export default function Settings() {
         vehicles,
         settings: cfg,
         passphrase: backupExportPlaintext ? null : backupExportPassphrase,
+        signal: controller.signal,
+        onProgress: updateBackupExportProgress,
       });
+      setBackupExportProgress({ percent: 100, label: 'Backup saved' });
       setBackupExportOpen(false);
+      setBackupExportPassphrase('');
+      setBackupExportConfirm('');
       setBackupExportPasswordVisible(false);
       setBackupExportConfirmVisible(false);
       showBackupExportToast(result);
+      taskStatus = 'complete';
+      taskFilename = result?.filename || 'Road Sage backup';
     } catch (error) {
+      if (error?.name === 'AbortError') return;
+      taskStatus = 'failed';
+      taskErrorMessage = error.message || 'Open Road Sage and try again.';
       logSystemFailure('backup_export', error);
       toast({
         title: 'Could not export backup',
@@ -2877,19 +3027,75 @@ export default function Settings() {
         variant: 'destructive',
       });
     } finally {
+      const task = backupExportTaskRef.current;
+      if (task?.taskId) {
+        await backupExportNotificationQueueRef.current.catch(() => {});
+        await finishBackupExportProgressNotification({
+          taskId: task.taskId,
+          status: taskStatus,
+          filename: taskFilename,
+          message: taskErrorMessage,
+        });
+        if (backupExportTaskRef.current?.taskId === task.taskId) backupExportTaskRef.current = null;
+      }
+      if (backupExportAbortRef.current === controller) backupExportAbortRef.current = null;
       setBackupExportBusy(false);
+      setBackupExportProgress({ percent: 0, label: '' });
       unlockDialogAction('backup-export');
     }
   };
 
+  const updateBackupImportProgress = (progress = {}) => {
+    const { phase, completed = 0, total = 0 } = progress;
+    const ratio = total > 0 ? Math.max(0, Math.min(1, completed / total)) : 0;
+    const progressByPhase = {
+      reading: { start: 2, span: 10, label: 'Reading backup file' },
+      decrypting: { start: 13, span: 16, label: 'Unlocking encrypted backup' },
+      decompressing: { start: 30, span: 14, label: 'Decompressing backup' },
+      verifying: { start: 45, span: 10, label: 'Verifying backup integrity' },
+      validating: { start: 56, span: 8, label: 'Checking backup data' },
+      restoring_vehicles: { start: 65, span: 5, label: 'Restoring vehicles' },
+      restoring_trips: {
+        start: 70,
+        span: 29,
+        label: total > 0 ? `Restoring trips (${completed} of ${total})` : 'Restoring trips',
+      },
+    };
+    const view = progressByPhase[phase] || { start: 1, span: 0, label: 'Preparing import' };
+    setBackupImportProgress({
+      percent: Math.min(99, Math.round(view.start + view.span * ratio)),
+      label: view.label,
+    });
+  };
+
+  const cancelActiveBackupImport = () => {
+    backupImportAbortRef.current?.abort();
+    setBackupImportOpen(false);
+    setPendingBackupImportFile(null);
+    setBackupImportPassphrase('');
+    setBackupImportError('');
+  };
+
+  /**
+   * @param {any} file
+   * @param {{passphrase?:string|null,acknowledgeTruncation?:boolean,allowUnverifiedSignedBackup?:boolean,signal?:AbortSignal,onProgress?:(progress:any)=>void}} options
+   */
   const finishImportBackup = async (
     file,
-    { passphrase = null, acknowledgeTruncation = false, allowUnverifiedSignedBackup = false } = {}
+    {
+      passphrase = null,
+      acknowledgeTruncation = false,
+      allowUnverifiedSignedBackup = false,
+      signal,
+      onProgress = updateBackupImportProgress,
+    } = {}
   ) => {
     let result = await importDriveSenseBackupFromSettings(file, {
       passphrase,
       acknowledgeTruncation,
       allowUnverifiedSignedBackup,
+      signal,
+      onProgress,
     });
     if (result.requiresAcknowledgement) {
       const affected = result.truncatedNoteTripCount;
@@ -2903,6 +3109,8 @@ export default function Settings() {
         passphrase,
         acknowledgeTruncation: true,
         allowUnverifiedSignedBackup,
+        signal,
+        onProgress,
       });
     }
     setCfg(localSettings.get());
@@ -2938,15 +3146,22 @@ export default function Settings() {
 
   const handleImportPassphraseSubmit = async () => {
     if (!pendingBackupImportFile || backupImportPassphrase.length < BACKUP_PASSPHRASE_MIN_LENGTH || backupImportBusy || !lockDialogAction('backup-import')) return;
+    const controller = new AbortController();
+    backupImportAbortRef.current = controller;
     setBackupImportBusy(true);
+    setBackupImportProgress({ percent: 1, label: 'Preparing import' });
     try {
       recordSystemEvent('backup_import_password_submitted', {
         encrypted: true,
         byte_count: Number(pendingBackupImportFile?.size) || 0,
       }, { category: 'storage', title: 'Backup password submitted' });
       await yieldToPaint();
-      await finishImportBackup(pendingBackupImportFile, { passphrase: backupImportPassphrase });
+      await finishImportBackup(pendingBackupImportFile, {
+        passphrase: backupImportPassphrase,
+        signal: controller.signal,
+      });
     } catch (error) {
+      if (error?.name === 'AbortError') return;
       if (error?.code === BACKUP_WRONG_PASSWORD_CODE) {
         setBackupImportError(BACKUP_WRONG_PASSWORD_CODE);
         recordSystemEvent('backup_import_wrong_password_notice_shown', {
@@ -2969,6 +3184,7 @@ export default function Settings() {
           await finishImportBackup(pendingBackupImportFile, {
             passphrase: backupImportPassphrase,
             allowUnverifiedSignedBackup: true,
+            signal: controller.signal,
           });
         }
         return;
@@ -2982,7 +3198,9 @@ export default function Settings() {
         variant: 'destructive',
       });
     } finally {
+      if (backupImportAbortRef.current === controller) backupImportAbortRef.current = null;
       setBackupImportBusy(false);
+      setBackupImportProgress({ percent: 0, label: '' });
       unlockDialogAction('backup-import');
     }
   };
@@ -3011,9 +3229,18 @@ export default function Settings() {
     });
     if (!confirmed) return;
 
+    const controller = new AbortController();
+    backupImportAbortRef.current = controller;
+    setPendingBackupImportFile(file);
+    setBackupImportError('');
+    setBackupImportProgress({ percent: 1, label: 'Preparing import' });
+    setBackupImportBusy(true);
+    setBackupImportOpen(true);
     try {
-      await finishImportBackup(file);
+      await yieldToPaint();
+      await finishImportBackup(file, { signal: controller.signal });
     } catch (error) {
+      if (error?.name === 'AbortError') return;
       if (error?.code === BACKUP_PASSWORD_REQUIRED_CODE || error?.code === BACKUP_WRONG_PASSWORD_CODE) {
         setPendingBackupImportFile(file);
         setBackupImportPassphrase('');
@@ -3038,7 +3265,10 @@ export default function Settings() {
           confirmLabel: 'Import trips',
         });
         if (recover) {
-          await finishImportBackup(file, { allowUnverifiedSignedBackup: true });
+          await finishImportBackup(file, {
+            allowUnverifiedSignedBackup: true,
+            signal: controller.signal,
+          });
         }
         return;
       }
@@ -3050,6 +3280,11 @@ export default function Settings() {
         description: error.message || 'Make sure the file is a Road Sage backup file.',
         variant: 'destructive',
       });
+      setBackupImportOpen(false);
+    } finally {
+      if (backupImportAbortRef.current === controller) backupImportAbortRef.current = null;
+      setBackupImportBusy(false);
+      setBackupImportProgress({ percent: 0, label: '' });
     }
   };
 
@@ -3597,7 +3832,7 @@ export default function Settings() {
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-semibold">Premium Visual Experience</span>
               <span className="mt-0.5 block text-xs text-muted-foreground">
-                Rich trip launch, totals, and insight cards with layered color, illustrations, and theme-aware detail.
+                Rich trip launch, map controls, totals, and insight cards with layered color, illustrations, and theme-aware detail.
               </span>
             </span>
             <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
@@ -5689,6 +5924,21 @@ export default function Settings() {
               {erasureBusy ? 'Erasing...' : 'Erase'}
             </span>
           </SettingRow>
+          {erasureBusy && (
+            <div className="mx-1 mb-3 rounded-xl border border-red-200 bg-red-50/70 p-3 dark:border-red-900/60 dark:bg-red-950/20" role="status" aria-live="polite">
+              <div className="flex items-center justify-between gap-3 text-xs font-medium text-red-800 dark:text-red-200">
+                <span>{erasureProgress.label || 'Erasing local data'}</span>
+                <span className="tabular-nums">{erasureProgress.percent}%</span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-red-100 dark:bg-red-950" aria-hidden="true">
+                <div
+                  className="h-full rounded-full bg-red-600 transition-[width] duration-200"
+                  style={{ width: `${erasureProgress.percent}%` }}
+                />
+              </div>
+              <p className="mt-2 text-[11px] text-red-700 dark:text-red-300">Keep Road Sage open. Erasure cannot be cancelled safely after it starts.</p>
+            </div>
+          )}
           <SettingRow
             icon={Info}
             label="Data Retention"
@@ -5780,6 +6030,21 @@ export default function Settings() {
               ? <span className="text-xs font-semibold text-red-500">Deleting...</span>
               : <ChevronRight className="w-4 h-4 text-red-400" />}
           </SettingRow>
+          {tripDeleteBusy && (
+            <div className="mx-1 mb-3 rounded-xl border border-red-200 bg-red-50/70 p-3 dark:border-red-900/60 dark:bg-red-950/20" role="status" aria-live="polite">
+              <div className="flex items-center justify-between gap-3 text-xs font-medium text-red-800 dark:text-red-200">
+                <span>{tripDeleteProgress.label || 'Deleting trips'}</span>
+                <span className="tabular-nums">{tripDeleteProgress.percent}%</span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-red-100 dark:bg-red-950" aria-hidden="true">
+                <div
+                  className="h-full rounded-full bg-red-600 transition-[width] duration-200"
+                  style={{ width: `${tripDeleteProgress.percent}%` }}
+                />
+              </div>
+              <p className="mt-2 text-[11px] text-red-700 dark:text-red-300">Keep Road Sage open. Trip deletion cannot be cancelled safely after it starts.</p>
+            </div>
+          )}
           {cfg.osrm_consent_invalidated_reason === 'privacy_zone_changed' && (
             <div className="mx-1 mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
               <div className="flex items-start gap-2">
@@ -6018,7 +6283,10 @@ export default function Settings() {
       </Dialog>
 
       <Dialog open={backupExportOpen} onOpenChange={(open) => {
-        if (backupExportBusy) return;
+        if (!open && backupExportBusy) {
+          cancelActiveBackupExport();
+          return;
+        }
         setBackupExportOpen(open);
         if (!open) {
           recordSystemEvent('backup_export_dialog_closed', {
@@ -6122,15 +6390,31 @@ export default function Settings() {
               />
               <span>Export readable JSON instead. Anyone with the file can read trip and route data.</span>
             </label>
+            {backupExportBusy && (
+              <div className="rounded-xl border border-border bg-secondary/30 p-3" role="status" aria-live="polite">
+                <div className="flex items-center justify-between gap-3 text-xs font-medium">
+                  <span>{backupExportProgress.label || 'Preparing backup'}</span>
+                  <span className="tabular-nums text-muted-foreground">{backupExportProgress.percent}%</span>
+                </div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-secondary" aria-hidden="true">
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width] duration-200"
+                    style={{ width: `${backupExportProgress.percent}%` }}
+                  />
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  On Android, you can minimize Road Sage and follow progress from the notification. You can cancel safely; saved trips will not be changed.
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <button
               type="button"
-              onClick={() => setBackupExportOpen(false)}
-              disabled={backupExportBusy}
+              onClick={cancelActiveBackupExport}
               className="rounded-lg border border-border px-3 py-2 text-sm font-semibold disabled:opacity-50"
             >
-              Cancel
+              {backupExportBusy ? 'Cancel export' : 'Cancel'}
             </button>
             <Button
               onClick={performExportBackup}
@@ -6146,7 +6430,10 @@ export default function Settings() {
       </Dialog>
 
       <Dialog open={backupImportOpen} onOpenChange={(open) => {
-        if (backupImportBusy) return;
+        if (!open && backupImportBusy) {
+          cancelActiveBackupImport();
+          return;
+        }
         setBackupImportOpen(open);
         if (!open) {
           recordSystemEvent('backup_import_unlock_dialog_closed', {
@@ -6161,11 +6448,30 @@ export default function Settings() {
       }}>
         <DialogContent className="rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Unlock Backup</DialogTitle>
+            <DialogTitle>{backupImportBusy ? 'Importing Backup' : 'Unlock Backup'}</DialogTitle>
             <DialogDescription>
-              Enter the password used when this backup was exported.
+              {backupImportBusy
+                ? 'Road Sage is checking and restoring this backup in small, memory-safe batches.'
+                : 'Enter the password used when this backup was exported.'}
             </DialogDescription>
           </DialogHeader>
+          {backupImportBusy ? (
+            <div className="rounded-xl border border-border bg-secondary/30 p-3" role="status" aria-live="polite">
+              <div className="flex items-center justify-between gap-3 text-xs font-medium">
+                <span>{backupImportProgress.label || 'Preparing import'}</span>
+                <span className="tabular-nums text-muted-foreground">{backupImportProgress.percent}%</span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-secondary" aria-hidden="true">
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-200"
+                  style={{ width: `${backupImportProgress.percent}%` }}
+                />
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Keep Road Sage open during import. If cancelled after restoring starts, retrying the same backup safely completes the remaining trips.
+              </p>
+            </div>
+          ) : (
           <div className="space-y-3">
             {backupImportError === BACKUP_WRONG_PASSWORD_CODE && (
               <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
@@ -6204,16 +6510,16 @@ export default function Settings() {
               </div>
             </label>
           </div>
+          )}
           <DialogFooter>
             <button
               type="button"
-              onClick={() => setBackupImportOpen(false)}
-              disabled={backupImportBusy}
+              onClick={backupImportBusy ? cancelActiveBackupImport : () => setBackupImportOpen(false)}
               className="rounded-lg border border-border px-3 py-2 text-sm font-semibold disabled:opacity-50"
             >
-              Cancel
+              {backupImportBusy ? 'Cancel import' : 'Cancel'}
             </button>
-            <Button
+            {!backupImportBusy && <Button
               onClick={handleImportPassphraseSubmit}
               disabled={backupImportPassphrase.length < BACKUP_PASSPHRASE_MIN_LENGTH || backupImportBusy}
               loading={backupImportBusy}
@@ -6221,7 +6527,7 @@ export default function Settings() {
               className="rounded-lg"
             >
               Import
-            </Button>
+            </Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>

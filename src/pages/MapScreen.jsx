@@ -33,6 +33,10 @@ import { TRIAGE_DISABLE_MAPS } from '@/lib/performanceTriage';
 import InlineLoadError from '@/components/InlineLoadError';
 import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
 import PremiumMapDiagnostics from '@/components/PremiumMapDiagnostics';
+import PremiumMapControls from '@/components/PremiumMapControls';
+import PremiumMapLayers from '@/components/PremiumMapLayers';
+import PremiumEventAreasCard from '@/components/PremiumEventAreasCard';
+import { PremiumHistoryResultsPager } from '@/components/PremiumTripHistoryPanels';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -43,7 +47,7 @@ const MAP_FILTERS = [
 const MAP_ROUTE_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#06b6d4', '#ef4444'];
 const TRIP_CARD_PAGE_SIZE = 30;
 const MAP_OVERVIEW_ROUTE_LIMIT = 8;
-export const shouldShowStandardMapRouteSummary = (premiumVisuals, selectedTrip) => !(premiumVisuals && selectedTrip);
+export const shouldShowStandardMapRouteSummary = (premiumVisuals) => !premiumVisuals;
 const scheduleIdleWork = (callback) => {
   if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
     const idleId = window.requestIdleCallback(callback, { timeout: 1000 });
@@ -226,8 +230,11 @@ export default function MapScreen() {
     };
   }
   const overviewMapTrips = overviewMapTripsRef.current.trips;
-  const selectedTrip = selectedTripDetail || selectedTripSummary || null;
-  const secondaryTrip = secondaryTripDetail || secondaryTripSummary || null;
+  const overviewDiagnosticsTrips = overviewTripsForMap.map((summary, index) => (
+    /** @type {any} */ (overviewTripDetails[index]?.data) || summary
+  ));
+  const selectedTrip = selectedTripId ? (selectedTripDetail || selectedTripSummary || null) : null;
+  const secondaryTrip = secondaryTripId ? (secondaryTripDetail || secondaryTripSummary || null) : null;
   const selectedEvents = useMemo(() => (
     settings.phone_use_show_on_map === false
       ? (selectedTrip?.driving_events || []).filter((event) => event.type !== 'phone_use')
@@ -492,29 +499,39 @@ export default function MapScreen() {
         </p>
       </div>
 
-      <div className="flex gap-2">
-        <button onClick={() => setPlaybackMode(false)} aria-pressed={!playbackMode}
-          data-map-tab="mode"
-          className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-all ${!playbackMode ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}>
-          Map View
-        </button>
-        <button onClick={() => setPlaybackMode(true)} aria-pressed={playbackMode}
-          data-map-tab="mode"
-          className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-1.5 ${playbackMode ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}>
-          <Play className="w-3.5 h-3.5" /> Playback
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowLayerPanel(value => !value)}
-          aria-pressed={showLayerPanel}
-          data-map-tab="utility"
-          className={`px-3 py-2 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-1.5 ${
-            showLayerPanel ? 'bg-card border-primary text-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
-          }`}
-        >
-          <Layers className="w-3.5 h-3.5" /> Layers
-        </button>
-      </div>
+      {premiumVisuals ? (
+        <PremiumMapControls
+          playbackMode={playbackMode}
+          showLayerPanel={showLayerPanel}
+          onShowMap={() => setPlaybackMode(false)}
+          onShowPlayback={() => setPlaybackMode(true)}
+          onToggleLayers={() => setShowLayerPanel(value => !value)}
+        />
+      ) : (
+        <div className="flex gap-2">
+          <button onClick={() => setPlaybackMode(false)} aria-pressed={!playbackMode}
+            data-map-tab="mode"
+            className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-all ${!playbackMode ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}>
+            Map View
+          </button>
+          <button onClick={() => setPlaybackMode(true)} aria-pressed={playbackMode}
+            data-map-tab="mode"
+            className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-1.5 ${playbackMode ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}>
+            <Play className="w-3.5 h-3.5" /> Playback
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowLayerPanel(value => !value)}
+            aria-pressed={showLayerPanel}
+            data-map-tab="utility"
+            className={`px-3 py-2 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-1.5 ${
+              showLayerPanel ? 'bg-card border-primary text-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" /> Layers
+          </button>
+        </div>
+      )}
 
       <div>
         {playbackMode ? (
@@ -563,7 +580,7 @@ export default function MapScreen() {
               showSpeedLimits={showSpeedLimits && Boolean(selectedTrip)}
               speedLimitKnowledgeResults={speedLimitLocalKnowledgeResults}
               rawPointCount={selectedTrip?.route_points_raw_count}
-              showRouteSummary={shouldShowStandardMapRouteSummary(premiumVisuals, selectedTrip)}
+              showRouteSummary={shouldShowStandardMapRouteSummary(premiumVisuals)}
               height="400px"
             />}
             {selectedTripId && selectedTripLoading && !selectedTripDetail && (
@@ -611,13 +628,16 @@ export default function MapScreen() {
                 Privacy
               </button>
             )}
-            {premiumVisuals && selectedTrip && (
+            {premiumVisuals && (selectedTrip || overviewDiagnosticsTrips.length > 0) && (
               <div className="premium-map-diagnostics-overlay">
                 <PremiumMapDiagnostics
                   trip={selectedTrip}
+                  trips={selectedTrip ? undefined : overviewDiagnosticsTrips}
                   units={units}
-                  loading={selectedTripLoading && !selectedTripDetail}
-                  onShowAll={() => setSelectedTripId(null)}
+                  loading={selectedTrip
+                    ? selectedTripLoading && !selectedTripDetail
+                    : overviewTripDetails.some((query) => query.isFetching && !query.data)}
+                  onShowAll={selectedTrip ? () => setSelectedTripId(null) : undefined}
                   overlay
                 />
               </div>
@@ -633,14 +653,17 @@ export default function MapScreen() {
         )}
       </div>
 
-      {selectedTrip && (premiumVisuals ? (playbackMode && (
+      {selectedTrip && playbackMode && (
         <PremiumMapDiagnostics
           trip={selectedTrip}
           units={units}
           loading={selectedTripLoading && !selectedTripDetail}
           onShowAll={() => setSelectedTripId(null)}
+          premium={premiumVisuals}
         />
-      )) : (
+      )}
+
+      {selectedTrip && !playbackMode && !premiumVisuals && (
         <div className="bg-card border border-border rounded-2xl p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -657,9 +680,45 @@ export default function MapScreen() {
             </button>
           </div>
         </div>
-      ))}
+      )}
 
-      {showLayerPanel && (
+      {showLayerPanel && (premiumVisuals ? (
+        <PremiumMapLayers
+          selectedTrip={selectedTrip}
+          selectedRouteReady={selectedRouteReady}
+          selectedHasLocalSpeedLimits={selectedHasLocalSpeedLimits}
+          selectedHasSpeedLimits={selectedHasSpeedLimits}
+          selectedSpeedLimitCoverage={selectedSpeedLimitCoverage}
+          selectedSpeedLimitStatus={selectedSpeedLimitStatus}
+          selectedMapMatchingStatus={selectedMapMatchingStatus}
+          selectedRiskSegmentCount={selectedRiskSegments.length}
+          visibleDangerZoneCount={visibleDangerZones.length}
+          dangerZonesLoading={!dangerZonesReady || tripsLoading}
+          speedLimitLookupEnabled={speedLimitLookupEnabled}
+          showSpeedLimits={showSpeedLimits}
+          showRouteRisk={showRouteRisk}
+          showDangerZones={showDangerZones}
+          speedLayerDisabled={!selectedTrip || !selectedRouteReady || contextMutation.isPending || (!selectedHasSpeedLimits && !speedLimitLookupEnabled)}
+          roadDataPending={contextMutation.isPending}
+          roadDataError={contextMutation.isError ? contextMutation.error?.message || 'Could not get road data.' : ''}
+          osmFetchStatus={osmFetchStatus}
+          selectedLayerEffect={selectedLayerEffect}
+          osrmConfigured={osrmConfigured}
+          settings={settings}
+          onSpeedLayer={() => {
+            if (!selectedTrip) return;
+            if (!selectedHasSpeedLimits) {
+              if (!speedLimitLookupEnabled) return;
+              confirmAndFetchRoadContext();
+              return;
+            }
+            setShowSpeedLimits(value => !value);
+          }}
+          onRouteRiskLayer={() => setShowRouteRisk(value => !value)}
+          onDangerZoneLayer={() => setShowDangerZones(value => !value)}
+          onFetchRoadData={confirmAndFetchRoadContext}
+        />
+      ) : (
         <div className="rounded-3xl border border-border bg-card p-4 shadow-sm">
           <div className="mb-3 flex items-center gap-2">
             <Layers className="h-4 w-4 text-primary" />
@@ -763,8 +822,24 @@ export default function MapScreen() {
             </div>
           )}
         </div>
-      )}
+      ))}
 
+      {premiumVisuals ? (
+        <PremiumEventAreasCard
+          canToggleAll={visibleDangerZones.length > MAX_VISIBLE_DANGER_ZONES}
+          completedTripCount={completedSummaries.length}
+          dangerZonesReady={dangerZonesReady}
+          displayedDangerZones={displayedDangerZones}
+          hiddenAreaCount={dangerZones.length}
+          hiddenDangerZoneCount={hiddenDangerZoneCount}
+          loading={tripsLoading}
+          onShowAll={() => setShowAllDangerZones((value) => !value)}
+          onShowOnMap={() => setShowDangerZones(true)}
+          relativeTimeFormatter={relativeTime}
+          showAllDangerZones={showAllDangerZones}
+          visibleDangerZoneCount={visibleDangerZones.length}
+        />
+      ) : (
       <div className="rounded-3xl border border-border bg-card p-5 shadow-sm">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
@@ -831,6 +906,7 @@ export default function MapScreen() {
           </button>
         )}
       </div>
+      )}
 
       <div>
         <div className="flex items-center justify-between mb-3 gap-3">
@@ -914,7 +990,19 @@ export default function MapScreen() {
               </div>
             </button>
 
-            {completed.length > TRIP_CARD_PAGE_SIZE && (
+            {premiumVisuals ? (
+              <div className="premium-trip-history-on">
+                <PremiumHistoryResultsPager
+                  start={tripPageStart + 1}
+                  end={tripPageEnd}
+                  total={completed.length}
+                  page={safeTripListPage}
+                  pageCount={tripPageCount}
+                  onPrevious={() => setTripListPage((page) => Math.max(0, page - 1))}
+                  onNext={() => setTripListPage((page) => Math.min(tripPageCount - 1, page + 1))}
+                />
+              </div>
+            ) : completed.length > TRIP_CARD_PAGE_SIZE && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-secondary/35 px-3 py-2 text-xs text-muted-foreground">
                 <span>
                   Showing trips {tripPageStart + 1}-{tripPageEnd} of {completed.length}

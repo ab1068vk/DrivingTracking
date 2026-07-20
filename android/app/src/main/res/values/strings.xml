@@ -12,6 +12,9 @@
     <string name="where_i_parked_widget_description">Shows when your last privacy-safe parking location was saved and opens directions to it.</string>
     <string name="where_i_parked_saved_title">Parked %1$s</string>
     <string name="where_i_parked_saved_detail">Location stays hidden until you choose Directions.</string>
+    <string name="where_i_parked_saved_detail_high">High confidence from a stable stop. Location stays hidden.</string>
+    <string name="where_i_parked_saved_detail_medium">Good confidence from recent GPS fixes. Location stays hidden.</string>
+    <string name="where_i_parked_saved_detail_estimated">Estimated from the latest trip end. Location stays hidden.</string>
     <string name="where_i_parked_empty_title">No saved parking spot</string>
     <string name="where_i_parked_empty_detail">A spot appears after Road Sage confirms the end of a parked trip.</string>
     <string name="where_i_parked_driving_title">Trip recording</string>

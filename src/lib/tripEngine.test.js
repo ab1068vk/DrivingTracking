@@ -70,6 +70,7 @@ import {
   DEFAULT_SETTINGS,
   PARKED_LOCATION_PRIVACY_GUARD_M,
   saveLastParkedLocation,
+  suppressLastParkedLocation,
   sanitizeImportedSettings,
 } from '@/lib/trackingStore';
 import {
@@ -2163,6 +2164,48 @@ describe('tripEngine', () => {
     });
   });
 
+  it('keeps the newest completed trip authoritative for the parked location', async () => {
+    await saveLastParkedLocation({
+      lat: 43.6532,
+      lng: -79.3832,
+      timestamp: '2026-07-17T18:00:00.000Z',
+      tripId: 'july-17-trip',
+    });
+    await saveLastParkedLocation({
+      lat: 43.7001,
+      lng: -79.4101,
+      timestamp: '2026-07-18T18:00:00.000Z',
+      tripId: 'july-18-trip',
+    });
+    await saveLastParkedLocation({
+      lat: 43.61,
+      lng: -79.31,
+      timestamp: '2026-07-17T20:00:00.000Z',
+      tripId: 'late-import-of-older-trip',
+    });
+
+    await expect(getLastParkedLocation()).resolves.toMatchObject({
+      lat: 43.7001,
+      lng: -79.4101,
+      tripId: 'july-18-trip',
+    });
+  });
+
+  it('does not let an older public trip replace a newer private endpoint suppression', async () => {
+    await suppressLastParkedLocation({
+      timestamp: '2026-07-19T18:00:00.000Z',
+      source: 'privacy_zone',
+    });
+    await saveLastParkedLocation({
+      lat: 43.6532,
+      lng: -79.3832,
+      timestamp: '2026-07-18T20:00:00.000Z',
+      tripId: 'older-public-trip',
+    });
+
+    await expect(getLastParkedLocation()).resolves.toBeNull();
+  });
+
   it('does not store the last parked location inside a privacy zone guard', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: false,
@@ -2184,12 +2227,20 @@ describe('tripEngine', () => {
         timestamp: '2026-01-01T12:00:00.000Z',
         tripId: 'public-park',
       });
+      const smartPrivateEndpoint = await saveLastParkedLocation({
+        ...publicParkedLocation,
+        endpointLat: privateParkedLocation.lat,
+        endpointLng: privateParkedLocation.lng,
+        timestamp: '2026-01-01T12:04:00.000Z',
+        tripId: 'cluster-outside-private-endpoint',
+      });
       const savedPrivate = await saveLastParkedLocation({
         ...privateParkedLocation,
         timestamp: '2026-01-01T12:05:00.000Z',
         tripId: 'private-park',
       });
 
+      expect(smartPrivateEndpoint).toBeNull();
       expect(savedPrivate).toBeNull();
       expect(await getLastParkedLocation()).toBeNull();
     } finally {

@@ -37,6 +37,9 @@ import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 @CapacitorPlugin(
     name = "DriveSenseActivityRecognition",
@@ -56,6 +59,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     private ActivityRecognitionClient activityClient;
     private PendingIntent activityIntent;
     private DriveSenseSpeechController speechController;
+    private static final Map<String, PendingExport> pendingExports = new ConcurrentHashMap<>();
 
     @Override
     public void load() {
@@ -74,7 +78,23 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     @Override
     protected void handleOnDestroy() {
         if (speechController != null) speechController.shutdown();
+        if (!DriveSenseBackupExportService.hasActiveTask()) cancelAllPendingExports(getContext());
         super.handleOnDestroy();
+    }
+
+    static void publishBackupExportCancellation(String taskId) {
+        DriveSenseActivityRecognitionPlugin plugin = instance != null ? instance.get() : null;
+        if (plugin == null) return;
+        JSObject payload = new JSObject();
+        payload.put("taskId", taskId);
+        plugin.notifyListeners("backupExportCancelled", payload, true);
+    }
+
+    static void cancelAllPendingExports(Context context) {
+        for (String exportId : pendingExports.keySet()) {
+            PendingExport pending = pendingExports.remove(exportId);
+            if (pending != null) pending.delete(context);
+        }
     }
 
     @PluginMethod
@@ -382,6 +402,66 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void startBackupExportTask(PluginCall call) {
+        String taskId = UUID.randomUUID().toString();
+        String label = call.getString("label", "Preparing backup");
+        Integer progress = call.getInt("progress", 0);
+        try {
+            DriveSenseBackupExportService.start(getContext(), taskId, progress == null ? 0 : progress, label);
+            JSObject payload = new JSObject();
+            payload.put("taskId", taskId);
+            call.resolve(payload);
+        } catch (Exception error) {
+            call.reject("Could not start background backup export.", error);
+        }
+    }
+
+    @PluginMethod
+    public void updateBackupExportTask(PluginCall call) {
+        String taskId = call.getString("taskId");
+        if (taskId == null || taskId.trim().isEmpty()) {
+            call.reject("taskId is required.");
+            return;
+        }
+        Integer progress = call.getInt("progress", 0);
+        String label = call.getString("label", "Exporting backup");
+        boolean cancelled = DriveSenseBackupExportService.isCancelled(taskId);
+        if (!cancelled) {
+            DriveSenseBackupExportService.update(getContext(), taskId, progress == null ? 0 : progress, label);
+        }
+        JSObject payload = new JSObject();
+        payload.put("cancelled", cancelled);
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void finishBackupExportTask(PluginCall call) {
+        String taskId = call.getString("taskId");
+        if (taskId == null || taskId.trim().isEmpty()) {
+            call.reject("taskId is required.");
+            return;
+        }
+        String status = call.getString("status", "complete");
+        if ("complete".equals(status)) {
+            DriveSenseBackupExportService.complete(getContext(), taskId, call.getString("filename", "Road Sage backup"));
+        } else if ("failed".equals(status)) {
+            DriveSenseBackupExportService.fail(getContext(), taskId, call.getString("message", "Open Road Sage and try again."));
+        } else {
+            DriveSenseBackupExportService.cancelFromApp(getContext(), taskId);
+        }
+        DriveSenseBackupExportService.clearCancellation(taskId);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void isBackupExportTaskCancelled(PluginCall call) {
+        String taskId = call.getString("taskId");
+        JSObject payload = new JSObject();
+        payload.put("cancelled", DriveSenseBackupExportService.isCancelled(taskId));
+        call.resolve(payload);
+    }
+
+    @PluginMethod
     public void saveExportToDownloads(PluginCall call) {
         String filename;
         try {
@@ -405,6 +485,101 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         } catch (Exception error) {
             call.reject(error.getMessage(), error);
         }
+    }
+
+    @PluginMethod
+    public void beginExportToDownloads(PluginCall call) {
+        String filename;
+        try {
+            filename = validateDownloadFilename(call.getString("filename"));
+        } catch (IllegalArgumentException error) {
+            call.reject(error.getMessage());
+            return;
+        }
+        String mimeType = call.getString("mimeType", "application/octet-stream");
+
+        try {
+            String exportId = UUID.randomUUID().toString();
+            PendingExport pending = createPendingExport(exportId, filename, mimeType);
+            pendingExports.put(exportId, pending);
+            JSObject payload = new JSObject();
+            payload.put("exportId", exportId);
+            call.resolve(payload);
+        } catch (Exception error) {
+            call.reject(error.getMessage(), error);
+        }
+    }
+
+    @PluginMethod
+    public void appendExportToDownloads(PluginCall call) {
+        String exportId = call.getString("exportId");
+        String data = call.getString("data");
+        PendingExport pending = exportId == null ? null : pendingExports.get(exportId);
+        if (pending == null) {
+            call.reject("Export session is unavailable.");
+            return;
+        }
+        if (data == null) {
+            call.reject("data is required.");
+            return;
+        }
+        if (data.length() > 512 * 1024) {
+            call.reject("Export chunk is too large.");
+            return;
+        }
+
+        try {
+            byte[] bytes = data.getBytes(StandardCharsets.UTF_8);
+            synchronized (pending) {
+                pending.output.write(bytes);
+                pending.bytesWritten += bytes.length;
+            }
+            JSObject payload = new JSObject();
+            payload.put("bytesWritten", pending.bytesWritten);
+            call.resolve(payload);
+        } catch (Exception error) {
+            cancelPendingExport(exportId);
+            call.reject(error.getMessage(), error);
+        }
+    }
+
+    @PluginMethod
+    public void finishExportToDownloads(PluginCall call) {
+        String exportId = call.getString("exportId");
+        PendingExport pending = exportId == null ? null : pendingExports.remove(exportId);
+        if (pending == null) {
+            call.reject("Export session is unavailable.");
+            return;
+        }
+
+        try {
+            synchronized (pending) {
+                pending.output.flush();
+                pending.output.close();
+            }
+            if (pending.mediaStoreUri != null) {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                getContext().getContentResolver().update(pending.mediaStoreUri, values, null, null);
+            }
+            JSObject payload = new JSObject();
+            payload.put("uri", pending.uri().toString());
+            payload.put("filename", pending.filename);
+            payload.put("bytesWritten", pending.bytesWritten);
+            call.resolve(payload);
+        } catch (Exception error) {
+            pending.delete(getContext());
+            call.reject(error.getMessage(), error);
+        }
+    }
+
+    @PluginMethod
+    public void cancelExportToDownloads(PluginCall call) {
+        String exportId = call.getString("exportId");
+        boolean cancelled = exportId != null && cancelPendingExport(exportId);
+        JSObject payload = new JSObject();
+        payload.put("cancelled", cancelled);
+        call.resolve(payload);
     }
 
     @PluginMethod
@@ -530,6 +705,71 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             return saveDownloadWithMediaStore(filename, data, mimeType);
         }
         return saveDownloadWithPublicFile(filename, data);
+    }
+
+    private PendingExport createPendingExport(String exportId, String filename, String mimeType) throws Exception {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContentResolver resolver = getContext().getContentResolver();
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.MediaColumns.DISPLAY_NAME, filename);
+            values.put(MediaStore.MediaColumns.MIME_TYPE, mimeType);
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+            values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+            Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) throw new Exception("Unable to create Downloads file.");
+            OutputStream output = resolver.openOutputStream(uri);
+            if (output == null) {
+                resolver.delete(uri, null, null);
+                throw new Exception("Unable to open Downloads file.");
+            }
+            return new PendingExport(exportId, filename, output, uri, null);
+        }
+
+        File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        if (!downloadsDir.exists() && !downloadsDir.mkdirs()) {
+            throw new Exception("Unable to open Downloads folder.");
+        }
+        File file = new File(downloadsDir, filename);
+        return new PendingExport(exportId, filename, new FileOutputStream(file, false), null, file);
+    }
+
+    private boolean cancelPendingExport(String exportId) {
+        PendingExport pending = pendingExports.remove(exportId);
+        if (pending == null) return false;
+        pending.delete(getContext());
+        return true;
+    }
+
+    private static final class PendingExport {
+        final String exportId;
+        final String filename;
+        final OutputStream output;
+        final Uri mediaStoreUri;
+        final File publicFile;
+        long bytesWritten;
+
+        PendingExport(String exportId, String filename, OutputStream output, Uri mediaStoreUri, File publicFile) {
+            this.exportId = exportId;
+            this.filename = filename;
+            this.output = output;
+            this.mediaStoreUri = mediaStoreUri;
+            this.publicFile = publicFile;
+        }
+
+        Uri uri() {
+            return mediaStoreUri != null ? mediaStoreUri : Uri.fromFile(publicFile);
+        }
+
+        void delete(Context context) {
+            try {
+                output.close();
+            } catch (Exception ignored) {}
+            if (mediaStoreUri != null) {
+                context.getContentResolver().delete(mediaStoreUri, null, null);
+            } else if (publicFile != null && publicFile.exists()) {
+                publicFile.delete();
+            }
+        }
     }
 
     private JSObject saveDownloadWithMediaStore(String filename, byte[] data, String mimeType) throws Exception {

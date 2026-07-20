@@ -8,6 +8,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.time.Instant;
 import java.util.UUID;
 
 class DriveSenseNativeTripStore {
@@ -192,12 +193,31 @@ class DriveSenseNativeTripStore {
     }
 
     static JSONObject getLastParkedLocation(Context context) {
-        String stored = prefs(context).getString(KEY_LAST_PARKED, null);
-        String contextName = LAST_PARKED_CONTEXT;
-        if (stored == null || stored.trim().isEmpty()) {
-            stored = context.getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE).getString(SHARED_LAST_PARKED_KEY, null);
-            contextName = SHARED_LAST_PARKED_CONTEXT;
+        JSONObject nativeParked = readParkedLocation(
+            prefs(context).getString(KEY_LAST_PARKED, null),
+            LAST_PARKED_CONTEXT
+        );
+        JSONObject sharedParked = readParkedLocation(
+            context.getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE)
+                .getString(SHARED_LAST_PARKED_KEY, null),
+            SHARED_LAST_PARKED_CONTEXT
+        );
+        JSONObject parked = parkedTimestampMs(sharedParked) >= parkedTimestampMs(nativeParked)
+            ? sharedParked
+            : nativeParked;
+        if (parked == null || parked.optBoolean("suppressed", false)) return null;
+        if (PrivacyZoneChecker.isInsidePrivacyZone(
+            context,
+            parked.optDouble("lat", Double.NaN),
+            parked.optDouble("lng", Double.NaN)
+        )) {
+            clearLastParkedLocation(context);
+            return null;
         }
+        return parked;
+    }
+
+    private static JSONObject readParkedLocation(String stored, String contextName) {
         if (stored == null || stored.trim().isEmpty()) return null;
         try {
             String raw;
@@ -215,22 +235,39 @@ class DriveSenseNativeTripStore {
                     raw = stored;
                 }
             }
-            JSONObject parked = new JSONObject(raw);
-            if (PrivacyZoneChecker.isInsidePrivacyZone(
-                context,
-                parked.optDouble("lat", Double.NaN),
-                parked.optDouble("lng", Double.NaN)
-            )) {
-                clearLastParkedLocation(context);
-                return null;
-            }
-            return parked;
+            return new JSONObject(raw);
         } catch (Exception e) {
             return null;
         }
     }
 
+    private static long parkedTimestampMs(JSONObject parked) {
+        if (parked == null) return Long.MIN_VALUE;
+        long storedMs = parked.optLong("timestamp_ms", 0L);
+        if (storedMs > 0L) return storedMs;
+        try {
+            return Instant.parse(parked.optString("timestamp", "")).toEpochMilli();
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
     static void saveLastParkedLocation(Context context, double lat, double lng, long timestampMs, String tripId, String source) {
+        saveLastParkedLocation(context, lat, lng, timestampMs, tripId, source, null);
+    }
+
+    static void saveLastParkedLocation(
+        Context context,
+        double lat,
+        double lng,
+        long timestampMs,
+        String tripId,
+        String source,
+        JSONObject resolution
+    ) {
+        if (!Double.isFinite(lat) || !Double.isFinite(lng) || Math.abs(lat) > 90d || Math.abs(lng) > 180d) {
+            return;
+        }
         if (PrivacyZoneChecker.isInsidePrivacyZone(context, lat, lng)) {
             clearLastParkedLocation(context);
             Log.i(TAG, "Parked location suppressed (privacy zone)");
@@ -245,6 +282,13 @@ class DriveSenseNativeTripStore {
             parked.put("timestamp_ms", timestampMs);
             parked.put("tripId", tripId);
             parked.put("source", source);
+            if (resolution != null) {
+                parked.put("confidence", resolution.optString("confidence", "estimated"));
+                parked.put("accuracy_m", resolution.optLong("accuracy_m", 0L));
+                parked.put("strategy", resolution.optString("strategy", "last_trip_point"));
+                parked.put("sample_count", resolution.optInt("sample_count", 1));
+                parked.put("spread_m", resolution.optLong("spread_m", 0L));
+            }
             String encrypted = DriveSensePayloadCrypto.encryptForStorage(parked.toString(), LAST_PARKED_CONTEXT);
             prefs(context).edit().putString(KEY_LAST_PARKED, encrypted).apply();
             WhereIParkedWidgetProvider.refreshAll(context);

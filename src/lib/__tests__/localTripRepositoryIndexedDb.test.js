@@ -481,6 +481,37 @@ describe('localTripRepository IndexedDB migrations', () => {
     expect(tripStore.getAllCount).toBe(1);
   });
 
+  it('reports an encrypted IndexedDB read failure instead of presenting intact storage as empty', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    const values = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    await localTripRepository.create({
+      id: 'still-saved-after-read-error',
+      status: 'completed',
+      start_time: '2026-07-18T10:00:00.000Z',
+      route_points: [{ lat: 43.65, lng: -79.38 }],
+    });
+
+    const tripStore = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips');
+    const stored = tripStore.records.get('still-saved-after-read-error');
+    stored.encrypted_payload = {
+      ...stored.encrypted_payload,
+      ciphertext: 'not-valid-base64',
+    };
+
+    await expect(localTripRepository.listAllForExport()).rejects.toThrow(
+      'Trip history is temporarily unavailable. Your saved trips were not deleted.'
+    );
+    expect(tripStore.records.has('still-saved-after-read-error')).toBe(true);
+    expect(values.has('drivesense_trips')).toBe(false);
+  });
+
   it('opens an empty IndexedDB and creates the trip store with required indexes', async () => {
     const fakeIndexedDb = new FakeIndexedDb();
     vi.stubGlobal('indexedDB', fakeIndexedDb);

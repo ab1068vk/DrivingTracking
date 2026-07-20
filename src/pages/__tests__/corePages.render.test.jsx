@@ -237,6 +237,7 @@ vi.mock('@/lib/trackingStore', () => ({
   },
   clearSettingsMemoryForErasure: vi.fn(),
   saveLastParkedLocation: vi.fn(),
+  suppressLastParkedLocation: vi.fn(),
   validateSettingsPatch: vi.fn(() => ({ valid: true, errors: [] })),
 }));
 
@@ -1296,7 +1297,7 @@ describe('core page component renders', () => {
     )).toBe(false);
   });
 
-  it('keeps premium map visuals scoped to the route diagnostics card', async () => {
+  it('gates premium map controls and route diagnostics behind the appearance setting', async () => {
     settings.premium_visual_experience = true;
 
     const { default: TripDetail } = await import('@/pages/TripDetail');
@@ -1310,14 +1311,42 @@ describe('core page component renders', () => {
     expect(mapHtml).not.toContain('premium-map-page');
     expect(mapHtml).not.toContain('premium-map-heading');
     expect(mapHtml).not.toContain('premium-map-tabs');
-    expect(mapHtml).not.toContain('premium-map-layers-card');
+    expect(mapHtml).toContain('premium-map-controls');
+    expect(mapHtml).toContain('premium-map-control-view.png');
+    expect(mapHtml).toContain('premium-map-control-playback.png');
+    expect(mapHtml).toContain('premium-map-control-layers.png');
+    expect(mapHtml).toContain('premium-map-layers-card');
+    expect(mapHtml).toContain('premium-map-layer-speed.webp');
+    expect(mapHtml).toContain('premium-map-layer-repeated-route.webp');
+    expect(mapHtml).toContain('premium-map-layer-event-areas.webp');
+    expect(mapHtml).toContain('Customize what appears on your map');
+    expect(mapHtml).toContain('premium-event-areas');
+    expect(mapHtml).toContain('premium-event-areas-hero.png');
+    expect(mapHtml).toContain('Repeated Driving-Event Areas');
     expect(mapHtml).not.toContain('premium-map-events-card');
     expect(mapHtml).not.toContain('premium-map-trip-picker');
+    expect(mapHtml).toContain('aria-label="Matching trip result pages"');
+    expect(mapHtml).toContain('Showing <strong>1–1</strong> of <strong>1</strong> matching trip');
+    expect(mapHtml).toContain('aria-label="Show previous matching trips"');
+    expect(mapHtml).toContain('aria-label="Show next matching trips"');
     expect(mapHtml.match(/data-map-tab="mode"/g)).toHaveLength(2);
     expect(mapHtml).toContain('data-map-tab="utility"');
+    expect(mapHtml).toContain('premium-map-diagnostics--overlay');
+    expect(mapHtml).toContain('Route diagnostics');
+    expect(mapHtml).toContain('1 route');
     expect(shouldShowStandardMapRouteSummary(true, sampleTrip)).toBe(false);
     expect(shouldShowStandardMapRouteSummary(false, sampleTrip)).toBe(true);
-    expect(shouldShowStandardMapRouteSummary(true, null)).toBe(true);
+    expect(shouldShowStandardMapRouteSummary(true, null)).toBe(false);
+
+    settings.premium_visual_experience = false;
+    const standardMapHtml = renderToStaticMarkup(<MapScreen />);
+    expect(standardMapHtml).not.toContain('premium-map-controls');
+    expect(standardMapHtml).not.toContain('premium-map-layers-card');
+    expect(standardMapHtml).not.toContain('premium-event-areas');
+    expect(standardMapHtml).toContain('rounded-3xl border border-border bg-card p-4 shadow-sm');
+    expect(standardMapHtml).toContain('rounded-3xl border border-border bg-card p-5 shadow-sm');
+    expect(standardMapHtml.match(/data-map-tab="mode"/g)).toHaveLength(2);
+    expect(standardMapHtml).toContain('data-map-tab="utility"');
   });
 
   it('gates the premium trip-history surfaces behind the persisted appearance setting', async () => {

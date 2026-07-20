@@ -34,8 +34,8 @@ export const tripService = {
     return repository().listAll({ sort });
   },
 
-  listAllForExport: ({ sort = "-start_time" } = {}) => {
-    return repository().listAllForExport({ sort });
+  listAllForExport: ({ sort = "-start_time", signal, onProgress } = {}) => {
+    return repository().listAllForExport({ sort, signal, onProgress });
   },
 
   getById: (id) => {

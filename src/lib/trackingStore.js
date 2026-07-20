@@ -753,11 +753,36 @@ export function validateSettingsPatch(patch = {}) {
 
 export async function getLastParkedLocation() {
   const parkedLocation = await getEncryptedJson(LAST_PARKED_KEY, null);
+  if (parkedLocation?.suppressed === true) return null;
   if (parkedLocation && await isPrivateParkedLocation(parkedLocation)) {
-    await removeEncryptedJson(LAST_PARKED_KEY);
+    await suppressLastParkedLocation({
+      timestamp: parkedLocation.timestamp,
+      source: 'privacy_zone',
+    });
     return null;
   }
   return parkedLocation;
+}
+
+const parkedTimestampMs = (value) => {
+  const parsed = Date.parse(String(value?.timestamp || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+/** @param {{timestamp?: string | null, source?: string}} [options] */
+export async function suppressLastParkedLocation(options = {}) {
+  const { timestamp, source = 'trip_end_unavailable' } = options;
+  const suppression = {
+    suppressed: true,
+    timestamp: timestamp || new Date().toISOString(),
+    source,
+  };
+  const existing = await getEncryptedJson(LAST_PARKED_KEY, null);
+  if (parkedTimestampMs(existing) > parkedTimestampMs(suppression)) {
+    return existing?.suppressed === true ? null : existing;
+  }
+  await setEncryptedJson(LAST_PARKED_KEY, suppression);
+  return null;
 }
 
 const shortenParkedAddress = (address) => {
@@ -791,22 +816,55 @@ const summarizeSettingsPatch = (keys, before = {}, after = {}) => keys.reduce((a
   return acc;
 }, {});
 
-export async function saveLastParkedLocation({ lat, lng, timestamp, tripId, address = null, source = 'trip_end' }) {
+export async function saveLastParkedLocation({
+  lat,
+  lng,
+  endpointLat = lat,
+  endpointLng = lng,
+  timestamp,
+  tripId,
+  address = null,
+  source = 'trip_end',
+  confidence = 'estimated',
+  accuracyM = null,
+  strategy = 'last_trip_point',
+  sampleCount = 1,
+  spreadM = null,
+}) {
   const parsedLat = Number(lat);
   const parsedLng = Number(lng);
-  if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) return null;
-  if (await isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng })) {
-    await removeEncryptedJson(LAST_PARKED_KEY);
-    return null;
+  const parsedEndpointLat = Number(endpointLat);
+  const parsedEndpointLng = Number(endpointLng);
+  if (
+    !Number.isFinite(parsedLat) ||
+    !Number.isFinite(parsedLng) ||
+    Math.abs(parsedLat) > 90 ||
+    Math.abs(parsedLng) > 180
+  ) return null;
+  const normalizedTimestamp = timestamp || new Date().toISOString();
+  const existing = await getEncryptedJson(LAST_PARKED_KEY, null);
+  if (parkedTimestampMs(existing) > parkedTimestampMs({ timestamp: normalizedTimestamp })) {
+    return existing?.suppressed === true ? null : existing;
+  }
+  if (
+    await isPrivateParkedLocation({ lat: parsedEndpointLat, lng: parsedEndpointLng }) ||
+    await isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng })
+  ) {
+    return suppressLastParkedLocation({ timestamp: normalizedTimestamp, source: 'privacy_zone' });
   }
 
   const parkedLocation = {
     lat: parsedLat,
     lng: parsedLng,
-    timestamp: timestamp || new Date().toISOString(),
+    timestamp: normalizedTimestamp,
     tripId: tripId ?? null,
     address: shortenParkedAddress(address),
     source,
+    confidence: ['high', 'medium', 'estimated'].includes(confidence) ? confidence : 'estimated',
+    accuracy_m: Number.isFinite(Number(accuracyM)) ? Math.max(0, Math.round(Number(accuracyM))) : null,
+    strategy,
+    sample_count: Math.max(1, Math.round(Number(sampleCount) || 1)),
+    spread_m: Number.isFinite(Number(spreadM)) ? Math.max(0, Math.round(Number(spreadM))) : null,
   };
   await setEncryptedJson(LAST_PARKED_KEY, parkedLocation);
   return parkedLocation;

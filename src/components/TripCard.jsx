@@ -9,6 +9,7 @@ import {
 } from '@/lib/tripMetadata';
 import { useNavigate } from 'react-router-dom';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
+import PremiumTripCard from '@/components/PremiumTripCard';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
 
@@ -21,11 +22,26 @@ export default function TripCard({
   units = 'metric',
   index: _index = 0,
   compact = false,
+  premium = false,
   scoreDelta = null,
   onToggleFavorite = null,
   onIntent = null,
 }) {
   const navigate = useNavigate();
+
+  if (premium) {
+    return (
+      <PremiumTripCard
+        trip={trip}
+        units={units}
+        compact={compact}
+        scoreDelta={scoreDelta}
+        onToggleFavorite={onToggleFavorite}
+        onIntent={onIntent}
+      />
+    );
+  }
+
   const overallScore = getTripComponentScore(trip, 'overall');
   const safetyScore = getTripComponentScore(trip, 'safety');
   const phoneUsePermissionRequired = trip.phone_use_score_status === 'usage_access_required';

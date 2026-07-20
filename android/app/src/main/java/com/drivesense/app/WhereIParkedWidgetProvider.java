@@ -70,7 +70,13 @@ public class WhereIParkedWidgetProvider extends AppWidgetProvider {
             R.id.widget_status,
             context.getString(R.string.where_i_parked_saved_title, formatElapsed(context, parkedTimestampMs(parked)))
         );
-        views.setTextViewText(R.id.widget_detail, context.getString(R.string.where_i_parked_saved_detail));
+        String confidence = parked.optString("confidence", "estimated");
+        int detailResource = "high".equals(confidence)
+            ? R.string.where_i_parked_saved_detail_high
+            : "medium".equals(confidence)
+                ? R.string.where_i_parked_saved_detail_medium
+                : R.string.where_i_parked_saved_detail_estimated;
+        views.setTextViewText(R.id.widget_detail, context.getString(detailResource));
         views.setTextViewText(R.id.widget_open_app, context.getString(R.string.where_i_parked_open_app));
         views.setTextViewText(R.id.widget_directions, context.getString(R.string.where_i_parked_directions));
         views.setViewVisibility(R.id.widget_directions, View.VISIBLE);

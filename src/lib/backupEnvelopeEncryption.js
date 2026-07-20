@@ -12,9 +12,17 @@ const SALT_BYTES = 16;
 const IV_BYTES = 12;
 const BASE64_CHUNK_SIZE = 0x8000;
 
+const throwIfAborted = (signal) => {
+  if (!signal?.aborted) return;
+  const error = new Error('Backup export cancelled.');
+  error.name = 'AbortError';
+  throw error;
+};
+
 export const BACKUP_PASSWORD_REQUIRED_CODE = 'backup_password_required';
 export const BACKUP_WRONG_PASSWORD_CODE = 'backup_wrong_password';
 export const BACKUP_UNSUPPORTED_ENCRYPTION_CODE = 'backup_unsupported_encryption';
+export const BACKUP_DECOMPRESSED_TOO_LARGE_CODE = 'backup_decompressed_too_large';
 
 /**
  * @param {string} message
@@ -101,22 +109,76 @@ const compressBackupBytes = async (bytes) => {
     : { bytes, compression: null };
 };
 
-const decompressBackupBytes = async (bytes, compression) => {
-  if (!compression) return bytes;
+const decompressBackupText = async (
+  bytes,
+  compression,
+  { maxBytes = MAX_BACKUP_DECOMPRESSED_BYTES, signal, onProgress } = {}
+) => {
+  throwIfAborted(signal);
+  if (!compression) {
+    if (bytes.length > maxBytes) {
+      throw makeBackupCryptoError(
+        BACKUP_DECOMPRESSED_TOO_LARGE_MESSAGE,
+        BACKUP_DECOMPRESSED_TOO_LARGE_CODE
+      );
+    }
+    onProgress?.({ phase: 'decompressing', completed: bytes.length, total: bytes.length });
+    return new TextDecoder().decode(bytes);
+  }
   if (compression !== ENCRYPTED_BACKUP_COMPRESSION) {
     throw makeBackupCryptoError(
       'Encrypted backup compression is not supported.',
       BACKUP_UNSUPPORTED_ENCRYPTION_CODE
     );
   }
-  const decompressed = await transformBackupBytes(bytes, 'decompress').catch(() => null);
-  if (!decompressed) {
+  if (typeof globalThis.DecompressionStream !== 'function') {
     throw makeBackupCryptoError(
       'This device cannot decompress the encrypted backup.',
       BACKUP_UNSUPPORTED_ENCRYPTION_CODE
     );
   }
-  return decompressed;
+
+  let reader;
+  try {
+    reader = new Blob([bytes])
+      .stream()
+      .pipeThrough(new globalThis.DecompressionStream(ENCRYPTED_BACKUP_COMPRESSION))
+      .getReader();
+    const decoder = new TextDecoder();
+    const textChunks = [];
+    let totalBytes = 0;
+    while (true) {
+      throwIfAborted(signal);
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw makeBackupCryptoError(
+          BACKUP_DECOMPRESSED_TOO_LARGE_MESSAGE,
+          BACKUP_DECOMPRESSED_TOO_LARGE_CODE
+        );
+      }
+      textChunks.push(decoder.decode(value, { stream: true }));
+      onProgress?.({ phase: 'decompressing', completed: totalBytes, total: maxBytes });
+    }
+    textChunks.push(decoder.decode());
+    return textChunks.join('');
+  } catch (error) {
+    if (
+      error?.name === 'AbortError' ||
+      error?.code === BACKUP_DECOMPRESSED_TOO_LARGE_CODE ||
+      error?.code === BACKUP_UNSUPPORTED_ENCRYPTION_CODE
+    ) {
+      throw error;
+    }
+    throw makeBackupCryptoError(
+      'This device cannot decompress the encrypted backup.',
+      BACKUP_UNSUPPORTED_ENCRYPTION_CODE
+    );
+  } finally {
+    reader?.releaseLock?.();
+  }
 };
 
 const validateEnvelope = (envelope) => {
@@ -158,20 +220,30 @@ export function isEncryptedBackupEnvelope(value) {
   }
 }
 
-export async function encryptBackupText(plaintext, passphrase, { exportedAt = new Date().toISOString() } = {}) {
+export async function encryptBackupText(
+  plaintext,
+  passphrase,
+  { exportedAt = new Date().toISOString(), signal, onProgress } = {}
+) {
+  throwIfAborted(signal);
   const crypto = cryptoProvider();
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const plaintextBytes = new TextEncoder().encode(String(plaintext));
+  onProgress?.({ phase: 'compressing', completed: 0, total: plaintextBytes.length });
   const [key, compressed] = await Promise.all([
     deriveBackupKey(passphrase, salt, BACKUP_KDF_ITERATIONS),
     compressBackupBytes(plaintextBytes),
   ]);
+  throwIfAborted(signal);
+  onProgress?.({ phase: 'encrypting', completed: 0, total: compressed.bytes.length });
   const ciphertext = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv },
     key,
     compressed.bytes
   );
+  throwIfAborted(signal);
+  onProgress?.({ phase: 'encrypting', completed: compressed.bytes.length, total: compressed.bytes.length });
 
   return JSON.stringify({
     app: 'Road Sage',
@@ -188,7 +260,12 @@ export async function encryptBackupText(plaintext, passphrase, { exportedAt = ne
   });
 }
 
-export async function decryptBackupText(encryptedText, passphrase) {
+export async function decryptBackupText(
+  encryptedText,
+  passphrase,
+  { maxDecompressedBytes = MAX_BACKUP_DECOMPRESSED_BYTES, signal, onProgress } = {}
+) {
+  throwIfAborted(signal);
   validatePassphrase(passphrase);
 
   let envelope;
@@ -206,18 +283,27 @@ export async function decryptBackupText(encryptedText, passphrase) {
     const salt = base64ToBytes(envelope.salt);
     const iv = base64ToBytes(envelope.iv);
     const ciphertext = base64ToBytes(envelope.ciphertext);
+    onProgress?.({ phase: 'decrypting', completed: 0, total: ciphertext.length });
     const key = await deriveBackupKey(passphrase, salt, Number(envelope.iterations));
+    throwIfAborted(signal);
     const plaintext = await cryptoProvider().subtle.decrypt(
       { name: 'AES-GCM', iv },
       key,
       ciphertext
     );
-    const plaintextBytes = await decompressBackupBytes(new Uint8Array(plaintext), envelope.compression);
-    return new TextDecoder().decode(plaintextBytes);
+    throwIfAborted(signal);
+    onProgress?.({ phase: 'decrypting', completed: ciphertext.length, total: ciphertext.length });
+    return decompressBackupText(new Uint8Array(plaintext), envelope.compression, {
+      maxBytes: maxDecompressedBytes,
+      signal,
+      onProgress,
+    });
   } catch (error) {
     if (
+      error?.name === 'AbortError' ||
       error?.code === BACKUP_PASSWORD_REQUIRED_CODE ||
-      error?.code === BACKUP_UNSUPPORTED_ENCRYPTION_CODE
+      error?.code === BACKUP_UNSUPPORTED_ENCRYPTION_CODE ||
+      error?.code === BACKUP_DECOMPRESSED_TOO_LARGE_CODE
     ) {
       throw error;
     }
@@ -227,3 +313,7 @@ export async function decryptBackupText(encryptedText, passphrase) {
     );
   }
 }
+import {
+  BACKUP_DECOMPRESSED_TOO_LARGE_MESSAGE,
+  MAX_BACKUP_DECOMPRESSED_BYTES,
+} from '@/lib/dataBackupConstants';

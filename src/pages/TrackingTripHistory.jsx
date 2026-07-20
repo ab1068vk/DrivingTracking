@@ -111,6 +111,13 @@ export default function TrackingTripHistory() {
         <select aria-label="Sort trips" value={sort} onChange={(e) => startFilterTransition(() => { setSort(e.target.value); setPage(0); })} className="h-10 rounded-md border border-border bg-card px-3 text-sm">{sorts.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       </div>
     </header>
+    {query.isError && (
+      <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" role="alert">
+        <div className="font-semibold">Trip history could not be opened</div>
+        <div className="mt-1">{query.error?.message || 'Your saved trips were not deleted. Retry the local storage read.'}</div>
+        <button type="button" onClick={() => query.refetch()} className="mt-3 h-9 rounded-md bg-amber-900 px-3 font-semibold text-white dark:bg-amber-200 dark:text-amber-950">Retry safely</button>
+      </div>
+    )}
     <div className="mt-3 overflow-hidden rounded-lg border border-border bg-card/60">
       <div className="flex min-h-9 items-center justify-between gap-3 border-b border-border px-3 py-2 text-xs text-muted-foreground" aria-live="polite">
         <span>{query.isLoading ? 'Reading local trip summaries…' : `${visible.length} of ${trips.length} trips`}</span>
@@ -128,7 +135,7 @@ export default function TrackingTripHistory() {
             <Td><b className="text-foreground">{route.label}</b><div className="mt-1">{points == null ? 'sample count unavailable' : `${points} retained samples`}</div></Td>
             <Td><span title={evidence.detail} className={`inline-flex rounded-sm border px-2 py-1 font-semibold ${badge[evidence.key] || badge.unavailable}`}>{evidence.label}</span></Td>
           </tr>;
-        })}{!query.isLoading && !visible.length && <tr><td colSpan={7} className="px-4 py-16 text-center text-sm text-muted-foreground">No trips match the current telemetry filters.</td></tr>}</tbody>
+        })}{!query.isLoading && !query.isError && !visible.length && <tr><td colSpan={7} className="px-4 py-16 text-center text-sm text-muted-foreground">No trips match the current telemetry filters.</td></tr>}</tbody>
       </table></div>
       {visible.length > PAGE_SIZE && (
         <div className="flex items-center justify-between gap-3 border-t border-border px-3 py-2 text-xs">

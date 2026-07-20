@@ -1,5 +1,6 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import TripCard from '@/components/TripCard';
 
@@ -114,5 +115,81 @@ describe('TripCard score provenance display', () => {
 
     expect(html).not.toContain('1 phone');
     expect(html).not.toContain('confirmed phone-use window');
+  });
+
+  it('renders the time-aware premium card only when explicitly enabled', () => {
+    const standardHtml = renderToStaticMarkup(<TripCard trip={trip('calibrated')} />);
+    const premiumHtml = renderToStaticMarkup(<TripCard premium trip={{
+      ...trip('calibrated'),
+      start_time: new Date(2026, 6, 18, 19, 30).toISOString(),
+      route_replay_available: true,
+      harsh_brakes_count: 2,
+    }} scoreDelta={{ delta: 8, direction: 'up', sampleCount: 5 }} />);
+
+    expect(standardHtml).not.toContain('premium-trip-card');
+    expect(premiumHtml).toContain('premium-trip-card');
+    expect(premiumHtml).toContain('data-time="dusk"');
+    expect(premiumHtml).toContain('data-scene="dusk"');
+    expect(premiumHtml).toContain('data-score-tone="excellent"');
+    expect(premiumHtml).toContain('premium-trip-emblem-dusk-v2.webp');
+    expect(premiumHtml).toContain('8 vs last 5');
+    expect(premiumHtml).toContain('2 events');
+    expect(premiumHtml).toContain('Open 3D replay for Untitled trip');
+  });
+
+  it('ships the layout rules required to render the premium markup as a card', () => {
+    const css = readFileSync(new URL('../../index.css', import.meta.url), 'utf8');
+
+    expect(css).toContain('.premium-trip-card {');
+    expect(css).toContain('.premium-trip-scene {');
+    expect(css).toContain('.premium-trip-content {');
+    expect(css).toContain('.premium-trip-open-target {');
+    expect(css).toContain('overflow: hidden;');
+    expect(css).toContain('border-radius: 1.75rem;');
+  });
+
+  it.each([
+    [58, 'dusk-caution', 'premium-trip-emblem-dusk-caution-v2.webp'],
+    [49, 'dusk-risk', 'premium-trip-emblem-dusk-risk-v2.webp'],
+    [20, 'dusk-risk', 'premium-trip-emblem-dusk-risk-v2.webp'],
+  ])('selects score %i as the dusk %s scene', (score, scene, emblem) => {
+    const html = renderToStaticMarkup(<TripCard premium trip={{
+      ...trip('calibrated'),
+      start_time: new Date(2026, 6, 18, 19, 19).toISOString(),
+      score_overall: score,
+    }} />);
+
+    expect(html).toContain(`data-scene="${scene}"`);
+    expect(html).toContain(emblem);
+  });
+
+  it.each([
+    [6, 'dawn', 'premium-trip-emblem-dawn-v2.webp'],
+    [12, 'day', 'premium-trip-emblem-day-v2.webp'],
+    [19, 'dusk', 'premium-trip-emblem-dusk-v2.webp'],
+    [23, 'night', 'premium-trip-emblem-night-v2.webp'],
+  ])('selects local hour %i as the generated %s emblem', (hour, scene, emblem) => {
+    const html = renderToStaticMarkup(<TripCard premium trip={{
+      ...trip('calibrated'),
+      start_time: new Date(2026, 6, 18, hour, 30).toISOString(),
+    }} />);
+
+    expect(html).toContain(`data-scene="${scene}"`);
+    expect(html).toContain(emblem);
+  });
+
+  it('selects the red dusk scene for a fair score with high event density', () => {
+    const html = renderToStaticMarkup(<TripCard premium trip={{
+      ...trip('calibrated'),
+      start_time: new Date(2026, 6, 18, 19, 45).toISOString(),
+      score_overall: 59,
+      distance_km: 1.9,
+      harsh_brakes_count: 2,
+      rapid_accel_count: 1,
+      sharp_turns_count: 1,
+    }} />);
+
+    expect(html).toContain('data-scene="dusk-risk"');
+    expect(html).toContain('4 events');
   });
 });

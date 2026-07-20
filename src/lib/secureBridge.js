@@ -7,6 +7,7 @@ const SecureBridge = registerPlugin('SecureBridge');
 
 let sessionPromise = null;
 let lastNonce = 0;
+let bridgeCallQueue = Promise.resolve();
 
 const cryptoApi = () => {
   const api = globalThis.crypto;
@@ -100,7 +101,7 @@ const getSession = () => {
   return sessionPromise;
 };
 
-export async function secureCall(pluginName, method, data) {
+async function performSecureCall(pluginName, method, data) {
   const api = cryptoApi();
   const { key, sessionId } = await getSession();
   const nonce = nextNonce();
@@ -143,6 +144,12 @@ export async function secureCall(pluginName, method, data) {
     base64ToBytes(result.data)
   );
   return JSON.parse(new TextDecoder().decode(plaintext));
+}
+
+export function secureCall(pluginName, method, data) {
+  const call = bridgeCallQueue.then(() => performSecureCall(pluginName, method, data));
+  bridgeCallQueue = call.catch(() => undefined);
+  return call;
 }
 
 export async function secureSetPreference({ key, value, context, encryptAtRest = false }) {

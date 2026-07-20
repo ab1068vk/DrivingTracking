@@ -28,6 +28,7 @@ import {
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
 import { PageHeader } from '@/components/PageChrome';
+import { getPremiumTripScoreDelta } from '@/lib/premiumTripPresentation';
 
 const SORT_OPTIONS = [
   { id: 'date_desc', label: 'Newest First' },
@@ -68,32 +69,7 @@ const sortableScore = (trip, direction = 'desc') => {
 };
 
 export function scoreDeltaForTrip(trip, tripsByRecentOrder = []) {
-  const index = tripsByRecentOrder.findIndex((item) => String(item.id) === String(trip?.id));
-  const currentScore = scoreValue(trip);
-  if (index < 0 || !Number.isFinite(currentScore)) return null;
-
-  const previousFive = tripsByRecentOrder
-    .slice(index + 1, index + 6)
-    .map((item) => scoreValue(item))
-    .filter(Number.isFinite);
-
-  if (previousFive.length < SCORE_DELTA_MIN_PREVIOUS_TRIPS) {
-    return {
-      delta: null,
-      direction: 'flat',
-      insufficientBaseline: true,
-      sampleCount: previousFive.length,
-    };
-  }
-
-  const avg = previousFive.reduce((sum, score) => sum + score, 0) / previousFive.length;
-  const delta = currentScore - avg;
-  return {
-    delta,
-    direction: delta >= 3 ? 'up' : delta <= -3 ? 'down' : 'flat',
-    insufficientBaseline: false,
-    sampleCount: previousFive.length,
-  };
+  return getPremiumTripScoreDelta(trip, tripsByRecentOrder);
 }
 
 export function buildTripHistorySummary(trips = [], units = 'metric') {
@@ -215,6 +191,9 @@ export default function TripHistory() {
     isLoading,
     isFetching: recentFetching,
     isSuccess: recentTripsLoaded,
+    isError: recentTripsError,
+    error: recentTripError,
+    refetch: retryRecentTrips,
   } = useQuery({
     ...limitedTripSummaryQueryOptions(100),
     select: (trips) => trips.filter((trip) => trip.status === 'completed'),
@@ -783,7 +762,17 @@ export default function TripHistory() {
         </div>
       )}
 
-      {!isLoading && completed.length === 0 && (
+      {!isLoading && recentTripsError && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" role="alert">
+          <div className="font-semibold">Trip history could not be opened</div>
+          <div className="mt-1 text-sm">{recentTripError?.message || 'Your saved trips were not deleted. Retry the local storage read.'}</div>
+          <button type="button" onClick={() => retryRecentTrips()} className="mt-3 rounded-xl bg-amber-900 px-3 py-2 text-sm font-semibold text-white dark:bg-amber-200 dark:text-amber-950">
+            Retry safely
+          </button>
+        </div>
+      )}
+
+      {!isLoading && !recentTripsError && completed.length === 0 && (
         <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card py-16 text-center">
           <div className="w-16 h-16 bg-secondary rounded-3xl flex items-center justify-center mb-4">
             <Car className="w-8 h-8 text-muted-foreground" />
@@ -837,6 +826,7 @@ export default function TripHistory() {
                     trip={trip}
                     units={units}
                     index={pageWindow.offset + virtualItem.index}
+                    premium
                     scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
                     onToggleFavorite={(target) => updateTripMut.mutate({ id: target.id, patch: { is_favorite: target.is_favorite !== true } })}
                     onIntent={handleTripIntent}

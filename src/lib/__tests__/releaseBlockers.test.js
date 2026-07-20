@@ -144,7 +144,7 @@ describe('release blocker regressions', () => {
       text: vi.fn(),
     };
 
-    await expect(importDriveSenseBackup(file)).rejects.toThrow('50 MB or smaller');
+    await expect(importDriveSenseBackup(file)).rejects.toThrow('128 MB or smaller');
     expect(file.text).not.toHaveBeenCalled();
   });
 

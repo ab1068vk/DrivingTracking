@@ -307,15 +307,33 @@ export async function exportDataPortabilityBundle(options = {}) {
   }
 }
 
-export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now() } = {}) {
+const reportErasureProgress = (onProgress, progress) => {
+  try {
+    onProgress?.(progress);
+  } catch {
+    // Progress reporting must never interrupt a destructive operation.
+  }
+};
+
+export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now(), onProgress } = {}) {
   try {
     const startedAt = new Date(now).toISOString();
     const keyList = getErasureKeyList();
+    const totalSteps = keyList.length + 6;
+    reportErasureProgress(onProgress, { phase: 'trips', completed: 0, total: totalSteps });
     const tripRepository = await eraseTripRepositoryForDataRights();
+    reportErasureProgress(onProgress, { phase: 'trips', completed: 1, total: totalSteps });
     const speedKnowledge = await eraseSpeedKnowledgeForDataRights();
+    reportErasureProgress(onProgress, { phase: 'speed_knowledge', completed: 2, total: totalSteps });
     const wipedKeys = [];
-    for (const item of keyList) {
+    for (let index = 0; index < keyList.length; index += 1) {
+      const item = keyList[index];
       wipedKeys.push(await overwriteThenRemoveKey(item.key));
+      reportErasureProgress(onProgress, {
+        phase: 'local_keys',
+        completed: 3 + index,
+        total: totalSteps,
+      });
     }
     const nativeCompletedTripsCleared = isAndroid()
       ? await clearNativeCompletedTripsForErasure().then(() => true).catch((error) => {
@@ -323,7 +341,17 @@ export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now() } = {}
         return false;
       })
       : false;
+    reportErasureProgress(onProgress, {
+      phase: 'native_trips',
+      completed: keyList.length + 3,
+      total: totalSteps,
+    });
     clearSettingsMemoryForErasure();
+    reportErasureProgress(onProgress, {
+      phase: 'memory',
+      completed: keyList.length + 4,
+      total: totalSteps,
+    });
 
     const payload = {
       format: DATA_RIGHTS_ERASURE_RECEIPT_FORMAT,
@@ -337,7 +365,17 @@ export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now() } = {}
       nativeCompletedTripsCleared,
       limitation: 'This receipt records Road Sage app-level overwrite/remove operations. A rooted device, compromised app bundle, browser cache, OS backup, or storage wear-leveling can remain outside what the app can verify from inside itself.',
     };
+    reportErasureProgress(onProgress, {
+      phase: 'signing',
+      completed: keyList.length + 4,
+      total: totalSteps,
+    });
     const signature = await signErasureReceiptPayload(payload);
+    reportErasureProgress(onProgress, {
+      phase: 'signing',
+      completed: totalSteps - 1,
+      total: totalSteps,
+    });
     return {
       ...payload,
       signature,
@@ -350,14 +388,26 @@ export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now() } = {}
   }
 }
 
-export async function eraseAllLocalDataAndDownloadReceipt() {
-  const receipt = await eraseAllLocalDataAndBuildReceipt();
+export async function eraseAllLocalDataAndDownloadReceipt(options = {}) {
+  const receipt = await eraseAllLocalDataAndBuildReceipt(options);
+  const totalSteps = getErasureKeyList().length + 6;
   const filename = `road-sage-erasure-receipt-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
   try {
-    return {
+    reportErasureProgress(options.onProgress, {
+      phase: 'saving_receipt',
+      completed: totalSteps - 1,
+      total: totalSteps,
+    });
+    const result = {
       receipt,
       ...(await downloadJsonFile(filename, receipt, 'application/json', { logNativeFailure: false })),
     };
+    reportErasureProgress(options.onProgress, {
+      phase: 'saving_receipt',
+      completed: totalSteps,
+      total: totalSteps,
+    });
+    return result;
   } catch (error) {
     const receiptError = error instanceof Error
       ? error

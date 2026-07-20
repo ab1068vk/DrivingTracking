@@ -30,7 +30,9 @@ import {
 import { logTransmission } from '@/lib/transmissionLog';
 import {
   BACKUP_SIGNATURE_INVALID_CODE,
+  BACKUP_DECOMPRESSED_TOO_LARGE_MESSAGE,
   BACKUP_TOO_LARGE_MESSAGE,
+  MAX_BACKUP_DECOMPRESSED_BYTES,
   MAX_BACKUP_BYTES,
 } from '@/lib/dataBackupConstants';
 
@@ -67,9 +69,11 @@ export const MAX_IMPORTED_SPEED_KNOWLEDGE_EDIT_HISTORY = 10;
 export const MAX_IMPORTED_SPEED_KNOWLEDGE_AUDIT_TRAIL = 25;
 export {
   BACKUP_PASSWORD_REQUIRED_CODE,
+  BACKUP_DECOMPRESSED_TOO_LARGE_MESSAGE,
   BACKUP_SIGNATURE_INVALID_CODE,
   BACKUP_TOO_LARGE_MESSAGE,
   BACKUP_WRONG_PASSWORD_CODE,
+  MAX_BACKUP_DECOMPRESSED_BYTES,
   MAX_BACKUP_BYTES,
 };
 
@@ -82,6 +86,7 @@ const IMPORTED_TRIP_STATUS = new Set(['completed', 'discarded']);
 const DANGEROUS_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_IMPORTED_NESTED_ARRAY_ITEMS = 500;
 const MAX_IMPORTED_NESTED_OBJECT_KEYS = 100;
+const IMPORT_TRIP_BATCH_SIZE = 4;
 const IMPORTED_STRING_LIMITS_BY_FIELD = {
   id: 120,
   nickname: 200,
@@ -731,6 +736,88 @@ const privacySafeSettingsForBackup = (settings = {}, privacyZones = []) => {
   return safe;
 };
 
+const backupAbortError = () => {
+  const error = new Error('Backup export cancelled.');
+  error.name = 'AbortError';
+  return error;
+};
+
+const throwIfBackupAborted = (signal) => {
+  if (signal?.aborted) throw backupAbortError();
+};
+
+const yieldBackupWork = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+async function buildDriveSenseBackupAsync({
+  trips = [],
+  vehicles = [],
+  settings = localSettings.get(),
+  savedFilters = [],
+  calibrationLabels = [],
+  calibrationSurveyMarkers = {},
+  speedKnowledge = {},
+  signal,
+  onProgress,
+} = {}) {
+  throwIfBackupAborted(signal);
+  const savedTripFilters = sanitizeSavedTripFilters(savedFilters);
+  const sanitizedCalibrationLabels = sanitizeCalibrationLabels(calibrationLabels);
+  const sanitizedCalibrationSurveyMarkers = sanitizeCalibrationSurveyMarkers(calibrationSurveyMarkers);
+  const privacyExportSalt = createPrivacyExportSalt();
+  const exportId = createExportId();
+  const privacyZones = getPrivacyZones(settings);
+  const zoneCommitments = privacyZones.map((zone) => commitZoneForExportSync(zone, exportId));
+  const sanitizedSpeedKnowledge = sanitizeSpeedKnowledge(speedKnowledge, privacyZones);
+  const exportSettings = privacySafeSettingsForBackup(settings, privacyZones);
+  const maskedTrips = [];
+  let privacyPlaceholderCount = 0;
+
+  for (let index = 0; index < trips.length; index += 1) {
+    throwIfBackupAborted(signal);
+    const masked = /** @type {any} */ (maskTripForPrivacyExport(trips[index], settings, privacyExportSalt));
+    const normalized = {
+      ...masked,
+      route_points: Array.isArray(masked.route_points) ? masked.route_points : [],
+      driving_events: Array.isArray(masked.driving_events) ? masked.driving_events : [],
+      event_feedback: masked.event_feedback && typeof masked.event_feedback === 'object' ? masked.event_feedback : {},
+    };
+    maskedTrips.push(normalized);
+    privacyPlaceholderCount += normalized.route_points.filter((point) => point?.privacy_export_placeholder === true).length;
+    onProgress?.({ phase: 'protecting', completed: index + 1, total: trips.length });
+    await yieldBackupWork();
+  }
+
+  throwIfBackupAborted(signal);
+  const privacyShiftedTrips = maskedTrips.filter((trip) => trip?.privacy_time_shifted === true);
+  return {
+    app: 'Road Sage',
+    version: BACKUP_VERSION,
+    export_id: exportId,
+    exported_at: new Date().toISOString(),
+    privacy_export: {
+      timestamp_fuzzing_enabled: true,
+      timestamp_shift_policy: 'bounded_private_zone_noise',
+      zone_commitment_scheme: 'sha256_zone_center_export_salt_v2',
+      zone_commitment_count: zoneCommitments.length,
+      zone_placeholder_count: privacyZones.length,
+      shifted_trip_count: privacyShiftedTrips.length,
+      boundary_placeholder_count: privacyPlaceholderCount,
+      shifted_trip_ids: privacyShiftedTrips.map((trip) => trip.id).filter(Boolean).slice(0, 1000),
+      no_backup_keys: [...BACKUP_EXCLUDED_KEYS],
+    },
+    zone_commitments: zoneCommitments,
+    settings: exportSettings,
+    ui: { saved_trip_filters: savedTripFilters },
+    calibration: {
+      labels: sanitizedCalibrationLabels,
+      survey_markers: sanitizedCalibrationSurveyMarkers,
+    },
+    speed_knowledge: sanitizedSpeedKnowledge,
+    vehicles,
+    trips: maskedTrips,
+  };
+}
+
 export function buildDriveSenseBackup({
   trips = [],
   vehicles = [],
@@ -796,16 +883,19 @@ export function buildDriveSenseBackup({
 }
 
 /**
- * @param {{trips?:Array,vehicles?:Array,settings?:Object,filename?:string,passphrase?:string|null}} options
+ * @param {{trips?:Array,vehicles?:Array,settings?:Object,filename?:string,passphrase?:string|null,signal?:AbortSignal,onProgress?:(progress:{phase:string,completed?:number,total?:number})=>void}} options
  */
-export async function exportDriveSenseBackup({ trips, vehicles, settings, filename, passphrase = null } = {}) {
+export async function exportDriveSenseBackup({ trips, vehicles, settings, filename, passphrase = null, signal, onProgress } = {}) {
+  throwIfBackupAborted(signal);
+  onProgress?.({ phase: 'preparing', completed: 0, total: 1 });
   const [savedFilters, calibrationLabels, calibrationSurveyMarkers, speedKnowledge] = await Promise.all([
     getJson(SAVED_FILTERS_KEY, []),
     getJson(CALIBRATION_LABELS_KEY, []),
     getJson(CALIBRATION_SURVEY_MARKERS_KEY, {}),
     readSpeedKnowledgeData().then((value) => value || {}),
   ]);
-  const backup = buildDriveSenseBackup({
+  throwIfBackupAborted(signal);
+  const backup = await buildDriveSenseBackupAsync({
     trips,
     vehicles,
     settings,
@@ -813,6 +903,8 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
     calibrationLabels,
     calibrationSurveyMarkers,
     speedKnowledge,
+    signal,
+    onProgress,
   });
   const encrypted = typeof passphrase === 'string' && passphrase.length > 0;
   const requestedName = filename || `road-sage-full-backup-${new Date().toISOString().split('T')[0]}.json`;
@@ -822,14 +914,22 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
   const outputName = safeFilename(encrypted ? encryptedName : requestedName);
   let signedBackup;
   try {
+    throwIfBackupAborted(signal);
+    onProgress?.({ phase: 'signing', completed: 0, total: 1 });
     signedBackup = await signExport(backup);
+    throwIfBackupAborted(signal);
   } catch (error) {
+    if (error?.name === 'AbortError') throw error;
     logSystemFailure('backup_export_sign', error, {
       backup_version: BACKUP_VERSION,
     });
     throw error;
   }
+  onProgress?.({ phase: 'packaging', completed: 0, total: 1 });
+  await yieldBackupWork();
+  throwIfBackupAborted(signal);
   const plaintext = JSON.stringify(signedBackup);
+  throwIfBackupAborted(signal);
   await logTransmission({
     service: 'export',
     type: encrypted ? 'Encrypted full backup' : 'Full backup',
@@ -859,8 +959,15 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
       vehicle_count: Array.isArray(vehicles) ? vehicles.length : 0,
     }, { category: 'storage', title: 'Backup encryption started' });
     try {
-      content = await encryptBackupText(plaintext, passphrase, { exportedAt: backup.exported_at });
+      onProgress?.({ phase: 'encrypting', completed: 0, total: 1 });
+      content = await encryptBackupText(plaintext, passphrase, {
+        exportedAt: backup.exported_at,
+        signal,
+        onProgress: (progress) => onProgress?.({ phase: progress.phase || 'encrypting', completed: progress.completed, total: progress.total }),
+      });
+      throwIfBackupAborted(signal);
     } catch (error) {
+      if (error?.name === 'AbortError') throw error;
       logSystemFailure('backup_export_encrypt', error, {
         backup_version: BACKUP_VERSION,
       });
@@ -898,6 +1005,8 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
         filename: outputName,
         data: content,
         mimeType,
+        signal,
+        onProgress: (progress) => onProgress?.({ phase: 'saving', ...progress }),
       });
       recordSystemEvent('backup_export_completed', {
         native: true,
@@ -908,9 +1017,10 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
         signed: true,
         output_format: encrypted ? 'encrypted' : 'json',
       }, { category: 'storage', title: 'Backup export completed' });
-      return { native: true, filename: outputName, uri: result.uri, backup, signedBackup, encrypted, signed: true };
+      return { native: true, filename: outputName, uri: result.uri, encrypted, signed: true };
     }
   } catch (error) {
+    if (error?.name === 'AbortError') throw error;
     nativeFallbackError = error?.message || 'Native export failed.';
     logSystemFailure('backup_native_export', error, {
       mime_type: mimeType,
@@ -1031,14 +1141,7 @@ export function migrateBackup(data, fromVersion = Number(data?.version) || 1) {
   return { ...migrated, version: BACKUP_VERSION };
 }
 
-export function parseDriveSenseBackup(text) {
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error('Backup file is not valid JSON. Please select the correct file.');
-  }
-
+function parseDriveSenseBackupValue(parsed, { sanitizeTrips = true } = {}) {
   if (!parsed || !['Road Sage', 'DriveSense'].includes(parsed.app) || !Array.isArray(parsed.trips)) {
     throw new Error('This is not a valid Road Sage backup file.');
   }
@@ -1049,6 +1152,13 @@ export function parseDriveSenseBackup(text) {
   const truncatedNoteTripCount = migrated.trips.filter((trip) => (
     typeof trip?.notes === 'string' && trip.notes.length > MAX_IMPORTED_TRIP_NOTES_LENGTH
   )).length;
+
+  const trips = sanitizeTrips
+    ? migrated.trips.map((trip) => sanitizeImportedTrip(trip, warnings))
+    : migrated.trips;
+  if (!sanitizeTrips && truncatedNoteTripCount > 0) {
+    addTruncationWarning(warnings, 'notes', MAX_IMPORTED_TRIP_NOTES_LENGTH);
+  }
 
   return {
     version: migrated.version,
@@ -1061,10 +1171,20 @@ export function parseDriveSenseBackup(text) {
     },
     speed_knowledge: sanitizeSpeedKnowledge(migrated.speed_knowledge, [], warnings),
     vehicles: Array.isArray(migrated.vehicles) ? migrated.vehicles : [],
-    trips: migrated.trips.map((trip) => sanitizeImportedTrip(trip, warnings)),
+    trips,
     warnings,
     truncatedNoteTripCount,
   };
+}
+
+export function parseDriveSenseBackup(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('Backup file is not valid JSON. Please select the correct file.');
+  }
+  return parseDriveSenseBackupValue(parsed);
 }
 
 export async function importDriveSenseBackup(
@@ -1074,8 +1194,11 @@ export async function importDriveSenseBackup(
     acknowledgeTruncation = false,
     passphrase = null,
     allowUnverifiedSignedBackup = false,
+    signal,
+    onProgress,
   } = {}
 ) {
+  throwIfBackupAborted(signal);
   if (Number(file?.size) > MAX_BACKUP_BYTES) {
     recordSystemEvent('backup_import_rejected', {
       reason: 'file_too_large',
@@ -1089,22 +1212,33 @@ export async function importDriveSenseBackup(
     include_settings: includeSettings !== false,
     acknowledge_truncation: acknowledgeTruncation === true,
   }, { category: 'storage', title: 'Backup import started' });
+  onProgress?.({ phase: 'reading', completed: 0, total: Number(file?.size) || 0 });
   let text = '';
   try {
     text = await file.text();
+    throwIfBackupAborted(signal);
+    onProgress?.({ phase: 'reading', completed: Number(file?.size) || text.length, total: Number(file?.size) || text.length });
   } catch (error) {
+    if (error?.name === 'AbortError') throw error;
     logSystemFailure('backup_import_read', error, {
       byte_count: Number(file?.size) || 0,
     });
     throw error;
   }
-  const encrypted = isEncryptedBackupEnvelope(text);
+
+  let parsedInput;
+  try {
+    parsedInput = JSON.parse(text);
+  } catch {
+    throw new Error('Backup file is not valid JSON. Please select the correct file.');
+  }
+  const encrypted = isEncryptedBackupEnvelope(parsedInput);
   recordSystemEvent('backup_import_format_detected', {
     byte_count: Number(file?.size) || text.length || 0,
     encrypted,
     input_format: encrypted ? 'encrypted' : 'json',
   }, { category: 'storage', title: 'Backup import format detected' });
-  let backupText = text;
+  let backupValue = parsedInput;
   if (encrypted) {
     if (typeof passphrase !== 'string' || passphrase.length === 0) {
       recordSystemEvent('backup_import_password_required', {
@@ -1123,8 +1257,21 @@ export async function importDriveSenseBackup(
       throw error;
     }
     try {
-      backupText = await decryptBackupText(text, passphrase);
+      const decryptedText = await decryptBackupText(parsedInput, passphrase, {
+        maxDecompressedBytes: MAX_BACKUP_DECOMPRESSED_BYTES,
+        signal,
+        onProgress,
+      });
+      throwIfBackupAborted(signal);
+      try {
+        backupValue = JSON.parse(decryptedText);
+      } catch {
+        throw new Error('Decrypted backup is not valid JSON. The file may be damaged.');
+      }
+      text = '';
+      parsedInput = null;
     } catch (error) {
+      if (error?.name === 'AbortError') throw error;
       const errorCode = error && typeof error === 'object' && 'code' in error ? String(error.code) : null;
       const wrongPassword = errorCode === BACKUP_WRONG_PASSWORD_CODE;
       recordSystemEvent(wrongPassword ? 'backup_import_wrong_password' : 'backup_import_decrypt_failed', {
@@ -1150,22 +1297,25 @@ export async function importDriveSenseBackup(
   let signed = false;
   let signatureSignedAt = null;
   let signatureRecovered = false;
-  if (isSignedExportEnvelope(backupText)) {
+  if (isSignedExportEnvelope(backupValue)) {
     signed = true;
-    const signedExport = JSON.parse(backupText);
+    const signedExport = backupValue;
     try {
+      onProgress?.({ phase: 'verifying', completed: 0, total: 1 });
       const verified = await verifyAndUnwrapExport(signedExport);
-      backupText = JSON.stringify(verified.payload);
+      throwIfBackupAborted(signal);
+      backupValue = verified.payload;
       signatureSignedAt = verified.signedAt;
+      onProgress?.({ phase: 'verifying', completed: 1, total: 1 });
       recordSystemEvent('backup_import_signature_verified', {
-        byte_count: Number(file?.size) || backupText.length || 0,
+        byte_count: Number(file?.size) || 0,
         encrypted,
         signed: true,
         signed_at: signatureSignedAt,
       }, { category: 'storage', title: 'Backup signature verified' });
     } catch (error) {
       recordSystemEvent('backup_import_signature_rejected', {
-        byte_count: Number(file?.size) || backupText.length || 0,
+        byte_count: Number(file?.size) || 0,
         encrypted,
         signed: true,
       }, {
@@ -1178,11 +1328,11 @@ export async function importDriveSenseBackup(
         error.code = BACKUP_SIGNATURE_INVALID_CODE;
         throw error;
       }
-      backupText = JSON.stringify(signedExport.payload);
+      backupValue = signedExport.payload;
       signatureSignedAt = signedExport.signed_at || null;
       signatureRecovered = true;
       recordSystemEvent('backup_import_signature_recovery_accepted', {
-        byte_count: Number(file?.size) || backupText.length || 0,
+        byte_count: Number(file?.size) || 0,
         encrypted,
         signed: true,
         signed_at: signatureSignedAt,
@@ -1195,7 +1345,7 @@ export async function importDriveSenseBackup(
     }
   } else {
     recordSystemEvent('backup_import_unsigned_legacy', {
-      byte_count: Number(file?.size) || backupText.length || 0,
+      byte_count: Number(file?.size) || text.length || 0,
       encrypted,
       signed: false,
     }, {
@@ -1208,10 +1358,15 @@ export async function importDriveSenseBackup(
 
   let backup;
   try {
-    backup = parseDriveSenseBackup(backupText);
+    throwIfBackupAborted(signal);
+    onProgress?.({ phase: 'validating', completed: 0, total: 1 });
+    backup = parseDriveSenseBackupValue(backupValue, { sanitizeTrips: false });
+    backupValue = null;
+    onProgress?.({ phase: 'validating', completed: 1, total: 1 });
   } catch (error) {
+    if (error?.name === 'AbortError') throw error;
     logSystemFailure('backup_import_parse', error, {
-      byte_count: Number(file?.size) || backupText.length || 0,
+      byte_count: Number(file?.size) || text.length || 0,
       encrypted,
       signed,
     });
@@ -1230,8 +1385,34 @@ export async function importDriveSenseBackup(
     };
   }
 
+  throwIfBackupAborted(signal);
+  onProgress?.({ phase: 'restoring_vehicles', completed: 0, total: backup.vehicles.length });
   const importedVehicles = await vehicleService.upsertMany(backup.vehicles);
-  const importedTrips = await tripService.upsertMany(backup.trips);
+  onProgress?.({ phase: 'restoring_vehicles', completed: importedVehicles.length, total: backup.vehicles.length });
+
+  let importedTripCount = 0;
+  const totalTripCount = backup.trips.length;
+  try {
+    for (let start = 0; start < totalTripCount; start += IMPORT_TRIP_BATCH_SIZE) {
+      throwIfBackupAborted(signal);
+      const end = Math.min(totalTripCount, start + IMPORT_TRIP_BATCH_SIZE);
+      const batch = [];
+      for (let index = start; index < end; index += 1) {
+        batch.push(sanitizeImportedTrip(backup.trips[index], backup.warnings));
+        backup.trips[index] = null;
+      }
+      const importedBatch = await tripService.upsertMany(batch);
+      importedTripCount += importedBatch.length;
+      onProgress?.({ phase: 'restoring_trips', completed: importedTripCount, total: totalTripCount });
+      await yieldBackupWork();
+    }
+  } catch (error) {
+    if (importedTripCount > 0) {
+      error.importedTripCount = importedTripCount;
+      error.message = `${error.message || 'Backup import stopped.'} ${importedTripCount} of ${totalTripCount} trips were restored; retrying the same backup is safe.`;
+    }
+    throw error;
+  }
 
   const shouldImportSettings = includeSettings && !signatureRecovered;
   const privacyZonesNeedReconfiguration = shouldImportSettings && Array.isArray(backup.settings?.privacy_zones)
@@ -1293,7 +1474,7 @@ export async function importDriveSenseBackup(
   }
 
   recordSystemEvent('backup_import_completed', {
-    trip_count: importedTrips.length,
+    trip_count: importedTripCount,
     vehicle_count: importedVehicles.length,
     settings_imported: importedSettings,
     saved_filter_count: savedFilters.length,
@@ -1319,7 +1500,7 @@ export async function importDriveSenseBackup(
     title: 'Backup import completed',
   });
   return {
-    trips: importedTrips.length,
+    trips: importedTripCount,
     vehicles: importedVehicles.length,
     settings: importedSettings,
     savedFilters: savedFilters.length,

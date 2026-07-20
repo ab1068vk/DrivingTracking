@@ -12,7 +12,8 @@ import {
 } from '@/lib/tripEngine';
 import { estimateTripEconomics } from '@/lib/tripInsights';
 import { localVehicleRepository } from '@/lib/localVehicleRepository';
-import { activeTripStore, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
+import { resolveParkedLocation } from '@/lib/parkedLocationResolver';
+import { activeTripStore, localSettings, saveLastParkedLocation, suppressLastParkedLocation } from '@/lib/trackingStore';
 import {
   sanitizeTripForPrivacyStorageAsync,
 } from '@/lib/privacyZones';
@@ -144,6 +145,18 @@ export const AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO = 0.2;
  */
 
 const canUseIndexedDb = () => typeof indexedDB !== 'undefined';
+
+const makeAbortError = () => {
+  const error = new Error('Operation cancelled.');
+  error.name = 'AbortError';
+  return error;
+};
+
+const throwIfAborted = (signal) => {
+  if (signal?.aborted) throw makeAbortError();
+};
+
+const yieldToEventLoop = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const hasStore = (db, storeName) => db.objectStoreNames.contains(storeName);
 
@@ -284,8 +297,29 @@ const decodeTripSummaryRecord = async (record) => {
   return decryptSensitiveValue(record.encrypted_payload, tripSummaryEncryptionContext(record.id));
 };
 
-const decodeTripRecords = (records = []) => Promise.all(records.map(decodeTripRecord));
-const decodeTripSummaryRecords = (records = []) => Promise.all(records.map(decodeTripSummaryRecord));
+const decodeRecordsInOrder = async (records = [], decode, { signal, onProgress, yieldEvery = 4 } = {}) => {
+  const decoded = [];
+  for (let index = 0; index < records.length; index += 1) {
+    throwIfAborted(signal);
+    decoded.push(await decode(records[index]));
+    onProgress?.({ completed: index + 1, total: records.length });
+    if (yieldEvery > 0 && (index + 1) % yieldEvery === 0) await yieldToEventLoop();
+  }
+  throwIfAborted(signal);
+  return decoded;
+};
+
+const encodeRecordsInOrder = async (trips = [], encode, options = {}) => {
+  const encoded = [];
+  for (let index = 0; index < trips.length; index += 1) {
+    encoded.push(await encode(trips[index], options));
+    if ((index + 1) % 4 === 0) await yieldToEventLoop();
+  }
+  return encoded;
+};
+
+const decodeTripRecords = (records = [], options) => decodeRecordsInOrder(records, decodeTripRecord, options);
+const decodeTripSummaryRecords = (records = [], options) => decodeRecordsInOrder(records, decodeTripSummaryRecord, options);
 const sanitizeTripsForPrivacyStorage = (trips = []) => (
   Promise.all((Array.isArray(trips) ? trips : []).map((trip) => sanitizeTripForPrivacyStorageAsync(trip)))
 );
@@ -303,13 +337,15 @@ const readTripsFromDb = async (dbName) => {
 
 const writeTripsToDb = async (dbName, trips) => {
   if (!trips.length) return;
-  const encryptedTrips = await Promise.all(trips.map(encodeTripRecord));
   const db = await openDbByName(dbName);
   try {
-    const tx = db.transaction(TRIP_STORE, 'readwrite');
-    const store = tx.objectStore(TRIP_STORE);
-    encryptedTrips.forEach((trip) => store.put(trip));
-    await idbTransactionDone(tx);
+    for (let start = 0; start < trips.length; start += 4) {
+      const encryptedTrips = await encodeRecordsInOrder(trips.slice(start, start + 4), encodeTripRecord);
+      const tx = db.transaction(TRIP_STORE, 'readwrite');
+      const store = tx.objectStore(TRIP_STORE);
+      encryptedTrips.forEach((trip) => store.put(trip));
+      await idbTransactionDone(tx);
+    }
   } finally {
     db.close();
   }
@@ -317,14 +353,16 @@ const writeTripsToDb = async (dbName, trips) => {
 
 const writeTripSummariesToDb = async (dbName, trips) => {
   if (!trips.length) return;
-  const encryptedSummaries = await Promise.all(trips.map(encodeTripSummaryRecord));
   const db = await openDbByName(dbName);
   try {
     if (!db.objectStoreNames.contains(TRIP_SUMMARY_STORE)) return;
-    const tx = db.transaction(TRIP_SUMMARY_STORE, 'readwrite');
-    const store = tx.objectStore(TRIP_SUMMARY_STORE);
-    encryptedSummaries.forEach((summary) => store.put(summary));
-    await idbTransactionDone(tx);
+    for (let start = 0; start < trips.length; start += 8) {
+      const encryptedSummaries = await encodeRecordsInOrder(trips.slice(start, start + 8), encodeTripSummaryRecord);
+      const tx = db.transaction(TRIP_SUMMARY_STORE, 'readwrite');
+      const store = tx.objectStore(TRIP_SUMMARY_STORE);
+      encryptedSummaries.forEach((summary) => store.put(summary));
+      await idbTransactionDone(tx);
+    }
   } finally {
     db.close();
   }
@@ -395,29 +433,59 @@ const migrateConfiguredDbName = () => {
   return dbNameMigrationPromise;
 };
 
-const getAllTrips = async () => {
+const readFallbackTrips = async () => {
+  const stored = await getJson(TRIPS_KEY, null);
+  if (stored == null) return null;
+  const trips = isEncryptedPayload(stored)
+    ? await decryptSensitiveValue(stored, `storage:${TRIPS_KEY}`)
+    : stored;
+  return Array.isArray(trips) ? trips : null;
+};
+
+const getAllTrips = async ({ signal, onProgress } = {}) => {
   try {
+    throwIfAborted(signal);
     const db = await openDb();
-    const readTx = db.transaction(TRIP_STORE, 'readonly');
-    const records = await idbRequest(readTx.objectStore(TRIP_STORE).getAll());
-    const tombstones = records.filter(isSecureDeleteTombstone);
-    if (tombstones.length) {
-      const cleanupTx = db.transaction(TRIP_STORE, 'readwrite');
-      const store = cleanupTx.objectStore(TRIP_STORE);
-      tombstones.forEach((record) => store.delete(record.id));
-      await idbTransactionDone(cleanupTx);
+    let records;
+    try {
+      const readTx = db.transaction(TRIP_STORE, 'readonly');
+      records = await idbRequest(readTx.objectStore(TRIP_STORE).getAll());
+      const tombstones = records.filter(isSecureDeleteTombstone);
+      if (tombstones.length) {
+        const cleanupTx = db.transaction(TRIP_STORE, 'readwrite');
+        const store = cleanupTx.objectStore(TRIP_STORE);
+        tombstones.forEach((record) => store.delete(record.id));
+        await idbTransactionDone(cleanupTx);
+      }
+    } finally {
+      db.close();
     }
-    db.close();
     const liveRecords = records.filter((record) => !isSecureDeleteTombstone(record));
-    const trips = await decodeTripRecords(liveRecords);
+    const trips = await decodeTripRecords(liveRecords, { signal, onProgress });
     const sanitizedTrips = await sanitizeTripsForPrivacyStorage(trips);
     const tripsToRewrite = sanitizedTrips.filter((trip, index) => (
       trip !== trips[index] || !isEncryptedPayload(liveRecords[index]?.encrypted_payload)
     ));
-    if (tripsToRewrite.length) await writeTripsToDb(DB_NAME, tripsToRewrite);
+    if (tripsToRewrite.length && !signal) {
+      await writeTripsToDb(DB_NAME, tripsToRewrite).catch((error) => {
+        logSystemFailure('trip_repository_read_rewrite_deferred', error, {
+          db_name: DB_NAME,
+          trip_count: tripsToRewrite.length,
+        });
+      });
+    }
+    throwIfAborted(signal);
     return sanitizedTrips;
-  } catch {
-    const trips = await getEncryptedJson(TRIPS_KEY, []);
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
+    const trips = await readFallbackTrips();
+    if (!trips) {
+      logSystemFailure('trip_repository_indexeddb_read', error, {
+        db_name: DB_NAME,
+        fallback_present: false,
+      });
+      throw new Error('Trip history is temporarily unavailable. Your saved trips were not deleted.', { cause: error });
+    }
     const sanitizedTrips = await sanitizeTripsForPrivacyStorage(trips);
     if (sanitizedTrips.some((trip, index) => trip !== trips[index])) {
       await setEncryptedJson(TRIPS_KEY, sanitizedTrips);
@@ -445,11 +513,24 @@ const getStoredTripById = async (id) => {
     const trip = await decodeTripRecord(record);
     const sanitized = await sanitizeTripForPrivacyStorageAsync(trip);
     if (!isEncryptedPayload(record.encrypted_payload) || JSON.stringify(sanitized) !== JSON.stringify(trip)) {
-      await putTrip(sanitized);
+      await putTrip(sanitized).catch((error) => {
+        logSystemFailure('trip_repository_record_rewrite_deferred', error, {
+          db_name: DB_NAME,
+          trip_id_present: id != null,
+        });
+      });
     }
     return sanitized;
-  } catch {
-    const trips = await getEncryptedJson(TRIPS_KEY, []);
+  } catch (error) {
+    const trips = await readFallbackTrips();
+    if (!trips) {
+      logSystemFailure('trip_repository_indexeddb_record_read', error, {
+        db_name: DB_NAME,
+        trip_id_present: id != null,
+        fallback_present: false,
+      });
+      throw new Error('This trip is temporarily unavailable. Its saved record was not deleted.', { cause: error });
+    }
     return trips.find((trip) => String(trip.id) === String(id)) || null;
   }
 };
@@ -639,18 +720,26 @@ export async function inspectStoredTripKeyVersions() {
 const putTrip = async (trip) => {
   const storageTrip = await sanitizeTripForPrivacyStorageAsync(trip);
   try {
-    const [encryptedTrip, encryptedSummary] = await Promise.all([
-      encodeTripRecord(storageTrip),
-      encodeTripSummaryRecord(storageTrip),
-    ]);
+    const encryptedTrip = await encodeTripRecord(storageTrip);
+    const encryptedSummary = await encodeTripSummaryRecord(storageTrip);
     const db = await openDb();
-    const hasSummaryStore = db.objectStoreNames.contains(TRIP_SUMMARY_STORE);
-    const tx = db.transaction(hasSummaryStore ? [TRIP_STORE, TRIP_SUMMARY_STORE] : TRIP_STORE, 'readwrite');
-    tx.objectStore(TRIP_STORE).put(encryptedTrip);
-    if (hasSummaryStore) tx.objectStore(TRIP_SUMMARY_STORE).put(encryptedSummary);
-    await idbTransactionDone(tx);
-    db.close();
-  } catch {
+    try {
+      const hasSummaryStore = db.objectStoreNames.contains(TRIP_SUMMARY_STORE);
+      const tx = db.transaction(hasSummaryStore ? [TRIP_STORE, TRIP_SUMMARY_STORE] : TRIP_STORE, 'readwrite');
+      tx.objectStore(TRIP_STORE).put(encryptedTrip);
+      if (hasSummaryStore) tx.objectStore(TRIP_SUMMARY_STORE).put(encryptedSummary);
+      await idbTransactionDone(tx);
+    } finally {
+      db.close();
+    }
+  } catch (error) {
+    if (canUseIndexedDb()) {
+      logSystemFailure('trip_repository_indexeddb_write', error, {
+        db_name: DB_NAME,
+        trip_id_present: storageTrip?.id != null,
+      });
+      throw new Error('Road Sage could not safely save this trip. Existing trip data was left unchanged.', { cause: error });
+    }
     const trips = await getEncryptedJson(TRIPS_KEY, []);
     const next = [storageTrip, ...trips.filter((item) => String(item.id) !== String(storageTrip.id))];
     await setEncryptedJson(TRIPS_KEY, next);
@@ -661,22 +750,30 @@ const putTrips = async (incomingTrips) => {
   if (!incomingTrips.length) return;
   const storageTrips = await sanitizeTripsForPrivacyStorage(incomingTrips);
   try {
-    const [encryptedTrips, encryptedSummaries] = await Promise.all([
-      Promise.all(storageTrips.map(encodeTripRecord)),
-      Promise.all(storageTrips.map(encodeTripSummaryRecord)),
-    ]);
+    const encryptedTrips = await encodeRecordsInOrder(storageTrips, encodeTripRecord);
+    const encryptedSummaries = await encodeRecordsInOrder(storageTrips, encodeTripSummaryRecord);
     const db = await openDb();
-    const hasSummaryStore = db.objectStoreNames.contains(TRIP_SUMMARY_STORE);
-    const tx = db.transaction(hasSummaryStore ? [TRIP_STORE, TRIP_SUMMARY_STORE] : TRIP_STORE, 'readwrite');
-    const store = tx.objectStore(TRIP_STORE);
-    encryptedTrips.forEach((trip) => store.put(trip));
-    if (hasSummaryStore) {
-      const summaryStore = tx.objectStore(TRIP_SUMMARY_STORE);
-      encryptedSummaries.forEach((summary) => summaryStore.put(summary));
+    try {
+      const hasSummaryStore = db.objectStoreNames.contains(TRIP_SUMMARY_STORE);
+      const tx = db.transaction(hasSummaryStore ? [TRIP_STORE, TRIP_SUMMARY_STORE] : TRIP_STORE, 'readwrite');
+      const store = tx.objectStore(TRIP_STORE);
+      encryptedTrips.forEach((trip) => store.put(trip));
+      if (hasSummaryStore) {
+        const summaryStore = tx.objectStore(TRIP_SUMMARY_STORE);
+        encryptedSummaries.forEach((summary) => summaryStore.put(summary));
+      }
+      await idbTransactionDone(tx);
+    } finally {
+      db.close();
     }
-    await idbTransactionDone(tx);
-    db.close();
-  } catch {
+  } catch (error) {
+    if (canUseIndexedDb()) {
+      logSystemFailure('trip_repository_indexeddb_batch_write', error, {
+        db_name: DB_NAME,
+        trip_count: storageTrips.length,
+      });
+      throw new Error('Road Sage could not safely save these trips. Existing trip data was left unchanged.', { cause: error });
+    }
     const trips = await getEncryptedJson(TRIPS_KEY, []);
     const incomingIds = new Set(storageTrips.map((trip) => String(trip.id)));
     const next = [
@@ -1287,19 +1384,23 @@ const importNativeCompletedTrips = async () => {
       await putTrip(importedTrip);
       importedTrips.push(importedTrip);
 
-      const finalPoint = [...routePoints].reverse().find((point) => point?.lat != null && point?.lng != null);
-      const endedStopped = importedTrip.parking_stop_detected ||
-        Number(importedTrip.parking_stop_duration_seconds || 0) > 0 ||
-        Number(finalPoint?.speed_kmh || 0) < (thresholds.IDLE_SPEED_KMH ?? 5);
-      if (finalPoint && endedStopped) {
+      // The widget represents the newest completed drive, not the newest trip that
+      // happened to satisfy the older parking-stop heuristic. Never walk backward
+      // past a privacy-redacted endpoint: that would expose the zone boundary as a
+      // misleading parking location.
+      const finalPoint = routePoints[routePoints.length - 1];
+      const parkedResolution = resolveParkedLocation(routePoints, { endTime: importedTrip.end_time });
+      if (parkedResolution.location) {
         await saveLastParkedLocation({
-          lat: finalPoint.lat,
-          lng: finalPoint.lng,
-          timestamp: importedTrip.end_time || finalPoint.timestamp || new Date().toISOString(),
+          ...parkedResolution.location,
           tripId: importedTrip.id,
-          source: importedTrip.parking_stop_detected ? 'native_parking_stop' : 'native_stopped_trip_end',
+          source: importedTrip.parking_stop_detected ? 'native_parking_stop' : 'native_trip_end',
         });
-        // Native background trips update the shared parked location only when they ended stopped.
+      } else {
+        await suppressLastParkedLocation({
+          timestamp: importedTrip.end_time || finalPoint?.timestamp || new Date().toISOString(),
+          source: parkedResolution.suppressionReason || 'trip_end_unavailable',
+        });
       }
     }
 
@@ -1353,7 +1454,14 @@ const deleteTrip = async (id) => {
     } finally {
       db.close();
     }
-  } catch {
+  } catch (error) {
+    if (canUseIndexedDb()) {
+      logSystemFailure('trip_repository_indexeddb_delete', error, {
+        db_name: DB_NAME,
+        trip_id_present: id != null,
+      });
+      throw new Error('Road Sage could not verify this trip deletion. The saved record was left unchanged.', { cause: error });
+    }
     const trips = await getEncryptedJson(TRIPS_KEY, []);
     const remainingTrips = trips.filter((trip) => String(trip.id) !== String(id));
     await setEncryptedJson(TRIPS_KEY, remainingTrips);
@@ -1644,11 +1752,15 @@ export const localTripRepository = {
     return sortTrips(trips, sort).slice(0, limit);
   },
 
-  async listAllForExport({ sort = '-start_time' } = {}) {
+  async listAllForExport({ sort = '-start_time', signal, onProgress } = {}) {
+    throwIfAborted(signal);
     await importNativeCompletedTrips();
-    const trips = await getAllTrips();
+    throwIfAborted(signal);
+    const trips = await getAllTrips({ signal, onProgress });
+    throwIfAborted(signal);
     const now = Date.now();
     const retention = await enforceTripDataRetention({ now, trips });
+    throwIfAborted(signal);
     if (!retention.enabled || !retention.deletedTrips) return sortTrips(trips, sort);
 
     const cutoff = now - retention.retentionDays * 24 * 60 * 60 * 1000;

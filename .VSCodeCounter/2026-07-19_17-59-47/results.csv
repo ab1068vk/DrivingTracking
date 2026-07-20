@@ -1,0 +1,547 @@
+"filename", "language", "JavaScript", "TypeScript", "HTML", "JSON with Comments", "JavaScript JSX", "Markdown", "PostCSS", "JSON", "Properties", "Gradle", "Batch", "YAML", "Java", "XML", "comment", "blank", "total"
+"c:\Users\bemat\src\DrivingTracking\.github\workflows\security-ci.yml", "YAML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 103, 0, 0, 0, 31, 134
+"c:\Users\bemat\src\DrivingTracking\android\app\build.gradle", "Gradle", 0, 0, 0, 0, 0, 0, 0, 0, 0, 86, 0, 0, 0, 0, 2, 9, 97
+"c:\Users\bemat\src\DrivingTracking\android\app\capacitor.build.gradle", "Gradle", 0, 0, 0, 0, 0, 0, 0, 0, 0, 19, 0, 0, 0, 0, 1, 6, 26
+"c:\Users\bemat\src\DrivingTracking\android\app\src\androidTest\java\com\drivesense\app\DriveSenseNativeTripStoreInstrumentedTest.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 645, 0, 1, 100, 746
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\AndroidManifest.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 119, 1, 16, 136
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\AuditAnchorPlugin.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 94, 0, 0, 13, 107
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\BiometricAuthPlugin.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 0, 0, 18, 133
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\DriveSenseActivityReceiver.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 0, 0, 4, 21
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\DriveSenseActivityRecognitionPlugin.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 754, 0, 0, 86, 840
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\DriveSenseAutoTrackingService.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2904, 0, 10, 251, 3165
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\DriveSenseAutoTrackingTileService.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 17, 117
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\DriveSenseBackupExportService.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 241, 0, 0, 36, 277
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\DriveSenseNativeTripStore.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 291, 0, 0, 28, 319
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\DriveSenseParkingResolver.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 147, 0, 1, 21, 169
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\DriveSensePayloadCrypto.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 112, 0, 0, 20, 132
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\DriveSensePhoneUsageTracker.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150, 0, 0, 20, 170
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\DriveSenseSpeechController.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 218, 0, 0, 29, 247
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\MainActivity.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 87, 0, 0, 9, 96
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\PrivacyZoneChecker.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 313, 0, 0, 40, 353
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\RaspChecker.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 109, 0, 1, 19, 129
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\RaspPlugin.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 0, 0, 5, 31
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\RaspResult.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 4, 14
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\RoadDataJobService.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 133, 0, 1, 16, 150
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\RoadDataQueuePlugin.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 86, 0, 1, 9, 96
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\RoadDataQueueStore.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 15, 79
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\ScreenAwakePlugin.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 0, 0, 6, 36
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\ScreenSecurityPlugin.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 28, 0, 0, 6, 34
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\SecureBridgePlugin.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 279, 0, 0, 40, 319
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\SecureDeleteHelper.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 39, 0, 10, 11, 60
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\SystemBarsPlugin.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 75, 0, 0, 11, 86
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\java\com\drivesense\app\WhereIParkedWidgetProvider.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 134, 0, 1, 21, 156
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\drawable-v24\ic_launcher_foreground.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 24, 0, 1, 25
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\drawable\ic_launcher_background.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 170, 0, 1, 171
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\drawable\ic_qs_roadsage.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 0, 1, 27
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\drawable\ic_stat_drivesense.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 1, 17
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\drawable\widget_where_i_parked_background.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 1, 7
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\drawable\widget_where_i_parked_primary_button.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 1, 6
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\drawable\widget_where_i_parked_secondary_button.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 1, 6
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\layout\activity_main.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 0, 2, 15
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\layout\widget_where_i_parked.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 84, 0, 4, 88
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\mipmap-anydpi-v26\ic_launcher.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 5
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\mipmap-anydpi-v26\ic_launcher_round.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 5
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\values-night\bools.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 1, 5
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\values-night\colors.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 0, 1, 13
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\values\bools.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 1, 5
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\values\colors.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 0, 1, 13
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\values\ic_launcher_background.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 1, 5
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\values\strings.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 39, 0, 1, 40
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\values\styles.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 77, 1, 8, 86
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\xml\file_paths.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 5
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\xml\network_security_config.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 43, 5, 8, 56
+"c:\Users\bemat\src\DrivingTracking\android\app\src\main\res\xml\where_i_parked_widget_info.xml", "XML", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 0, 1, 13
+"c:\Users\bemat\src\DrivingTracking\android\app\src\test\java\com\drivesense\app\DriveSenseAutoTrackingServiceTest.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 488, 0, 0, 66, 554
+"c:\Users\bemat\src\DrivingTracking\android\app\src\test\java\com\getcapacitor\myapp\ExampleUnitTest.java", "Java", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 0, 5, 5, 19
+"c:\Users\bemat\src\DrivingTracking\android\build.gradle", "Gradle", 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 0, 3, 7, 30
+"c:\Users\bemat\src\DrivingTracking\android\capacitor.settings.gradle", "Gradle", 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 1, 8, 25
+"c:\Users\bemat\src\DrivingTracking\android\gradle.properties", "Properties", 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 15, 6, 28
+"c:\Users\bemat\src\DrivingTracking\android\gradle\wrapper\gradle-wrapper.properties", "Properties", 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 1, 8
+"c:\Users\bemat\src\DrivingTracking\android\gradlew.bat", "Batch", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 41, 0, 0, 0, 32, 22, 95
+"c:\Users\bemat\src\DrivingTracking\android\settings.gradle", "Gradle", 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 1, 5
+"c:\Users\bemat\src\DrivingTracking\android\variables.gradle", "Gradle", 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 16
+"c:\Users\bemat\src\DrivingTracking\capacitor.config.ts", "TypeScript", 0, 23, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 26
+"c:\Users\bemat\src\DrivingTracking\components.json", "JSON", 0, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 0, 0, 0, 0, 1, 22
+"c:\Users\bemat\src\DrivingTracking\docs\ADVANCED_TRACKING_MODE_PHASE_PROMPTS.md", "Markdown", 0, 0, 0, 0, 0, 296, 0, 0, 0, 0, 0, 0, 0, 0, 0, 122, 418
+"c:\Users\bemat\src\DrivingTracking\docs\ADVANCED_TRACKING_MODE_QA.md", "Markdown", 0, 0, 0, 0, 0, 24, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 33
+"c:\Users\bemat\src\DrivingTracking\docs\CERTIFICATE_PIN_RENEWAL.md", "Markdown", 0, 0, 0, 0, 0, 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 59
+"c:\Users\bemat\src\DrivingTracking\docs\MANUAL_TRIP_NO_MOVEMENT_DEBUG.md", "Markdown", 0, 0, 0, 0, 0, 666, 0, 0, 0, 0, 0, 0, 0, 0, 0, 176, 842
+"c:\Users\bemat\src\DrivingTracking\docs\PHASE_0_INCIDENT_TRIAGE_RESULTS.md", "Markdown", 0, 0, 0, 0, 0, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 72
+"c:\Users\bemat\src\DrivingTracking\docs\PRIVACY_INTELLIGENCE.md", "Markdown", 0, 0, 0, 0, 0, 1753, 0, 0, 0, 0, 0, 0, 0, 0, 0, 363, 2116
+"c:\Users\bemat\src\DrivingTracking\docs\PROJECT_README.md", "Markdown", 0, 0, 0, 0, 0, 178, 0, 0, 0, 0, 0, 0, 0, 0, 0, 49, 227
+"c:\Users\bemat\src\DrivingTracking\docs\README.md", "Markdown", 0, 0, 0, 0, 0, 21, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 31
+"c:\Users\bemat\src\DrivingTracking\docs\RECOVERY_PLAN.md", "Markdown", 0, 0, 0, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 28, 92
+"c:\Users\bemat\src\DrivingTracking\docs\TECHNICAL_REFERENCE.md", "Markdown", 0, 0, 0, 0, 0, 51645, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3417, 55062
+"c:\Users\bemat\src\DrivingTracking\docs\TRIP_3D_REPLAY.md", "Markdown", 0, 0, 0, 0, 0, 792, 0, 0, 0, 0, 0, 0, 0, 0, 0, 215, 1007
+"c:\Users\bemat\src\DrivingTracking\docs\UI_LOADING_PERFORMANCE.md", "Markdown", 0, 0, 0, 0, 0, 1512, 0, 0, 0, 0, 0, 0, 0, 0, 0, 462, 1974
+"c:\Users\bemat\src\DrivingTracking\docs\UPGRADE_VERIFICATION.md", "Markdown", 0, 0, 0, 0, 0, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 19, 67
+"c:\Users\bemat\src\DrivingTracking\docs\VERSION_CODE_2_VERIFICATION.md", "Markdown", 0, 0, 0, 0, 0, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 49
+"c:\Users\bemat\src\DrivingTracking\docs\speed-and-fallbacks.md", "Markdown", 0, 0, 0, 0, 0, 709, 0, 0, 0, 0, 0, 0, 0, 0, 0, 212, 921
+"c:\Users\bemat\src\DrivingTracking\e2e\app-smoke.spec.js", "JavaScript", 140, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 166
+"c:\Users\bemat\src\DrivingTracking\e2e\insights.spec.js", "JavaScript", 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 54
+"c:\Users\bemat\src\DrivingTracking\e2e\settings-controls.spec.js", "JavaScript", 84, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 101
+"c:\Users\bemat\src\DrivingTracking\e2e\trip-3d-replay-upgrade.spec.js", "JavaScript", 186, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 204
+"c:\Users\bemat\src\DrivingTracking\e2e\ux-layout.spec.js", "JavaScript", 320, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 53, 373
+"c:\Users\bemat\src\DrivingTracking\eslint.config.js", "JavaScript", 77, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 79
+"c:\Users\bemat\src\DrivingTracking\index.html", "HTML", 0, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 17
+"c:\Users\bemat\src\DrivingTracking\jsconfig.json", "JSON with Comments", 0, 0, 0, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 39
+"c:\Users\bemat\src\DrivingTracking\package-lock.json", "JSON", 0, 0, 0, 0, 0, 0, 0, 11739, 0, 0, 0, 0, 0, 0, 0, 1, 11740
+"c:\Users\bemat\src\DrivingTracking\package.json", "JSON", 0, 0, 0, 0, 0, 0, 0, 121, 0, 0, 0, 0, 0, 0, 0, 1, 122
+"c:\Users\bemat\src\DrivingTracking\playwright.config.js", "JavaScript", 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 32
+"c:\Users\bemat\src\DrivingTracking\postcss.config.js", "JavaScript", 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6
+"c:\Users\bemat\src\DrivingTracking\scripts\android-perf-cdp.mjs", "JavaScript", 35, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 39
+"c:\Users\bemat\src\DrivingTracking\scripts\build-integrity-utils.mjs", "JavaScript", 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 51
+"c:\Users\bemat\src\DrivingTracking\scripts\check-certificate-pins.mjs", "JavaScript", 97, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 123
+"c:\Users\bemat\src\DrivingTracking\scripts\check-recovery-contract.mjs", "JavaScript", 94, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 103
+"c:\Users\bemat\src\DrivingTracking\scripts\check-repository-hygiene.mjs", "JavaScript", 24, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 31
+"c:\Users\bemat\src\DrivingTracking\scripts\fit-calibration-labels.mjs", "JavaScript", 34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 42
+"c:\Users\bemat\src\DrivingTracking\scripts\generate-scoring-version.mjs", "JavaScript", 56, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 65
+"c:\Users\bemat\src\DrivingTracking\scripts\generate-technical-reference.mjs", "JavaScript", 1194, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 83, 1277
+"c:\Users\bemat\src\DrivingTracking\scripts\patch-android-gradle.mjs", "JavaScript", 65, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 75
+"c:\Users\bemat\src\DrivingTracking\scripts\run-live-contracts.mjs", "JavaScript", 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 16
+"c:\Users\bemat\src\DrivingTracking\src\App.jsx", "JavaScript JSX", 0, 0, 0, 0, 671, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 50, 725
+"c:\Users\bemat\src\DrivingTracking\src\api\__tests__\clientFallback.test.js", "JavaScript", 19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 24
+"c:\Users\bemat\src\DrivingTracking\src\api\auth.js", "JavaScript", 28, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 6, 36
+"c:\Users\bemat\src\DrivingTracking\src\api\calibrationLabels.js", "JavaScript", 266, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 286
+"c:\Users\bemat\src\DrivingTracking\src\api\client.js", "JavaScript", 76, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 15, 101
+"c:\Users\bemat\src\DrivingTracking\src\api\trips.js", "JavaScript", 107, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 22, 131
+"c:\Users\bemat\src\DrivingTracking\src\api\vehicles.js", "JavaScript", 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 40
+"c:\Users\bemat\src\DrivingTracking\src\assets.d.ts", "TypeScript", 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 10
+"c:\Users\bemat\src\DrivingTracking\src\components\AppInteractionFeedback.jsx", "JavaScript JSX", 0, 0, 0, 0, 108, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 14, 124
+"c:\Users\bemat\src\DrivingTracking\src\components\CalibrationStatusTag.jsx", "JavaScript JSX", 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 9
+"c:\Users\bemat\src\DrivingTracking\src\components\DeferredRecharts.jsx", "JavaScript JSX", 0, 0, 0, 0, 29, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 34
+"c:\Users\bemat\src\DrivingTracking\src\components\EventBadge.jsx", "JavaScript JSX", 0, 0, 0, 0, 71, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 7, 79
+"c:\Users\bemat\src\DrivingTracking\src\components\InlineLoadError.jsx", "JavaScript JSX", 0, 0, 0, 0, 24, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 27
+"c:\Users\bemat\src\DrivingTracking\src\components\InlineRefreshBadge.jsx", "JavaScript JSX", 0, 0, 0, 0, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 16
+"c:\Users\bemat\src\DrivingTracking\src\components\Layout.jsx", "JavaScript JSX", 0, 0, 0, 0, 733, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 41, 790
+"c:\Users\bemat\src\DrivingTracking\src\components\LegalNoticeDialog.jsx", "JavaScript JSX", 0, 0, 0, 0, 324, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 19, 344
+"c:\Users\bemat\src\DrivingTracking\src\components\LiveCoachOverlay.jsx", "JavaScript JSX", 0, 0, 0, 0, 496, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 22, 526
+"c:\Users\bemat\src\DrivingTracking\src\components\MapErrorBoundary.jsx", "JavaScript JSX", 0, 0, 0, 0, 68, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 10, 79
+"c:\Users\bemat\src\DrivingTracking\src\components\PageChrome.jsx", "JavaScript JSX", 0, 0, 0, 0, 58, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 62
+"c:\Users\bemat\src\DrivingTracking\src\components\PageLoadingSkeleton.jsx", "JavaScript JSX", 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 7
+"c:\Users\bemat\src\DrivingTracking\src\components\PageSkeleton.jsx", "JavaScript JSX", 0, 0, 0, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 4, 41
+"c:\Users\bemat\src\DrivingTracking\src\components\PhoneUsePermissionBanner.jsx", "JavaScript JSX", 0, 0, 0, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 40
+"c:\Users\bemat\src\DrivingTracking\src\components\PremiumDrivingExposureCard.jsx", "JavaScript JSX", 0, 0, 0, 0, 132, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 15, 156
+"c:\Users\bemat\src\DrivingTracking\src\components\PremiumDrivingScoreCard.jsx", "JavaScript JSX", 0, 0, 0, 0, 173, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 13, 200
+"c:\Users\bemat\src\DrivingTracking\src\components\PremiumEventSummary.jsx", "JavaScript JSX", 0, 0, 0, 0, 82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 27, 6, 115
+"c:\Users\bemat\src\DrivingTracking\src\components\PremiumMapControls.jsx", "JavaScript JSX", 0, 0, 0, 0, 71, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 4, 89
+"c:\Users\bemat\src\DrivingTracking\src\components\PremiumMapDiagnostics.jsx", "JavaScript JSX", 0, 0, 0, 0, 204, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 19, 224
+"c:\Users\bemat\src\DrivingTracking\src\components\PremiumMapLayers.jsx", "JavaScript JSX", 0, 0, 0, 0, 218, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 14, 237
+"c:\Users\bemat\src\DrivingTracking\src\components\PremiumPreTripPlanner.jsx", "JavaScript JSX", 0, 0, 0, 0, 145, 0, 0, 0, 0, 0, 0, 0, 0, 0, 138, 10, 293
+"c:\Users\bemat\src\DrivingTracking\src\components\PremiumReadyToDriveCard.jsx", "JavaScript JSX", 0, 0, 0, 0, 169, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 14, 201
+"c:\Users\bemat\src\DrivingTracking\src\components\PremiumScoreTipsCard.jsx", "JavaScript JSX", 0, 0, 0, 0, 168, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 12, 186
+"c:\Users\bemat\src\DrivingTracking\src\components\PremiumTotalsCard.jsx", "JavaScript JSX", 0, 0, 0, 0, 234, 0, 0, 0, 0, 0, 0, 0, 0, 0, 79, 20, 333
+"c:\Users\bemat\src\DrivingTracking\src\components\PremiumTripCard.jsx", "JavaScript JSX", 0, 0, 0, 0, 123, 0, 0, 0, 0, 0, 0, 0, 0, 0, 165, 5, 293
+"c:\Users\bemat\src\DrivingTracking\src\components\PremiumTripHistoryPanels.jsx", "JavaScript JSX", 0, 0, 0, 0, 173, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 19, 193
+"c:\Users\bemat\src\DrivingTracking\src\components\PremiumWeeklyDriverGoals.jsx", "JavaScript JSX", 0, 0, 0, 0, 176, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 19, 212
+"c:\Users\bemat\src\DrivingTracking\src\components\PrivacyZoneProtectionCheck.jsx", "JavaScript JSX", 0, 0, 0, 0, 206, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 17, 224
+"c:\Users\bemat\src\DrivingTracking\src\components\ProtectedRoute.jsx", "JavaScript JSX", 0, 0, 0, 0, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 8, 39
+"c:\Users\bemat\src\DrivingTracking\src\components\RoadSectionPreview.jsx", "JavaScript JSX", 0, 0, 0, 0, 192, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 12, 205
+"c:\Users\bemat\src\DrivingTracking\src\components\ScoreRing.jsx", "JavaScript JSX", 0, 0, 0, 0, 74, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 5, 87
+"c:\Users\bemat\src\DrivingTracking\src\components\SectionErrorBoundary.jsx", "JavaScript JSX", 0, 0, 0, 0, 66, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 11, 78
+"c:\Users\bemat\src\DrivingTracking\src\components\SpeedLimitConflictReview.jsx", "JavaScript JSX", 0, 0, 0, 0, 1412, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 66, 1481
+"c:\Users\bemat\src\DrivingTracking\src\components\SpeedLimitEditorMap.jsx", "JavaScript JSX", 0, 0, 0, 0, 704, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 62, 772
+"c:\Users\bemat\src\DrivingTracking\src\components\StatCard.jsx", "JavaScript JSX", 0, 0, 0, 0, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 35
+"c:\Users\bemat\src\DrivingTracking\src\components\TrackingTelemetryCharts.jsx", "JavaScript JSX", 0, 0, 0, 0, 142, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 154
+"c:\Users\bemat\src\DrivingTracking\src\components\TripCard.jsx", "JavaScript JSX", 0, 0, 0, 0, 409, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 23, 433
+"c:\Users\bemat\src\DrivingTracking\src\components\TripDrive3D.jsx", "JavaScript JSX", 0, 0, 0, 0, 2320, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 158, 2484
+"c:\Users\bemat\src\DrivingTracking\src\components\TripMap.jsx", "JavaScript JSX", 0, 0, 0, 0, 1495, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 103, 1605
+"c:\Users\bemat\src\DrivingTracking\src\components\TripPlayback.jsx", "JavaScript JSX", 0, 0, 0, 0, 1216, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 58, 1277
+"c:\Users\bemat\src\DrivingTracking\src\components\UserNotRegisteredError.jsx", "JavaScript JSX", 0, 0, 0, 0, 29, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 33
+"c:\Users\bemat\src\DrivingTracking\src\components\VehicleCompare.jsx", "JavaScript JSX", 0, 0, 0, 0, 130, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 12, 146
+"c:\Users\bemat\src\DrivingTracking\src\components\VehicleMaintenancePanel.jsx", "JavaScript JSX", 0, 0, 0, 0, 333, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 20, 354
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\ButtonLoading.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 28, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 33
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\LayoutAccessibility.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 34
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\PremiumDrivingExposureCard.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 91, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 98
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\PremiumDrivingScoreCard.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 87
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\PremiumMapControls.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 37, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 43
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\PremiumMapDiagnostics.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 135
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\PremiumMapLayers.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 90
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\PremiumPreTripPlanner.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 109, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 117
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\PremiumReadyToDriveCard.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 112
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\PremiumScoreTipsCard.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 58, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 66
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\PremiumTotalsCard.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 191, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 211
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\PremiumTripHistoryPanels.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 94, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 102
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\PremiumWeeklyDriverGoals.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 114, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 130
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\ScoreRing.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 53
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\SectionErrorBoundary.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 91, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15, 106
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\SpeedLimitEditorMap.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 432, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 35, 467
+"c:\Users\bemat\src\DrivingTracking\src\components\__tests__\TripCard.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 139, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 28, 167
+"c:\Users\bemat\src\DrivingTracking\src\components\insights\InsightDiagnosticPanels.jsx", "JavaScript JSX", 0, 0, 0, 0, 213, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 218
+"c:\Users\bemat\src\DrivingTracking\src\components\insights\InsightExplorePanels.jsx", "JavaScript JSX", 0, 0, 0, 0, 205, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 209
+"c:\Users\bemat\src\DrivingTracking\src\components\insights\InsightHistoryPanels.jsx", "JavaScript JSX", 0, 0, 0, 0, 159, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 173
+"c:\Users\bemat\src\DrivingTracking\src\components\insights\InsightInvestigationPanels.jsx", "JavaScript JSX", 0, 0, 0, 0, 323, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 333
+"c:\Users\bemat\src\DrivingTracking\src\components\insights\InsightOverviewPanels.jsx", "JavaScript JSX", 0, 0, 0, 0, 248, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 252
+"c:\Users\bemat\src\DrivingTracking\src\components\insights\InsightPrimitives.jsx", "JavaScript JSX", 0, 0, 0, 0, 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 68
+"c:\Users\bemat\src\DrivingTracking\src\components\insights\InsightProgressPanels.jsx", "JavaScript JSX", 0, 0, 0, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 205
+"c:\Users\bemat\src\DrivingTracking\src\components\insights\__tests__\InsightHistoryPanels.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 50
+"c:\Users\bemat\src\DrivingTracking\src\components\insights\__tests__\InsightInvestigationPanels.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 41
+"c:\Users\bemat\src\DrivingTracking\src\components\privacy\ProtectionGuidance.jsx", "JavaScript JSX", 0, 0, 0, 0, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 5, 56
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\accordion.jsx", "JavaScript JSX", 0, 0, 0, 0, 35, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 42
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\alert-dialog.jsx", "JavaScript JSX", 0, 0, 0, 0, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 14, 119
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\alert.jsx", "JavaScript JSX", 0, 0, 0, 0, 41, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 49
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\aspect-ratio.jsx", "JavaScript JSX", 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 6
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\avatar.jsx", "JavaScript JSX", 0, 0, 0, 0, 29, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 36
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\badge.jsx", "JavaScript JSX", 0, 0, 0, 0, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 35
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\breadcrumb.jsx", "JavaScript JSX", 0, 0, 0, 0, 82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 93
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\button.jsx", "JavaScript JSX", 0, 0, 0, 0, 92, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 7, 100
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\calendar.jsx", "JavaScript JSX", 0, 0, 0, 0, 68, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 72
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\card.jsx", "JavaScript JSX", 0, 0, 0, 0, 42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 51
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\carousel.jsx", "JavaScript JSX", 0, 0, 0, 0, 167, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 27, 194
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\chart.jsx", "JavaScript JSX", 0, 0, 0, 0, 281, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 30, 313
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\checkbox.jsx", "JavaScript JSX", 0, 0, 0, 0, 21, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 4, 29
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\collapsible.jsx", "JavaScript JSX", 0, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 12
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\command.jsx", "JavaScript JSX", 0, 0, 0, 0, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 117
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\context-menu.jsx", "JavaScript JSX", 0, 0, 0, 0, 139, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 157
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\dialog.jsx", "JavaScript JSX", 0, 0, 0, 0, 97, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 14, 115
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\drawer.jsx", "JavaScript JSX", 0, 0, 0, 0, 79, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 93
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\dropdown-menu.jsx", "JavaScript JSX", 0, 0, 0, 0, 139, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 157
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\form.jsx", "JavaScript JSX", 0, 0, 0, 0, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 135
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\hover-card.jsx", "JavaScript JSX", 0, 0, 0, 0, 19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 26
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\input-otp.jsx", "JavaScript JSX", 0, 0, 0, 0, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 54
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\input.jsx", "JavaScript JSX", 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 20
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\label.jsx", "JavaScript JSX", 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 17
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\menubar.jsx", "JavaScript JSX", 0, 0, 0, 0, 181, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 201
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\navigation-menu.jsx", "JavaScript JSX", 0, 0, 0, 0, 93, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 105
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\pagination.jsx", "JavaScript JSX", 0, 0, 0, 0, 91, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 101
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\popover.jsx", "JavaScript JSX", 0, 0, 0, 0, 21, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 28
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\progress.jsx", "JavaScript JSX", 0, 0, 0, 0, 19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 24
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\radio-group.jsx", "JavaScript JSX", 0, 0, 0, 0, 25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 30
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\resizable.jsx", "JavaScript JSX", 0, 0, 0, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 43
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\scroll-area.jsx", "JavaScript JSX", 0, 0, 0, 0, 34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 39
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\select.jsx", "JavaScript JSX", 0, 0, 0, 0, 108, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 122
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\separator.jsx", "JavaScript JSX", 0, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 24
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\sheet.jsx", "JavaScript JSX", 0, 0, 0, 0, 96, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 110
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\sidebar.jsx", "JavaScript JSX", 0, 0, 0, 0, 578, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 55, 647
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\skeleton.jsx", "JavaScript JSX", 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 15
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\slider.jsx", "JavaScript JSX", 0, 0, 0, 0, 18, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 22
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\sonner.jsx", "JavaScript JSX", 0, 0, 0, 0, 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 30
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\switch.jsx", "JavaScript JSX", 0, 0, 0, 0, 19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 23
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\table.jsx", "JavaScript JSX", 0, 0, 0, 0, 76, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 87
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\tabs.jsx", "JavaScript JSX", 0, 0, 0, 0, 35, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 7, 60
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\textarea.jsx", "JavaScript JSX", 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 19
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\toast.jsx", "JavaScript JSX", 0, 0, 0, 0, 95, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 105
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\toaster.jsx", "JavaScript JSX", 0, 0, 0, 0, 31, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 34
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\toggle-group.jsx", "JavaScript JSX", 0, 0, 0, 0, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 45
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\toggle.jsx", "JavaScript JSX", 0, 0, 0, 0, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 39
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\tooltip.jsx", "JavaScript JSX", 0, 0, 0, 0, 21, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 29
+"c:\Users\bemat\src\DrivingTracking\src\components\ui\use-toast.jsx", "JavaScript JSX", 0, 0, 0, 0, 163, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 30, 196
+"c:\Users\bemat\src\DrivingTracking\src\global.d.ts", "TypeScript", 0, 28, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 33
+"c:\Users\bemat\src\DrivingTracking\src\hooks\use-mobile.jsx", "JavaScript JSX", 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 20
+"c:\Users\bemat\src\DrivingTracking\src\hooks\useDebouncedValue.js", "JavaScript", 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 13
+"c:\Users\bemat\src\DrivingTracking\src\hooks\useLocalSettings.jsx", "JavaScript JSX", 0, 0, 0, 0, 85, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 12, 100
+"c:\Users\bemat\src\DrivingTracking\src\hooks\usePlaybackScreenAwake.js", "JavaScript", 52, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 12, 66
+"c:\Users\bemat\src\DrivingTracking\src\hooks\usePrivacyZonesRevision.js", "JavaScript", 22, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 26
+"c:\Users\bemat\src\DrivingTracking\src\index.css", "PostCSS", 0, 0, 0, 0, 0, 0, 8705, 0, 0, 0, 0, 0, 0, 0, 26, 1057, 9788
+"c:\Users\bemat\src\DrivingTracking\src\lib\AuthContext.jsx", "JavaScript JSX", 0, 0, 0, 0, 87, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 100
+"c:\Users\bemat\src\DrivingTracking\src\lib\PageNotFound.jsx", "JavaScript JSX", 0, 0, 0, 0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 21
+"c:\Users\bemat\src\DrivingTracking\src\lib\SecureGpsBuffer.js", "JavaScript", 53, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 62
+"c:\Users\bemat\src\DrivingTracking\src\lib\__fixtures__\androidTripStatsParityFixture.json", "JSON", 0, 0, 0, 0, 0, 0, 0, 90, 0, 0, 0, 0, 0, 0, 0, 1, 91
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\activeTripStoreSecurity.test.js", "JavaScript", 149, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 19, 168
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\activityRecognition.test.js", "JavaScript", 233, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 28, 262
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\advancedInsightIntelligence.test.js", "JavaScript", 267, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 24, 291
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\advancedInsights.test.js", "JavaScript", 191, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 205
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\advancedOpenSourceFeatures.test.js", "JavaScript", 447, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 60, 507
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\androidPhoneUsageSummary.test.js", "JavaScript", 72, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 93
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\androidTripStatsParity.test.js", "JavaScript", 158, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 25, 183
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\biometricGate.test.js", "JavaScript", 43, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 53
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\brakeOnsetSmoothness.test.js", "JavaScript", 41, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 50
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\brakingEfficiency.test.js", "JavaScript", 44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 52
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\buildIntegrity.test.js", "JavaScript", 24, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 28
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\calibrationLabeling.test.js", "JavaScript", 225, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 22, 247
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\coachPrograms.test.js", "JavaScript", 336, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 39, 375
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\controlSelfTests.test.js", "JavaScript", 107, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 118
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\corneringConsistency.test.js", "JavaScript", 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 53
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\crashSanitizer.test.js", "JavaScript", 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 69
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\currency.test.js", "JavaScript", 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 38
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\dailyFatigueEngine.test.js", "JavaScript", 113, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 134
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\dangerZoneEngine.test.js", "JavaScript", 70, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 84
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\dashboardScoreReview.test.js", "JavaScript", 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 65
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\dashboardStats.test.js", "JavaScript", 51, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 59
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\dataBackupImportSecurity.test.js", "JavaScript", 930, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 93, 1023
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\dataRights.test.js", "JavaScript", 86, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 91
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\deviceStatus.test.js", "JavaScript", 37, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 43
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\differentialPrivacy.test.js", "JavaScript", 35, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 43
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\driverProgression.test.js", "JavaScript", 194, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 224
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\driverSignature.test.js", "JavaScript", 110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 133
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\drivingConsistency.test.js", "JavaScript", 47, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 54
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\errorReporting.test.js", "JavaScript", 35, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 43
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\exportIntegrityNative.test.js", "JavaScript", 44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 52
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\externalContracts.test.js", "JavaScript", 555, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 57, 616
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\fatigueHeatmapData.test.js", "JavaScript", 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 62
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\feedbackRescore.test.js", "JavaScript", 141, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 157
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\goldenFixtures.test.js", "JavaScript", 81, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 94
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\goldenFixtures\eventful_speeding_v2_1_0.json", "JSON", 0, 0, 0, 0, 0, 0, 0, 74, 0, 0, 0, 0, 0, 0, 0, 1, 75
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\goldenFixtures\urban_smooth_v2_1_0.json", "JSON", 0, 0, 0, 0, 0, 0, 0, 70, 0, 0, 0, 0, 0, 0, 0, 1, 71
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\hashChainLog.test.js", "JavaScript", 181, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 26, 211
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\htmlUtils.test.js", "JavaScript", 79, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 92
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\keyRotationManager.test.js", "JavaScript", 101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 114
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\legalDisclaimers.test.js", "JavaScript", 59, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 65
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\liveExternalContracts.test.js", "JavaScript", 70, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 82
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\liveTrackingTelemetry.test.js", "JavaScript", 70, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 80
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\localSpeedKnowledge.test.js", "JavaScript", 153, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 167
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\localSpeedScoreRefresh.test.js", "JavaScript", 229, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 252
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\localTestTrips.test.js", "JavaScript", 21, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 25
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\localTripRepositoryIndexedDb.test.js", "JavaScript", 1033, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 120, 1153
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\localVehicleRepository.test.js", "JavaScript", 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 65
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\mapMatching.test.js", "JavaScript", 362, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 45, 409
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\mapPlaybackInsights.test.js", "JavaScript", 300, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 57, 357
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\mathUtils.test.js", "JavaScript", 21, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 26
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\mediumInsights.test.js", "JavaScript", 238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 24, 262
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\metricRegistry.test.js", "JavaScript", 84, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 95
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\nativeDownloads.test.js", "JavaScript", 58, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 69
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\nativeManualTripIdentity.test.js", "JavaScript", 59, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 66
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\notifications.test.js", "JavaScript", 203, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 36, 239
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\numericDisplayConsistency.test.js", "JavaScript", 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 56
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\openSourceContext.test.js", "JavaScript", 289, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 30, 320
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\overtakeQuality.test.js", "JavaScript", 65, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 75
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\parkedLocationResolver.test.js", "JavaScript", 52, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 64
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\phoneUsageAccess.test.js", "JavaScript", 173, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 25, 198
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\phoneUseDetection.test.js", "JavaScript", 146, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 22, 168
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\phoneUseSummary.test.js", "JavaScript", 265, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 286
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\pinnedFetch.test.js", "JavaScript", 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 38
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\preTripRisk.test.js", "JavaScript", 256, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 41, 297
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\predictiveMaintenance.test.js", "JavaScript", 109, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 125
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\premiumTripPresentation.test.js", "JavaScript", 105, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 119
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\privacyGatedFetch.test.js", "JavaScript", 179, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 202
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\privacyIntelligence.test.js", "JavaScript", 731, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 66, 799
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\privacyIntelligenceUi.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 51
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\privacyMode.test.js", "JavaScript", 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 61
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\privacyTripRemediation.test.js", "JavaScript", 94, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 103
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\privacyZoneEditorPrivacy.test.js", "JavaScript", 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 55
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\privacyZoneSuggestions.test.js", "JavaScript", 154, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 24, 178
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\privacyZones.test.js", "JavaScript", 1252, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 150, 1405
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\privateTripMode.test.js", "JavaScript", 87, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 94
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\rasp.test.js", "JavaScript", 62, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 74
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\recoveryCompatibility.test.js", "JavaScript", 118, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 136
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\releaseBlockers.test.js", "JavaScript", 941, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 134, 1077
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\requestObfuscator.test.js", "JavaScript", 75, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 88
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\rescoringQueue.test.js", "JavaScript", 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 64
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\rescoringWorker.test.js", "JavaScript", 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 40
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\roadContextQueue.test.js", "JavaScript", 66, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15, 81
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\roadSectionIdentity.test.js", "JavaScript", 62, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 72
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\roadTypeSegmentedScoring.test.js", "JavaScript", 51, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 61
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\routeRiskIndex.test.js", "JavaScript", 144, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 170
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\safeWording.test.js", "JavaScript", 66, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 75
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\scoreDisplay.test.js", "JavaScript", 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 24
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\scoreExplainer.test.js", "JavaScript", 41, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 46
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\scoreInputPrivacy.test.js", "JavaScript", 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 54
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\scoringConstants.test.js", "JavaScript", 133, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 144
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\secureBridge.test.js", "JavaScript", 68, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 12, 81
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\securePayloadCrypto.test.js", "JavaScript", 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 36
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\securePayloadCryptoNative.test.js", "JavaScript", 67, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 77
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\settingsImportSecurity.test.js", "JavaScript", 85, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 20, 106
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\settingsPerformance.test.js", "JavaScript", 71, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 80
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\settingsSearch.test.js", "JavaScript", 78, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 94
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\slipperyConditionProxy.test.js", "JavaScript", 37, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 45
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\speedKnowledgeHealth.test.js", "JavaScript", 56, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 61
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\speedKnowledgeRepository.test.js", "JavaScript", 278, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 44, 322
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\speedLimitCompliance.test.js", "JavaScript", 217, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 28, 254
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\speedLimitDisplay.test.js", "JavaScript", 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 35
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\speedLimitIntelligence.test.js", "JavaScript", 105, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 119
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\speedLimitMapSections.test.js", "JavaScript", 316, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 33, 349
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\speedSectionExclusions.test.js", "JavaScript", 47, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 54
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\themeMode.test.js", "JavaScript", 94, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 114
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\thresholdCalibration.test.js", "JavaScript", 219, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 25, 244
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\trackingDiagnostics.test.js", "JavaScript", 121, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 134
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\trackingEvents.test.js", "JavaScript", 121, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 134
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\trackingEvidence.test.js", "JavaScript", 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 163
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\trackingExportLab.test.js", "JavaScript", 145, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 161
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\trackingPrivacyConsole.test.js", "JavaScript", 155, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 166
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\trackingReplayPro.test.js", "JavaScript", 121, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 133
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\trackingService.test.js", "JavaScript", 220, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 243
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\trackingSpeedConsole.test.js", "JavaScript", 68, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 73
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\trackingStoreDefaults.test.js", "JavaScript", 416, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 35, 454
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\trackingTelemetryAnalytics.test.js", "JavaScript", 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 66
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\trackingTripPresentation.test.js", "JavaScript", 24, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 28
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\transmissionLog.test.js", "JavaScript", 188, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 24, 213
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\tripEngineCalculationCoverage.test.js", "JavaScript", 516, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 71, 587
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\tripInsightsEvidenceGates.test.js", "JavaScript", 133, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 151
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\ubiPdfExport.test.js", "JavaScript", 89, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 103
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\ubiReport.test.js", "JavaScript", 171, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 28, 199
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\unitFormatting.test.js", "JavaScript", 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 51
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\vehicleMaintenance.test.js", "JavaScript", 121, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 16, 138
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\vehicleSuggestions.test.js", "JavaScript", 58, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 68
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\voiceAlertMessages.test.js", "JavaScript", 183, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 25, 216
+"c:\Users\bemat\src\DrivingTracking\src\lib\__tests__\voiceAlerts.test.js", "JavaScript", 269, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 42, 311
+"c:\Users\bemat\src\DrivingTracking\src\lib\activityRecognition.js", "JavaScript", 508, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 36, 548
+"c:\Users\bemat\src\DrivingTracking\src\lib\advancedInsightIntelligence.js", "JavaScript", 416, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 427
+"c:\Users\bemat\src\DrivingTracking\src\lib\advancedInsights.js", "JavaScript", 289, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 9, 300
+"c:\Users\bemat\src\DrivingTracking\src\lib\appConstants.js", "JavaScript", 27, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 10, 45
+"c:\Users\bemat\src\DrivingTracking\src\lib\appDialog.jsx", "JavaScript JSX", 0, 0, 0, 0, 163, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15, 178
+"c:\Users\bemat\src\DrivingTracking\src\lib\appearance.js", "JavaScript", 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 10, 51
+"c:\Users\bemat\src\DrivingTracking\src\lib\backupEnvelopeEncryption.js", "JavaScript", 293, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 22, 320
+"c:\Users\bemat\src\DrivingTracking\src\lib\biometricGate.js", "JavaScript", 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 25
+"c:\Users\bemat\src\DrivingTracking\src\lib\buildIntegrity.generated.js", "JavaScript", 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3
+"c:\Users\bemat\src\DrivingTracking\src\lib\buildIntegrity.js", "JavaScript", 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 16
+"c:\Users\bemat\src\DrivingTracking\src\lib\calibrationFitting.js", "JavaScript", 315, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 29, 344
+"c:\Users\bemat\src\DrivingTracking\src\lib\calibrationLabeling.js", "JavaScript", 296, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 328
+"c:\Users\bemat\src\DrivingTracking\src\lib\coachPrograms.js", "JavaScript", 779, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 47, 828
+"c:\Users\bemat\src\DrivingTracking\src\lib\commuteMatching.js", "JavaScript", 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 4, 34
+"c:\Users\bemat\src\DrivingTracking\src\lib\controlSelfTests.js", "JavaScript", 349, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 27, 377
+"c:\Users\bemat\src\DrivingTracking\src\lib\crashSanitizer.js", "JavaScript", 145, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15, 160
+"c:\Users\bemat\src\DrivingTracking\src\lib\currency.js", "JavaScript", 22, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 4, 30
+"c:\Users\bemat\src\DrivingTracking\src\lib\dailyFatigueEngine.js", "JavaScript", 110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 37, 13, 160
+"c:\Users\bemat\src\DrivingTracking\src\lib\dangerZoneEngine.js", "JavaScript", 103, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 119
+"c:\Users\bemat\src\DrivingTracking\src\lib\dashboardScoreReview.js", "JavaScript", 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 59
+"c:\Users\bemat\src\DrivingTracking\src\lib\dashboardStats.js", "JavaScript", 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 9, 58
+"c:\Users\bemat\src\DrivingTracking\src\lib\dataBackup.js", "JavaScript", 1432, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 25, 64, 1521
+"c:\Users\bemat\src\DrivingTracking\src\lib\dataBackupConstants.js", "JavaScript", 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 6
+"c:\Users\bemat\src\DrivingTracking\src\lib\dataRights.js", "JavaScript", 395, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 21, 422
+"c:\Users\bemat\src\DrivingTracking\src\lib\deviceStatus.js", "JavaScript", 77, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 82
+"c:\Users\bemat\src\DrivingTracking\src\lib\differentialPrivacy.js", "JavaScript", 109, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 20, 131
+"c:\Users\bemat\src\DrivingTracking\src\lib\driveSenseNativePlugin.js", "JavaScript", 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 6
+"c:\Users\bemat\src\DrivingTracking\src\lib\driverAnomaly.js", "JavaScript", 71, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 76
+"c:\Users\bemat\src\DrivingTracking\src\lib\driverProgression.js", "JavaScript", 872, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 61, 938
+"c:\Users\bemat\src\DrivingTracking\src\lib\ecoDefaults.js", "JavaScript", 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 8
+"c:\Users\bemat\src\DrivingTracking\src\lib\encryptedStore.js", "JavaScript", 53, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 12, 73
+"c:\Users\bemat\src\DrivingTracking\src\lib\errorReporting.js", "JavaScript", 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 56
+"c:\Users\bemat\src\DrivingTracking\src\lib\exportCommitment.js", "JavaScript", 118, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 135
+"c:\Users\bemat\src\DrivingTracking\src\lib\exportIntegrity.js", "JavaScript", 222, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 34, 256
+"c:\Users\bemat\src\DrivingTracking\src\lib\habitProfile.js", "JavaScript", 178, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 19, 29, 226
+"c:\Users\bemat\src\DrivingTracking\src\lib\hashChainLog.js", "JavaScript", 359, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 31, 392
+"c:\Users\bemat\src\DrivingTracking\src\lib\htmlUtils.js", "JavaScript", 19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 24
+"c:\Users\bemat\src\DrivingTracking\src\lib\interactionFeedback.js", "JavaScript", 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 59
+"c:\Users\bemat\src\DrivingTracking\src\lib\keyRotationManager.js", "JavaScript", 172, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 190
+"c:\Users\bemat\src\DrivingTracking\src\lib\legalDisclaimers.js", "JavaScript", 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 157
+"c:\Users\bemat\src\DrivingTracking\src\lib\liveTrackingTelemetry.js", "JavaScript", 172, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 186
+"c:\Users\bemat\src\DrivingTracking\src\lib\localCalibrationLabelRepository.js", "JavaScript", 126, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 142
+"c:\Users\bemat\src\DrivingTracking\src\lib\localSpeedKnowledge.js", "JavaScript", 1084, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 96, 1191
+"c:\Users\bemat\src\DrivingTracking\src\lib\localSpeedScoreRefresh.js", "JavaScript", 164, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 182
+"c:\Users\bemat\src\DrivingTracking\src\lib\localTestTrips.js", "JavaScript", 69, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 79
+"c:\Users\bemat\src\DrivingTracking\src\lib\localTripRepository.js", "JavaScript", 1795, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 93, 169, 2057
+"c:\Users\bemat\src\DrivingTracking\src\lib\localVehicleRepository.js", "JavaScript", 169, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 187
+"c:\Users\bemat\src\DrivingTracking\src\lib\mapMatching.js", "JavaScript", 590, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 39, 629
+"c:\Users\bemat\src\DrivingTracking\src\lib\mapPlaybackInsights.js", "JavaScript", 583, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 64, 648
+"c:\Users\bemat\src\DrivingTracking\src\lib\mapPopupHtml.js", "JavaScript", 42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 8, 53
+"c:\Users\bemat\src\DrivingTracking\src\lib\mathUtils.js", "JavaScript", 29, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 3, 48
+"c:\Users\bemat\src\DrivingTracking\src\lib\mediumInsights.js", "JavaScript", 585, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 35, 620
+"c:\Users\bemat\src\DrivingTracking\src\lib\metricRegistry.js", "JavaScript", 1071, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 10, 1087
+"c:\Users\bemat\src\DrivingTracking\src\lib\mobileStorage.js", "JavaScript", 72, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 85
+"c:\Users\bemat\src\DrivingTracking\src\lib\nativeDownloads.js", "JavaScript", 120, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 14, 137
+"c:\Users\bemat\src\DrivingTracking\src\lib\nativeManualTripIdentity.js", "JavaScript", 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 55
+"c:\Users\bemat\src\DrivingTracking\src\lib\nativePlatform.js", "JavaScript", 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 20
+"c:\Users\bemat\src\DrivingTracking\src\lib\nativeRoadDataQueue.js", "JavaScript", 44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 50
+"c:\Users\bemat\src\DrivingTracking\src\lib\notificationService.js", "JavaScript", 921, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 87, 1016
+"c:\Users\bemat\src\DrivingTracking\src\lib\obdBluetooth.js", "JavaScript", 133, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 143
+"c:\Users\bemat\src\DrivingTracking\src\lib\openSourceTripContext.js", "JavaScript", 475, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 26, 504
+"c:\Users\bemat\src\DrivingTracking\src\lib\osrmPrivacy.js", "JavaScript", 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 12
+"c:\Users\bemat\src\DrivingTracking\src\lib\parkedLocationResolver.js", "JavaScript", 110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 13, 127
+"c:\Users\bemat\src\DrivingTracking\src\lib\pdfExport.js", "JavaScript", 498, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 31, 534
+"c:\Users\bemat\src\DrivingTracking\src\lib\performanceTriage.js", "JavaScript", 69, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 8, 79
+"c:\Users\bemat\src\DrivingTracking\src\lib\permissions.js", "JavaScript", 198, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 221
+"c:\Users\bemat\src\DrivingTracking\src\lib\phoneUsageAccess.js", "JavaScript", 372, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 33, 437
+"c:\Users\bemat\src\DrivingTracking\src\lib\phoneUseSummary.js", "JavaScript", 420, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 450
+"c:\Users\bemat\src\DrivingTracking\src\lib\pinnedFetch.js", "JavaScript", 53, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 63
+"c:\Users\bemat\src\DrivingTracking\src\lib\preTripRisk.js", "JavaScript", 382, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 31, 41, 454
+"c:\Users\bemat\src\DrivingTracking\src\lib\predictiveRouteRisk.js", "JavaScript", 213, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 24, 18, 255
+"c:\Users\bemat\src\DrivingTracking\src\lib\premiumTripPresentation.js", "JavaScript", 113, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 17, 150
+"c:\Users\bemat\src\DrivingTracking\src\lib\privacyGatedFetch.js", "JavaScript", 216, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 24, 240
+"c:\Users\bemat\src\DrivingTracking\src\lib\privacyIntelligence.js", "JavaScript", 1438, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 31, 82, 1551
+"c:\Users\bemat\src\DrivingTracking\src\lib\privacyMode.js", "JavaScript", 39, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 45
+"c:\Users\bemat\src\DrivingTracking\src\lib\privacyTripRemediation.js", "JavaScript", 114, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 12, 130
+"c:\Users\bemat\src\DrivingTracking\src\lib\privacyZoneSuggestions.js", "JavaScript", 237, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 257
+"c:\Users\bemat\src\DrivingTracking\src\lib\privacyZones.js", "JavaScript", 1933, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 31, 220, 2184
+"c:\Users\bemat\src\DrivingTracking\src\lib\privateTripMode.js", "JavaScript", 234, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 19, 253
+"c:\Users\bemat\src\DrivingTracking\src\lib\query-client.js", "JavaScript", 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 14
+"c:\Users\bemat\src\DrivingTracking\src\lib\rasp.js", "JavaScript", 80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 92
+"c:\Users\bemat\src\DrivingTracking\src\lib\requestObfuscator.js", "JavaScript", 133, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 18, 152
+"c:\Users\bemat\src\DrivingTracking\src\lib\rescoringQueue.js", "JavaScript", 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 143
+"c:\Users\bemat\src\DrivingTracking\src\lib\rescoringWorker.js", "JavaScript", 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 16
+"c:\Users\bemat\src\DrivingTracking\src\lib\retry.js", "JavaScript", 39, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 46
+"c:\Users\bemat\src\DrivingTracking\src\lib\roadContextQueue.js", "JavaScript", 59, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 69
+"c:\Users\bemat\src\DrivingTracking\src\lib\roadSectionIdentity.js", "JavaScript", 170, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 19, 189
+"c:\Users\bemat\src\DrivingTracking\src\lib\routeRiskIndex.js", "JavaScript", 263, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 22, 289
+"c:\Users\bemat\src\DrivingTracking\src\lib\scoreDisplay.js", "JavaScript", 29, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 34
+"c:\Users\bemat\src\DrivingTracking\src\lib\scoreInputPrivacy.js", "JavaScript", 162, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15, 12, 189
+"c:\Users\bemat\src\DrivingTracking\src\lib\scoringConstants.js", "JavaScript", 401, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 24, 446
+"c:\Users\bemat\src\DrivingTracking\src\lib\scoringVersion.generated.js", "JavaScript", 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 1, 6
+"c:\Users\bemat\src\DrivingTracking\src\lib\scoring\scoreExplainer.js", "JavaScript", 80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 91
+"c:\Users\bemat\src\DrivingTracking\src\lib\screenSecurity.js", "JavaScript", 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 11
+"c:\Users\bemat\src\DrivingTracking\src\lib\secureBridge.js", "JavaScript", 142, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 22, 164
+"c:\Users\bemat\src\DrivingTracking\src\lib\securePayloadCrypto.js", "JavaScript", 225, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 29, 254
+"c:\Users\bemat\src\DrivingTracking\src\lib\sensorFusionModel.js", "JavaScript", 344, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 31, 375
+"c:\Users\bemat\src\DrivingTracking\src\lib\settingsSearch.js", "JavaScript", 152, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 31, 183
+"c:\Users\bemat\src\DrivingTracking\src\lib\speedKnowledgeHealth.js", "JavaScript", 73, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 82
+"c:\Users\bemat\src\DrivingTracking\src\lib\speedKnowledgeRepository.js", "JavaScript", 190, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 22, 212
+"c:\Users\bemat\src\DrivingTracking\src\lib\speedLimitConfidence.js", "JavaScript", 162, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 172
+"c:\Users\bemat\src\DrivingTracking\src\lib\speedLimitDisplay.js", "JavaScript", 81, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 88
+"c:\Users\bemat\src\DrivingTracking\src\lib\speedLimitIntelligence.js", "JavaScript", 226, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 247
+"c:\Users\bemat\src\DrivingTracking\src\lib\speedLimitMapSections.js", "JavaScript", 976, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 78, 1055
+"c:\Users\bemat\src\DrivingTracking\src\lib\speedLimitReview.js", "JavaScript", 188, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 25, 223
+"c:\Users\bemat\src\DrivingTracking\src\lib\speedLimitSource.js", "JavaScript", 935, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 80, 1020
+"c:\Users\bemat\src\DrivingTracking\src\lib\speedSectionExclusions.js", "JavaScript", 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 55
+"c:\Users\bemat\src\DrivingTracking\src\lib\systemLog.js", "JavaScript", 516, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 45, 561
+"c:\Users\bemat\src\DrivingTracking\src\lib\thresholdCalibration.js", "JavaScript", 355, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 37, 392
+"c:\Users\bemat\src\DrivingTracking\src\lib\trackingDiagnostics.js", "JavaScript", 439, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 469
+"c:\Users\bemat\src\DrivingTracking\src\lib\trackingEvents.js", "JavaScript", 347, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 29, 376
+"c:\Users\bemat\src\DrivingTracking\src\lib\trackingEvidence.js", "JavaScript", 352, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 378
+"c:\Users\bemat\src\DrivingTracking\src\lib\trackingExportLab.js", "JavaScript", 278, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 24, 302
+"c:\Users\bemat\src\DrivingTracking\src\lib\trackingPrivacyConsole.js", "JavaScript", 273, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 285
+"c:\Users\bemat\src\DrivingTracking\src\lib\trackingReplayPro.js", "JavaScript", 274, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 292
+"c:\Users\bemat\src\DrivingTracking\src\lib\trackingService.js", "JavaScript", 265, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 27, 293
+"c:\Users\bemat\src\DrivingTracking\src\lib\trackingSpeedConsole.js", "JavaScript", 223, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 244
+"c:\Users\bemat\src\DrivingTracking\src\lib\trackingStore.js", "JavaScript", 1050, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 27, 84, 1161
+"c:\Users\bemat\src\DrivingTracking\src\lib\trackingTelemetryAnalytics.js", "JavaScript", 185, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 19, 204
+"c:\Users\bemat\src\DrivingTracking\src\lib\trackingTripPresentation.js", "JavaScript", 80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 89
+"c:\Users\bemat\src\DrivingTracking\src\lib\transmissionLog.js", "JavaScript", 183, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 201
+"c:\Users\bemat\src\DrivingTracking\src\lib\tripEconomyDefaults.js", "JavaScript", 28, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 33
+"c:\Users\bemat\src\DrivingTracking\src\lib\tripEngine.js", "JavaScript", 6484, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 337, 611, 7432
+"c:\Users\bemat\src\DrivingTracking\src\lib\tripEngine.test.js", "JavaScript", 2358, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 296, 2658
+"c:\Users\bemat\src\DrivingTracking\src\lib\tripInsights.js", "JavaScript", 2061, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 112, 2196
+"c:\Users\bemat\src\DrivingTracking\src\lib\tripMetadata.js", "JavaScript", 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 36, 27, 318
+"c:\Users\bemat\src\DrivingTracking\src\lib\tripRepositoryEvents.js", "JavaScript", 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2
+"c:\Users\bemat\src\DrivingTracking\src\lib\tripSummary.js", "JavaScript", 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 8, 59
+"c:\Users\bemat\src\DrivingTracking\src\lib\ubiReport.js", "JavaScript", 159, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 14, 182
+"c:\Users\bemat\src\DrivingTracking\src\lib\unitFormatting.js", "JavaScript", 61, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 71
+"c:\Users\bemat\src\DrivingTracking\src\lib\urlSecurity.js", "JavaScript", 39, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 46
+"c:\Users\bemat\src\DrivingTracking\src\lib\utils.js", "JavaScript", 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 10
+"c:\Users\bemat\src\DrivingTracking\src\lib\vehicleMaintenance.js", "JavaScript", 249, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 20, 270
+"c:\Users\bemat\src\DrivingTracking\src\lib\vehicleReferenceCatalog.js", "JavaScript", 103, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 7, 112
+"c:\Users\bemat\src\DrivingTracking\src\lib\vehicleSuggestions.js", "JavaScript", 121, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15, 136
+"c:\Users\bemat\src\DrivingTracking\src\lib\voiceAlertMessages.js", "JavaScript", 456, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 36, 499
+"c:\Users\bemat\src\DrivingTracking\src\lib\voiceAlerts.js", "JavaScript", 196, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 24, 221
+"c:\Users\bemat\src\DrivingTracking\src\lib\weatherContext.js", "JavaScript", 434, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 31, 467
+"c:\Users\bemat\src\DrivingTracking\src\lib\weeklyCoaching.js", "JavaScript", 109, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 119
+"c:\Users\bemat\src\DrivingTracking\src\main.jsx", "JavaScript JSX", 0, 0, 0, 0, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 17
+"c:\Users\bemat\src\DrivingTracking\src\pages\Achievements.jsx", "JavaScript JSX", 0, 0, 0, 0, 576, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 30, 607
+"c:\Users\bemat\src\DrivingTracking\src\pages\AndroidReference.jsx", "JavaScript JSX", 0, 0, 0, 0, 938, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 9, 950
+"c:\Users\bemat\src\DrivingTracking\src\pages\Dashboard.jsx", "JavaScript JSX", 0, 0, 0, 0, 4555, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15, 183, 4753
+"c:\Users\bemat\src\DrivingTracking\src\pages\Diagnostics.jsx", "JavaScript JSX", 0, 0, 0, 0, 565, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 34, 600
+"c:\Users\bemat\src\DrivingTracking\src\pages\DrivingCoach.jsx", "JavaScript JSX", 0, 0, 0, 0, 1097, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 51, 1149
+"c:\Users\bemat\src\DrivingTracking\src\pages\Insights.jsx", "JavaScript JSX", 0, 0, 0, 0, 281, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 17, 299
+"c:\Users\bemat\src\DrivingTracking\src\pages\MapScreen.jsx", "JavaScript JSX", 0, 0, 0, 0, 1004, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 43, 1048
+"c:\Users\bemat\src\DrivingTracking\src\pages\Onboarding.jsx", "JavaScript JSX", 0, 0, 0, 0, 513, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 30, 552
+"c:\Users\bemat\src\DrivingTracking\src\pages\PrivacyIntelligence.jsx", "JavaScript JSX", 0, 0, 0, 0, 1226, 0, 0, 0, 0, 0, 0, 0, 0, 0, 33, 70, 1329
+"c:\Users\bemat\src\DrivingTracking\src\pages\Report.jsx", "JavaScript JSX", 0, 0, 0, 0, 1220, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 51, 1285
+"c:\Users\bemat\src\DrivingTracking\src\pages\Settings.jsx", "JavaScript JSX", 0, 0, 0, 0, 6345, 0, 0, 0, 0, 0, 0, 0, 0, 0, 31, 239, 6615
+"c:\Users\bemat\src\DrivingTracking\src\pages\SpeedAnalysis.jsx", "JavaScript JSX", 0, 0, 0, 0, 640, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 30, 671
+"c:\Users\bemat\src\DrivingTracking\src\pages\SpeedLimits.jsx", "JavaScript JSX", 0, 0, 0, 0, 3662, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 144, 3809
+"c:\Users\bemat\src\DrivingTracking\src\pages\SystemLogs.jsx", "JavaScript JSX", 0, 0, 0, 0, 732, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 47, 780
+"c:\Users\bemat\src\DrivingTracking\src\pages\TrackingAlertsLab.jsx", "JavaScript JSX", 0, 0, 0, 0, 284, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 22, 306
+"c:\Users\bemat\src\DrivingTracking\src\pages\TrackingEvents.jsx", "JavaScript JSX", 0, 0, 0, 0, 319, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 342
+"c:\Users\bemat\src\DrivingTracking\src\pages\TrackingEvidenceConsole.jsx", "JavaScript JSX", 0, 0, 0, 0, 228, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15, 243
+"c:\Users\bemat\src\DrivingTracking\src\pages\TrackingMapWorkspace.jsx", "JavaScript JSX", 0, 0, 0, 0, 510, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 39, 549
+"c:\Users\bemat\src\DrivingTracking\src\pages\TrackingOverview.jsx", "JavaScript JSX", 0, 0, 0, 0, 1073, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 63, 1136
+"c:\Users\bemat\src\DrivingTracking\src\pages\TrackingPrivacyConsole.jsx", "JavaScript JSX", 0, 0, 0, 0, 362, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 28, 390
+"c:\Users\bemat\src\DrivingTracking\src\pages\TrackingReplayPro.jsx", "JavaScript JSX", 0, 0, 0, 0, 337, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 363
+"c:\Users\bemat\src\DrivingTracking\src\pages\TrackingReportsLab.jsx", "JavaScript JSX", 0, 0, 0, 0, 311, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 327
+"c:\Users\bemat\src\DrivingTracking\src\pages\TrackingSpeedConsole.jsx", "JavaScript JSX", 0, 0, 0, 0, 238, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 256
+"c:\Users\bemat\src\DrivingTracking\src\pages\TrackingTripDetail.jsx", "JavaScript JSX", 0, 0, 0, 0, 139, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 150
+"c:\Users\bemat\src\DrivingTracking\src\pages\TrackingTripHistory.jsx", "JavaScript JSX", 0, 0, 0, 0, 151, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 156
+"c:\Users\bemat\src\DrivingTracking\src\pages\Trip3DReplay.jsx", "JavaScript JSX", 0, 0, 0, 0, 140, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 10, 151
+"c:\Users\bemat\src\DrivingTracking\src\pages\TripDetail.jsx", "JavaScript JSX", 0, 0, 0, 0, 3570, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 132, 3722
+"c:\Users\bemat\src\DrivingTracking\src\pages\TripDrive3DPage.jsx", "JavaScript JSX", 0, 0, 0, 0, 145, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 14, 160
+"c:\Users\bemat\src\DrivingTracking\src\pages\TripHistory.jsx", "JavaScript JSX", 0, 0, 0, 0, 879, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 52, 932
+"c:\Users\bemat\src\DrivingTracking\src\pages\Vehicles.jsx", "JavaScript JSX", 0, 0, 0, 0, 970, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 47, 1020
+"c:\Users\bemat\src\DrivingTracking\src\pages\__tests__\PrivacyIntelligence.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 419, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 25, 444
+"c:\Users\bemat\src\DrivingTracking\src\pages\__tests__\Vehicles.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 94
+"c:\Users\bemat\src\DrivingTracking\src\pages\__tests__\corePages.render.test.jsx", "JavaScript JSX", 0, 0, 0, 0, 1248, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 123, 1373
+"c:\Users\bemat\src\DrivingTracking\src\tests\localSpeedKnowledge.test.js", "JavaScript", 620, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 71, 696
+"c:\Users\bemat\src\DrivingTracking\src\tests\speedLimitResolver.test.js", "JavaScript", 305, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 31, 346
+"c:\Users\bemat\src\DrivingTracking\src\tests\speedLimitReview.test.js", "JavaScript", 211, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 25, 236
+"c:\Users\bemat\src\DrivingTracking\src\tests\statutoryDefaults.test.js", "JavaScript", 24, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 6, 33
+"c:\Users\bemat\src\DrivingTracking\src\utils\index.ts", "TypeScript", 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3
+"c:\Users\bemat\src\DrivingTracking\tailwind.config.js", "JavaScript", 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 66
+"c:\Users\bemat\src\DrivingTracking\vite.config.js", "JavaScript", 68, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 77
+"Total", "-", 70647, 62, 16, 38, 55735, 57835, 8705, 12115, 14, 161, 41, 103, 7698, 690, 1961, 17952, 233773
