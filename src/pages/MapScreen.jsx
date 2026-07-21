@@ -37,6 +37,7 @@ import PremiumMapControls from '@/components/PremiumMapControls';
 import PremiumMapLayers from '@/components/PremiumMapLayers';
 import PremiumEventAreasCard from '@/components/PremiumEventAreasCard';
 import { PremiumHistoryResultsPager } from '@/components/PremiumTripHistoryPanels';
+import PremiumMapTripCard from '@/components/PremiumMapTripCard';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -126,6 +127,7 @@ export default function MapScreen() {
   const [showAllDangerZones, setShowAllDangerZones] = useState(false);
   const [osmFetchStatus, setOsmFetchStatus] = useState('');
   const [tripListPage, setTripListPage] = useState(0);
+  const [showPremiumRouteDiagnostics, setShowPremiumRouteDiagnostics] = useState(true);
   const [speedLimitKnowledgeRevision, setSpeedLimitKnowledgeRevision] = useState(0);
   const [speedLimitLocalKnowledgeResults, setSpeedLimitLocalKnowledgeResults] = useState([]);
   const overviewMapTripsRef = useRef({ key: '', trips: [] });
@@ -629,18 +631,30 @@ export default function MapScreen() {
               </button>
             )}
             {premiumVisuals && (selectedTrip || overviewDiagnosticsTrips.length > 0) && (
-              <div className="premium-map-diagnostics-overlay">
-                <PremiumMapDiagnostics
-                  trip={selectedTrip}
-                  trips={selectedTrip ? undefined : overviewDiagnosticsTrips}
-                  units={units}
-                  loading={selectedTrip
-                    ? selectedTripLoading && !selectedTripDetail
-                    : overviewTripDetails.some((query) => query.isFetching && !query.data)}
-                  onShowAll={selectedTrip ? () => setSelectedTripId(null) : undefined}
-                  overlay
-                />
-              </div>
+              showPremiumRouteDiagnostics ? (
+                <div className="premium-map-diagnostics-overlay">
+                  <PremiumMapDiagnostics
+                    trip={selectedTrip}
+                    trips={selectedTrip ? undefined : overviewDiagnosticsTrips}
+                    units={units}
+                    loading={selectedTrip
+                      ? selectedTripLoading && !selectedTripDetail
+                      : overviewTripDetails.some((query) => query.isFetching && !query.data)}
+                    onShowAll={selectedTrip ? () => setSelectedTripId(null) : undefined}
+                    onDismiss={() => setShowPremiumRouteDiagnostics(false)}
+                    overlay
+                  />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowPremiumRouteDiagnostics(true)}
+                  className="absolute bottom-3 left-3 z-10 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground shadow"
+                  aria-label="Show route diagnostics"
+                >
+                  Route diagnostics
+                </button>
+              )
             )}
           </div>
         )}
@@ -978,17 +992,31 @@ export default function MapScreen() {
                 {completedTripSummaryLabel(retentionRemovedRouteCount)} {retentionRemovedRouteCount === 1 ? 'is' : 'are'} not shown here because raw GPS retention removed route coordinates for map/playback. Summaries stay saved in Trip History.
               </div>
             )}
-            <button
-              onClick={() => setSelectedTripId(null)}
-              className={`w-full p-3 rounded-xl border text-sm text-left transition-all ${
-                !selectedTripId ? 'border-primary bg-primary/5 text-primary font-medium' : 'border-border bg-card text-muted-foreground hover:border-primary/40'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <MapPin className="w-4 h-4" />
-                Show all filtered trips
-              </div>
-            </button>
+            {premiumVisuals ? (
+              <button
+                type="button"
+                onClick={() => setSelectedTripId(null)}
+                aria-pressed={!selectedTripId}
+                className="premium-map-trip-overview"
+                data-selected={!selectedTripId ? 'true' : 'false'}
+              >
+                <span><MapPin aria-hidden="true" /></span>
+                <span><strong>All filtered routes</strong><small>{completed.length} trip{completed.length === 1 ? '' : 's'} available on the map</small></span>
+                <ChevronRight aria-hidden="true" />
+              </button>
+            ) : (
+              <button
+                onClick={() => setSelectedTripId(null)}
+                className={`w-full p-3 rounded-xl border text-sm text-left transition-all ${
+                  !selectedTripId ? 'border-primary bg-primary/5 text-primary font-medium' : 'border-border bg-card text-muted-foreground hover:border-primary/40'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-4 h-4" />
+                  Show all filtered trips
+                </div>
+              </button>
+            )}
 
             {premiumVisuals ? (
               <div className="premium-trip-history-on">
@@ -1036,6 +1064,17 @@ export default function MapScreen() {
             )}
 
             {visibleTripCards.map(trip => {
+              if (premiumVisuals) {
+                return (
+                  <PremiumMapTripCard
+                    key={trip.id}
+                    trip={trip}
+                    units={units}
+                    selected={selectedTripId === trip.id}
+                    onSelect={() => setSelectedTripId(trip.id)}
+                  />
+                );
+              }
               const overallScore = getTripComponentScore(trip, 'overall');
               const { color } = overallScore.value == null
                 ? { color: 'text-muted-foreground' }

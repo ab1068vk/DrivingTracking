@@ -147,6 +147,7 @@ export default function PremiumMapDiagnostics({
   units = 'metric',
   loading = false,
   onShowAll = undefined,
+  onDismiss = undefined,
   overlay = false,
   premium = true,
 }) {
@@ -170,10 +171,19 @@ export default function PremiumMapDiagnostics({
 
   return (
     <section
-      className={`premium-map-diagnostics${overlay ? ' premium-map-diagnostics--overlay' : ''}${premium ? '' : ' premium-map-diagnostics--standard'}`}
+      className={`premium-map-diagnostics${overlay ? ' premium-map-diagnostics--overlay' : ''}${typeof onDismiss === 'function' ? ' premium-map-diagnostics--dismissible' : ''}${premium ? '' : ' premium-map-diagnostics--standard'}`}
       aria-labelledby="premium-map-diagnostics-title"
       data-visual-experience={premium ? 'premium' : 'standard'}
     >
+      {typeof onDismiss === 'function' && (
+        <button
+          type="button"
+          className="premium-map-diagnostics-dismiss"
+          onClick={onDismiss}
+          aria-label="Hide route diagnostics"
+          title="Hide route diagnostics"
+        />
+      )}
       {premium && <img className="premium-map-diagnostics-art" src={premiumMapRouteIntelligence} alt="" aria-hidden="true" />}
       <div className="premium-map-diagnostics-head">
         <div className="premium-map-diagnostics-title">

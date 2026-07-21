@@ -92,10 +92,12 @@ describe('PremiumMapDiagnostics', () => {
 
   it('uses the compact overlay composition inside the premium live map', () => {
     const html = renderToStaticMarkup(
-      <PremiumMapDiagnostics trip={trip} units="metric" onShowAll={() => {}} overlay />,
+      <PremiumMapDiagnostics trip={trip} units="metric" onShowAll={() => {}} onDismiss={() => {}} overlay />,
     );
 
     expect(html).toContain('premium-map-diagnostics--overlay');
+    expect(html).toContain('premium-map-diagnostics--dismissible');
+    expect(html).toContain('aria-label="Hide route diagnostics"');
     expect(html).toContain('premium-map-diagnostic-stack');
     expect(html).toContain('>Stops</span>');
     expect(html).toContain('average including stops');

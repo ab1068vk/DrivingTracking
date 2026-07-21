@@ -1321,8 +1321,15 @@ describe('core page component renders', () => {
     expect(mapHtml).toContain('premium-map-layer-event-areas.webp');
     expect(mapHtml).toContain('Customize what appears on your map');
     expect(mapHtml).toContain('premium-event-areas');
-    expect(mapHtml).toContain('premium-event-areas-hero.png');
+    expect(mapHtml).toContain('premium-event-areas-emblem-v2.png');
+    expect(mapHtml).toContain('premium-event-areas-map-v2.png');
     expect(mapHtml).toContain('Repeated Driving-Event Areas');
+    expect(mapHtml).toContain('premium-map-trip-overview');
+    expect(mapHtml).toContain('premium-map-trip-card');
+    expect(mapHtml).toContain('premium-map-trip-violet-v2.webp');
+    expect(mapHtml).toContain('premium-map-trip-emblem-violet-v2.png');
+    expect(mapHtml).toContain('3 GPS readings');
+    expect(mapHtml).toContain('3 map/playback points');
     expect(mapHtml).not.toContain('premium-map-events-card');
     expect(mapHtml).not.toContain('premium-map-trip-picker');
     expect(mapHtml).toContain('aria-label="Matching trip result pages"');
@@ -1333,6 +1340,7 @@ describe('core page component renders', () => {
     expect(mapHtml).toContain('data-map-tab="utility"');
     expect(mapHtml).toContain('premium-map-diagnostics--overlay');
     expect(mapHtml).toContain('Route diagnostics');
+    expect(mapHtml).toContain('aria-label="Hide route diagnostics"');
     expect(mapHtml).toContain('1 route');
     expect(shouldShowStandardMapRouteSummary(true, sampleTrip)).toBe(false);
     expect(shouldShowStandardMapRouteSummary(false, sampleTrip)).toBe(true);
@@ -1343,6 +1351,9 @@ describe('core page component renders', () => {
     expect(standardMapHtml).not.toContain('premium-map-controls');
     expect(standardMapHtml).not.toContain('premium-map-layers-card');
     expect(standardMapHtml).not.toContain('premium-event-areas');
+    expect(standardMapHtml).not.toContain('premium-map-trip-card');
+    expect(standardMapHtml).not.toContain('premium-map-trip-overview');
+    expect(standardMapHtml).toContain('Show all filtered trips');
     expect(standardMapHtml).toContain('rounded-3xl border border-border bg-card p-4 shadow-sm');
     expect(standardMapHtml).toContain('rounded-3xl border border-border bg-card p-5 shadow-sm');
     expect(standardMapHtml.match(/data-map-tab="mode"/g)).toHaveLength(2);
@@ -1367,10 +1378,12 @@ describe('core page component renders', () => {
     expect(premiumHtml).toContain('Showing <strong>1–2</strong> of <strong>2</strong> matching trips');
     expect(premiumHtml.match(/aria-label="Matching trip result pages"/g)).toHaveLength(2);
     const firstPagerIndex = premiumHtml.indexOf('aria-label="Matching trip result pages"');
-    const tripListIndex = premiumHtml.indexOf('aria-label="Virtualized trip history list"');
+    const tripListIndex = premiumHtml.indexOf('aria-label="Premium trip history list"');
     const secondPagerIndex = premiumHtml.indexOf('aria-label="Matching trip result pages"', firstPagerIndex + 1);
     expect(firstPagerIndex).toBeLessThan(tripListIndex);
     expect(secondPagerIndex).toBeGreaterThan(tripListIndex);
+    expect(premiumHtml).not.toContain('max-h-[72vh]');
+    expect(premiumHtml).not.toContain('overflow-y-auto');
 
     settings.premium_visual_experience = false;
     const standardHtml = renderToStaticMarkup(<TripHistory />);

@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useVirtualizer } from '@tanstack/react-virtual';
 import { limitedTripSummaryQueryOptions, tripDetailQueryOptions, tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { Search, Car, Tag, Star, CalendarDays, TrendingUp, X, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react';
@@ -279,13 +278,6 @@ export default function TripHistory() {
     () => sorted.slice(pageWindow.offset, pageWindow.end),
     [pageWindow.end, pageWindow.offset, sorted]
   );
-  const tripVirtualizer = useVirtualizer({
-    count: premiumVisuals ? premiumTrips.length : 0,
-    getScrollElement: () => tripListRef.current,
-    estimateSize: () => 190,
-    overscan: 5,
-  });
-  const virtualTrips = tripVirtualizer.getVirtualItems();
   const historySummary = useMemo(() => buildTripHistorySummary(sorted, units), [sorted, units]);
   const activeFilterLabel = QUICK_FILTERS.find((option) => option.id === filterBy)?.label || 'Custom filter';
   const exactDateLabel = dateFrom
@@ -316,6 +308,12 @@ export default function TripHistory() {
   }, [qc]);
   const changePage = (nextPage) => {
     setPage(Math.max(0, Math.min(pageCount - 1, nextPage)));
+    requestAnimationFrame(() => {
+      tripListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+  const changePremiumPage = (nextPage) => {
+    setCurrentPage(Math.max(0, Math.min(pageWindow.pageCount - 1, nextPage)));
     requestAnimationFrame(() => {
       tripListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
@@ -354,8 +352,7 @@ export default function TripHistory() {
   useEffect(() => {
     setPage(0);
     setCurrentPage(0);
-    if (premiumVisuals) tripVirtualizer.scrollToIndex(0, { align: 'start' });
-  }, [dateFilter, dateFrom, dateTo, filterBy, premiumVisuals, search, selectedTag, sortBy, tripVirtualizer]);
+  }, [dateFilter, dateFrom, dateTo, filterBy, premiumVisuals, search, selectedTag, sortBy]);
 
   useEffect(() => {
     if (page > pageCount - 1) setPage(Math.max(0, pageCount - 1));
@@ -364,11 +361,6 @@ export default function TripHistory() {
   useEffect(() => {
     if (currentPage !== pageWindow.page) setCurrentPage(pageWindow.page);
   }, [currentPage, pageWindow.page]);
-
-  useEffect(() => {
-    if (!premiumVisuals) return;
-    tripVirtualizer.scrollToIndex(0, { align: 'start' });
-  }, [currentPage, premiumVisuals, tripVirtualizer]);
 
   const saveCurrentFilter = () => {
     const name = presetName.trim();
@@ -806,35 +798,22 @@ export default function TripHistory() {
             total={sorted.length}
             page={pageWindow.page}
             pageCount={pageWindow.pageCount}
-            onPrevious={() => setCurrentPage((current) => Math.max(0, current - 1))}
-            onNext={() => setCurrentPage((current) => Math.min(pageWindow.pageCount - 1, current + 1))}
+            onPrevious={() => changePremiumPage(pageWindow.page - 1)}
+            onNext={() => changePremiumPage(pageWindow.page + 1)}
           />
-        <div ref={tripListRef} className="max-h-[72vh] overflow-y-auto pr-1 thin-scrollbar" aria-label="Virtualized trip history list">
-          <div className="relative w-full" style={{ height: `${tripVirtualizer.getTotalSize()}px` }}>
-            {virtualTrips.map((virtualItem) => {
-              const trip = premiumTrips[virtualItem.index];
-              if (!trip) return null;
-              return (
-                <div
-                  key={trip.id}
-                  ref={tripVirtualizer.measureElement}
-                  data-index={virtualItem.index}
-                  className="absolute left-0 top-0 w-full pb-3"
-                  style={{ transform: `translateY(${virtualItem.start}px)` }}
-                >
-                  <TripCard
-                    trip={trip}
-                    units={units}
-                    index={pageWindow.offset + virtualItem.index}
-                    premium
-                    scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
-                    onToggleFavorite={(target) => updateTripMut.mutate({ id: target.id, patch: { is_favorite: target.is_favorite !== true } })}
-                    onIntent={handleTripIntent}
-                  />
-                </div>
-              );
-            })}
-          </div>
+        <div ref={tripListRef} className="space-y-3 scroll-mt-24" aria-label="Premium trip history list">
+          {premiumTrips.map((trip, index) => (
+            <TripCard
+              key={trip.id}
+              trip={trip}
+              units={units}
+              index={pageWindow.offset + index}
+              premium
+              scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
+              onToggleFavorite={(target) => updateTripMut.mutate({ id: target.id, patch: { is_favorite: target.is_favorite !== true } })}
+              onIntent={handleTripIntent}
+            />
+          ))}
         </div>
           <PremiumHistoryResultsPager
             start={pageWindow.start}
@@ -842,8 +821,8 @@ export default function TripHistory() {
             total={sorted.length}
             page={pageWindow.page}
             pageCount={pageWindow.pageCount}
-            onPrevious={() => setCurrentPage((current) => Math.max(0, current - 1))}
-            onNext={() => setCurrentPage((current) => Math.min(pageWindow.pageCount - 1, current + 1))}
+            onPrevious={() => changePremiumPage(pageWindow.page - 1)}
+            onNext={() => changePremiumPage(pageWindow.page + 1)}
           />
         </section>
         ) : (

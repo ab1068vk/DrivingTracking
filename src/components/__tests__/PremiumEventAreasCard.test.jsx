@@ -90,7 +90,8 @@ describe('PremiumEventAreasCard', () => {
     />);
 
     expect(html).toContain('premium-event-areas');
-    expect(html).toContain('premium-event-areas-hero.png');
+    expect(html).toContain('premium-event-areas-emblem-v2.png');
+    expect(html).toContain('premium-event-areas-map-v2.png');
     expect(html).toContain('premium-event-area-braking.png');
     expect(html).toContain('premium-event-area-speeding.png');
     expect(html).toContain('premium-event-area-turn.png');
@@ -110,7 +111,7 @@ describe('PremiumEventAreasCard', () => {
 
     const emptyHtml = renderToStaticMarkup(<PremiumEventAreasCard {...baseProps} completedTripCount={987654} />);
     expect(emptyHtml).toContain('987654');
-    expect(emptyHtml).toContain('No repeated area has enough evidence yet.');
+    expect(emptyHtml).not.toContain('No repeated area has enough evidence yet.');
     expect(emptyHtml).toContain('roughly <b>80-metre</b> cells');
 
     const privacyHtml = renderToStaticMarkup(<PremiumEventAreasCard {...baseProps} completedTripCount={9} hiddenAreaCount={3} />);
@@ -145,7 +146,7 @@ describe('PremiumEventAreasCard', () => {
     const emptyHtml = renderToStaticMarkup(<PremiumEventAreasCard {...baseProps} />);
     expect(emptyHtml).toContain('class="premium-event-areas-map-button" disabled=""');
     expect(emptyHtml).toContain('Show on map unavailable. No areas to map.');
-    expect(emptyHtml).toContain('<small>No areas to map</small>');
+    expect(emptyHtml).not.toContain('<small>No areas to map</small>');
 
     const loadingHtml = renderToStaticMarkup(<PremiumEventAreasCard {...baseProps} dangerZonesReady={false} loading />);
     expect(loadingHtml).toContain('Show on map unavailable. Areas are still loading.');

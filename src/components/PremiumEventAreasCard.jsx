@@ -6,11 +6,10 @@ import {
   LoaderCircle,
   LockKeyhole,
   MapPin,
-  MapPinOff,
   Route,
-  ShieldCheck,
 } from 'lucide-react';
-import premiumEventAreasHero from '@/assets/premium-event-areas-hero.png';
+import premiumEventAreasEmblem from '@/assets/premium-event-areas-emblem-v2.png';
+import premiumEventAreasMap from '@/assets/premium-event-areas-map-v2.png';
 import premiumEventAreaBraking from '@/assets/premium-event-area-braking.png';
 import premiumEventAreaSpeeding from '@/assets/premium-event-area-speeding.png';
 import premiumEventAreaTurn from '@/assets/premium-event-area-turn.png';
@@ -37,7 +36,7 @@ const EVENT_PRESENTATIONS = Object.freeze({
 });
 
 const FALLBACK_PRESENTATION = Object.freeze({
-  asset: premiumEventAreasHero,
+  asset: premiumEventAreasMap,
   icon: AlertTriangle,
   label: 'Driving event',
   tone: 'risk',
@@ -110,7 +109,6 @@ function EmptyEvidence({ completedTripCount, hiddenAreaCount }) {
           </>
         ) : (
           <>
-            <strong>No repeated area has enough evidence yet.</strong>
             <p>
               Checked all <b>{completedTripCount}</b> completed trip{completedTripCount === 1 ? '' : 's'}. The app groups scored harsh-braking, speeding, and sharp-turn coordinates into roughly <b>80-metre</b> cells. Driving the same road again only creates an area when qualifying events also repeat there.
             </p>
@@ -165,10 +163,11 @@ export default function PremiumEventAreasCard({
       <div className="premium-event-areas-orbit" aria-hidden="true"><i /><i /><i /></div>
 
       <header className="premium-event-areas-header">
+        <span className="premium-event-areas-emblem" aria-hidden="true">
+          <img src={premiumEventAreasEmblem} alt="" />
+        </span>
         <div className="premium-event-areas-identity">
-          <span className="premium-event-areas-emblem" aria-hidden="true"><ShieldCheck /></span>
           <div>
-            <span className="premium-event-areas-eyebrow"><MapPin /> Location intelligence</span>
             <h2 id="premium-event-areas-title">Repeated Driving-Event Areas</h2>
             <p>Your repeated harsh-braking, speeding, or sharp-turn locations</p>
           </div>
@@ -182,17 +181,14 @@ export default function PremiumEventAreasCard({
           title={mapButtonDisabled ? mapButtonStatus : 'Show repeated driving-event areas on map'}
         >
           <span className="premium-event-areas-map-icon" aria-hidden="true">
-            {mapButtonDisabled ? <MapPinOff /> : <MapPin />}
+            <MapPin />
           </span>
-          <span className="premium-event-areas-map-copy">
-            <span>Show on map</span>
-            {mapButtonDisabled && <small>{mapButtonStatus}</small>}
-          </span>
+          <span className="premium-event-areas-map-copy">Show on map</span>
         </button>
       </header>
 
       <div className="premium-event-areas-hero" aria-hidden="true">
-        <img src={premiumEventAreasHero} alt="" />
+        <img src={premiumEventAreasMap} alt="" />
         <span className="premium-event-areas-scan" />
       </div>
 
