@@ -357,6 +357,37 @@ describe('core page component renders', () => {
     expect(html).toContain('approximate');
   }, 10_000);
 
+  it('keeps the standard dashboard totals and Personal Baseline unchanged and gates their illustrated versions behind premium visuals', async () => {
+    const { default: Dashboard } = await import('@/pages/Dashboard');
+
+    settings.premium_visual_experience = false;
+    const standardHtml = renderToStaticMarkup(<Dashboard />);
+    expect(standardHtml).toContain('rounded-3xl border border-border bg-card p-4 shadow-sm');
+    expect(standardHtml).not.toContain('premium-totals-card');
+    expect(standardHtml).not.toContain('premium-totals-hero-v2.webp');
+    expect(standardHtml).toContain('Personal Baseline');
+    expect(standardHtml).toContain('bg-card border border-border rounded-3xl p-5 shadow-sm');
+    expect(standardHtml).not.toContain('premium-baseline-card');
+    expect(standardHtml).not.toContain('premium-baseline-hero-v2.jpg');
+
+    settings.premium_visual_experience = true;
+    const premiumHtml = renderToStaticMarkup(<Dashboard />);
+    expect(premiumHtml).toContain('class="premium-totals-card"');
+    expect(premiumHtml).toContain('premium-totals-hero-v2.webp');
+    expect(premiumHtml).toContain('premium-totals-distance-v2.webp');
+    expect(premiumHtml).toContain('premium-totals-duration-v2.webp');
+    expect(premiumHtml).toContain('premium-totals-trips-v2.webp');
+    expect(premiumHtml).toContain('premium-totals-days-v4.webp');
+    expect(premiumHtml).toContain('premium-totals-average-v2.webp');
+    expect(premiumHtml).toContain('premium-totals-longest-v2.webp');
+    expect(premiumHtml).toContain('class="premium-baseline-card"');
+    expect(premiumHtml).toContain('premium-baseline-hero-v2.jpg');
+    expect(premiumHtml).toContain('premium-baseline-week-v3.jpg');
+    expect(premiumHtml).toContain('premium-baseline-reference-v3.jpg');
+    expect(premiumHtml).toContain('premium-baseline-percentile-v4.jpg');
+    expect(premiumHtml).toContain('premium-baseline-stress-scene-');
+  }, 10_000);
+
   it('renders the Driving Coach mission shell with secondary tools collapsed', async () => {
     const { default: DrivingCoach } = await import('@/pages/DrivingCoach');
     const html = renderToStaticMarkup(<DrivingCoach />);
@@ -369,6 +400,106 @@ describe('core page component renders', () => {
     expect(html).toContain('<details');
     expect(html).toContain('Open your supporting weekly goals');
     expect(html).toContain('Open the local evidence assistant');
+  });
+
+  it('gates the premium Coaching cards behind the persisted appearance setting', async () => {
+    const {
+      default: DrivingCoach,
+      EvidenceExplorer,
+      ModelTransparencyCard,
+      RecentShiftCard,
+    } = await import('@/pages/DrivingCoach');
+    const shift = {
+      anomaly_level: 'normal',
+      anomaly_score: 5,
+      model_trip_count: 60,
+      reasons: [],
+    };
+    const evidencePatterns = [{
+      key: 'speeding',
+      label: 'Speed control',
+      count: 2,
+      events_per_100km: 2,
+      share_percent: 100,
+    }];
+
+    settings.premium_visual_experience = false;
+    const standardHtml = renderToStaticMarkup(<DrivingCoach />);
+    const standardEvidenceHtml = renderToStaticMarkup(
+      <EvidenceExplorer patterns={evidencePatterns} units="metric" premium={false} />,
+    );
+    const standardShiftHtml = renderToStaticMarkup(<RecentShiftCard anomaly={shift} premium={false} />);
+    const standardTransparencyHtml = renderToStaticMarkup(
+      <ModelTransparencyCard
+        eligibleTripCount={1}
+        confidence={0.03}
+        distanceKm={12.3}
+        units="metric"
+        premium={false}
+      />,
+    );
+    expect(standardHtml).not.toContain('premium-post-drive-card');
+    expect(standardHtml).not.toContain('premium-personal-context');
+    expect(standardHtml).not.toContain('premium-connected-goals group');
+    expect(standardHtml).not.toContain('premium-ask-coach group');
+    expect(standardEvidenceHtml).not.toContain('premium-evidence-explorer');
+    expect(standardEvidenceHtml).toContain('rounded-3xl border border-border bg-card p-5 shadow-sm');
+    expect(standardEvidenceHtml).toContain('2.0 / 100 km');
+    expect(standardTransparencyHtml).not.toContain('premium-model-transparency');
+    expect(standardTransparencyHtml).toContain('rounded-3xl border border-border bg-card p-5 shadow-sm');
+    expect(standardTransparencyHtml).toContain('eligible driver trips');
+    expect(standardShiftHtml).not.toContain('premium-recent-shift-card');
+    expect(standardShiftHtml).toContain('rounded-3xl border border-border bg-card p-5 shadow-sm');
+    expect(standardShiftHtml).toContain('normal difference from your norm');
+    expect(standardHtml).toContain('rounded-3xl border border-border bg-card p-5 shadow-sm');
+    expect(standardHtml).toContain('The coach will show the exact trip metric');
+    expect(standardHtml).toContain('model confidence');
+    expect(standardHtml).toContain('Open your supporting weekly goals');
+    expect(standardHtml).toContain('Building reliable evidence');
+    expect(standardHtml).toContain('role="status"');
+
+    settings.premium_visual_experience = true;
+    const premiumHtml = renderToStaticMarkup(<DrivingCoach />);
+    const premiumEvidenceHtml = renderToStaticMarkup(
+      <EvidenceExplorer patterns={evidencePatterns} units="metric" premium />,
+    );
+    const premiumShiftHtml = renderToStaticMarkup(<RecentShiftCard anomaly={shift} premium />);
+    const premiumTransparencyHtml = renderToStaticMarkup(
+      <ModelTransparencyCard
+        eligibleTripCount={1}
+        confidence={0.03}
+        distanceKm={12.3}
+        units="metric"
+        premium
+      />,
+    );
+    expect(premiumHtml).toContain('premium-post-drive-card');
+    expect(premiumHtml).toContain('premium-personal-context');
+    expect(premiumHtml).toContain('premium-connected-goals group');
+    expect(premiumHtml).toContain('premium-ask-coach group');
+    expect(premiumEvidenceHtml).toContain('premium-evidence-explorer');
+    expect(premiumEvidenceHtml).toContain('premium-evidence-speeding.webp');
+    expect(premiumEvidenceHtml).toContain('2.0 / 100 km');
+    expect(premiumTransparencyHtml).toContain('premium-model-transparency');
+    expect(premiumTransparencyHtml).toContain('premium-model-transparency-hero.jpg');
+    expect(premiumTransparencyHtml).toContain('aria-label="eligible driver trips: 1"');
+    expect(premiumShiftHtml).toContain('premium-recent-shift-card');
+    expect(premiumShiftHtml).toContain('premium-recent-shift-route-layer.png');
+    expect(premiumShiftHtml).toContain('premium-recent-shift-car-layer.png');
+    expect(premiumShiftHtml).toContain('premium-recent-shift-shield.png');
+    expect(premiumHtml).toContain('premium-connected-goals-hero.png');
+    expect(premiumHtml).toContain('premium-connected-goals-atlas.png');
+    expect(premiumHtml).toContain('premium-personal-context-hero.webp');
+    expect(premiumHtml).toContain('premium-ask-coach-hero.webp');
+    expect(premiumHtml).toContain('premium-ask-coach-focus.webp');
+    expect(premiumHtml).toContain('premium-ask-coach-improving.webp');
+    expect(premiumHtml).toContain('premium-ask-coach-repeat.webp');
+    expect(premiumHtml).toContain('premium-ask-coach-fatigue.webp');
+    expect(premiumHtml).toContain('Question for Coach');
+    expect(premiumHtml).toContain('aria-label="Model calibration confidence"');
+    expect(premiumHtml).toContain('data-state="awaiting"');
+    expect(premiumHtml).toContain('premium-post-drive-awaiting.webp');
+    expect(premiumHtml).not.toContain('border-dashed border-border p-5 text-sm');
   });
 
 
@@ -1078,6 +1209,42 @@ describe('core page component renders', () => {
     expect(html).not.toContain('Reference-speed model is provisional');
   });
 
+  it('switches the Vehicles overview and Fleet intelligence only when premium appearance is enabled', async () => {
+    queryData.set(JSON.stringify(['vehicles']), [{
+      id: 'vehicle-1',
+      name: 'Commuter',
+      fuel_type: 'gasoline',
+      is_default: true,
+    }]);
+    setTripSummaries([{
+      ...sampleTrip,
+      vehicle_id: 'vehicle-1',
+      distance_km: 42,
+      score_overall: 88,
+    }]);
+    const { default: Vehicles } = await import('@/pages/Vehicles');
+
+    const standardHtml = renderToStaticMarkup(<Vehicles />);
+    expect(standardHtml).toContain('rounded-2xl border border-border bg-card p-4');
+    expect(standardHtml).not.toContain('premium-vehicle-overview');
+    expect(standardHtml).not.toContain('premium-fleet-card');
+
+    settings.premium_visual_experience = true;
+    const premiumHtml = renderToStaticMarkup(<Vehicles />);
+    expect(premiumHtml).toContain('class="premium-vehicle-overview"');
+    expect(premiumHtml).toContain('aria-label="Garage: 1. 1 completed trip"');
+    expect(premiumHtml).toContain('premium-vehicle-garage.webp');
+    expect(premiumHtml).toContain('premium-vehicle-assignment.webp');
+    expect(premiumHtml).toContain('premium-vehicle-cost.webp');
+    expect(premiumHtml).toContain('premium-vehicle-service.webp');
+    expect(premiumHtml).toContain('class="premium-fleet-card"');
+    expect(premiumHtml).toContain('Busiest vehicle: Commuter. 42.0 km across 1 trip');
+    expect(premiumHtml).toContain('Approximate fleet score 88 out of 100');
+    expect(premiumHtml).toContain('premium-fleet-busiest.webp');
+    expect(premiumHtml).not.toContain('class="grid gap-3 md:grid-cols-4"');
+    expect(premiumHtml).not.toContain('class="grid gap-3 md:grid-cols-3"');
+  });
+
   it('renders only insufficient-data UBI status below the score-card evidence threshold', async () => {
     setTripSummaries([{
       ...sampleTrip,
@@ -1192,6 +1359,7 @@ describe('core page component renders', () => {
       totalDistanceLabel: '15.0 km',
       totalDurationLabel: '15m 0s',
       averageScoreLabel: '85',
+      scoreTrend: [80, 90],
       favoriteCount: 1,
       nightCount: 1,
     });
@@ -1297,13 +1465,59 @@ describe('core page component renders', () => {
     )).toBe(false);
   });
 
-  it('gates premium map controls and route diagnostics behind the appearance setting', async () => {
+  it('keeps Trip Detail standard while matching premium map route intelligence to the appearance setting', async () => {
     settings.premium_visual_experience = true;
+    queryData.set(JSON.stringify(['trip', 'trip-1']), {
+      ...sampleTrip,
+      native_phone_usage_access_granted: true,
+      sensor_fusion_summary: {
+        quality: 'good',
+        sample_count: 42,
+        peak_linear_ms2: 3.4,
+        phone_movement_score: 8,
+      },
+    });
 
     const { default: TripDetail } = await import('@/pages/TripDetail');
     const tripHtml = renderToStaticMarkup(<TripDetail />);
-    expect(tripHtml).toContain('premium-trip-detail-on');
+    expect(tripHtml).not.toContain('premium-trip-detail-on');
     expect(tripHtml).toContain('trip-detail-identity');
+    expect(tripHtml).not.toContain('premium-trip-score-overview');
+    expect(tripHtml).not.toContain('data-premium-scene=');
+    expect(tripHtml).not.toContain('premium-trip-context-card');
+    expect(tripHtml).not.toContain('premium-phone-use-card');
+    expect(tripHtml).not.toContain('premium-trip-speed-coverage-card');
+    expect(tripHtml).toContain('premium-map-diagnostics');
+    expect(tripHtml).toContain('premium-map-diagnostics--overlay');
+    expect(tripHtml).toContain('Route diagnostics');
+    expect(tripHtml).toContain('Maximum speed');
+    expect(tripHtml).toContain('average including stops');
+    expect(tripHtml).toContain('Show all routes');
+    expect(tripHtml).toContain('Weather Context:');
+    expect(tripHtml).toContain('Phone Use Analysis');
+    expect(tripHtml).toContain('42 motion samples');
+
+    queryData.set(JSON.stringify(['trip', 'trip-1']), {
+      ...sampleTrip,
+      native_phone_usage_access_granted: false,
+      phone_use_score_status: 'usage_access_required',
+    });
+    const premiumUnmeasuredTripHtml = renderToStaticMarkup(<TripDetail />);
+    expect(premiumUnmeasuredTripHtml).not.toContain('data-phone-state=');
+    expect(premiumUnmeasuredTripHtml).not.toContain('premium-trip-phone-neutral.webp');
+    expect(premiumUnmeasuredTripHtml).toContain('unmeasured');
+    expect(premiumUnmeasuredTripHtml).not.toContain('premium-trip-phone-safe.webp');
+    expect(premiumUnmeasuredTripHtml).not.toContain('premium-trip-phone-risk.webp');
+
+    queryData.set(JSON.stringify(['trip', 'trip-1']), {
+      ...sampleTrip,
+      native_phone_usage_access_granted: true,
+      was_driver: 'no',
+    });
+    const premiumPassengerTripHtml = renderToStaticMarkup(<TripDetail />);
+    expect(premiumPassengerTripHtml).not.toContain('data-phone-state=');
+    expect(premiumPassengerTripHtml).not.toContain('premium-trip-phone-neutral.webp');
+    expect(premiumPassengerTripHtml).toContain('Passenger trip');
 
     const { default: MapScreen, shouldShowStandardMapRouteSummary } = await import('@/pages/MapScreen');
     const mapHtml = renderToStaticMarkup(<MapScreen />);
@@ -1321,13 +1535,15 @@ describe('core page component renders', () => {
     expect(mapHtml).toContain('premium-map-layer-event-areas.webp');
     expect(mapHtml).toContain('Customize what appears on your map');
     expect(mapHtml).toContain('premium-event-areas');
-    expect(mapHtml).toContain('premium-event-areas-emblem-v2.png');
-    expect(mapHtml).toContain('premium-event-areas-map-v2.png');
+    expect(mapHtml).toContain('premium-event-areas-shield-wheel-v4.png');
+    expect(mapHtml).toContain('premium-event-areas-highway-v7.png');
+    expect(mapHtml).toContain('premium-event-areas-trip-map-v4.png');
     expect(mapHtml).toContain('Repeated Driving-Event Areas');
     expect(mapHtml).toContain('premium-map-trip-overview');
     expect(mapHtml).toContain('premium-map-trip-card');
-    expect(mapHtml).toContain('premium-map-trip-violet-v2.webp');
-    expect(mapHtml).toContain('premium-map-trip-emblem-violet-v2.png');
+    expect(mapHtml).toContain('data-time="night"');
+    expect(mapHtml).toContain('premium-map-trip-blue-v2.webp');
+    expect(mapHtml).toContain('premium-map-trip-emblem-blue-v2.png');
     expect(mapHtml).toContain('3 GPS readings');
     expect(mapHtml).toContain('3 map/playback points');
     expect(mapHtml).not.toContain('premium-map-events-card');
@@ -1346,7 +1562,66 @@ describe('core page component renders', () => {
     expect(shouldShowStandardMapRouteSummary(false, sampleTrip)).toBe(true);
     expect(shouldShowStandardMapRouteSummary(true, null)).toBe(false);
 
+    queryData.set(JSON.stringify(['trip', 'trip-1']), {
+      ...sampleTrip,
+      native_phone_usage_access_granted: true,
+      phone_use_risk: 'high',
+      phone_use_events: [{
+        type: 'phone_use',
+        source: 'android_usage_access',
+        startTime: '2026-01-01T12:04:00.000Z',
+        endTime: '2026-01-01T12:05:05.000Z',
+        duration_seconds: 65,
+        speed_kmh: 46,
+        confidence: 0.92,
+        confidence_level: 'high',
+        severity: 'high',
+      }],
+      speed_limit_context: {
+        status: 'manual_required',
+        source: 'openstreetmap_overpass',
+        coverage: 0,
+      },
+      sensor_fusion_summary: {
+        quality: 'good',
+        sample_count: 42,
+        peak_linear_ms2: 3.4,
+        phone_movement_score: 8,
+      },
+    });
+    const premiumRiskTripHtml = renderToStaticMarkup(<TripDetail />);
+    expect(premiumRiskTripHtml).not.toContain('data-phone-risk=');
+    expect(premiumRiskTripHtml).not.toContain('data-phone-state=');
+    expect(premiumRiskTripHtml).not.toContain('premium-trip-phone-risk.webp');
+    expect(premiumRiskTripHtml).not.toContain('premium-trip-phone-safe.webp');
+    expect(premiumRiskTripHtml).not.toContain('premium-trip-phone-neutral.webp');
+    expect(premiumRiskTripHtml).not.toContain('premium-trip-road-data-card');
+    expect(premiumRiskTripHtml).not.toContain('premium-trip-road-data.webp');
+    expect(premiumRiskTripHtml).toContain('Speed limit data unavailable');
+
     settings.premium_visual_experience = false;
+    const standardTripHtml = renderToStaticMarkup(<TripDetail />);
+    expect(standardTripHtml).not.toContain('premium-trip-context-card');
+    expect(standardTripHtml).not.toContain('premium-trip-score-overview');
+    expect(standardTripHtml).not.toContain('Drive intelligence');
+    expect(standardTripHtml).not.toContain('data-premium-score=');
+    expect(standardTripHtml).not.toContain('data-premium-behavior=');
+    expect(standardTripHtml).not.toContain('data-premium-scene=');
+    expect(standardTripHtml).not.toContain('premium-trip-weather-unavailable.jpg');
+    expect(standardTripHtml).not.toContain('premium-phone-use-card');
+    expect(standardTripHtml).not.toContain('premium-trip-phone-risk.webp');
+    expect(standardTripHtml).not.toContain('premium-trip-phone-neutral.webp');
+    expect(standardTripHtml).not.toContain('premium-trip-road-data-card');
+    expect(standardTripHtml).not.toContain('premium-trip-road-data.webp');
+    expect(standardTripHtml).not.toContain('premium-trip-speed-coverage-card');
+    expect(standardTripHtml).not.toContain('premium-trip-speed-coverage.webp');
+    expect(standardTripHtml).not.toContain('premium-map-diagnostics');
+    expect(standardTripHtml).toContain('Weather Context:');
+    expect(standardTripHtml).toContain('42 motion samples');
+    expect(standardTripHtml).toContain('Phone Use Analysis');
+    expect(standardTripHtml).toContain('Speed limit data unavailable');
+    expect(standardTripHtml).toContain('Speed-limit coverage for this trip');
+
     const standardMapHtml = renderToStaticMarkup(<MapScreen />);
     expect(standardMapHtml).not.toContain('premium-map-controls');
     expect(standardMapHtml).not.toContain('premium-map-layers-card');
@@ -1371,6 +1646,11 @@ describe('core page component renders', () => {
 
     expect(premiumHtml).toContain('premium-trip-history-on');
     expect(premiumHtml).toContain('premium-history-filter');
+    expect(premiumHtml).toContain('premium-history-search-bmw-v2.jpg');
+    expect(premiumHtml).toContain('data-control="date"');
+    expect(premiumHtml).toContain('data-control="trip-type"');
+    expect(premiumHtml).toContain('data-control="sort"');
+    expect(premiumHtml).toContain('data-control="tags"');
     expect(premiumHtml).toContain('premium-history-snapshot');
     expect(premiumHtml).toContain('premium-history-results');
     expect(premiumHtml).toContain('aria-label="Filter trips by date"');
@@ -1388,6 +1668,8 @@ describe('core page component renders', () => {
     settings.premium_visual_experience = false;
     const standardHtml = renderToStaticMarkup(<TripHistory />);
     expect(standardHtml).not.toContain('premium-trip-history-on');
+    expect(standardHtml).not.toContain('premium-history-search-bmw-v2.jpg');
+    expect(standardHtml).not.toContain('data-control="date"');
     expect(standardHtml).toContain('aria-label="Paginated trip history"');
   });
 });

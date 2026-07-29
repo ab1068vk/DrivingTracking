@@ -25,14 +25,18 @@ vi.mock('@/lib/systemLog', () => mockState.systemLog);
 import {
   canSpeakSafetyAlert,
   getVoiceAlertDeliveryStatus,
+  isTripStartVoiceAlertEnabled,
   isVoiceAlertEnabled,
+  isVoiceAlertTypeEnabled,
   markSafetyAlertSpoken,
   resetSafetyAlertCooldowns,
   shouldMuteWebViewVoiceForTrip,
   speakSafetyAlert,
   speakSafetyAlertOnce,
+  speakTripStartConfirmationOnce,
   stopSafetyAlerts,
   testVoiceAlert,
+  voiceAlertGroupSettingForKey,
 } from '@/lib/voiceAlerts';
 
 function stubSpeechSynthesis(overrides = {}) {
@@ -84,6 +88,63 @@ describe('voice alert cooldowns', () => {
     expect(isVoiceAlertEnabled({ voice_alerts_enabled: 'false' })).toBe(false);
     expect(isVoiceAlertEnabled({ voice_alerts_enabled: 'undefined' })).toBe(true);
     expect(isVoiceAlertEnabled({})).toBe(true);
+    expect(isTripStartVoiceAlertEnabled({ trip_start_voice_alert_enabled: 'false' })).toBe(false);
+    expect(isTripStartVoiceAlertEnabled({})).toBe(true);
+  });
+
+  it('maps every recurring alert family to its user-facing voice group', () => {
+    expect(voiceAlertGroupSettingForKey('speeding_posted')).toBe('voice_speed_alerts_enabled');
+    expect(voiceAlertGroupSettingForKey('harsh_brake')).toBe('voice_driving_event_alerts_enabled');
+    expect(voiceAlertGroupSettingForKey('repeated_event_area')).toBe('voice_driving_event_alerts_enabled');
+    expect(voiceAlertGroupSettingForKey('phone_use')).toBe('voice_attention_incident_alerts_enabled');
+    expect(voiceAlertGroupSettingForKey('possible_incident')).toBe('voice_attention_incident_alerts_enabled');
+    expect(voiceAlertGroupSettingForKey('coach_program_brief_123')).toBe('voice_coaching_reminder_alerts_enabled');
+    expect(voiceAlertGroupSettingForKey('coach_program_123_harsh_brake')).toBe('voice_driving_event_alerts_enabled');
+    expect(voiceAlertGroupSettingForKey('long_drive')).toBe('voice_coaching_reminder_alerts_enabled');
+  });
+
+  it('blocks only the disabled recurring voice group', async () => {
+    resetSafetyAlertCooldowns();
+    const speechSynthesis = stubSpeechSynthesis();
+    const settings = {
+      voice_alerts_enabled: true,
+      voice_speed_alerts_enabled: false,
+      voice_driving_event_alerts_enabled: true,
+    };
+
+    expect(isVoiceAlertTypeEnabled('speeding_posted', settings)).toBe(false);
+    expect(await speakSafetyAlertOnce('speeding_posted', 'Speed warning.', settings, 0, 1000)).toBe(false);
+    expect(await speakSafetyAlertOnce('harsh_brake', 'Brake smoothly.', settings, 0, 1000)).toBe(true);
+    expect(speechSynthesis.speak).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps trip-start confirmation independent from recurring live alerts', async () => {
+    resetSafetyAlertCooldowns();
+    const speechSynthesis = stubSpeechSynthesis();
+
+    expect(await speakTripStartConfirmationOnce(
+      'Road Sage is tracking.',
+      {
+        trip_start_voice_alert_enabled: true,
+        voice_alerts_enabled: false,
+      },
+      5 * 60 * 1000,
+      1000,
+      { interrupt: true }
+    )).toBe(true);
+    expect(speechSynthesis.speak).toHaveBeenCalledTimes(1);
+
+    resetSafetyAlertCooldowns();
+    expect(await speakTripStartConfirmationOnce(
+      'Road Sage is tracking.',
+      {
+        trip_start_voice_alert_enabled: false,
+        voice_alerts_enabled: true,
+      },
+      5 * 60 * 1000,
+      2000
+    )).toBe(false);
+    expect(speechSynthesis.speak).toHaveBeenCalledTimes(1);
   });
 
   it('mutes WebView speech when Android native tracking owns trip voice', () => {
@@ -103,8 +164,15 @@ describe('voice alert cooldowns', () => {
 
   it('reports the current voice alert delivery owner', () => {
     expect(getVoiceAlertDeliveryStatus({
-      settings: { voice_alerts_enabled: false },
-    }).status).toBe('disabled');
+      settings: {
+        voice_alerts_enabled: false,
+        trip_start_voice_alert_enabled: true,
+      },
+    })).toMatchObject({
+      status: 'disabled',
+      label: 'Live alerts off',
+      detail: expect.stringContaining('trip-start confirmation remains on'),
+    });
     expect(getVoiceAlertDeliveryStatus({
       settings: { voice_alerts_enabled: true },
       trip: { native_manual_background: true },
@@ -121,6 +189,20 @@ describe('voice alert cooldowns', () => {
       settings: { voice_alerts_enabled: true },
       tracking: true,
     }).status).toBe('webview');
+    expect(getVoiceAlertDeliveryStatus({
+      settings: {
+        voice_alerts_enabled: true,
+        trip_start_voice_alert_enabled: true,
+        voice_speed_alerts_enabled: false,
+        voice_driving_event_alerts_enabled: false,
+        voice_attention_incident_alerts_enabled: false,
+        voice_coaching_reminder_alerts_enabled: false,
+      },
+    })).toMatchObject({
+      status: 'groups_disabled',
+      label: 'Recurring groups off',
+      detail: expect.stringContaining('trip-start confirmation remains on'),
+    });
   });
 
   it('records cooldowns at enqueue time when requested', () => {
@@ -252,6 +334,17 @@ describe('voice alert cooldowns', () => {
       interrupt: true,
       queueMode: 'flush',
     });
+  });
+
+  it('allows the explicit settings voice test while the recurring master switch is off', async () => {
+    mockState.isNative = true;
+    mockState.nativeSpeech.speakText = vi.fn().mockResolvedValue();
+
+    expect(await testVoiceAlert({
+      voice_alerts_enabled: false,
+      voice_speed_alerts_enabled: false,
+    })).toBe(true);
+    expect(mockState.nativeSpeech.speakText).toHaveBeenCalledTimes(1);
   });
 
   it('uses technical test-alert wording when tracking mode requests mode default', async () => {

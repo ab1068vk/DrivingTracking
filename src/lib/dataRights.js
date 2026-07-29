@@ -61,7 +61,10 @@ export const DATA_PORTABILITY_VERSION = 1;
 
 const AuditAnchor = registerPlugin('AuditAnchor');
 const clearNativeCompletedTripsForErasure = () => import('@/lib/activityRecognition')
-  .then(({ clearNativeCompletedTrips }) => clearNativeCompletedTrips());
+  .then(({ clearNativeActiveTripCheckpoint, clearNativeCompletedTrips }) => Promise.all([
+    clearNativeCompletedTrips(),
+    clearNativeActiveTripCheckpoint(),
+  ]));
 
 const extraErasureKeys = Object.freeze([
   TRIPS_KEY,

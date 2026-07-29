@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  buildPendingNativeTripRecord,
   createIndexedDbMigrationRunner,
   DB_NAME,
   DB_NAME_META_KEY,
@@ -316,6 +317,32 @@ describe('localTripRepository IndexedDB migrations', () => {
     });
 
     expect(reimported.speed_limit_review_required).toBe(true);
+  });
+
+  it('builds a visible pending record before optional native-trip enrichment', () => {
+    const pending = buildPendingNativeTripRecord({
+      id: 'native-trip-long-drive',
+      status: 'completed',
+      start_source: 'native_auto',
+      distance_km: 150,
+      duration_seconds: 10_800,
+      route_points: [{ lat: 43.65, lng: -79.38 }],
+      motion_samples: [{ timestamp: '2026-07-22T18:00:00.000Z', ax: 0.1 }],
+      score_status: 'pending_javascript_scoring',
+    });
+
+    expect(pending).toMatchObject({
+      id: 'native-trip-long-drive',
+      status: 'completed',
+      distance_km: 150,
+      duration_seconds: 10_800,
+      imported_from_native: true,
+      needs_rescore: true,
+      score_status: 'pending_javascript_scoring',
+      schema_version: TRIP_SCHEMA_VERSION,
+    });
+    expect(pending.route_points).toHaveLength(1);
+    expect(pending.motion_samples).toHaveLength(1);
   });
 
   it('expires route coordinates while preserving trip summaries', () => {

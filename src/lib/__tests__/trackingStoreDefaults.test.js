@@ -97,6 +97,42 @@ describe('tracking store default settings', () => {
     expect(validateSettingsPatch({ voice_alert_style: 'invalid' })).toMatchObject({ valid: false });
   });
 
+  it('keeps the trip-start voice confirmation independent from live voice alerts', () => {
+    expect(DEFAULT_SETTINGS.trip_start_voice_alert_enabled).toBe(true);
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 19,
+      experience_mode: EXPERIENCE_MODES.COACHING,
+      voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
+      voice_alerts_enabled: false,
+    }).settings).toMatchObject({
+      trip_start_voice_alert_enabled: true,
+      voice_alerts_enabled: false,
+    });
+    expect(sanitizeImportedSettings({
+      trip_start_voice_alert_enabled: false,
+      voice_alerts_enabled: true,
+    })).toMatchObject({
+      trip_start_voice_alert_enabled: false,
+      voice_alerts_enabled: true,
+    });
+    expect(validateSettingsPatch({ trip_start_voice_alert_enabled: false })).toEqual({ valid: true, errors: [] });
+  });
+
+  it('defaults every recurring voice group on and validates independent user choices', () => {
+    const voiceGroupKeys = [
+      'voice_speed_alerts_enabled',
+      'voice_driving_event_alerts_enabled',
+      'voice_attention_incident_alerts_enabled',
+      'voice_coaching_reminder_alerts_enabled',
+    ];
+
+    voiceGroupKeys.forEach((key) => {
+      expect(DEFAULT_SETTINGS[key]).toBe(true);
+      expect(validateSettingsPatch({ [key]: false })).toEqual({ valid: true, errors: [] });
+      expect(sanitizeImportedSettings({ [key]: false })).toMatchObject({ [key]: false });
+    });
+  });
+
   it('defaults premium visuals off and preserves an explicit preference', () => {
     expect(DEFAULT_SETTINGS.premium_visual_experience).toBe(false);
     expect(migrateDefaultSettings({

@@ -373,7 +373,9 @@ const AuthenticatedApp = () => {
 
     CapacitorApp.addListener('appStateChange', ({ isActive }) => {
       if (isActive) {
-        applyThemeMode(localSettings.get().dark_mode);
+        localSettings.hydrateFromNative()
+          .then((settings) => applyThemeMode(settings.dark_mode))
+          .catch((error) => logSystemFailure('app_resume_settings_hydrate', error));
         measureAsync('app.resume.privacyZoneSweep', () => sweepExpiredZonesOnForeground(), { source: 'appStateChange' })
           .catch((error) => logSystemFailure('app_resume_privacy_zone_expiry', error));
         measureAsync('app.resume.nativeTripSync', () => syncNativeCompletedTripsToLocalStore(), { source: 'appStateChange' })
@@ -407,7 +409,9 @@ const AuthenticatedApp = () => {
   useEffect(() => {
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        applyThemeMode(localSettings.get().dark_mode);
+        localSettings.hydrateFromNative()
+          .then((settings) => applyThemeMode(settings.dark_mode))
+          .catch((error) => logSystemFailure('visibility_settings_hydrate', error));
         measureAsync('app.resume.privacyZoneSweep', () => sweepExpiredZonesOnForeground(), { source: 'visibilitychange' })
           .catch((error) => logSystemFailure('visibility_privacy_zone_expiry', error));
         measureAsync('app.resume.keyRotation', () => checkAndRotateEncryptionKeyFromApp(), { source: 'visibilitychange' })

@@ -147,6 +147,7 @@ import {
   shouldMuteWebViewVoiceForTrip,
   speakSafetyAlert,
   speakSafetyAlertOnce,
+  speakTripStartConfirmationOnce,
   stopSafetyAlerts,
 } from '@/lib/voiceAlerts';
 import { buildSpeedingMessage, buildVoiceAlertMessage } from '@/lib/voiceAlertMessages';
@@ -838,7 +839,12 @@ export default function Dashboard() {
         logError('heading_drift_notification', error);
       });
       if (!shouldMuteDashboardWebViewVoice(activeTripRef.current || activeTrip)) {
-        speakSafetyAlert(buildVoiceAlertMessage('heading_drift_beta', {}, { settings: cfg }), cfg).catch((error) => {
+        speakSafetyAlertOnce(
+          'heading_drift_beta',
+          buildVoiceAlertMessage('heading_drift_beta', {}, { settings: cfg }),
+          cfg,
+          10 * 60 * 1000
+        ).catch((error) => {
           logError('heading_drift_voice_alert', error);
         });
       }
@@ -1306,6 +1312,7 @@ export default function Dashboard() {
   }, [currentLocation?.speed_kmh, markActiveTripLocationPermissionLoss]);
 
   const promoteCandidateTrip = useCallback((trip, decision) => {
+    const settings = localSettings.get();
     const promoted = {
       ...trip,
       trip_state: TRIP_STATES.CONFIRMED,
@@ -1340,6 +1347,20 @@ export default function Dashboard() {
         start_source: promoted.start_source,
       });
     });
+    if (!shouldMuteDashboardWebViewVoice(promoted)) {
+      speakTripStartConfirmationOnce(
+        buildVoiceAlertMessage('tracking_ready', {}, { settings }),
+        settings,
+        5 * 60 * 1000,
+        undefined,
+        { interrupt: true }
+      ).catch((error) => {
+        logError('candidate_tracking_ready_voice_alert', error, {
+          trip_state: promoted.trip_state,
+          start_source: promoted.start_source,
+        });
+      });
+    }
     Promise.resolve(scheduleLongTripReminder(promoted.start_time)).catch((error) => {
       logError('candidate_long_trip_reminder_schedule', error, {
         trip_state: promoted.trip_state,
@@ -1472,7 +1493,9 @@ export default function Dashboard() {
               speakSafetyAlert(buildVoiceAlertMessage('repeated_event_area', {
                 dominantType: typeLabel,
                 distanceM: zone.distanceM,
-              }, { settings: latestSettings }), latestSettings).catch((error) => {
+              }, { settings: latestSettings }), latestSettings, {
+                alertKey: 'repeated_event_area',
+              }).catch((error) => {
                 logError('repeated_event_area_voice_alert', error, {
                   zone_id: zone.id,
                   distance_m: Math.round(zone.distanceM || 0),
@@ -1584,7 +1607,10 @@ export default function Dashboard() {
           if (!webViewVoiceMuted) {
             speakSafetyAlert(buildVoiceAlertMessage('possible_incident', {
               emergencyWorkflow,
-            }, { settings: latestSettings }), latestSettings, { interrupt: true }).catch((error) => {
+            }, { settings: latestSettings }), latestSettings, {
+              alertKey: 'possible_incident',
+              interrupt: true,
+            }).catch((error) => {
               logError('possible_incident_voice_alert', error, {
                 severity: incident.severity,
                 emergency_workflow: emergencyWorkflow,
@@ -2028,8 +2054,7 @@ export default function Dashboard() {
         });
       });
       if (!shouldMuteDashboardWebViewVoice(tripForNotifications)) {
-        speakSafetyAlertOnce(
-          'tracking_ready',
+        speakTripStartConfirmationOnce(
           buildVoiceAlertMessage('tracking_ready', {}, { settings: cfg }),
           cfg,
           5 * 60 * 1000,
@@ -3403,7 +3428,7 @@ export default function Dashboard() {
   ) : null;
 
   return (
-    <div className={`cyber-dashboard space-y-6 pb-4 ${settings.premium_visual_experience === true ? 'premium-dashboard-on' : ''}`}>
+    <div className={`space-y-6 pb-4 ${settings.premium_visual_experience === true ? 'premium-dashboard-on' : ''}`}>
       {/* Header */}
       <motion.div className="app-page-header" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
         <h1 className="text-2xl font-grotesk font-bold">Dashboard</h1>
@@ -3688,7 +3713,7 @@ export default function Dashboard() {
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.96 }}
-            className="cyber-active-trip bg-gradient-to-br from-blue-600 to-blue-800 rounded-3xl p-6 text-white shadow-2xl"
+            className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-3xl p-6 text-white shadow-2xl"
           >
             <div className="flex items-start justify-between mb-4">
               <div>
@@ -3929,7 +3954,7 @@ export default function Dashboard() {
             exit={{ opacity: 0, scale: 0.96 }}
             className={settings.premium_visual_experience === true
               ? 'premium-ready-motion-shell'
-              : 'cyber-hero-panel bg-card border border-border rounded-3xl p-6 shadow-sm'}
+              : 'bg-card border border-border rounded-3xl p-6 shadow-sm'}
           >
             {settings.premium_visual_experience === true ? (
               <PremiumReadyToDriveCard
@@ -3956,7 +3981,7 @@ export default function Dashboard() {
                 disabled={startingTrip}
                 aria-label={startingTrip ? 'Starting trip' : 'Start trip'}
                 aria-busy={startingTrip || undefined}
-                className="cyber-start-button w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg hover:opacity-90 transition-opacity disabled:cursor-progress disabled:opacity-70"
+                className="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg hover:opacity-90 transition-opacity disabled:cursor-progress disabled:opacity-70"
               >
                 {startingTrip
                   ? <RefreshCw className="h-7 w-7 animate-spin text-white" />
@@ -4018,7 +4043,7 @@ export default function Dashboard() {
               onClick={() => handleStartTrip({ privateTrip: true })}
               disabled={startingTrip}
               aria-busy={startingTrip || undefined}
-              className="cyber-private-trip mt-4 flex w-full items-center gap-3 rounded-2xl border border-border bg-secondary/50 px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-secondary disabled:cursor-progress disabled:opacity-65"
+              className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-border bg-secondary/50 px-4 py-3 text-left transition-colors hover:border-primary/40 hover:bg-secondary disabled:cursor-progress disabled:opacity-65"
             >
               <div className="rounded-xl bg-slate-900 p-2 text-white dark:bg-slate-700">
                 <Shield className="h-5 w-5" />
@@ -4120,7 +4145,7 @@ export default function Dashboard() {
             peakStress={peakStress}
           />
         ) : (
-        <div className="cyber-baseline-panel bg-card border border-border rounded-3xl p-5 shadow-sm">
+        <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
           <div className="flex items-start justify-between">
             <div>
               <h2 className="font-semibold text-base">Personal Baseline</h2>
@@ -4135,22 +4160,22 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
-            <div className="cyber-baseline-tile bg-secondary/50 rounded-xl p-3">
+            <div className="bg-secondary/50 rounded-xl p-3">
               <div className="font-grotesk font-bold text-xl">{baseline.this_week_avg ?? '-'}</div>
               <div className="text-xs text-muted-foreground">this week</div>
             </div>
-            <div className="cyber-baseline-tile bg-secondary/50 rounded-xl p-3">
+            <div className="bg-secondary/50 rounded-xl p-3">
               <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg == null ? '-' : baselineRangeLabel ? `${baseline.baseline_avg} (${baselineRangeLabel})` : baseline.baseline_avg}</div>
               <div className="text-xs text-muted-foreground">approx baseline (recent trips)</div>
             </div>
-            <div className="cyber-baseline-tile bg-secondary/50 rounded-xl p-3">
+            <div className="bg-secondary/50 rounded-xl p-3">
               <div className="font-grotesk font-bold text-xl">{baseline.percentile == null ? '-' : `${baseline.percentile}%`}</div>
               <div className="text-xs text-muted-foreground">percentile among your recorded weeks</div>
               {baseline.percentile == null && (
                 <div className="mt-1 text-[11px] text-muted-foreground">Needs {baseline.percentile_min_weeks} scored weeks</div>
               )}
             </div>
-            <div className="cyber-baseline-tile cyber-baseline-stress bg-secondary/50 rounded-xl p-3">
+            <div className="bg-secondary/50 rounded-xl p-3">
               <div className="flex items-center gap-2">
                 <TrafficCone className={`w-4 h-4 ${
                   peakStress.insufficient_data ? 'text-muted-foreground' :
@@ -4306,7 +4331,7 @@ export default function Dashboard() {
           showApproximateTag={OVERALL_SCORE_IS_APPROXIMATE}
         />
       ) : (
-      <div className="cyber-score-panel bg-card border border-border rounded-3xl p-5 shadow-sm">
+      <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
         <div className="flex items-start justify-between mb-4">
           <div>
             <div className="flex items-center gap-2">

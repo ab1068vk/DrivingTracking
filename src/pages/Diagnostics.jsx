@@ -64,6 +64,10 @@ const typeIcon = {
   tail_trimmed: MapPin,
   trip_started: Car,
   trip_ended: MapPin,
+  trip_saved: CheckCircle2,
+  trip_save_failed: AlertTriangle,
+  checkpoint_recovered: RefreshCw,
+  checkpoint_save_failed: AlertTriangle,
   auto_stop: MapPin,
   trip_discarded: AlertTriangle,
   parking_detected: MapPin,
@@ -104,6 +108,8 @@ function EventRow({ event, units = 'metric' }) {
 function HealthIcon({ id }) {
   const icons = {
     native: Shield,
+    'native-handoff': RefreshCw,
+    'active-checkpoint': Shield,
     location: MapPin,
     background: Satellite,
     activity: Activity,

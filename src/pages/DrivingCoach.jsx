@@ -1,5 +1,5 @@
 // @ts-check
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -67,6 +67,31 @@ import { logError } from '@/lib/errorReporting';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import DeferredRecharts from '@/components/DeferredRecharts';
+import PremiumRecommendedProgramCard from '@/components/PremiumRecommendedProgramCard';
+import PremiumProgramBuilder from '@/components/PremiumProgramBuilder';
+import PremiumPostDriveReviewCard from '@/components/PremiumPostDriveReviewCard';
+import PremiumPersonalContextCard from '@/components/PremiumPersonalContextCard';
+import PremiumConnectedGoalsCard from '@/components/PremiumConnectedGoalsCard';
+import PremiumAskCoachCard from '@/components/PremiumAskCoachCard';
+import PremiumCoachProgramSettingsCard from '@/components/PremiumCoachProgramSettingsCard';
+import PremiumPracticePlanCard from '@/components/PremiumPracticePlanCard';
+import PremiumProgramHistoryCard from '@/components/PremiumProgramHistoryCard';
+import PremiumCoachingResponsivenessCard from '@/components/PremiumCoachingResponsivenessCard';
+import RepeatedEventAreasSection from '@/components/RepeatedEventAreasSection';
+import PremiumPressureWindowsCard from '@/components/PremiumPressureWindowsCard';
+import PremiumContextIntelligenceCard, {
+  shouldRenderPremiumContextIntelligence,
+} from '@/components/PremiumContextIntelligenceCard';
+import PremiumEvidenceExplorerCard from '@/components/PremiumEvidenceExplorerCard';
+import PremiumRecentShiftCard from '@/components/PremiumRecentShiftCard';
+import PremiumModelTransparencyCard from '@/components/PremiumModelTransparencyCard';
+import PremiumHistoricalEvidenceAuditCard from '@/components/PremiumHistoricalEvidenceAuditCard';
+import PremiumSegmentIntelligenceCard, {
+  shouldRenderPremiumSegmentIntelligence,
+} from '@/components/PremiumSegmentIntelligenceCard';
+import PremiumOperationalDriverModel, {
+  shouldRenderPremiumOperationalDriverModel,
+} from '@/components/PremiumOperationalDriverModel';
 import { PageEmptyState, PageHeader } from '@/components/PageChrome';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -85,11 +110,19 @@ const CoachSelectTrigger = /** @type {any} */ (SelectTrigger);
 const CoachSelectValue = /** @type {any} */ (SelectValue);
 const DRIVER_SIGNATURE_KEY = 'drivesense_driver_signature';
 
-const eventTypeLabel = (value) => ({
-  harsh_brake: 'harsh braking',
-  sharp_turn: 'sharp turns',
-  speeding: 'speeding',
-}[value] || String(value || 'mixed events').replaceAll('_', ' '));
+export function formatEventAreaRelativeTime(value, now = Date.now()) {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return 'date unavailable';
+  const elapsedMs = Math.max(0, now - timestamp);
+  const elapsedMinutes = Math.floor(elapsedMs / 60000);
+  if (elapsedMinutes < 1) return 'just now';
+  if (elapsedMinutes < 60) return `${elapsedMinutes} min ago`;
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) return `${elapsedHours} hr ago`;
+  const elapsedDays = Math.floor(elapsedHours / 24);
+  if (elapsedDays < 7) return `${elapsedDays} day${elapsedDays === 1 ? '' : 's'} ago`;
+  return new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 function Stat({ label, value, detail = null, className = '' }) {
   return (
@@ -119,6 +152,88 @@ function SectionHeading({ icon: Icon = null, eyebrow = null, title, description 
   );
 }
 
+/**
+ * Preserves the standard Evidence Explorer markup while gating the generated,
+ * data-rich visual treatment behind the persisted premium appearance setting.
+ * @param {{ patterns?: Array<Record<string, any>>, units?: string, premium?: boolean }} props
+ */
+export function EvidenceExplorer({ patterns = [], units = 'metric', premium = false }) {
+  if (premium) {
+    return <PremiumEvidenceExplorerCard patterns={patterns} units={units} />;
+  }
+
+  return (
+    <section className={CARD}>
+      <SectionHeading icon={Gauge} eyebrow="Evidence explorer" title="What is driving the recommendation" />
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {patterns.map((pattern) => (
+          <div key={pattern.key} className="rounded-2xl bg-secondary/50 p-4">
+            <div className="font-semibold">{pattern.label}</div>
+            <div className="mt-2 font-grotesk text-2xl font-bold">{formatPerDistanceRate(pattern.events_per_100km, units, { empty: '-' })}</div>
+            <div className="mt-1 text-xs text-muted-foreground">{pattern.share_percent}% of recorded risk events</div>
+          </div>
+        ))}
+        {patterns.length === 0 && <div className="text-sm text-muted-foreground">No dominant risk event is currently strong enough to display.</div>}
+      </div>
+    </section>
+  );
+}
+
+export function RecentShiftCard({ anomaly = null, premium = false }) {
+  if (premium) {
+    return <PremiumRecentShiftCard anomaly={anomaly} />;
+  }
+
+  return (
+    <section className={CARD}>
+      <SectionHeading icon={TrendingUp} eyebrow="Recent shift" title={anomaly?.anomaly_level && anomaly.anomaly_level !== 'unknown' ? `${anomaly.anomaly_level} difference from your norm` : 'No unusual recent shift'} />
+      {anomaly?.anomaly_level && anomaly.anomaly_level !== 'unknown' ? (
+        <div className="mt-4">
+          <div className="font-grotesk text-3xl font-bold">{formatEstimatedScore(anomaly.anomaly_score)}/100</div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            Last trip compared with {anomaly.model_trip_count} local trips.
+            {anomaly.reasons.length ? ` Unusual signals: ${anomaly.reasons.join(', ').replaceAll('_', ' ')}.` : ''}
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">A difference means the trip was unusual for you, not necessarily unsafe.</p>
+        </div>
+      ) : <p className="mt-4 text-sm text-muted-foreground">The latest trip is within the normal range of your local driver model.</p>}
+    </section>
+  );
+}
+
+export function ModelTransparencyCard({
+  eligibleTripCount = 0,
+  confidence = 0,
+  distanceKm = 0,
+  units = 'metric',
+  premium = false,
+}) {
+  if (premium) {
+    return (
+      <PremiumModelTransparencyCard
+        eligibleTripCount={eligibleTripCount}
+        confidence={confidence}
+        distanceKm={distanceKm}
+        units={units}
+      />
+    );
+  }
+
+  return (
+    <section className={CARD}>
+      <SectionHeading icon={ShieldCheck} eyebrow="Model transparency" title="Evidence and limitations" />
+      <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <Stat value={eligibleTripCount} label="eligible driver trips" />
+        <Stat value={`${Math.round(confidence * 100)}%`} label="habit-model confidence" />
+        <Stat value={formatDistance(distanceKm, units)} label="coaching distance" />
+      </div>
+      <p className="mt-4 text-xs text-muted-foreground">
+        Scores, event detections, readiness, repeated areas, and coaching targets are personal GPS/sensor estimates. They are not validated collision-risk, medical, legal, or insurance assessments. Review incorrect events from Trip Detail so future evidence is based on corrected trips.
+      </p>
+    </section>
+  );
+}
+
 function MetricComparison({ focusId, baseline, current, target }) {
   return (
     <div className="grid grid-cols-1 gap-2 min-[390px]:grid-cols-3">
@@ -129,7 +244,63 @@ function MetricComparison({ focusId, baseline, current, target }) {
   );
 }
 
-function EmptyMission({ recommendation, onConfigure }) {
+export function ProgramHistory({ programs = [], premium = false }) {
+  if (premium) {
+    return <PremiumProgramHistoryCard programs={programs} />;
+  }
+
+  return (
+    <section className={CARD}>
+      <SectionHeading icon={History} eyebrow="Program history" title="What coaching has worked" description="Completed and replaced programs stay local on this device." />
+      {programs.length === 0 ? (
+        <div className="mt-4 rounded-2xl border border-dashed border-border p-5 text-sm text-muted-foreground">Finish your first program to build a coaching-effectiveness history.</div>
+      ) : (
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {programs.slice(0, 6).map((program) => {
+            const focus = COACH_FOCUS_CATALOG[program.focusId] || COACH_FOCUS_CATALOG.consistency;
+            return (
+              <div key={program.id} className="rounded-2xl border border-border p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">{focus.label}</span>
+                  {program.result?.graduated ? <Trophy className="h-4 w-4 text-amber-500" /> : <History className="h-4 w-4 text-muted-foreground" />}
+                </div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {program.result?.completedCount || 0}/{program.targetTripCount} drives {'\u00b7'} {program.status}
+                </div>
+                <div className="mt-3 font-grotesk text-xl font-bold">
+                  {program.result?.improvement == null ? 'No measured change' : `${program.result.improvement > 0 ? '+' : ''}${program.result.improvement}${program.result.improvementUnit === '%' ? '%' : ' pts'}`}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function CoachingResponsiveness({ programs = [], premium = false, loading = false }) {
+  if (premium) {
+    return <PremiumCoachingResponsivenessCard programs={programs} loading={loading} />;
+  }
+
+  return (
+    <section className={CARD}>
+      <SectionHeading icon={Trophy} eyebrow="Coaching responsiveness" title={programs.length ? 'Your completed programs' : 'Complete a program to measure what works'} />
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <Stat value={programs.length} label="programs" />
+        <Stat value={programs.filter((item) => item.result?.graduated).length} label="graduated" />
+        <Stat value={programs.filter((item) => Number(item.result?.improvement) > 0).length} label="improved" />
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">Road Sage can use this history to show which drills and difficulty levels produce measurable changes for you.</p>
+    </section>
+  );
+}
+
+export function EmptyMission({ recommendation, onConfigure, premium = false }) {
+  if (premium) {
+    return <PremiumRecommendedProgramCard recommendation={recommendation} onConfigure={onConfigure} />;
+  }
   if (!recommendation) {
     return (
       <section className={CARD}>
@@ -216,6 +387,8 @@ export default function DrivingCoach() {
   const [coachQuestion, setCoachQuestion] = useState('');
   const [coachAnswer, setCoachAnswer] = useState(/** @type {any} */ (null));
   const [selectedRouteKey, setSelectedRouteKey] = useState('');
+  const [showAllDangerZones, setShowAllDangerZones] = useState(false);
+  const selectedFocusInitializedRef = useRef(false);
 
   const {
     data: recentCompleted = [],
@@ -229,6 +402,8 @@ export default function DrivingCoach() {
   const {
     data: fullHistoryCompleted = [],
     isFetching: fullHistoryFetching,
+    isSuccess: fullHistoryLoaded,
+    isError: fullHistoryError,
   } = useQuery({
     ...tripSummaryQueryOptions(),
     enabled: recentTripsLoaded,
@@ -263,6 +438,7 @@ export default function DrivingCoach() {
     })),
   });
   const detailedRouteTrips = detailedRouteTripQueries.map((query) => query.data).filter(Boolean);
+  const segmentInsightsLoading = detailedRouteTripQueries.some((query) => query.isFetching);
   const segmentInsights = buildCoachSegmentInsights(
     detailedRouteTrips.length ? detailedRouteTrips : driverCompleted,
     intelligenceRouteKey,
@@ -270,9 +446,13 @@ export default function DrivingCoach() {
   );
   const preTripBriefing = useMemo(() => buildPreTripBriefing(activeProgram, driverCompleted), [activeProgram, driverCompleted]);
   const dangerZones = useMemo(() => buildDangerZones(driverCompleted), [driverCompleted]);
+  const dangerZonesReady = recentTripsLoaded && (fullHistoryLoaded || fullHistoryError);
+  const displayedDangerZones = showAllDangerZones ? dangerZones : dangerZones.slice(0, 6);
+  const hiddenDangerZoneCount = Math.max(0, dangerZones.length - displayedDangerZones.length);
   const timeOfDay = useMemo(() => analyzeTimeOfDay(driverCompleted), [driverCompleted]);
   const dayOfWeek = useMemo(() => analyzeDayOfWeek(driverCompleted), [driverCompleted]);
   const weeklyGoals = useMemo(() => calculateWeeklyDrivingGoals(driverCompleted, settings), [driverCompleted, settings]);
+  const weeklyGoalEvidence = weeklyGoals.find((goal) => !goal.qualified)?.evidence || null;
   const noHarshBrakeStreak = useMemo(() => calculateNoHarshBrakeStreak(driverCompleted), [driverCompleted]);
 
   const bestTime = [...timeOfDay]
@@ -319,8 +499,13 @@ export default function DrivingCoach() {
   }, []);
 
   useEffect(() => {
-    if (!activeProgram && recommendations[0]?.focusId) setSelectedFocus(recommendations[0].focusId);
-  }, [activeProgram, recommendations]);
+    if (activeProgram || !recommendations[0]?.focusId) return;
+    const selectedFocusStillAvailable = recommendations.some((item) => item.focusId === selectedFocus);
+    if (!selectedFocusInitializedRef.current || !selectedFocusStillAvailable) {
+      selectedFocusInitializedRef.current = true;
+      setSelectedFocus(recommendations[0].focusId);
+    }
+  }, [activeProgram, recommendations, selectedFocus]);
 
   useEffect(() => {
     if (!driverSignature) return;
@@ -493,7 +678,11 @@ export default function DrivingCoach() {
                 </div>
               </section>
             ) : !activeProgram ? (
-              <EmptyMission recommendation={recommendations[0]} onConfigure={openProgramBuilder} />
+              <EmptyMission
+                recommendation={recommendations[0]}
+                onConfigure={openProgramBuilder}
+                premium={settings.premium_visual_experience === true}
+              />
             ) : (
               <section className={`${CARD} overflow-hidden border-primary/30`}>
                 <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
@@ -579,6 +768,17 @@ export default function DrivingCoach() {
             )}
 
             <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+              {settings.premium_visual_experience === true ? (
+                <PremiumPostDriveReviewCard
+                  progress={programProgress}
+                  program={activeProgram}
+                  units={units}
+                  feedbackValue={latestFeedback?.verdict}
+                  feedbackBusy={feedbackBusy}
+                  onReviewTrip={() => programProgress?.latestReview?.tripId && navigate(`/trips/${programProgress.latestReview.tripId}`)}
+                  onFeedback={(verdict) => submitCoachFeedback(activeProgram, programProgress?.latestReview?.tripId, verdict)}
+                />
+              ) : (
               <section className={CARD}>
                 <SectionHeading
                   icon={Activity}
@@ -627,7 +827,17 @@ export default function DrivingCoach() {
                   </div>
                 )}
               </section>
+              )}
 
+              {settings.premium_visual_experience === true ? (
+                <PremiumPersonalContextCard
+                  habitProfile={habitProfile}
+                  bestTime={bestTime}
+                  weakestTime={weakestTime}
+                  streak={noHarshBrakeStreak}
+                  tripCount={driverCompleted.length}
+                />
+              ) : (
               <section className={CARD}>
                 <SectionHeading icon={ShieldCheck} eyebrow="Drive readiness" title="Personal context" />
                 <div className="mt-4 grid grid-cols-2 gap-2">
@@ -642,8 +852,12 @@ export default function DrivingCoach() {
                   </p>
                 )}
               </section>
+              )}
             </div>
 
+            {shouldRenderPremiumContextIntelligence(settings.premium_visual_experience) ? (
+              <PremiumConnectedGoalsCard goals={weeklyGoals} units={units} />
+            ) : (
             <details className={`${CARD} group`}>
               <summary className="cursor-pointer list-none">
                 <span className="flex items-start justify-between gap-3">
@@ -657,19 +871,46 @@ export default function DrivingCoach() {
                   <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
                 </span>
               </summary>
-              <div className="mt-4 grid gap-3 border-t border-border pt-4 md:grid-cols-3 xl:grid-cols-5">
-                {weeklyGoals.map((goal) => (
-                  <div key={goal.id} className={`rounded-2xl border p-3 ${goal.met ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-amber-500/30 bg-amber-500/5'}`}>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-semibold">{goal.label}</span>
-                      {goal.met ? <Check className="h-4 w-4 text-emerald-500" /> : <Target className="h-4 w-4 text-amber-500" />}
-                    </div>
-                    <div className="mt-2 font-grotesk text-xl font-bold">{goal.value}/{goal.target}{goal.unit ? ` ${goal.unit}` : ''}</div>
+              <div className="mt-4 border-t border-border pt-4">
+                {weeklyGoalEvidence && (
+                  <div className="mb-3 flex min-w-0 items-center gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-3" role="status">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary" aria-hidden="true">
+                      <Activity className="h-4 w-4" />
+                    </span>
+                    <span className="min-w-0">
+                      <strong className="block text-sm">Building reliable evidence</strong>
+                      <span className="mt-0.5 block break-words text-xs text-muted-foreground">
+                        {Math.max(0, Number(weeklyGoalEvidence.trips) || 0)}/{Math.max(0, Number(weeklyGoalEvidence.minimum_trips) || 0)} trips ·{' '}
+                        {formatDistance(Math.max(0, Number(weeklyGoalEvidence.distance_km) || 0), units)} /{' '}
+                        {formatDistance(Math.max(0, Number(weeklyGoalEvidence.minimum_distance_km) || 0), units)}
+                      </span>
+                    </span>
                   </div>
-                ))}
+                )}
+                <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
+                  {weeklyGoals.map((goal) => (
+                    <div key={goal.id} className={`rounded-2xl border p-3 ${goal.met ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-amber-500/30 bg-amber-500/5'}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold">{goal.label}</span>
+                        {goal.met ? <Check className="h-4 w-4 text-emerald-500" /> : <Target className="h-4 w-4 text-amber-500" />}
+                      </div>
+                      <div className="mt-2 font-grotesk text-xl font-bold">{goal.value}/{goal.target}{goal.unit ? ` ${goal.unit}` : ''}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </details>
+            )}
 
+            {settings.premium_visual_experience === true ? (
+              <PremiumAskCoachCard
+                question={coachQuestion}
+                answer={coachAnswer}
+                onQuestionChange={setCoachQuestion}
+                onAsk={askCoach}
+                onOpenTrip={(tripId) => navigate(`/trips/${tripId}`)}
+              />
+            ) : (
             <details className={`${CARD} group`}>
               <summary className="cursor-pointer list-none">
                 <span className="flex items-start justify-between gap-3">
@@ -720,10 +961,14 @@ export default function DrivingCoach() {
                 </div>
               )}
             </details>
+            )}
           </TabsContent>
 
           <TabsContent value="program" className="mt-0 space-y-5">
-            <section className={CARD}>
+            {settings.premium_visual_experience === true ? (
+              <PremiumHistoricalEvidenceAuditCard audit={evidenceAudit} loading={isFetching} />
+            ) : (
+              <section className={CARD}>
               <SectionHeading icon={ShieldCheck} eyebrow="Historical evidence audit" title="What the Coach can actually measure" description="A numeric 0 appears only when a trip explicitly recorded zero events. Missing legacy values are labelled unavailable and excluded." />
               <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                 <Stat value={evidenceAudit.totalCompleted || 'None'} label="completed trips found" />
@@ -739,201 +984,226 @@ export default function DrivingCoach() {
                   {evidenceAudit.privacyProtected > 0 && <p><span className="font-semibold text-foreground">{evidenceAudit.privacyProtected} privacy-protected trips:</span> included using stored scores, events, and route points outside your configured privacy-zone radius. Protected coordinates remain excluded.</p>}
                 </div>
               )}
-            </section>
+              </section>
+            )}
 
-            <section className={CARD}>
-              <SectionHeading
-                icon={Target}
-                eyebrow={activeProgram ? 'Change program' : 'Build a program'}
-                title="Choose one habit to practise"
-                description="Road Sage recommends the highest-value focus, but you remain in control. Starting a new program archives the current one."
+            {settings.premium_visual_experience === true ? (
+              <PremiumProgramBuilder
+                activeProgram={activeProgram}
+                recommendations={recommendations}
+                selectedFocus={selectedFocus}
+                onSelect={setSelectedFocus}
               />
-              <div className="mt-5 grid gap-3 lg:grid-cols-3">
-                {recommendations.map((recommendation, index) => {
-                  const selected = selectedFocus === recommendation.focusId;
-                  return (
-                    <button
-                      key={recommendation.focusId}
-                      type="button"
-                      onClick={() => setSelectedFocus(recommendation.focusId)}
-                      className={`rounded-2xl border p-4 text-left transition ${selected ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border hover:border-primary/40'}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-xs font-bold uppercase text-primary">{index === 0 ? 'Recommended' : recommendation.priority}</div>
-                          <div className="mt-1 font-semibold">{recommendation.focus.label}</div>
-                        </div>
-                        {selected && <CheckCircle2 className="h-5 w-5 text-primary" />}
-                      </div>
-                      <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{recommendation.reason}</p>
-                      {recommendation.evidence && <div className="mt-3 text-xs font-semibold">{recommendation.evidence}</div>}
-                      <div className="mt-3 rounded-xl bg-secondary/50 p-2 text-[11px] text-muted-foreground">
-                        <span className="font-semibold text-foreground">Why now: </span>
-                        {recommendation.whyNow}
-                      </div>
-                    </button>
-                  );
-                })}
-                {recommendations.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-border p-5 text-sm text-muted-foreground lg:col-span-3">
-                    No focus is recommended yet because fewer than two trips contain a comparable measurement. Complete a newly measured drive; old missing fields will remain excluded.
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <div className="grid min-w-0 gap-5 xl:grid-cols-[1fr_0.85fr]">
+            ) : (
               <section className={CARD}>
-                <SectionHeading title="Program settings" description="Control the challenge, duration, and comparison group." />
-                <div className="mt-5 grid min-w-0 gap-4 sm:grid-cols-2">
-                  <label className="min-w-0 space-y-2 text-sm font-semibold">
-                    Difficulty
-                    <CoachSelect value={selectedDifficulty} onValueChange={setSelectedDifficulty}>
-                      <CoachSelectTrigger className="h-11 w-full min-w-0 overflow-hidden rounded-xl [&>span]:truncate"><CoachSelectValue /></CoachSelectTrigger>
-                      <CoachSelectContent>
-                        <CoachSelectItem value="adaptive">Adaptive</CoachSelectItem>
-                        <CoachSelectItem value="gentle">Gentle</CoachSelectItem>
-                        <CoachSelectItem value="standard">Standard</CoachSelectItem>
-                        <CoachSelectItem value="intensive">Intensive</CoachSelectItem>
-                      </CoachSelectContent>
-                    </CoachSelect>
-                    <span className="block text-xs font-normal text-muted-foreground">Adaptive uses only completed, measured programs. Targets range from 15% to 35%.</span>
-                  </label>
-                  <label className="min-w-0 space-y-2 text-sm font-semibold">
-                    Program length
-                    <CoachSelect value={selectedTripCount} onValueChange={setSelectedTripCount}>
-                      <CoachSelectTrigger className="h-11 w-full min-w-0 overflow-hidden rounded-xl [&>span]:truncate"><CoachSelectValue /></CoachSelectTrigger>
-                      <CoachSelectContent>
-                        <CoachSelectItem value="3">3 drives</CoachSelectItem>
-                        <CoachSelectItem value="5">5 drives</CoachSelectItem>
-                        <CoachSelectItem value="10">10 drives</CoachSelectItem>
-                      </CoachSelectContent>
-                    </CoachSelect>
-                    <span className="block text-xs font-normal text-muted-foreground">Use 5 drives for a balanced check; 3 is exploratory and 10 is stronger evidence.</span>
-                  </label>
-                  <label className="min-w-0 space-y-2 text-sm font-semibold sm:col-span-2">
-                    Compare against
-                    <CoachSelect value={selectedContext} onValueChange={setSelectedContext}>
-                      <CoachSelectTrigger className="h-11 w-full min-w-0 overflow-hidden rounded-xl [&>span]:truncate"><CoachSelectValue /></CoachSelectTrigger>
-                      <CoachSelectContent>
-                        <CoachSelectItem value="route" disabled={programRoutes.length === 0}>Specific repeated route</CoachSelectItem>
-                        <CoachSelectItem value="comparable">Comparable drives</CoachSelectItem>
-                        <CoachSelectItem value="urban">Urban drives</CoachSelectItem>
-                        <CoachSelectItem value="highway">Highway drives</CoachSelectItem>
-                        <CoachSelectItem value="all">All eligible drives</CoachSelectItem>
-                      </CoachSelectContent>
-                    </CoachSelect>
-                    <span className="block text-xs font-normal text-muted-foreground">Comparable matches route and driving context when that evidence exists.</span>
-                  </label>
-                  {selectedContext === 'route' && (
-                    <label className="min-w-0 space-y-2 text-sm font-semibold sm:col-span-2">
-                      Repeated route
-                      <CoachSelect value={selectedRouteKey || programRoutes[0]?.routeKey || ''} onValueChange={setSelectedRouteKey}>
-                        <CoachSelectTrigger className="h-11 w-full min-w-0 overflow-hidden rounded-xl [&>span]:truncate"><CoachSelectValue placeholder="Choose a repeated route" /></CoachSelectTrigger>
-                        <CoachSelectContent>
-                          {programRoutes.map((route) => (
-                            <CoachSelectItem key={route.routeKey} value={route.routeKey}>
-                              {route.label} - {route.tripCount} drives
-                            </CoachSelectItem>
-                          ))}
-                        </CoachSelectContent>
-                      </CoachSelect>
-                    </label>
-                  )}
-                </div>
-                {selectedDifficulty === 'adaptive' && (
-                  <div className="mt-4 rounded-2xl border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground">
-                    <span className="font-semibold text-foreground">Suggested {recommendCoachDifficulty(selectedFocus, programStore).difficulty}: </span>
-                    {recommendCoachDifficulty(selectedFocus, programStore).reason}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  disabled={programBusy || driverCompleted.length === 0 || !selectedRecommendation}
-                  onClick={startProgram}
-                  className="mt-5 inline-flex min-h-12 w-full min-w-0 items-center justify-center gap-2 rounded-2xl bg-primary px-5 font-semibold text-primary-foreground disabled:opacity-60"
-                >
-                  <Play className="h-4 w-4" />
-                  <span className="sm:hidden">{activeProgram ? 'Replace mission' : 'Start mission'}</span>
-                  <span className="hidden sm:inline">{activeProgram ? `Replace with ${selectedDefinition.label}` : `Start ${selectedDefinition.label}`}</span>
-                </button>
-                {!selectedRecommendation && <p className="mt-2 text-xs text-muted-foreground">Start is disabled until this focus has at least two measured historical trips.</p>}
-              </section>
-
-              <section className={CARD}>
-                {selectedRecommendation ? (
-                  <>
-                    <SectionHeading icon={Activity} eyebrow="Practice plan" title={selectedDefinition.label} description={selectedDefinition.cue} />
-                    <div className="mt-4 space-y-2">
-                      {selectedDefinition.drill.map((step, index) => (
-                        <div key={step} className="flex gap-3 rounded-2xl bg-secondary/50 p-3 text-sm">
-                          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">{index + 1}</span>
-                          <span className="text-muted-foreground">{step}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="mt-4 rounded-2xl border border-primary/20 bg-primary/5 p-4">
-                      <div className="text-xs font-bold uppercase text-primary">Live cue</div>
-                      <p className="mt-1 text-sm font-semibold">{selectedDefinition.liveCue}</p>
-                      <p className="mt-2 text-xs text-muted-foreground">Live coaching keeps safety-critical warnings and limits habit prompts using the selected difficulty.</p>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <SectionHeading icon={Activity} eyebrow="Practice plan" title="No measured focus available" description="Road Sage needs comparable measurements before it can make a real plan." />
-                    <div className="mt-4 rounded-2xl border border-dashed border-border p-5 text-sm text-muted-foreground">The next newly recorded trip can qualify. Historical trips with missing Coach fields stay visible in your trip history but do not become fake zeros here.</div>
-                  </>
-                )}
-              </section>
-            </div>
-
-            <section className={CARD}>
-              <SectionHeading icon={History} eyebrow="Program history" title="What coaching has worked" description="Completed and replaced programs stay local on this device." />
-              {programStore.history.length === 0 ? (
-                <div className="mt-4 rounded-2xl border border-dashed border-border p-5 text-sm text-muted-foreground">Finish your first program to build a coaching-effectiveness history.</div>
-              ) : (
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {programStore.history.slice(0, 6).map((program) => {
-                    const focus = COACH_FOCUS_CATALOG[program.focusId] || COACH_FOCUS_CATALOG.consistency;
+                <SectionHeading
+                  icon={Target}
+                  eyebrow={activeProgram ? 'Change program' : 'Build a program'}
+                  title="Choose one habit to practise"
+                  description="Road Sage recommends the highest-value focus, but you remain in control. Starting a new program archives the current one."
+                />
+                <div className="mt-5 grid gap-3 lg:grid-cols-3">
+                  {recommendations.map((recommendation, index) => {
+                    const selected = selectedFocus === recommendation.focusId;
                     return (
-                      <div key={program.id} className="rounded-2xl border border-border p-4">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-semibold">{focus.label}</span>
-                          {program.result?.graduated ? <Trophy className="h-4 w-4 text-amber-500" /> : <History className="h-4 w-4 text-muted-foreground" />}
+                      <button
+                        key={recommendation.focusId}
+                        type="button"
+                        onClick={() => setSelectedFocus(recommendation.focusId)}
+                        className={`rounded-2xl border p-4 text-left transition ${selected ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border hover:border-primary/40'}`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-xs font-bold uppercase text-primary">{index === 0 ? 'Recommended' : recommendation.priority}</div>
+                            <div className="mt-1 font-semibold">{recommendation.focus.label}</div>
+                          </div>
+                          {selected && <CheckCircle2 className="h-5 w-5 text-primary" />}
                         </div>
-                        <div className="mt-2 text-xs text-muted-foreground">
-                          {program.result?.completedCount || 0}/{program.targetTripCount} drives {'\u00b7'} {program.status}
+                        <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{recommendation.reason}</p>
+                        {recommendation.evidence && <div className="mt-3 text-xs font-semibold">{recommendation.evidence}</div>}
+                        <div className="mt-3 rounded-xl bg-secondary/50 p-2 text-[11px] text-muted-foreground">
+                          <span className="font-semibold text-foreground">Why now: </span>
+                          {recommendation.whyNow}
                         </div>
-                        <div className="mt-3 font-grotesk text-xl font-bold">
-                          {program.result?.improvement == null ? 'No measured change' : `${program.result.improvement > 0 ? '+' : ''}${program.result.improvement}${program.result.improvementUnit === '%' ? '%' : ' pts'}`}
-                        </div>
-                      </div>
+                      </button>
                     );
                   })}
+                  {recommendations.length === 0 && (
+                    <div className="rounded-2xl border border-dashed border-border p-5 text-sm text-muted-foreground lg:col-span-3">
+                      No focus is recommended yet because fewer than two trips contain a comparable measurement. Complete a newly measured drive; old missing fields will remain excluded.
+                    </div>
+                  )}
                 </div>
+              </section>
+            )}
+
+            <div className="grid min-w-0 gap-5 xl:grid-cols-[1fr_0.85fr]">
+              {settings.premium_visual_experience === true ? (
+                <PremiumCoachProgramSettingsCard
+                  activeProgram={activeProgram}
+                  adaptiveRecommendation={recommendCoachDifficulty(selectedFocus, programStore)}
+                  driverTripCount={driverCompleted.length}
+                  onDifficultyChange={setSelectedDifficulty}
+                  onStart={startProgram}
+                  onContextChange={setSelectedContext}
+                  onRouteKeyChange={setSelectedRouteKey}
+                  onTripCountChange={setSelectedTripCount}
+                  programBusy={programBusy}
+                  programRoutes={programRoutes}
+                  selectedDefinition={selectedDefinition}
+                  selectedDifficulty={selectedDifficulty}
+                  selectedContext={selectedContext}
+                  selectedRecommendation={selectedRecommendation}
+                  selectedRouteKey={selectedRouteKey}
+                  selectedTripCount={selectedTripCount}
+                />
+              ) : (
+                <section className={CARD}>
+                  <SectionHeading title="Program settings" description="Control the challenge, duration, and comparison group." />
+                  <div className="mt-5 grid min-w-0 gap-4 sm:grid-cols-2">
+                    <label className="min-w-0 space-y-2 text-sm font-semibold">
+                      Difficulty
+                      <CoachSelect value={selectedDifficulty} onValueChange={setSelectedDifficulty}>
+                        <CoachSelectTrigger className="h-11 w-full min-w-0 overflow-hidden rounded-xl [&>span]:truncate"><CoachSelectValue /></CoachSelectTrigger>
+                        <CoachSelectContent>
+                          <CoachSelectItem value="adaptive">Adaptive</CoachSelectItem>
+                          <CoachSelectItem value="gentle">Gentle</CoachSelectItem>
+                          <CoachSelectItem value="standard">Standard</CoachSelectItem>
+                          <CoachSelectItem value="intensive">Intensive</CoachSelectItem>
+                        </CoachSelectContent>
+                      </CoachSelect>
+                      <span className="block text-xs font-normal text-muted-foreground">Adaptive uses only completed, measured programs. Targets range from 15% to 35%.</span>
+                    </label>
+                    <label className="min-w-0 space-y-2 text-sm font-semibold">
+                      Program length
+                      <CoachSelect value={selectedTripCount} onValueChange={setSelectedTripCount}>
+                        <CoachSelectTrigger className="h-11 w-full min-w-0 overflow-hidden rounded-xl [&>span]:truncate"><CoachSelectValue /></CoachSelectTrigger>
+                        <CoachSelectContent>
+                          <CoachSelectItem value="3">3 drives</CoachSelectItem>
+                          <CoachSelectItem value="5">5 drives</CoachSelectItem>
+                          <CoachSelectItem value="10">10 drives</CoachSelectItem>
+                        </CoachSelectContent>
+                      </CoachSelect>
+                      <span className="block text-xs font-normal text-muted-foreground">Use 5 drives for a balanced check; 3 is exploratory and 10 is stronger evidence.</span>
+                    </label>
+                    <label className="min-w-0 space-y-2 text-sm font-semibold sm:col-span-2">
+                      Compare against
+                      <CoachSelect value={selectedContext} onValueChange={setSelectedContext}>
+                        <CoachSelectTrigger className="h-11 w-full min-w-0 overflow-hidden rounded-xl [&>span]:truncate"><CoachSelectValue /></CoachSelectTrigger>
+                        <CoachSelectContent>
+                          <CoachSelectItem value="route" disabled={programRoutes.length === 0}>Specific repeated route</CoachSelectItem>
+                          <CoachSelectItem value="comparable">Comparable drives</CoachSelectItem>
+                          <CoachSelectItem value="urban">Urban drives</CoachSelectItem>
+                          <CoachSelectItem value="highway">Highway drives</CoachSelectItem>
+                          <CoachSelectItem value="all">All eligible drives</CoachSelectItem>
+                        </CoachSelectContent>
+                      </CoachSelect>
+                      <span className="block text-xs font-normal text-muted-foreground">Comparable matches route and driving context when that evidence exists.</span>
+                    </label>
+                    {selectedContext === 'route' && (
+                      <label className="min-w-0 space-y-2 text-sm font-semibold sm:col-span-2">
+                        Repeated route
+                        <CoachSelect value={selectedRouteKey || programRoutes[0]?.routeKey || ''} onValueChange={setSelectedRouteKey}>
+                          <CoachSelectTrigger className="h-11 w-full min-w-0 overflow-hidden rounded-xl [&>span]:truncate"><CoachSelectValue placeholder="Choose a repeated route" /></CoachSelectTrigger>
+                          <CoachSelectContent>
+                            {programRoutes.map((route) => (
+                              <CoachSelectItem key={route.routeKey} value={route.routeKey}>
+                                {route.label} - {route.tripCount} drives
+                              </CoachSelectItem>
+                            ))}
+                          </CoachSelectContent>
+                        </CoachSelect>
+                      </label>
+                    )}
+                  </div>
+                  {selectedDifficulty === 'adaptive' && (
+                    <div className="mt-4 rounded-2xl border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground">
+                      <span className="font-semibold text-foreground">Suggested {recommendCoachDifficulty(selectedFocus, programStore).difficulty}: </span>
+                      {recommendCoachDifficulty(selectedFocus, programStore).reason}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    disabled={programBusy || driverCompleted.length === 0 || !selectedRecommendation}
+                    onClick={startProgram}
+                    className="mt-5 inline-flex min-h-12 w-full min-w-0 items-center justify-center gap-2 rounded-2xl bg-primary px-5 font-semibold text-primary-foreground disabled:opacity-60"
+                  >
+                    <Play className="h-4 w-4" />
+                    <span className="sm:hidden">{activeProgram ? 'Replace mission' : 'Start mission'}</span>
+                    <span className="hidden sm:inline">{activeProgram ? `Replace with ${selectedDefinition.label}` : `Start ${selectedDefinition.label}`}</span>
+                  </button>
+                  {!selectedRecommendation && <p className="mt-2 text-xs text-muted-foreground">Start is disabled until this focus has at least two measured historical trips.</p>}
+                </section>
               )}
-            </section>
+
+              {settings.premium_visual_experience === true ? (
+                <PremiumPracticePlanCard
+                  definition={selectedDefinition}
+                  recommendation={selectedRecommendation}
+                />
+              ) : (
+                <section className={CARD}>
+                  {selectedRecommendation ? (
+                    <>
+                      <SectionHeading icon={Activity} eyebrow="Practice plan" title={selectedDefinition.label} description={selectedDefinition.cue} />
+                      <div className="mt-4 space-y-2">
+                        {selectedDefinition.drill.map((step, index) => (
+                          <div key={step} className="flex gap-3 rounded-2xl bg-secondary/50 p-3 text-sm">
+                            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">{index + 1}</span>
+                            <span className="text-muted-foreground">{step}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-4 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+                        <div className="text-xs font-bold uppercase text-primary">Live cue</div>
+                        <p className="mt-1 text-sm font-semibold">{selectedDefinition.liveCue}</p>
+                        <p className="mt-2 text-xs text-muted-foreground">Live coaching keeps safety-critical warnings and limits habit prompts using the selected difficulty.</p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <SectionHeading icon={Activity} eyebrow="Practice plan" title="No measured focus available" description="Road Sage needs comparable measurements before it can make a real plan." />
+                      <div className="mt-4 rounded-2xl border border-dashed border-border p-5 text-sm text-muted-foreground">The next newly recorded trip can qualify. Historical trips with missing Coach fields stay visible in your trip history but do not become fake zeros here.</div>
+                    </>
+                  )}
+                </section>
+              )}
+            </div>
+
+            <ProgramHistory
+              programs={programStore.history}
+              premium={settings.premium_visual_experience === true}
+            />
           </TabsContent>
 
           <TabsContent value="patterns" className="mt-0 space-y-5">
-            <section className={CARD}>
-              <SectionHeading
-                icon={MapPinned}
-                eyebrow="Context intelligence"
-                title="Where and when your driving changes"
-                description="Patterns are separated from the active mission so the coach can monitor secondary risks without constantly changing your focus."
-                action={(
-                  <button type="button" onClick={() => navigate('/map')} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border px-3 text-sm font-semibold hover:bg-secondary">
-                    Open map <ArrowRight className="h-4 w-4" />
-                  </button>
-                )}
+            {settings.premium_visual_experience === true ? (
+              <PremiumContextIntelligenceCard
+                routes={routes}
+                dangerZones={dangerZones}
+                weakestTime={weakestTime}
+                onOpenMap={() => navigate('/map')}
               />
-              <div className="mt-5 grid gap-3 md:grid-cols-3">
-                <Stat value={routes.length || 'Not enough evidence'} label="repeated routes" detail="matched by similar start and end areas" />
-                <Stat value={dangerZones.length || 'Not enough evidence'} label="repeated event areas" detail="harsh braking, speeding, or sharp-turn clusters" />
-                <Stat value={weakestTime?.label || 'Learning'} label="highest-pressure window" detail={weakestTime ? `average ${formatEstimatedScore(weakestTime.avgScore)}` : 'needs comparable trips'} />
-              </div>
-            </section>
+            ) : (
+              <section className={CARD}>
+                <SectionHeading
+                  icon={MapPinned}
+                  eyebrow="Context intelligence"
+                  title="Where and when your driving changes"
+                  description="Patterns are separated from the active mission so the coach can monitor secondary risks without constantly changing your focus."
+                  action={(
+                    <button type="button" onClick={() => navigate('/map')} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border px-3 text-sm font-semibold hover:bg-secondary">
+                      Open map <ArrowRight className="h-4 w-4" />
+                    </button>
+                  )}
+                />
+                <div className="mt-5 grid gap-3 md:grid-cols-3">
+                  <Stat value={routes.length || 'Not enough evidence'} label="repeated routes" detail="matched by similar start and end areas" />
+                  <Stat value={dangerZones.length || 'Not enough evidence'} label="repeated event areas" detail="harsh braking, speeding, or sharp-turn clusters" />
+                  <Stat value={weakestTime?.label || 'Learning'} label="highest-pressure window" detail={weakestTime ? `average ${formatEstimatedScore(weakestTime.avgScore)}` : 'needs comparable trips'} />
+                </div>
+              </section>
+            )}
 
             <div className="grid gap-5 xl:grid-cols-2">
               <section className={CARD}>
@@ -955,191 +1225,192 @@ export default function DrivingCoach() {
                 )}
               </section>
 
-              <section className={CARD}>
-                <SectionHeading icon={Clock3} eyebrow="Pressure windows" title="Personal time pattern" />
-                <div className="mt-4 space-y-3">
-                  {timeOfDay.map((row) => (
-                    <div key={row.id} className="flex items-center justify-between gap-3 rounded-2xl bg-secondary/50 p-3">
-                      <div>
-                        <div className="font-semibold">{row.label}</div>
-                        <div className="text-xs text-muted-foreground">{row.trips} trips {'\u00b7'} {row.events} risk events</div>
-                      </div>
-                      <div className="font-grotesk text-2xl font-bold">{formatEstimatedScore(row.avgScore)}</div>
-                    </div>
-                  ))}
-                </div>
-                {weakestDay && <p className="mt-3 text-xs text-muted-foreground">Your weakest sufficiently sampled day is {weakestDay.day}, averaging {formatEstimatedScore(weakestDay.avgScore)}.</p>}
-              </section>
-            </div>
-
-            <section className={CARD}>
-              <SectionHeading icon={AlertTriangle} eyebrow="Repeated event areas" title={dangerZones.length ? `${dangerZones.length} local areas need attention` : 'No repeated event area has enough evidence yet'} description="Coordinates stay in the existing private map workflow; this summary only explains the pattern." />
-              {dangerZones.length > 0 && (
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {dangerZones.slice(0, 6).map((zone) => (
-                    <div key={zone.id} className="rounded-2xl border border-border p-4">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-semibold capitalize">{eventTypeLabel(zone.dominantType)}</span>
-                        <span className={`rounded-full px-2 py-1 text-xs font-bold uppercase ${zone.riskLevel === 'critical' || zone.riskLevel === 'high' ? 'bg-red-500/10 text-red-600 dark:text-red-300' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>{zone.riskLevel}</span>
-                      </div>
-                      <div className="mt-2 text-sm text-muted-foreground">{zone.eventCount} events in an approximately {Math.round(zone.radiusM)} m area.</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <section className={CARD}>
-              <SectionHeading icon={Gauge} eyebrow="Evidence explorer" title="What is driving the recommendation" />
-              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                {(coach.risk_patterns || []).map((pattern) => (
-                  <div key={pattern.key} className="rounded-2xl bg-secondary/50 p-4">
-                    <div className="font-semibold">{pattern.label}</div>
-                    <div className="mt-2 font-grotesk text-2xl font-bold">{formatPerDistanceRate(pattern.events_per_100km, units, { empty: '-' })}</div>
-                    <div className="mt-1 text-xs text-muted-foreground">{pattern.share_percent}% of recorded risk events</div>
-                  </div>
-                ))}
-                {(coach.risk_patterns || []).length === 0 && <div className="text-sm text-muted-foreground">No dominant risk event is currently strong enough to display.</div>}
-              </div>
-            </section>
-
-            <section className={CARD}>
-              <SectionHeading
-                icon={Route}
-                eyebrow="Segment intelligence"
-                title={intelligenceRoute?.label || 'Choose a repeated route'}
-                description={segmentInsights.explanation}
-                action={intelligenceRoute?.lastTripId ? (
-                  <button type="button" onClick={() => navigate(`/trips/${intelligenceRoute.lastTripId}`)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border px-3 text-sm font-semibold">
-                    Open route evidence <ArrowRight className="h-4 w-4" />
-                  </button>
-                ) : null}
-              />
-              {programRoutes.length > 1 && !activeProgram?.context?.routeKey && (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {programRoutes.slice(0, 5).map((route) => (
-                    <button key={route.routeKey} type="button" onClick={() => setSelectedRouteKey(route.routeKey)} className={`min-h-9 rounded-xl border px-3 text-xs font-semibold ${route.routeKey === intelligenceRouteKey ? 'border-primary bg-primary/10 text-primary' : 'border-border'}`}>
-                      {route.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {intelligenceRoute ? (
-                <div className="mt-4">
-                  <div className="mb-3 flex flex-wrap gap-2 text-xs">
-                    <span className="rounded-full bg-secondary px-3 py-1 font-semibold">{segmentInsights.tripCount} detailed drives</span>
-                    <span className="rounded-full bg-secondary px-3 py-1 font-semibold">{segmentInsights.locatedEvents} located events</span>
-                    <span className="rounded-full bg-secondary px-3 py-1 font-semibold">{segmentInsights.evidenceLevel} evidence</span>
-                  </div>
-                  <div className="grid gap-3 md:grid-cols-3">
-                    {segmentInsights.sections.map((section) => (
-                      <div key={section.id} className={`rounded-2xl border p-4 ${segmentInsights.strongestSection?.id === section.id && section.eventCount ? 'border-amber-500/35 bg-amber-500/5' : 'border-border'}`}>
-                        <div className="text-sm font-semibold">{section.label}</div>
-                        <div className="mt-2 font-grotesk text-2xl font-bold">{section.eventCount}</div>
-                        <div className="text-xs text-muted-foreground">events {'\u00b7'} repeated on {section.repeatRate}% of detailed drives</div>
+              {settings.premium_visual_experience === true ? (
+                <PremiumPressureWindowsCard timeOfDay={timeOfDay} weakestDay={weakestDay} />
+              ) : (
+                <section className={CARD}>
+                  <SectionHeading icon={Clock3} eyebrow="Pressure windows" title="Personal time pattern" />
+                  <div className="mt-4 space-y-3">
+                    {timeOfDay.map((row) => (
+                      <div key={row.id} className="flex items-center justify-between gap-3 rounded-2xl bg-secondary/50 p-3">
+                        <div>
+                          <div className="font-semibold">{row.label}</div>
+                          <div className="text-xs text-muted-foreground">{row.trips} trips {'\u00b7'} {row.events} risk events</div>
+                        </div>
+                        <div className="font-grotesk text-2xl font-bold">{formatEstimatedScore(row.avgScore)}</div>
                       </div>
                     ))}
                   </div>
-                </div>
-              ) : (
-                <div className="mt-4 rounded-2xl border border-dashed border-border p-5 text-sm text-muted-foreground">Complete the same route twice to unlock section-by-section comparisons.</div>
+                  {weakestDay && <p className="mt-3 text-xs text-muted-foreground">Your weakest sufficiently sampled day is {weakestDay.day}, averaging {formatEstimatedScore(weakestDay.avgScore)}.</p>}
+                </section>
               )}
-            </section>
+            </div>
+
+            <RepeatedEventAreasSection
+              canToggleAll={dangerZones.length > 6}
+              completedTripCount={driverCompleted.length}
+              dangerZones={dangerZones}
+              dangerZonesReady={dangerZonesReady}
+              displayedDangerZones={displayedDangerZones}
+              hiddenDangerZoneCount={hiddenDangerZoneCount}
+              loading={!dangerZonesReady && (recentFetching || fullHistoryFetching)}
+              onShowAll={() => setShowAllDangerZones((current) => !current)}
+              onShowOnMap={() => navigate('/map')}
+              premium={settings.premium_visual_experience === true}
+              relativeTimeFormatter={formatEventAreaRelativeTime}
+              showAllDangerZones={showAllDangerZones}
+              units={units}
+            />
+
+            <EvidenceExplorer
+              patterns={coach.risk_patterns || []}
+              units={units}
+              premium={settings.premium_visual_experience === true}
+            />
+
+            {shouldRenderPremiumSegmentIntelligence(settings.premium_visual_experience) ? (
+              <PremiumSegmentIntelligenceCard
+                insights={segmentInsights}
+                loading={segmentInsightsLoading}
+                lockedToActiveProgram={Boolean(activeProgram?.context?.routeKey)}
+                onOpenRouteEvidence={() => intelligenceRoute?.lastTripId && navigate(`/trips/${intelligenceRoute.lastTripId}`)}
+                onSelectRoute={setSelectedRouteKey}
+                route={intelligenceRoute}
+                routes={programRoutes}
+              />
+            ) : (
+              <section className={CARD}>
+                <SectionHeading
+                  icon={Route}
+                  eyebrow="Segment intelligence"
+                  title={intelligenceRoute?.label || 'Choose a repeated route'}
+                  description={segmentInsights.explanation}
+                  action={intelligenceRoute?.lastTripId ? (
+                    <button type="button" onClick={() => navigate(`/trips/${intelligenceRoute.lastTripId}`)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border px-3 text-sm font-semibold">
+                      Open route evidence <ArrowRight className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                />
+                {programRoutes.length > 1 && !activeProgram?.context?.routeKey && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {programRoutes.slice(0, 5).map((route) => (
+                      <button key={route.routeKey} type="button" onClick={() => setSelectedRouteKey(route.routeKey)} className={`min-h-9 rounded-xl border px-3 text-xs font-semibold ${route.routeKey === intelligenceRouteKey ? 'border-primary bg-primary/10 text-primary' : 'border-border'}`}>
+                        {route.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {intelligenceRoute ? (
+                  <div className="mt-4">
+                    <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                      <span className="rounded-full bg-secondary px-3 py-1 font-semibold">{segmentInsights.tripCount} detailed drives</span>
+                      <span className="rounded-full bg-secondary px-3 py-1 font-semibold">{segmentInsights.locatedEvents} located events</span>
+                      <span className="rounded-full bg-secondary px-3 py-1 font-semibold">{segmentInsights.evidenceLevel} evidence</span>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      {segmentInsights.sections.map((section) => (
+                        <div key={section.id} className={`rounded-2xl border p-4 ${segmentInsights.strongestSection?.id === section.id && section.eventCount ? 'border-amber-500/35 bg-amber-500/5' : 'border-border'}`}>
+                          <div className="text-sm font-semibold">{section.label}</div>
+                          <div className="mt-2 font-grotesk text-2xl font-bold">{section.eventCount}</div>
+                          <div className="text-xs text-muted-foreground">events {'\u00b7'} repeated on {section.repeatRate}% of detailed drives</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-2xl border border-dashed border-border p-5 text-sm text-muted-foreground">Complete the same route twice to unlock section-by-section comparisons.</div>
+                )}
+              </section>
+            )}
           </TabsContent>
 
           <TabsContent value="profile" className="mt-0 space-y-5">
-            <section className={CARD}>
-              <SectionHeading
-                icon={Brain}
-                eyebrow="Operational driver model"
-                title={driverSignature ? driverSignature.archetype.replaceAll('_', ' ') : 'Building your personal model'}
-                description={driverSignature
-                  ? `Built locally from ${driverSignature.trip_count_used} recent trips. Each signal below explains how it changes coaching.`
-                  : 'Complete at least five scored trips to unlock your driver signature.'}
+            {shouldRenderPremiumOperationalDriverModel(settings.premium_visual_experience) ? (
+              <PremiumOperationalDriverModel
+                bestTime={bestTime}
+                currentFocus={currentFocus}
+                driverSignature={driverSignature}
+                habitProfile={habitProfile}
+                loading={isFetching && !driverSignature}
+                recommendation={recommendations[0]}
               />
-              {driverSignature && (
-                <div className="mt-5 grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-                  <div className="rounded-2xl bg-secondary/30 p-3">
-                    <DeferredRecharts height={260}>
-                      {({ ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar, Tooltip }) => {
-                        const data = [
-                          ['Aggression', driverSignature.dimensions.aggression],
-                          ['Smoothness', driverSignature.dimensions.smoothness],
-                          ['Eco', driverSignature.dimensions.ecoMindedness],
-                          ['Speed tolerance', driverSignature.dimensions.speedTolerance],
-                          ['Consistency', driverSignature.dimensions.consistencyIdx],
-                        ].map(([dimension, value]) => ({ dimension, value: Math.round(Number(value) * 100) }));
-                        return (
-                          <ResponsiveContainer width="100%" height={260}>
-                            <RadarChart data={data} outerRadius={86}>
-                              <PolarGrid />
-                              <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 10 }} />
-                              <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.24} />
-                              <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 10, fontSize: 11 }} />
-                            </RadarChart>
-                          </ResponsiveContainer>
-                        );
-                      }}
-                    </DeferredRecharts>
+            ) : (
+              <section className={CARD}>
+                <SectionHeading
+                  icon={Brain}
+                  eyebrow="Operational driver model"
+                  title={driverSignature ? driverSignature.archetype.replaceAll('_', ' ') : 'Building your personal model'}
+                  description={driverSignature
+                    ? `Built locally from ${driverSignature.trip_count_used} recent trips. Each signal below explains how it changes coaching.`
+                    : 'Complete at least five scored trips to unlock your driver signature.'}
+                />
+                {driverSignature && (
+                  <div className="mt-5 grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+                    <div className="rounded-2xl bg-secondary/30 p-3">
+                      <DeferredRecharts height={260}>
+                        {({ ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar, Tooltip }) => {
+                          const data = [
+                            ['Aggression', driverSignature.dimensions.aggression],
+                            ['Smoothness', driverSignature.dimensions.smoothness],
+                            ['Eco', driverSignature.dimensions.ecoMindedness],
+                            ['Speed tolerance', driverSignature.dimensions.speedTolerance],
+                            ['Consistency', driverSignature.dimensions.consistencyIdx],
+                          ].map(([dimension, value]) => ({ dimension, value: Math.round(Number(value) * 100) }));
+                          return (
+                            <ResponsiveContainer width="100%" height={260}>
+                              <RadarChart data={data} outerRadius={86}>
+                                <PolarGrid />
+                                <PolarAngleAxis dataKey="dimension" tick={{ fontSize: 10 }} />
+                                <Radar dataKey="value" stroke="hsl(var(--primary))" fill="hsl(var(--primary))" fillOpacity={0.24} />
+                                <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 10, fontSize: 11 }} />
+                              </RadarChart>
+                            </ResponsiveContainer>
+                          );
+                        }}
+                      </DeferredRecharts>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="rounded-2xl border border-border p-4">
+                        <div className="text-xs font-bold uppercase text-primary">Stable strength</div>
+                        <div className="mt-1 font-semibold">{bestTime ? `${bestTime.label} driving` : 'Still calibrating'}</div>
+                        <p className="mt-1 text-xs text-muted-foreground">{bestTime ? `${bestTime.trips} trips average ${formatEstimatedScore(bestTime.avgScore)}. The coach uses this as a personal reference set.` : 'More repeated contexts are needed before naming a stable strength.'}</p>
+                      </div>
+                      <div className="rounded-2xl border border-border p-4">
+                        <div className="text-xs font-bold uppercase text-primary">Developing weakness</div>
+                        <div className="mt-1 font-semibold">{recommendations[0]?.focus.label || 'Consistency'}</div>
+                        <p className="mt-1 text-xs text-muted-foreground">{recommendations[0]?.reason || currentFocus.cue}</p>
+                      </div>
+                      <div className="rounded-2xl border border-border p-4">
+                        <div className="text-xs font-bold uppercase text-primary">Fatigue response</div>
+                        <div className="mt-1 font-semibold">Performance change estimated near {habitProfile.fatigueOnsetMinutes} minutes</div>
+                        <p className="mt-1 text-xs text-muted-foreground">This is learned from your local multi-trip history and is not a medical fatigue measurement.</p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="space-y-3">
-                    <div className="rounded-2xl border border-border p-4">
-                      <div className="text-xs font-bold uppercase text-primary">Stable strength</div>
-                      <div className="mt-1 font-semibold">{bestTime ? `${bestTime.label} driving` : 'Still calibrating'}</div>
-                      <p className="mt-1 text-xs text-muted-foreground">{bestTime ? `${bestTime.trips} trips average ${formatEstimatedScore(bestTime.avgScore)}. The coach uses this as a personal reference set.` : 'More repeated contexts are needed before naming a stable strength.'}</p>
-                    </div>
-                    <div className="rounded-2xl border border-border p-4">
-                      <div className="text-xs font-bold uppercase text-primary">Developing weakness</div>
-                      <div className="mt-1 font-semibold">{recommendations[0]?.focus.label || 'Consistency'}</div>
-                      <p className="mt-1 text-xs text-muted-foreground">{recommendations[0]?.reason || currentFocus.cue}</p>
-                    </div>
-                    <div className="rounded-2xl border border-border p-4">
-                      <div className="text-xs font-bold uppercase text-primary">Fatigue response</div>
-                      <div className="mt-1 font-semibold">Performance change estimated near {habitProfile.fatigueOnsetMinutes} minutes</div>
-                      <p className="mt-1 text-xs text-muted-foreground">This is learned from your local multi-trip history and is not a medical fatigue measurement.</p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </section>
+                )}
+              </section>
+            )}
 
             <div className="grid gap-5 xl:grid-cols-2">
-              <section className={CARD}>
-                <SectionHeading icon={TrendingUp} eyebrow="Recent shift" title={latestAnomaly?.anomaly_level && latestAnomaly.anomaly_level !== 'unknown' ? `${latestAnomaly.anomaly_level} difference from your norm` : 'No unusual recent shift'} />
-                {latestAnomaly?.anomaly_level && latestAnomaly.anomaly_level !== 'unknown' ? (
-                  <div className="mt-4">
-                    <div className="font-grotesk text-3xl font-bold">{formatEstimatedScore(latestAnomaly.anomaly_score)}/100</div>
-                    <div className="mt-1 text-sm text-muted-foreground">
-                      Last trip compared with {latestAnomaly.model_trip_count} local trips.
-                      {latestAnomaly.reasons.length ? ` Unusual signals: ${latestAnomaly.reasons.join(', ').replaceAll('_', ' ')}.` : ''}
-                    </div>
-                    <p className="mt-3 text-xs text-muted-foreground">A difference means the trip was unusual for you, not necessarily unsafe.</p>
-                  </div>
-                ) : <p className="mt-4 text-sm text-muted-foreground">The latest trip is within the normal range of your local driver model.</p>}
-              </section>
+              <RecentShiftCard
+                anomaly={latestAnomaly}
+                premium={settings.premium_visual_experience === true}
+              />
 
-              <section className={CARD}>
-                <SectionHeading icon={Trophy} eyebrow="Coaching responsiveness" title={programStore.history.length ? 'Your completed programs' : 'Complete a program to measure what works'} />
-                <div className="mt-4 grid grid-cols-3 gap-2">
-                  <Stat value={programStore.history.length} label="programs" />
-                  <Stat value={programStore.history.filter((item) => item.result?.graduated).length} label="graduated" />
-                  <Stat value={programStore.history.filter((item) => Number(item.result?.improvement) > 0).length} label="improved" />
-                </div>
-                <p className="mt-3 text-xs text-muted-foreground">Road Sage can use this history to show which drills and difficulty levels produce measurable changes for you.</p>
-              </section>
+              <CoachingResponsiveness
+                programs={programStore.history}
+                premium={settings.premium_visual_experience === true}
+                loading={!programsLoaded}
+              />
             </div>
 
-            <section className={CARD}>
-              <SectionHeading icon={ShieldCheck} eyebrow="Model transparency" title="Evidence and limitations" />
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
-                <Stat value={driverCompleted.length} label="eligible driver trips" />
-                <Stat value={`${Math.round(habitProfile.confidence * 100)}%`} label="habit-model confidence" />
-                <Stat value={formatDistance(coach.risk_rate.distance_km, units)} label="coaching distance" />
-              </div>
-              <p className="mt-4 text-xs text-muted-foreground">
-                Scores, event detections, readiness, repeated areas, and coaching targets are personal GPS/sensor estimates. They are not validated collision-risk, medical, legal, or insurance assessments. Review incorrect events from Trip Detail so future evidence is based on corrected trips.
-              </p>
-            </section>
+            <ModelTransparencyCard
+              eligibleTripCount={driverCompleted.length}
+              confidence={habitProfile.confidence}
+              distanceKm={coach.risk_rate.distance_km}
+              units={units}
+              premium={settings.premium_visual_experience === true}
+            />
           </TabsContent>
         </Tabs>
       )}

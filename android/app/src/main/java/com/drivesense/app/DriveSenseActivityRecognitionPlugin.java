@@ -369,6 +369,10 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         payload.put("enabled", enabled);
         payload.put("recordingActive", recordingActive);
         payload.put("activeTrip", recordingActive ? activeTrip : null);
+        payload.put(
+            "activeTripCheckpoint",
+            DriveSenseActiveTripCheckpointStore.getStatus(getContext(), System.currentTimeMillis())
+        );
         payload.put("completedTripsCount", DriveSenseNativeTripStore.getCompletedTrips(getContext()).length());
         payload.put("diagnosticEventsCount", DriveSenseNativeTripStore.getDiagnosticEvents(getContext()).length());
         call.resolve(payload);
@@ -398,6 +402,12 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     @PluginMethod
     public void clearNativeCompletedTrips(PluginCall call) {
         DriveSenseNativeTripStore.clearCompletedTrips(getContext());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void clearNativeActiveTripCheckpoint(PluginCall call) {
+        DriveSenseActiveTripCheckpointStore.clear(getContext());
         call.resolve();
     }
 

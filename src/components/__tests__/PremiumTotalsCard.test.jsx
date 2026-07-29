@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPremiumBaselineViewModel,
   buildPremiumTotals,
+  default as PremiumTotalsCard,
   PremiumBaselineCard,
 } from '@/components/PremiumTotalsCard';
 import PremiumEventSummary, { buildPremiumEventSummary } from '@/components/PremiumEventSummary';
@@ -47,15 +48,82 @@ describe('buildPremiumTotals', () => {
     });
   });
 
-  it('treats missing and negative totals as zero', () => {
+  it('treats invalid dates and negative totals as zero', () => {
     expect(buildPremiumTotals([{ start_time: 'invalid', distance_km: -5, duration_seconds: -1 }], 'all_time', NOW)).toEqual({
       activeDays: 0,
       averageDistanceKm: 0,
       distanceKm: 0,
       durationSeconds: 0,
       longestDistanceKm: 0,
+      tripCount: 0,
+    });
+  });
+
+  it('matches the dashboard rules for future, incomplete, and timestamp-derived trips', () => {
+    expect(buildPremiumTotals([
+      {
+        status: 'completed',
+        start_time: new Date(NOW - 2 * 60 * 60 * 1000).toISOString(),
+        end_time: new Date(NOW - 60 * 60 * 1000).toISOString(),
+        distance_km: 20,
+      },
+      {
+        status: 'active',
+        start_time: new Date(NOW - 60 * 60 * 1000).toISOString(),
+        distance_km: 80,
+        duration_seconds: 3600,
+      },
+      {
+        status: 'completed',
+        start_time: new Date(NOW + 60 * 60 * 1000).toISOString(),
+        distance_km: 40,
+        duration_seconds: 1800,
+      },
+    ], 'seven_days', NOW)).toEqual({
+      activeDays: 1,
+      averageDistanceKm: 20,
+      distanceKm: 20,
+      durationSeconds: 3600,
+      longestDistanceKm: 20,
       tripCount: 1,
     });
+  });
+});
+
+describe('PremiumTotalsCard', () => {
+  it('renders the generated scene for every live metric and exposes both period controls', () => {
+    const html = renderToStaticMarkup(
+      <PremiumTotalsCard
+        trips={[trip({ daysAgo: 1, distanceKm: 12.5, durationSeconds: 1800 })]}
+        units="metric"
+      />,
+    );
+
+    expect(html).toContain('class="premium-totals-card"');
+    expect(html).toContain('data-period="all_time"');
+    expect(html).toContain('premium-totals-hero-v2.webp');
+    expect(html).toContain('premium-totals-distance-v2.webp');
+    expect(html).toContain('premium-totals-duration-v2.webp');
+    expect(html).toContain('premium-totals-trips-v2.webp');
+    expect(html).toContain('premium-totals-days-v4.webp');
+    expect(html).toContain('premium-totals-average-v2.webp');
+    expect(html).toContain('premium-totals-longest-v2.webp');
+    expect(html).toContain('aria-label="Totals period"');
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('aria-pressed="false"');
+    expect(html).toContain('aria-label="Distance: 12.5 km. completed trips"');
+    expect(html.match(/class="premium-metric"/g)).toHaveLength(6);
+  });
+
+  it('keeps zero-data values readable without inventing activity', () => {
+    const html = renderToStaticMarkup(<PremiumTotalsCard trips={[]} units="imperial" />);
+
+    expect(html).toContain('data-empty="true"');
+    expect(html).toContain('Distance: 0.0 mi. completed trips');
+    expect(html).toContain('Time driving: 0m. recorded time');
+    expect(html).toContain('Active days: 0. no driving days');
+    expect(html).not.toContain('NaN');
+    expect(html).not.toContain('Infinity');
   });
 });
 
@@ -80,9 +148,12 @@ describe('PremiumBaselineCard', () => {
   it('derives every premium label from live baseline evidence', () => {
     expect(buildPremiumBaselineViewModel(baseline, '76-91', peakStress)).toMatchObject({
       baselineMeta: '14 recent scored trips',
+      baselineRange: '76-91',
+      baselineScoreLabel: '82',
       baselineValue: '82 (76-91)',
       deltaLabel: '+5 vs baseline',
       percentileMeta: '8 scored weeks analyzed',
+      percentileProgress: 75,
       percentileValue: '75%',
       scoreDegrees: 234.9,
       scoreLabel: '87',
@@ -106,10 +177,16 @@ describe('PremiumBaselineCard', () => {
     expect(html).toContain('class="premium-baseline-card"');
     expect(html).toContain('data-tone="improving"');
     expect(html).toContain('aria-label="This week score: 87. +5 vs baseline"');
-    expect(html).toContain('aria-label="Approximate personal baseline: 82 (76-91)"');
+    expect(html).toContain('aria-label="Approximate personal baseline: 82 (76-91). 14 recent scored trips"');
     expect(html).toContain('aria-label="Personal percentile: 75%. 8 scored weeks analyzed"');
     expect(html).toContain('aria-label="Rush hour behaviour: consistent. 6 peak / 11 off-peak trips"');
-    expect(html.match(/class="premium-baseline-art"/g)).toHaveLength(4);
+    expect(html).toContain('data-icon="safe"');
+    expect(html).toContain('data-scene="safe"');
+    expect(html).toContain('class="premium-baseline-stress-state-art"');
+    expect(html.match(/class="premium-baseline-art(?: |")/g)).toHaveLength(4);
+    expect(html).toContain('class="premium-baseline-hero"');
+    expect(html).toContain('aria-label="75% of personal percentile scale"');
+    expect(html).toContain('style="width:75%"');
     expect(html).not.toContain('Recent baseline trend');
   });
 
@@ -130,10 +207,13 @@ describe('PremiumBaselineCard', () => {
 
     expect(model).toMatchObject({
       baselineMeta: '3/10 recent scored trips',
+      baselineRange: '',
+      baselineScoreLabel: 'Building',
       baselineValue: 'Building',
       delta: null,
       deltaLabel: 'Building comparison',
       percentileMeta: 'Needs 4 scored weeks',
+      percentileProgress: 0,
       percentileValue: '—',
       score: null,
       scoreLabel: '—',
@@ -155,6 +235,36 @@ describe('PremiumBaselineCard', () => {
       tone: trend === 'unknown' ? 'learning' : trend,
       trendLabel,
     });
+  });
+
+  it.each([
+    ['consistent', false, 'safe'],
+    ['slightly stressed', false, 'caution'],
+    ['traffic-affected', false, 'warning'],
+    ['significantly stressed', false, 'alert'],
+    ['insufficient off-peak data', true, 'learning'],
+  ])('maps live rush-hour state %s to its semantic 3D icon', (peakStressLabel, insufficientData, tone) => {
+    const livePeakStress = {
+      insufficient_data: insufficientData,
+      off_peak_trip_count: 11,
+      peak_stress_label: peakStressLabel,
+      peak_trip_count: 6,
+    };
+    const model = buildPremiumBaselineViewModel(baseline, '76-91', livePeakStress);
+    const html = renderToStaticMarkup(
+      <PremiumBaselineCard
+        baseline={baseline}
+        baselineRangeLabel="76-91"
+        baselineText="Approximate baseline: 82. This week is +5."
+        peakStress={livePeakStress}
+      />,
+    );
+
+    expect(model.stressTone).toBe(tone);
+    expect(html).toContain(`data-icon="${tone}"`);
+    expect(html).toContain(`data-scene="${tone}"`);
+    expect(html).toContain(`premium-baseline-stress-scene-${tone}-v1.jpg`);
+    expect(html).toContain('class="premium-baseline-stress-state-art"');
   });
 
   it('preserves long labels and large evidence counts without abbreviating live data', () => {
@@ -179,6 +289,42 @@ describe('PremiumBaselineCard', () => {
     expect(model.percentileMeta).toBe('123456 scored weeks analyzed');
     expect(model.stressMeta).toBe('1234567 peak / 7654321 off-peak trips');
     expect(model.stressLabel).toBe('significantly stressed');
+  });
+
+  it('clamps dynamic score and percentile visuals to their real display scales', () => {
+    const model = buildPremiumBaselineViewModel({
+      baseline_avg: 104,
+      baseline_trip_count: 12,
+      delta: -150,
+      percentile: 140,
+      percentile_min_weeks: 4,
+      this_week_avg: -20,
+      trend: 'declining',
+      weeks_analyzed: 5,
+    }, '98-108', peakStress);
+
+    expect(model.score).toBe(0);
+    expect(model.scoreLabel).toBe('-20');
+    expect(model.scoreDegrees).toBe(0);
+    expect(model.percentileValue).toBe('140%');
+    expect(model.percentileProgress).toBe(100);
+  });
+
+  it.each([
+    [0, 0],
+    [42, 42],
+    [140, 100],
+  ])('renders a live %s percentile with a %s percent responsive bar fill', (percentile, expectedFill) => {
+    const html = renderToStaticMarkup(
+      <PremiumBaselineCard
+        baseline={{ ...baseline, percentile }}
+        baselineRangeLabel="76-91"
+        baselineText="Live baseline summary"
+        peakStress={peakStress}
+      />,
+    );
+
+    expect(html).toContain(`style="width:${expectedFill}%"`);
   });
 });
 

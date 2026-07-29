@@ -51,6 +51,11 @@ import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/use-toast';
 import { requestAppConfirm } from '@/lib/appDialog';
+import {
+  matchesSavedRoadSpeedFilter,
+  savedRoadSpeedSearchText,
+  sortSavedRoadSpeedRows,
+} from '@/lib/savedRoadSpeedFilters';
 
 const sourceLabel = (source) => speedLimitSourceLabel(source, { short: true });
 const correctionKey = (correction = {}) => correction?.id || correction?.ruleId || correction?.sectionKey || correction?.geohash;
@@ -265,6 +270,7 @@ const ROW_FILTERS = [
   ['timeRules', 'Timed'],
   ['expiring', 'Expiring'],
 ];
+/** @type {Array<[string, string]>} */
 const ROW_SORTS = [
   ['updated', 'Recently updated'],
   ['impact', 'Conflict impact'],
@@ -310,39 +316,6 @@ const sectionMidpoint = (points = []) => {
     .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
   return clean[Math.floor(clean.length / 2)] || null;
 };
-
-const rowSearchText = (row = {}, conflict = null) => [
-  row.geohash,
-  row.roadName,
-  row.contextLabel,
-  row.note,
-  row.source,
-  row.limitKmh,
-  conflict?.observedLimitKmh,
-].filter((value) => value != null && value !== '').join(' ').toLowerCase();
-
-const matchesRowFilter = (row = {}, conflict = null, filter = 'all') => {
-  if (filter === 'conflicts') return Boolean(conflict);
-  if (filter === 'posted') return row.source === 'user_confirmed_posted_sign';
-  if (filter === 'estimates') return row.source !== 'user_confirmed_posted_sign';
-  if (filter === 'timeRules') return row.timeRule?.enabled === true || row.directionMode === 'forward' || row.directionMode === 'reverse';
-  if (filter === 'expiring') return Boolean(row.expiresAt);
-  return true;
-};
-
-const sortRows = (items = [], sortMode = 'updated') => [...items].sort((a, b) => {
-  if (sortMode === 'impact') {
-    return (Number(b.conflict?.deltaKmh) || 0) - (Number(a.conflict?.deltaKmh) || 0);
-  }
-  if (sortMode === 'road') {
-    return String(a.row.roadName || a.row.contextLabel || a.row.geohash)
-      .localeCompare(String(b.row.roadName || b.row.contextLabel || b.row.geohash));
-  }
-  if (sortMode === 'limit') {
-    return (Number(a.row.limitKmh) || 0) - (Number(b.row.limitKmh) || 0);
-  }
-  return new Date(b.row.appliedAt || 0).getTime() - new Date(a.row.appliedAt || 0).getTime();
-});
 
 const tripLabel = (trip = {}) => {
   const title = trip.name || trip.title || trip.label;
@@ -588,9 +561,9 @@ export default function SpeedLimits() {
     const query = deferredRowQuery.trim().toLowerCase();
     const items = rows
       .map((row) => ({ row, conflict: conflictsByGeohash.get(correctionKey(row)) || null }))
-      .filter(({ row, conflict }) => matchesRowFilter(row, conflict, deferredRowFilter))
-      .filter(({ row, conflict }) => !query || rowSearchText(row, conflict).includes(query));
-    return sortRows(items, deferredRowSort).map(({ row }) => row);
+      .filter(({ row, conflict }) => matchesSavedRoadSpeedFilter(row, conflict, deferredRowFilter))
+      .filter(({ row, conflict }) => !query || savedRoadSpeedSearchText(row, conflict).includes(query));
+    return sortSavedRoadSpeedRows(items, deferredRowSort).map(({ row }) => row);
   }, [conflictsByGeohash, deferredRowFilter, deferredRowQuery, deferredRowSort, rows]);
   const updateRowQuery = (value) => setRowQueryInput(value);
   const updateRowFilter = (value) => setRowFilter(value);

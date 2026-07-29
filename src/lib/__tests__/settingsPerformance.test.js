@@ -69,7 +69,8 @@ describe('Settings interaction performance contracts', () => {
     expect(dialogSource).toContain('data-app-dialog-content="true"');
     expect(dialogSource).toContain('data-app-dialog-close="true"');
     expect(alertDialogSource).toContain('data-app-dialog-content="true"');
-    expect(readFileSync(new URL('../../index.css', import.meta.url), 'utf8')).toContain('position: fixed !important;');
+    expect(dialogSource).toContain('"fixed left-[50%] top-[50%]');
+    expect(alertDialogSource).toContain('"fixed left-[50%] top-[50%]');
   });
 
   it('settles app confirmations only once during rapid taps', () => {

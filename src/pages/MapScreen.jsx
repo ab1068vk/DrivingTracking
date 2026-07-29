@@ -32,7 +32,7 @@ import useLocalSettings from '@/hooks/useLocalSettings';
 import { TRIAGE_DISABLE_MAPS } from '@/lib/performanceTriage';
 import InlineLoadError from '@/components/InlineLoadError';
 import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
-import PremiumMapDiagnostics from '@/components/PremiumMapDiagnostics';
+import PremiumMapDiagnostics, { shouldShowStandardMapRouteSummary } from '@/components/PremiumMapDiagnostics';
 import PremiumMapControls from '@/components/PremiumMapControls';
 import PremiumMapLayers from '@/components/PremiumMapLayers';
 import PremiumEventAreasCard from '@/components/PremiumEventAreasCard';
@@ -48,7 +48,7 @@ const MAP_FILTERS = [
 const MAP_ROUTE_COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#06b6d4', '#ef4444'];
 const TRIP_CARD_PAGE_SIZE = 30;
 const MAP_OVERVIEW_ROUTE_LIMIT = 8;
-export const shouldShowStandardMapRouteSummary = (premiumVisuals) => !premiumVisuals;
+export { shouldShowStandardMapRouteSummary };
 const scheduleIdleWork = (callback) => {
   if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
     const idleId = window.requestIdleCallback(callback, { timeout: 1000 });
@@ -571,6 +571,7 @@ export default function MapScreen() {
               </div>
             ) : <TripMap
               routes={mapRoutes}
+              diagnosticTrips={selectedTrip ? undefined : overviewDiagnosticsTrips}
               events={selectedEvents}
               showCurrentLocation={showCurrentLoc}
               currentLocation={currentLocation}
@@ -842,6 +843,7 @@ export default function MapScreen() {
         <PremiumEventAreasCard
           canToggleAll={visibleDangerZones.length > MAX_VISIBLE_DANGER_ZONES}
           completedTripCount={completedSummaries.length}
+          dangerZones={visibleDangerZones}
           dangerZonesReady={dangerZonesReady}
           displayedDangerZones={displayedDangerZones}
           hiddenAreaCount={dangerZones.length}

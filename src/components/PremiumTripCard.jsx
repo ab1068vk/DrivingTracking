@@ -12,6 +12,7 @@ import {
   StickyNote,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import useLocalSettings from '@/hooks/useLocalSettings';
 import premiumTripEmblemDawn from '@/assets/premium-trip-emblem-dawn-v2.webp';
 import premiumTripEmblemDay from '@/assets/premium-trip-emblem-day-v2.webp';
 import premiumTripEmblemDusk from '@/assets/premium-trip-emblem-dusk-v2.webp';
@@ -79,10 +80,11 @@ export default function PremiumTripCard({
   onIntent = null,
 }) {
   const navigate = useNavigate();
+  const settings = useLocalSettings();
   const overallScore = getTripComponentScore(trip, 'overall');
   const safetyScore = getTripComponentScore(trip, 'safety');
   const eventCount = getPremiumTripEventCount(trip);
-  const timePresentation = getPremiumTripTimePresentation(trip.start_time);
+  const timePresentation = getPremiumTripTimePresentation(trip, settings);
   const scorePresentation = getPremiumTripScorePresentation(overallScore.value);
   const sceneVariant = getPremiumTripSceneVariant(timePresentation.period, scorePresentation.tone, {
     eventCount,

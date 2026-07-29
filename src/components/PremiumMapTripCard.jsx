@@ -22,6 +22,7 @@ import premiumMapTripEmblemOrange from '@/assets/premium-map-trip-emblem-orange-
 import premiumMapTripEmblemViolet from '@/assets/premium-map-trip-emblem-violet-v2.png';
 import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
 import { formatDate, formatDistance, getTripComponentScore } from '@/lib/tripEngine';
+import useLocalSettings from '@/hooks/useLocalSettings';
 import {
   getPremiumTripEventCount,
   getPremiumTripScorePresentation,
@@ -50,8 +51,11 @@ const finiteCount = (value) => {
   return Number.isFinite(count) && count >= 0 ? Math.floor(count) : null;
 };
 
-/** @param {Record<string, any>} trip */
-export function buildPremiumMapTripCardModel(trip = {}) {
+/**
+ * @param {Record<string, any>} trip
+ * @param {Record<string, any>} [nightSettings]
+ */
+export function buildPremiumMapTripCardModel(trip = {}, nightSettings = {}) {
   const overallScore = getTripComponentScore(trip, 'overall');
   const score = getPremiumTripScorePresentation(overallScore.value);
   const routePointCount = Array.isArray(trip.route_points) ? trip.route_points.length : null;
@@ -69,14 +73,14 @@ export function buildPremiumMapTripCardModel(trip = {}) {
     stateLabel: evidenceKey.replace(/_/g, ' ').replace(/^./, (letter) => letter.toUpperCase()),
     confidence: 55,
   };
-  const time = getPremiumTripTimePresentation(trip.start_time);
+  const time = getPremiumTripTimePresentation(trip, nightSettings);
 
   let variant = 'cyan';
-  if (['low', 'unavailable'].includes(evidenceKey)) variant = 'violet';
+  if (time.period === 'night') variant = 'blue';
+  else if (['low', 'unavailable'].includes(evidenceKey)) variant = 'violet';
   else if (['poor', 'risky'].includes(score.tone) || trip.aggressive_grade === 'aggressive' || eventDensity >= 1.5) variant = 'orange';
   else if (score.tone === 'fair' || eventCount >= 3) variant = 'amber';
   else if (score.tone === 'excellent' && eventCount <= 1) variant = 'emerald';
-  else if (time.period === 'night') variant = 'blue';
 
   return {
     asset: VISUALS[variant].asset,
@@ -93,6 +97,7 @@ export function buildPremiumMapTripCardModel(trip = {}) {
       : `${recordedPoints.toLocaleString()} GPS reading${recordedPoints === 1 ? '' : 's'}`,
     score,
     scoreValue: formatScoreWithProvenance(overallScore.value, trip.score_provenance),
+    timePeriod: time.period,
     variant,
   };
 }
@@ -103,7 +108,8 @@ export function buildPremiumMapTripCardModel(trip = {}) {
  * @param {{ trip: Record<string, any>, units?: string, selected?: boolean, onSelect?: ((trip: Record<string, any>) => void)|null }} props
  */
 export default function PremiumMapTripCard({ trip, units = 'metric', selected = false, onSelect = null }) {
-  const model = buildPremiumMapTripCardModel(trip);
+  const settings = useLocalSettings();
+  const model = buildPremiumMapTripCardModel(trip, settings);
   const dateLabel = formatDate(trip.start_time);
   const scoreAria = model.score.normalizedScore == null
     ? 'score unavailable'
@@ -113,6 +119,7 @@ export default function PremiumMapTripCard({ trip, units = 'metric', selected = 
     <article
       className="premium-map-trip-card render-lazy"
       data-selected={selected ? 'true' : 'false'}
+      data-time={model.timePeriod}
       data-variant={model.variant}
       style={/** @type {import('react').CSSProperties & Record<string, string>} */ ({
         '--premium-map-trip-confidence': `${model.confidence}%`,

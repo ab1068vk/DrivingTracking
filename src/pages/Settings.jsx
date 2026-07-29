@@ -6,7 +6,7 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { calibrationLabelService } from '@/api/calibrationLabels';
 import {
-  Moon, Sun, Monitor, Cpu, Trash2, Download, Upload, Shield, ChevronRight, ArrowLeft, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff, Sparkles
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, ArrowLeft, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff, Sparkles
 } from 'lucide-react';
 import {
   Dialog,
@@ -100,7 +100,11 @@ import { rescoreTripForQueue } from '@/lib/rescoringWorker';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { connectObdBleAdapter, getObdBluetoothSupport } from '@/lib/obdBluetooth';
 import { getMotionSensorSupport, requestMotionSensorPermission } from '@/lib/sensorFusionModel';
-import { getVoiceAlertDeliveryStatus, testVoiceAlert } from '@/lib/voiceAlerts';
+import {
+  getVoiceAlertDeliveryStatus,
+  testVoiceAlert,
+  VOICE_ALERT_CONTROL_GROUPS,
+} from '@/lib/voiceAlerts';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { privacyZoneDraftFromSuggestion } from '@/lib/privacyZoneSuggestions';
 import { checkOsrmEndpointHealth, clearMapMatchingCache } from '@/lib/mapMatching';
@@ -545,7 +549,8 @@ const SETTINGS_SECTIONS = [
       { label: 'Crash detection', keywords: 'impact emergency safety' },
       { label: 'Emergency workflow', keywords: 'crash response' },
       { label: 'Predictive route risk', keywords: 'route warning hazard' },
-      { label: 'Voice alerts', keywords: 'spoken warning test volume' },
+      { label: 'Trip start voice confirmation', keywords: 'tracking started recording active spoken confirmation' },
+      { label: 'Live voice alerts', keywords: 'spoken warning coaching safety test volume' },
       { label: 'OBD-II Bluetooth', keywords: 'vehicle adapter diagnostics ble' },
       { label: 'Map overlays', keywords: 'event markers heatmap route line' },
     ],
@@ -1617,7 +1622,9 @@ export default function Settings() {
 
   const runVoiceTest = async () => {
     const ok = await testVoiceAlert(cfg);
-    setVoiceTestStatus(ok ? 'Voice test sent.' : 'Speech output is unavailable in this browser/WebView.');
+    setVoiceTestStatus(ok
+      ? 'Test voice accepted by the device speech output.'
+      : 'Test voice failed. Check Android text-to-speech, media volume, and audio routing.');
     setTimeout(() => setVoiceTestStatus(''), 3000);
   };
 
@@ -3360,6 +3367,9 @@ export default function Settings() {
     nativeStatus: nativeTrackingStatus,
     tracking: false,
   });
+  const enabledVoiceGroupCount = VOICE_ALERT_CONTROL_GROUPS
+    .filter((group) => cfg[group.settingKey] !== false)
+    .length;
 
   return (
     <div className="space-y-4 pb-6">
@@ -3791,12 +3801,11 @@ export default function Settings() {
         <div className="space-y-1">
           <div>
             <div className="text-sm font-medium mb-2 px-1">Theme</div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="grid grid-cols-3 gap-2">
               {[
                 { id: 'light', icon: Sun, label: 'Light' },
                 { id: 'dark', icon: Moon, label: 'Dark' },
                 { id: 'system', icon: Monitor, label: 'System' },
-                { id: 'cyber_lab', icon: Cpu, label: 'Cyber Lab' },
               ].map(({ id, icon: Icon, label }) => (
                 <button
                   key={id}
@@ -4666,10 +4675,18 @@ export default function Settings() {
           </SettingRow>
           <SettingRow
             icon={Volume2}
-            label="Live voice alerts"
-            sublabel={isAndroid()
-              ? 'Manual Android trips use a native background service for speech. Alerts can continue while minimized, but force-closing the app can stop them.'
-              : 'Speaks during active trips for live coaching, phone use, speeding, heading drift beta, long-drive, repeated-event-area, and incident alerts'}
+            label="Trip start voice confirmation"
+            sublabel="Speaks once when Road Sage confirms that trip tracking has started; works even when live voice alerts are off"
+          >
+            <Toggle
+              value={cfg.trip_start_voice_alert_enabled !== false}
+              onChange={v => updateCfg({ trip_start_voice_alert_enabled: v })}
+            />
+          </SettingRow>
+          <SettingRow
+            icon={Volume2}
+            label="Live voice alerts — master switch"
+            sublabel="Turns all four recurring voice groups below on or off. Trip-start confirmation stays separate."
           >
             <div className="flex items-center gap-2">
               <button
@@ -4680,7 +4697,7 @@ export default function Settings() {
                 }}
                 className="rounded-lg bg-secondary px-2.5 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
               >
-                Test
+                Test voice
               </button>
               <Toggle
                 value={cfg.voice_alerts_enabled !== false}
@@ -4695,6 +4712,39 @@ export default function Settings() {
           )}
           <div className="px-1 pb-3 text-xs text-muted-foreground">
             <span className="font-semibold text-foreground">{voiceDeliveryStatus.label}:</span> {voiceDeliveryStatus.detail}
+          </div>
+          <div className="mb-3 rounded-xl border border-border bg-background/70">
+            <div className="border-b border-border/60 px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold">Choose which recurring alerts speak</div>
+                <span className="shrink-0 text-xs font-semibold text-muted-foreground">
+                  {enabledVoiceGroupCount} of {VOICE_ALERT_CONTROL_GROUPS.length} enabled
+                </span>
+              </div>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                These switches control voice only. Event detection, trip scoring, and enabled notifications continue separately.
+              </p>
+            </div>
+            <div className={cfg.voice_alerts_enabled === false ? 'opacity-55' : ''}>
+              {VOICE_ALERT_CONTROL_GROUPS.map((group) => (
+                <SettingRow
+                  key={group.settingKey}
+                  label={group.label}
+                  sublabel={group.alerts}
+                >
+                  <Toggle
+                    value={cfg[group.settingKey] !== false}
+                    onChange={value => updateCfg({ [group.settingKey]: value })}
+                    disabled={cfg.voice_alerts_enabled === false}
+                  />
+                </SettingRow>
+              ))}
+            </div>
+            {cfg.voice_alerts_enabled === false && (
+              <p className="px-3 pb-3 text-xs text-muted-foreground">
+                Turn on the master switch to use these saved group choices.
+              </p>
+            )}
           </div>
           <SettingRow
             icon={Bluetooth}

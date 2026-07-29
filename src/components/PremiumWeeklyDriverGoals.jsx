@@ -1,24 +1,21 @@
 // @ts-check
-import {
-  CarFront,
-  ChartNoAxesColumnIncreasing,
-  Disc3,
-  Gauge,
-  MoonStar,
-  Route,
-  Target,
-} from 'lucide-react';
+import { Target } from 'lucide-react';
 import { formatDistance } from '@/lib/tripEngine';
-import premiumWeeklyGoalsTelemetry from '@/assets/premium-weekly-goals-telemetry.png';
+import premiumWeeklyGoalsHero from '@/assets/premium-weekly-goals-hero-v3.jpg';
+import premiumWeeklyGoalBraking from '@/assets/premium-weekly-goal-braking-v3.jpg';
+import premiumWeeklyGoalSpeeding from '@/assets/premium-weekly-goal-speeding-v3.jpg';
+import premiumWeeklyGoalScore from '@/assets/premium-weekly-goal-score-v3.jpg';
+import premiumWeeklyGoalNightDistance from '@/assets/premium-weekly-goal-night-distance-v3.jpg';
+import premiumWeeklyGoalNightTrips from '@/assets/premium-weekly-goal-night-trips-v3.jpg';
 import premiumSmoothBrakingRoad from '@/assets/premium-smooth-braking-road-v2.png';
 import premiumFatigueRiskShield from '@/assets/premium-fatigue-risk-shield.png';
 
 const GOAL_PRESENTATION = Object.freeze({
-  harsh_brakes: { Icon: Disc3 },
-  speeding: { Icon: Gauge },
-  avg_score: { Icon: ChartNoAxesColumnIncreasing },
-  night_distance: { Icon: Route, OverlayIcon: MoonStar },
-  night_trips: { Icon: CarFront, OverlayIcon: MoonStar },
+  harsh_brakes: { artwork: premiumWeeklyGoalBraking },
+  speeding: { artwork: premiumWeeklyGoalSpeeding },
+  avg_score: { artwork: premiumWeeklyGoalScore },
+  night_distance: { artwork: premiumWeeklyGoalNightDistance },
+  night_trips: { artwork: premiumWeeklyGoalNightTrips },
 });
 
 const clampPercent = (value) => Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
@@ -100,67 +97,84 @@ export function PremiumWeeklyGoalsCard({ goals = [], units = 'metric' }) {
   const rows = buildPremiumWeeklyGoals(goals, units);
   const buildingGoal = rows.find((goal) => goal.status === 'building_evidence');
   const cardTone = premiumWeeklyCardTone(rows);
+  const evidenceCopy = buildingGoal
+    ? `Goals activate after ${safeNumber(buildingGoal.evidence?.minimum_trips)} trips and ${formatDistance(safeNumber(buildingGoal.evidence?.minimum_distance_km), units)}. Until then, Road Sage is building evidence—not awarding easy completions.`
+    : `${rows.length} live goals use this week's recorded trips and your configured targets.`;
 
   return (
     <section className="premium-weekly-goals-card" data-tone={cardTone} aria-labelledby="premium-weekly-goals-title">
-      <img className="premium-weekly-goals-art" src={premiumWeeklyGoalsTelemetry} alt="" aria-hidden="true" />
-      <div className="premium-weekly-goals-scanline" aria-hidden="true" />
-
-      <header className="premium-weekly-goals-head">
-        <div className="premium-weekly-goals-mark" aria-hidden="true"><Target /></div>
-        <div>
-          <span>{WEEKLY_KICKERS[cardTone]}</span>
+      <div className="premium-weekly-goals-hero">
+        <img src={premiumWeeklyGoalsHero} alt="" aria-hidden="true" />
+        <div className="premium-weekly-goals-hero-shade" aria-hidden="true" />
+        <header className="premium-weekly-goals-head">
+          <div className="premium-weekly-goals-status-row">
+            <div className="premium-weekly-goals-mark" aria-hidden="true"><Target /></div>
+            <span>{WEEKLY_KICKERS[cardTone]}</span>
+          </div>
           <h2 id="premium-weekly-goals-title">Weekly Driver Goals</h2>
-          <p>Stay consistent. Drive smarter.</p>
-        </div>
-      </header>
+          <p role={buildingGoal ? 'status' : undefined}>{evidenceCopy}</p>
+        </header>
+      </div>
 
-      {buildingGoal && (
-        <div className="premium-weekly-evidence" role="status">
-          Goals activate after {safeNumber(buildingGoal.evidence?.minimum_trips)} trips and {formatDistance(safeNumber(buildingGoal.evidence?.minimum_distance_km), units)}. Progress shows the evidence collected so far.
+      {rows.length === 0 ? (
+        <div className="premium-weekly-goals-empty" role="status">
+          Weekly goals will appear when Road Sage has trip evidence to evaluate.
+        </div>
+      ) : (
+        <div className="premium-weekly-goal-list">
+          {rows.map((goal) => {
+            const presentation = GOAL_PRESENTATION[goal.id] || {};
+            const roundedProgress = Math.round(goal.progress);
+            return (
+              <article
+                key={goal.id}
+                className="premium-weekly-goal"
+                data-goal={goal.id}
+                data-tone={goal.tone}
+                aria-label={`${goal.label}: ${goal.valueLabel}. ${goal.statusLabel}`}
+              >
+                <div className="premium-weekly-goal-art" aria-hidden="true">
+                  {presentation.artwork
+                    ? <img src={presentation.artwork} alt="" />
+                    : <Target />}
+                </div>
+                <div className="premium-weekly-goal-title">
+                  <span>{goal.label}</span>
+                  <small>{goal.statusLabel}</small>
+                </div>
+                <div className="premium-weekly-goal-body">
+                  <strong>{goal.valueLabel}</strong>
+                  <div
+                    className="premium-weekly-goal-track"
+                    role="progressbar"
+                    aria-label={`${goal.label} goal progress`}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={roundedProgress}
+                    aria-valuetext={goal.statusLabel}
+                  >
+                    <span style={{ width: `${goal.progress}%` }} />
+                  </div>
+                </div>
+                <div className="premium-weekly-goal-ring" aria-hidden="true">
+                  <svg viewBox="0 0 48 48">
+                    <circle className="premium-weekly-goal-ring-track" cx="24" cy="24" r="20" pathLength="100" />
+                    <circle
+                      className="premium-weekly-goal-ring-value"
+                      cx="24"
+                      cy="24"
+                      r="20"
+                      pathLength="100"
+                      strokeDasharray={`${goal.progress} 100`}
+                    />
+                  </svg>
+                  <span>{roundedProgress}%</span>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
-
-      <div className="premium-weekly-goal-list">
-        {rows.map((goal) => {
-          const presentation = GOAL_PRESENTATION[goal.id] || { Icon: Target };
-          const GoalIcon = presentation.Icon;
-          const OverlayIcon = 'OverlayIcon' in presentation ? presentation.OverlayIcon : null;
-          return (
-            <article
-              key={goal.id}
-              className="premium-weekly-goal"
-              data-goal={goal.id}
-              data-tone={goal.tone}
-              aria-label={`${goal.label}: ${goal.valueLabel}. ${goal.statusLabel}`}
-            >
-              <div className="premium-weekly-goal-icon" aria-hidden="true">
-                <span className="premium-weekly-goal-glyph">
-                  <GoalIcon className="premium-weekly-goal-glyph-main" />
-                  {OverlayIcon && <OverlayIcon className="premium-weekly-goal-glyph-overlay" />}
-                </span>
-              </div>
-              <div className="premium-weekly-goal-body">
-                <div className="premium-weekly-goal-labels">
-                  <span>{goal.label}</span>
-                  <strong>{goal.valueLabel}</strong>
-                </div>
-                <div
-                  className="premium-weekly-goal-track"
-                  role="progressbar"
-                  aria-label={`${goal.label} goal progress`}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(goal.progress)}
-                  aria-valuetext={goal.statusLabel}
-                >
-                  <span style={{ width: `${goal.progress}%` }} />
-                </div>
-              </div>
-            </article>
-          );
-        })}
-      </div>
     </section>
   );
 }

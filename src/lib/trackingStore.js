@@ -49,6 +49,7 @@ let activeTripMemory = null;
 let activeTripWriteQueue = Promise.resolve();
 const CURRENT_SETTINGS_DEFAULTS_VERSION = 19;
 const SYSTEM_THEME_QUERY = '(prefers-color-scheme: dark)';
+const THEME_MODE_VALUES = Object.freeze(['system', 'light', 'dark']);
 let activeThemeMode = 'system';
 let systemThemeQueryList = null;
 let systemThemeQueryListener = null;
@@ -317,7 +318,12 @@ export const DEFAULT_SETTINGS = {
   background_location_granted: false,
   tracking_paused: false,
   live_coaching_enabled: true,
+  trip_start_voice_alert_enabled: true,
   voice_alerts_enabled: true,
+  voice_speed_alerts_enabled: true,
+  voice_driving_event_alerts_enabled: true,
+  voice_attention_incident_alerts_enabled: true,
+  voice_coaching_reminder_alerts_enabled: true,
   voice_alert_style: DEFAULT_VOICE_ALERT_STYLE,
   sensor_fusion_enabled: true,
   crash_detection_enabled: true,
@@ -480,13 +486,15 @@ export function migrateDefaultSettings(parsed = {}) {
   const voiceAlertStyleChanged = !Object.prototype.hasOwnProperty.call(parsed, 'voice_alert_style') ||
     merged.voice_alert_style !== normalizeVoiceAlertStyle(merged.voice_alert_style);
   merged.voice_alert_style = normalizeVoiceAlertStyle(merged.voice_alert_style);
+  const themeModeChanged = !THEME_MODE_VALUES.includes(merged.dark_mode);
+  if (themeModeChanged) merged.dark_mode = DEFAULT_SETTINGS.dark_mode;
 
   const osrmZoneGuardChanged = merged.osrm_block_near_any_zone !== true;
   merged.osrm_block_near_any_zone = true;
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
   return {
     settings: merged,
-    changed: calibrationSharingChanged || ecoSettingsRepaired || experienceModeChanged || voiceAlertStyleChanged || osrmZoneGuardChanged || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
+    changed: calibrationSharingChanged || ecoSettingsRepaired || experienceModeChanged || voiceAlertStyleChanged || themeModeChanged || osrmZoneGuardChanged || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
   };
 }
 
@@ -553,7 +561,7 @@ const SETTINGS_ENUMS = {
   tracking_mode: ['manual', 'auto_detect', 'background_auto'],
   units: ['metric', 'imperial'],
   currencySymbol: CURRENCY_SYMBOL_OPTIONS.map((option) => option.value),
-  dark_mode: ['system', 'light', 'dark', 'cyber_lab'],
+  dark_mode: THEME_MODE_VALUES,
   night_detection_mode: ['sunset', 'custom'],
   phone_use_sensitivity: ['low', 'medium', 'high'],
   configurable_country_defaults: STATUTORY_REGION_SETTING_VALUES,
@@ -885,11 +893,15 @@ export const localSettings = {
       const parsed = JSON.parse(value);
       const { settings: merged, changed } = migrateDefaultSettings(parsed);
       const serialized = JSON.stringify(merged);
+      const previousSerialized = localStorage.getItem(SETTINGS_KEY);
       localStorage.setItem(SETTINGS_KEY, serialized);
       if (changed) await Preferences.set({ key: SETTINGS_KEY, value: serialized });
       lastNativeSettingsSync = serialized;
       settingsCache = merged;
       settingsCacheSerialized = serialized;
+      if (serialized !== previousSerialized) {
+        dispatchSettingsChanged(merged, { source: 'native_hydrate' });
+      }
       return merged;
     } catch {
       return this.get();
@@ -907,7 +919,6 @@ export const localSettings = {
         if (changed || serialized !== raw) storage.setItem(SETTINGS_KEY, serialized);
         settingsCache = merged;
         settingsCacheSerialized = serialized;
-        syncSettingsForNative(merged, serialized);
         return merged;
       }
       if (!storage && memorySettings) {
@@ -925,7 +936,6 @@ export const localSettings = {
       else memorySettings = defaults;
       settingsCache = defaults;
       settingsCacheSerialized = serialized;
-      syncSettingsForNative(defaults, serialized);
       return defaults;
     } catch {
       return settingsCache || { ...DEFAULT_SETTINGS };
@@ -1006,7 +1016,7 @@ export function clearSettingsMemoryForErasure() {
   lastNativeSettingsSync = '';
 }
 
-const normalizeThemeMode = (mode) => (['light', 'dark', 'system', 'cyber_lab'].includes(mode) ? mode : 'system');
+const normalizeThemeMode = (mode) => (THEME_MODE_VALUES.includes(mode) ? mode : DEFAULT_SETTINGS.dark_mode);
 
 const syncNativeSystemBars = (themeMode, resolvedTheme) => {
   if (typeof window === 'undefined') return;
@@ -1039,13 +1049,9 @@ const renderThemeMode = (mode) => {
   if (typeof document === 'undefined') return;
   const normalized = normalizeThemeMode(mode);
   const shouldUseDark = normalized === 'dark' ||
-    normalized === 'cyber_lab' ||
     (normalized === 'system' && getSystemThemeQueryList()?.matches === true);
-  const resolvedTheme = normalized === 'cyber_lab'
-    ? 'cyber_lab'
-    : shouldUseDark ? 'dark' : 'light';
+  const resolvedTheme = shouldUseDark ? 'dark' : 'light';
   document.documentElement.classList.toggle('dark', shouldUseDark);
-  document.documentElement.classList.toggle('cyber-lab', normalized === 'cyber_lab');
   document.documentElement.dataset.themeMode = normalized;
   document.documentElement.dataset.resolvedTheme = resolvedTheme;
   document.documentElement.style.colorScheme = shouldUseDark ? 'dark' : 'light';

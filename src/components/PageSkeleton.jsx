@@ -16,7 +16,7 @@ export default function PageSkeleton({
   }, [title]);
 
   return (
-    <div className="cyber-page-skeleton space-y-5" role="status" aria-live="polite" aria-label={title}>
+    <div className="space-y-5" role="status" aria-live="polite" aria-label={title}>
       <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
         <span className="h-2.5 w-2.5 rounded-full bg-primary animate-pulse" aria-hidden="true" />
         <span>{title}</span>

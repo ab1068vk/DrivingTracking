@@ -18,6 +18,13 @@ import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import DeferredRecharts from '@/components/DeferredRecharts';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import PhoneUsePermissionBanner from '@/components/PhoneUsePermissionBanner';
+import PremiumMapDiagnostics, { shouldShowStandardMapRouteSummary } from '@/components/PremiumMapDiagnostics';
+import PremiumTripContextCard, {
+  selectPremiumSensorArtwork,
+  selectPremiumSpeedArtwork,
+  selectPremiumTripTagArtwork,
+  selectPremiumWeatherArtwork,
+} from '@/components/PremiumTripContextCard';
 import SpeedLimitConflictReview from '@/components/SpeedLimitConflictReview';
 import { buildTripSpeedLimitReviewCells, speedLimitReviewNeededForTrip } from '@/lib/speedLimitReview';
 import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
@@ -99,8 +106,14 @@ import { formatEstimatedScore, formatScoreWithProvenance } from '@/lib/scoreDisp
 import { formatDataSourceLabel } from '@/lib/metricRegistry';
 import { tripScoreDeltaSummary } from '@/lib/speedLimitDisplay';
 import { summarizeTripSpeedLimitIntelligence } from '@/lib/speedLimitIntelligence';
+import { getPremiumTripDetailPresentation } from '@/lib/premiumTripPresentation';
 import { recordSystemEvent } from '@/lib/systemLog';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import premiumTripPhoneRisk from '@/assets/premium-trip-phone-risk.webp';
+import premiumTripPhoneSafe from '@/assets/premium-trip-phone-safe.webp';
+import premiumTripPhoneNeutral from '@/assets/premium-trip-phone-neutral.webp';
+import premiumTripRoadData from '@/assets/premium-trip-road-data.webp';
+import premiumTripSpeedCoverage from '@/assets/premium-trip-speed-coverage.webp';
 
 // CHANGES (session):
 // - Added stronger posted-sign override wording for regional default and road-type estimates.
@@ -335,9 +348,13 @@ export default function TripDetail() {
   const settings = useLocalSettings();
   const reviewSpeedLimitConflicts = new URLSearchParams(location.search || '').get('review') === 'speed-limit-conflicts';
   const units = settings.units || 'metric';
+  // Trip Detail intentionally keeps the standard presentation in every app appearance mode.
+  const premiumVisuals = false;
+  const premiumMapVisuals = settings.premium_visual_experience === true;
   const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
   const [showCorneringHeatmap, setShowCorneringHeatmap] = useState(false);
   const [showSpeedLimitsOnMap, setShowSpeedLimitsOnMap] = useState(false);
+  const [showPremiumRouteDiagnostics, setShowPremiumRouteDiagnostics] = useState(true);
   const [routeRiskIndex, setRouteRiskIndex] = useState(new Map());
   const [editingMetadata, setEditingMetadata] = useState(false);
   const [metadataDraft, setMetadataDraft] = useState({ nickname: '', notes: '', tags: [] });
@@ -906,6 +923,7 @@ export default function TripDetail() {
   const tagSuggestion = suggestTripTag(trip);
   const tripTags = normalizeTripTags(trip);
   const tripTitle = getTripDisplayName(trip);
+  const premiumTripDetail = getPremiumTripDetailPresentation(trip, settings);
   const showTagSuggestion = dismissedTagsLoaded && tripTags.length === 0 &&
     ['high', 'medium'].includes(tagSuggestion.auto_tag_confidence) &&
     !dismissedTags.includes(String(trip.id));
@@ -957,11 +975,11 @@ export default function TripDetail() {
     { key: 'residential', label: 'Residential', data: trip.residential_compliance },
   ].filter((item) => item.data);
   const weatherContext = trip.weather_context || null;
-  const weatherContextSource = weatherContext?.source || (
+  const weatherContextSource = String(weatherContext?.source || weatherContext?.provider || (
     !weatherContext && trip.slippery_proxy && trip.slippery_proxy !== 'insufficient_data'
       ? 'gps_inference'
       : 'unavailable'
-  );
+  )).toLowerCase().replace(/-/g, '_');
   const weatherCondition = String(weatherContext?.condition || trip.slippery_proxy || '').replace(/_/g, ' ');
   const openMeteoWetCondition = ['rain', 'snow', 'storm', 'fog', 'freezing_precipitation'].includes(weatherContext?.condition);
   const weatherContextDisplayValue = weatherContextSource === 'open_meteo'
@@ -1070,11 +1088,44 @@ export default function TripDetail() {
     speedLimitIntelligence.coveragePercent - speedLimitIntelligence.verifiedCoveragePercent
   );
   const missingCoveragePercent = Math.max(0, 100 - speedLimitIntelligence.coveragePercent);
+  const verifiedCoverageForChart = Math.max(
+    0,
+    Math.min(100, Number(speedLimitIntelligence.verifiedCoveragePercent) || 0)
+  );
+  const estimatedCoverageForChart = Math.max(
+    0,
+    Math.min(100 - verifiedCoverageForChart, Number(estimatedCoveragePercent) || 0)
+  );
+  const mappedCoverageForChart = verifiedCoverageForChart + estimatedCoverageForChart;
+  const speedCoverageTone = verifiedCoverageForChart >= Math.max(estimatedCoverageForChart, 100 - mappedCoverageForChart)
+    ? 'verified'
+    : estimatedCoverageForChart >= 100 - mappedCoverageForChart
+      ? 'estimated'
+      : 'missing';
+  const speedCoverageChartBackground = `conic-gradient(
+    hsl(157 74% 43%) 0 ${verifiedCoverageForChart}%,
+    hsl(39 96% 56%) ${verifiedCoverageForChart}% ${mappedCoverageForChart}%,
+    hsl(215 20% 55%) ${mappedCoverageForChart}% 100%
+  )`;
   const dataQualityFlags = Array.isArray(trip.data_quality_flags) ? trip.data_quality_flags : [];
   const hasLocationPermissionLoss = dataQualityFlags.includes('location_permission_loss') ||
     trip.score_confidence_flag === 'data_gap_detected' ||
     (trip.native_tracking_timeline || []).some((event) => event?.type === 'location_permission_lost');
   const sensorFusionSummary = trip.sensor_fusion_summary || null;
+  const premiumTagArtwork = selectPremiumTripTagArtwork(tagSuggestion.auto_tag);
+  const premiumWeatherArtwork = selectPremiumWeatherArtwork({
+    condition: weatherContext?.condition || trip.slippery_proxy,
+    displayValue: weatherContextDisplayValue,
+    source: weatherContextSource,
+  });
+  const premiumSpeedArtwork = selectPremiumSpeedArtwork({
+    coverage: osmCoveragePct,
+    hasPostedEvidence: hasPostedSpeedLimitEvidence,
+    lookupEnabled: speedLimitLookupEnabled,
+    reviewNeeded: speedLimitReviewNeededForTrip(trip),
+    status: speedLimitContext?.status,
+  });
+  const premiumSensorArtwork = selectPremiumSensorArtwork(sensorFusionSummary);
   const driverAnomaly = trip.driver_anomaly || null;
   const possibleIncidentEvents = (trip.driving_events || []).filter((event) => event.type === 'possible_crash');
   const displayPhoneUse = buildPhoneUseFromTripEvidence(trip, trip.route_points || [], trip.duration_seconds || 0, {});
@@ -1099,6 +1150,18 @@ export default function TripDetail() {
   const phoneUseRisk = displayPhoneUse.phone_use_risk || trip.phone_use_risk || 'none';
   const hasPhoneUsageAccess = displayPhoneUse.phone_use_score_available === true;
   const phoneUsePermissionRequired = trip.phone_use_score_status === 'usage_access_required';
+  const phoneUseVisualState = !hasPhoneUsageAccess || phoneUsePermissionRequired
+    ? 'unmeasured'
+    : phoneUseInsights.isPassenger
+      ? 'passenger'
+      : phoneUseRisk === 'none'
+        ? 'safe'
+        : 'risk';
+  const premiumPhoneUseArtwork = phoneUseVisualState === 'safe'
+    ? premiumTripPhoneSafe
+    : phoneUseVisualState === 'risk'
+      ? premiumTripPhoneRisk
+      : premiumTripPhoneNeutral;
   const showPhoneUse = hasPhoneUsageAccess || phoneUseWindows.length > 0 || phoneUseRisk !== 'none' || phoneUsePermissionRequired;
   const phoneUseScoreForImpactRaw = displayPhoneUse.phone_use_score ?? trip.phone_use_score ?? null;
   const phoneUseScoreForImpact = Number.isFinite(Number(phoneUseScoreForImpactRaw)) ? Math.max(0, Math.min(100, Number(phoneUseScoreForImpactRaw))) : null;
@@ -1115,6 +1178,16 @@ export default function TripDetail() {
     low: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60',
     none: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60',
   }[phoneUseRisk] || 'bg-secondary text-muted-foreground border-border';
+  const premiumPhoneUseStatusLabel = phoneUseVisualState === 'unmeasured'
+    ? 'unmeasured'
+    : phoneUseVisualState === 'passenger'
+      ? 'passenger'
+      : phoneUseRisk;
+  const premiumPhoneUseStatusClass = phoneUseVisualState === 'unmeasured'
+    ? 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-900/70 dark:text-slate-200 dark:border-slate-700'
+    : phoneUseVisualState === 'passenger'
+      ? 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/60'
+      : phoneUseRiskClass;
   const phoneUseComparisonMax = Math.max(
     1,
     ...(phoneUseInsights.scoreComparison || []).map((row) => Number(row.referencePoints) || 0)
@@ -1372,7 +1445,7 @@ export default function TripDetail() {
   };
 
   return (
-    <div className={`trip-detail-page space-y-5 pb-4${settings.premium_visual_experience === true ? ' premium-trip-detail-on' : ''}`}>
+    <div className={`trip-detail-page space-y-5 pb-4${premiumVisuals ? ' premium-trip-detail-on' : ''}`}>
       {/* Header */}
       <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="trip-detail-actions space-y-2">
         <div className="flex items-center justify-between gap-3">
@@ -1498,33 +1571,76 @@ export default function TripDetail() {
       )}
 
       {showTagSuggestion && (
-        <motion.div
-          initial={{ opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-primary/5 border border-primary/20 rounded-2xl p-3 flex items-center gap-3"
-        >
-          <Tag className="w-4 h-4 text-primary" />
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium">Suggested tag: {getTripTagOption(tagSuggestion.auto_tag)?.label || tagSuggestion.auto_tag}</div>
-            <div className="text-xs text-muted-foreground capitalize">{tagSuggestion.auto_tag_confidence} confidence</div>
-          </div>
-          <button
-            onClick={() => tagMutation.mutate(tagSuggestion.auto_tag)}
-            disabled={tagMutation.isPending}
-            className="px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold"
+        premiumVisuals ? (
+          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+            <PremiumTripContextCard
+              accent="blue"
+              artwork={premiumTagArtwork}
+              ariaLabel={`Suggested tag: ${getTripTagOption(tagSuggestion.auto_tag)?.label || tagSuggestion.auto_tag}, ${tagSuggestion.auto_tag_confidence} confidence`}
+              className="premium-trip-tag-card"
+              eyebrow="Trip identity"
+              icon={Tag}
+              status={`${tagSuggestion.auto_tag_confidence} confidence`}
+              title={getTripTagOption(tagSuggestion.auto_tag)?.label || tagSuggestion.auto_tag}
+            >
+              <p className="premium-trip-context-summary">
+                Road Sage recognized this trip pattern. Confirm it to keep your history organized.
+              </p>
+              <div className="premium-trip-context-actions">
+                <button
+                  type="button"
+                  onClick={() => tagMutation.mutate(tagSuggestion.auto_tag)}
+                  disabled={tagMutation.isPending}
+                  className="premium-trip-context-primary"
+                >
+                  {tagMutation.isPending ? 'Saving' : 'Accept'}
+                </button>
+                <button
+                  type="button"
+                  onClick={openTagEditorWithSuggestion}
+                  className="premium-trip-context-secondary"
+                >
+                  Change
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissTagSuggestion}
+                  className="premium-trip-context-dismiss"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </PremiumTripContextCard>
+          </motion.div>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-primary/5 border border-primary/20 rounded-2xl p-3 flex items-center gap-3"
           >
-            {tagMutation.isPending ? 'Saving' : 'Accept'}
-          </button>
-          <button
-            onClick={openTagEditorWithSuggestion}
-            className="px-2.5 py-1.5 rounded-lg bg-secondary text-xs font-semibold"
-          >
-            Change
-          </button>
-          <button onClick={dismissTagSuggestion} className="px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground">
-            Dismiss
-          </button>
-        </motion.div>
+            <Tag className="w-4 h-4 text-primary" />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium">Suggested tag: {getTripTagOption(tagSuggestion.auto_tag)?.label || tagSuggestion.auto_tag}</div>
+              <div className="text-xs text-muted-foreground capitalize">{tagSuggestion.auto_tag_confidence} confidence</div>
+            </div>
+            <button
+              onClick={() => tagMutation.mutate(tagSuggestion.auto_tag)}
+              disabled={tagMutation.isPending}
+              className="px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold"
+            >
+              {tagMutation.isPending ? 'Saving' : 'Accept'}
+            </button>
+            <button
+              onClick={openTagEditorWithSuggestion}
+              className="px-2.5 py-1.5 rounded-lg bg-secondary text-xs font-semibold"
+            >
+              Change
+            </button>
+            <button onClick={dismissTagSuggestion} className="px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground">
+              Dismiss
+            </button>
+          </motion.div>
+        )
       )}
 
       {(trip.close_proximity_count ?? 0) > 0 && (
@@ -1572,18 +1688,48 @@ export default function TripDetail() {
         </div>
       )}
 
-      <div
-        title="Weather context is sourced from Open-Meteo when available, otherwise from GPS stopping-distance patterns when enough evidence exists."
-        className="flex items-center gap-2 rounded-2xl border border-border bg-card p-3 text-sm font-medium"
-      >
-        <Droplets className={`h-4 w-4 ${weatherContextSource === 'unavailable' ? 'text-muted-foreground' : weatherContextDisplayValue.includes('Dry') ? 'text-emerald-500' : 'text-sky-500'}`} />
-        <span>Weather Context: {weatherContextDisplayValue}</span>
-        {(trip.safety_condition_bonus || 0) > 0 && weatherContextSource === 'gps_inference' && (
-          <span className="ml-auto rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-            +{trip.safety_condition_bonus} safety context
-          </span>
-        )}
-      </div>
+      {premiumVisuals ? (
+        <PremiumTripContextCard
+          accent={weatherContextSource === 'unavailable' ? 'sky' : weatherContextDisplayValue.includes('Dry') ? 'emerald' : 'sky'}
+          artwork={premiumWeatherArtwork}
+          ariaLabel={`Weather Context: ${weatherContextDisplayValue}`}
+          className="premium-trip-weather-card"
+          eyebrow="Road conditions"
+          icon={Droplets}
+          status={weatherContextSource === 'open_meteo' ? 'Open-Meteo' : weatherContextSource === 'gps_inference' ? 'GPS inferred' : 'Unavailable'}
+          title="Weather Context"
+        >
+          <p className="premium-trip-context-summary">{weatherContextDisplayValue}</p>
+          {(weatherContext?.avg_temp_c != null || weatherContext?.precipitation_mm != null) && (
+            <div className="premium-trip-context-metrics">
+              {weatherContext.avg_temp_c != null && (
+                <span><strong>{weatherContext.avg_temp_c}°C</strong> Average temperature</span>
+              )}
+              {weatherContext.precipitation_mm != null && (
+                <span><strong>{weatherContext.precipitation_mm} mm</strong> Precipitation</span>
+              )}
+            </div>
+          )}
+          {(trip.safety_condition_bonus || 0) > 0 && weatherContextSource === 'gps_inference' && (
+            <span className="premium-trip-context-bonus">
+              +{trip.safety_condition_bonus} safety context
+            </span>
+          )}
+        </PremiumTripContextCard>
+      ) : (
+        <div
+          title="Weather context is sourced from Open-Meteo when available, otherwise from GPS stopping-distance patterns when enough evidence exists."
+          className="flex items-center gap-2 rounded-2xl border border-border bg-card p-3 text-sm font-medium"
+        >
+          <Droplets className={`h-4 w-4 ${weatherContextSource === 'unavailable' ? 'text-muted-foreground' : weatherContextDisplayValue.includes('Dry') ? 'text-emerald-500' : 'text-sky-500'}`} />
+          <span>Weather Context: {weatherContextDisplayValue}</span>
+          {(trip.safety_condition_bonus || 0) > 0 && weatherContextSource === 'gps_inference' && (
+            <span className="ml-auto rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+              +{trip.safety_condition_bonus} safety context
+            </span>
+          )}
+        </div>
+      )}
 
       {false && (
         <div
@@ -1601,48 +1747,117 @@ export default function TripDetail() {
       )}
 
       {(weatherContext || speedLimitContext || mapMatchingContext || sensorFusionSummary || driverAnomaly) && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2${premiumVisuals ? ' premium-trip-context-grid' : ''}`}>
           {weatherContext && (
-            <div className="rounded-2xl border border-border bg-card p-3 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 font-semibold">
-                  <Droplets className="h-4 w-4 text-sky-500" />
-                  Weather Context
+            premiumVisuals ? (
+              <PremiumTripContextCard
+                accent={weatherContextDisplayValue.includes('Dry') ? 'emerald' : 'sky'}
+                artwork={premiumWeatherArtwork}
+                ariaLabel={`Detailed Weather Context, ${weatherContext.riskLevel ? `${weatherContext.riskLevel} risk` : 'risk unavailable'}`}
+                className="premium-trip-weather-detail"
+                eyebrow="Weather evidence"
+                icon={Droplets}
+                status={weatherContext.riskLevel ? `${weatherContext.riskLevel} risk` : 'Risk unavailable'}
+                title="Conditions"
+              >
+                <p className="premium-trip-context-summary">
+                  {weatherContextDisplayValue}
+                </p>
+                {(weatherContext.avg_temp_c != null || weatherContext.precipitation_mm != null) && (
+                  <div className="premium-trip-context-inline-facts">
+                    {weatherContext.avg_temp_c != null && <span>{weatherContext.avg_temp_c}°C</span>}
+                    {weatherContext.precipitation_mm != null && <span>{weatherContext.precipitation_mm} mm precip</span>}
+                  </div>
+                )}
+                {trip.weather_score_adjustment < 0 && (
+                  <p className="premium-trip-context-alert">
+                    Score adjusted {trip.weather_score_adjustment} for harsh events in poor conditions.
+                  </p>
+                )}
+              </PremiumTripContextCard>
+            ) : (
+              <div className="rounded-2xl border border-border bg-card p-3 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <Droplets className="h-4 w-4 text-sky-500" />
+                    Weather Context
+                  </div>
+                  <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold capitalize">
+                    {weatherContext.riskLevel ? `${weatherContext.riskLevel} risk` : 'risk unavailable'}
+                  </span>
                 </div>
-                <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold capitalize">
-                  {weatherContext.riskLevel ? `${weatherContext.riskLevel} risk` : 'risk unavailable'}
-                </span>
-              </div>
-              <div className="mt-2 text-xs text-muted-foreground">
-                {weatherContextDisplayValue}
-                {weatherContext.avg_temp_c != null ? ` · ${weatherContext.avg_temp_c}°C` : ''}
-                {weatherContext.precipitation_mm ? ` · ${weatherContext.precipitation_mm} mm precip` : ''}
-              </div>
-              {trip.weather_score_adjustment < 0 && (
-                <div className="mt-2 text-xs font-semibold text-orange-600 dark:text-orange-300">
-                  Score adjusted {trip.weather_score_adjustment} for harsh events in poor conditions.
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {weatherContextDisplayValue}
+                  {weatherContext.avg_temp_c != null ? ` · ${weatherContext.avg_temp_c}°C` : ''}
+                  {weatherContext.precipitation_mm ? ` · ${weatherContext.precipitation_mm} mm precip` : ''}
                 </div>
-              )}
-            </div>
+                {trip.weather_score_adjustment < 0 && (
+                  <div className="mt-2 text-xs font-semibold text-orange-600 dark:text-orange-300">
+                    Score adjusted {trip.weather_score_adjustment} for harsh events in poor conditions.
+                  </div>
+                )}
+              </div>
+            )
           )}
           {speedLimitContext && (
-            <div className="rounded-2xl border border-border bg-card p-3 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 font-semibold">
-                  <Gauge className="h-4 w-4 text-emerald-500" />
-                  Speed limits
+            premiumVisuals ? (
+              <PremiumTripContextCard
+                accent="emerald"
+                artwork={premiumSpeedArtwork}
+                ariaLabel={`Speed limits, ${speedLimitContext.status?.replace(/_/g, ' ') || 'unknown'}, ${osmCoveragePct}% map coverage`}
+                className="premium-trip-speed-card"
+                eyebrow="Route intelligence"
+                icon={Gauge}
+                status={speedLimitContext.status?.replace(/_/g, ' ') || 'Unknown'}
+                title="Speed limits"
+              >
+                <div
+                  className="premium-trip-context-progress"
+                  role="progressbar"
+                  aria-label="Mapped speed-limit coverage"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.max(0, Math.min(100, Math.round(osmCoveragePct)))}
+                >
+                  <div>
+                    <span>Mapped coverage</span>
+                    <strong>{Math.max(0, Math.min(100, Math.round(osmCoveragePct)))}%</strong>
+                  </div>
+                  <span aria-hidden="true">
+                    <i style={{ width: `${Math.max(0, Math.min(100, osmCoveragePct))}%` }} />
+                  </span>
                 </div>
-                <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold capitalize">
-                  {speedLimitContext.status?.replace(/_/g, ' ') || 'unknown'}
-                </span>
+                <p className="premium-trip-context-summary">
+                  {describeOsmSpeedLimitStatus(speedLimitContext)}
+                </p>
+                <p className="premium-trip-context-detail">
+                  {effectiveSpeedLimits.length
+                    ? `Effective posted/estimated values: ${effectiveSpeedLimits.map((value) => formatSpeed(value, units)).join(', ')}.`
+                    : 'GPS fallback thresholds fill gaps.'}
+                </p>
+                {speedLimitContext.error && (
+                  <p className="premium-trip-context-alert">{speedLimitContext.error}</p>
+                )}
+              </PremiumTripContextCard>
+            ) : (
+              <div className="rounded-2xl border border-border bg-card p-3 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <Gauge className="h-4 w-4 text-emerald-500" />
+                    Speed limits
+                  </div>
+                  <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold capitalize">
+                    {speedLimitContext.status?.replace(/_/g, ' ') || 'unknown'}
+                  </span>
+                </div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {describeOsmSpeedLimitStatus(speedLimitContext)} {effectiveSpeedLimits.length ? `Effective posted/estimated values: ${effectiveSpeedLimits.map((value) => formatSpeed(value, units)).join(', ')}.` : 'GPS fallback thresholds fill gaps.'}
+                </div>
+                {speedLimitContext.error && (
+                  <div className="mt-1 text-xs text-orange-600 dark:text-orange-300">{speedLimitContext.error}</div>
+                )}
               </div>
-              <div className="mt-2 text-xs text-muted-foreground">
-                {describeOsmSpeedLimitStatus(speedLimitContext)} {effectiveSpeedLimits.length ? `Effective posted/estimated values: ${effectiveSpeedLimits.map((value) => formatSpeed(value, units)).join(', ')}.` : 'GPS fallback thresholds fill gaps.'}
-              </div>
-              {speedLimitContext.error && (
-                <div className="mt-1 text-xs text-orange-600 dark:text-orange-300">{speedLimitContext.error}</div>
-              )}
-            </div>
+            )
           )}
           {mapMatchingContext && (
             <div className="rounded-2xl border border-border bg-card p-3 text-sm">
@@ -1666,20 +1881,48 @@ export default function TripDetail() {
             </div>
           )}
           {sensorFusionSummary && (
-            <div className="rounded-2xl border border-border bg-card p-3 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 font-semibold">
-                  <Smartphone className="h-4 w-4 text-violet-500" />
-                  Sensor fusion
+            premiumVisuals ? (
+              <PremiumTripContextCard
+                accent="violet"
+                artwork={premiumSensorArtwork}
+                ariaLabel={`Sensor fusion, ${sensorFusionSummary.quality || 'partial'}, ${sensorFusionSummary.sample_count || 0} motion samples`}
+                className="premium-trip-sensor-card"
+                eyebrow="Motion evidence"
+                icon={Smartphone}
+                status={sensorFusionSummary.quality || 'Partial'}
+                title="Sensor fusion"
+              >
+                <div className="premium-trip-context-metrics">
+                  <span>
+                    <strong>{sensorFusionSummary.sample_count || 0}</strong>
+                    Motion samples
+                  </span>
+                  <span>
+                    <strong>{sensorFusionSummary.peak_linear_ms2 || 0} m/s²</strong>
+                    Peak motion
+                  </span>
+                  <span>
+                    <strong>{sensorFusionSummary.phone_movement_score || 0}/100</strong>
+                    Phone movement
+                  </span>
                 </div>
-                <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold capitalize">
-                  {sensorFusionSummary.quality || 'partial'}
-                </span>
+              </PremiumTripContextCard>
+            ) : (
+              <div className="rounded-2xl border border-border bg-card p-3 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <Smartphone className="h-4 w-4 text-violet-500" />
+                    Sensor fusion
+                  </div>
+                  <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold capitalize">
+                    {sensorFusionSummary.quality || 'partial'}
+                  </span>
+                </div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {sensorFusionSummary.sample_count || 0} motion samples · peak {sensorFusionSummary.peak_linear_ms2 || 0} m/s² · phone movement {sensorFusionSummary.phone_movement_score || 0}/100.
+                </div>
               </div>
-              <div className="mt-2 text-xs text-muted-foreground">
-                {sensorFusionSummary.sample_count || 0} motion samples · peak {sensorFusionSummary.peak_linear_ms2 || 0} m/s² · phone movement {sensorFusionSummary.phone_movement_score || 0}/100.
-              </div>
-            </div>
+            )
           )}
           {driverAnomaly && (
             <div className="rounded-2xl border border-border bg-card p-3 text-sm">
@@ -1705,17 +1948,36 @@ export default function TripDetail() {
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+          data-phone-risk={premiumVisuals ? phoneUseRisk : undefined}
+          data-phone-state={premiumVisuals ? phoneUseVisualState : undefined}
+          className={premiumVisuals
+            ? 'premium-phone-use-card bg-card border border-border rounded-3xl p-5 shadow-sm'
+            : 'bg-card border border-border rounded-3xl p-5 shadow-sm'}
         >
-          <div className="flex items-start justify-between gap-3">
+          {premiumVisuals && (
+            <>
+              <img
+                className="premium-phone-use-art"
+                src={premiumPhoneUseArtwork}
+                alt=""
+                aria-hidden="true"
+              />
+            </>
+          )}
+          <div className={premiumVisuals
+            ? 'premium-phone-use-header flex items-start justify-between gap-3'
+            : 'flex items-start justify-between gap-3'}
+          >
             <div>
               <h2 className="font-semibold">Phone Use Analysis</h2>
               <p className="mt-1 text-xs text-muted-foreground">
                 Confirmed Android Usage Access evidence only. GPS proxy diagnostics are excluded.
               </p>
             </div>
-            <span className={`rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${phoneUseRiskClass}`}>
-              {phoneUseRisk}
+            <span className={`rounded-full border px-2.5 py-1 text-xs font-bold uppercase ${
+              premiumVisuals ? premiumPhoneUseStatusClass : phoneUseRiskClass
+            }`}>
+              {premiumVisuals ? premiumPhoneUseStatusLabel : phoneUseRisk}
             </span>
           </div>
 
@@ -1808,7 +2070,10 @@ export default function TripDetail() {
                 <summary className="cursor-pointer list-none text-sm font-semibold">Phone-use timeline</summary>
                 <div className="mt-3 space-y-2">
                   {phoneUseTimeline.map((event, index) => (
-                    <div key={`${event.startTime || event.timestamp}-${index}`} className="rounded-xl bg-card p-3 text-sm">
+                    <div
+                      key={`${event.startTime || event.timestamp}-${index}`}
+                      className="rounded-xl bg-card p-3 text-sm"
+                    >
                       <div className="flex items-center justify-between gap-2">
                         <div className="font-semibold">
                           {event.activityLabel} · {event.startTime ? new Date(event.startTime).toLocaleTimeString() : 'time unknown'}
@@ -1935,68 +2200,176 @@ export default function TripDetail() {
           </div>
         )}
         {showLowSpeedLimitCoverageBanner && (
-          <div className="mb-3 rounded-2xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800 shadow-sm dark:border-orange-800/60 dark:bg-orange-950/30 dark:text-orange-200">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex min-w-0 items-start gap-2">
-                <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                <div>
-                  <div className="font-semibold">Speed limit data unavailable</div>
-                  <div className="mt-0.5 text-xs">
-                    {osmCoveragePct}% speed-limit coverage - tap Get Road Data to look for OpenStreetMap speed limits and enabled weather data for this trip.
+          premiumVisuals ? (
+            <article
+              className="premium-trip-road-data-card mb-3"
+              data-road-data-status={contextMutation.isPending ? 'loading' : 'unavailable'}
+              aria-label={`Speed limit data unavailable, ${osmCoveragePct}% speed-limit coverage`}
+            >
+              <img
+                className="premium-trip-road-data-art"
+                src={premiumTripRoadData}
+                alt=""
+                aria-hidden="true"
+              />
+              <div className="premium-trip-road-data-content">
+                <div className="premium-trip-road-data-heading">
+                  <span aria-hidden="true"><AlertTriangle /></span>
+                  <div>
+                    <p>Route intelligence</p>
+                    <h2>Speed limit data unavailable</h2>
                   </div>
                 </div>
+                <div className="premium-trip-road-data-meter">
+                  <div>
+                    <span>Mapped coverage</span>
+                    <strong>{Math.max(0, Math.min(100, Math.round(osmCoveragePct)))}%</strong>
+                  </div>
+                  <span aria-hidden="true">
+                    <i style={{ width: `${Math.max(0, Math.min(100, osmCoveragePct))}%` }} />
+                  </span>
+                </div>
+                <p>
+                  Tap Get Road Data to look for OpenStreetMap speed limits and enabled weather data for this trip.
+                </p>
+                <button
+                  type="button"
+                  onClick={confirmAndFetchRoadContext}
+                  disabled={contextMutation.isPending || !trip.route_points?.length}
+                >
+                  <Route />
+                  {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get Road Data'}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={confirmAndFetchRoadContext}
-                disabled={contextMutation.isPending || !trip.route_points?.length}
-                className="inline-flex flex-shrink-0 items-center justify-center gap-1.5 rounded-xl bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-orange-700 disabled:opacity-60"
-              >
-                <Route className="h-3.5 w-3.5" />
-                {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get Road Data'}
-              </button>
+            </article>
+          ) : (
+            <div className="mb-3 rounded-2xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-800 shadow-sm dark:border-orange-800/60 dark:bg-orange-950/30 dark:text-orange-200">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  <div>
+                    <div className="font-semibold">Speed limit data unavailable</div>
+                    <div className="mt-0.5 text-xs">
+                      {osmCoveragePct}% speed-limit coverage - tap Get Road Data to look for OpenStreetMap speed limits and enabled weather data for this trip.
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={confirmAndFetchRoadContext}
+                  disabled={contextMutation.isPending || !trip.route_points?.length}
+                  className="inline-flex flex-shrink-0 items-center justify-center gap-1.5 rounded-xl bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-orange-700 disabled:opacity-60"
+                >
+                  <Route className="h-3.5 w-3.5" />
+                  {contextMutation.isPending ? osmFetchStatus || 'Getting road data...' : 'Get Road Data'}
+                </button>
+              </div>
             </div>
-          </div>
+          )
         )}
         {speedLimitIntelligence.pointCount > 0 && (
-          <div className="mb-3 rounded-2xl border border-border bg-card p-3 shadow-sm">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <Gauge className="h-4 w-4 text-primary" />
-                  <div className="font-semibold">Speed-limit coverage for this trip</div>
+          premiumVisuals ? (
+            <article
+              className="premium-trip-speed-coverage-card mb-3"
+              data-coverage-tone={speedCoverageTone}
+              aria-label={`Speed-limit coverage for this trip: ${speedLimitIntelligence.verifiedCoveragePercent}% verified, ${estimatedCoveragePercent}% estimated, ${missingCoveragePercent}% missing`}
+            >
+              <img
+                className="premium-trip-speed-coverage-art"
+                src={premiumTripSpeedCoverage}
+                alt=""
+                aria-hidden="true"
+              />
+              <div className="premium-trip-speed-coverage-content">
+                <header>
+                  <span aria-hidden="true"><Gauge /></span>
+                  <div>
+                    <p>Coverage confidence</p>
+                    <h2>Speed-limit coverage for this trip</h2>
+                  </div>
+                </header>
+                <div className="premium-trip-speed-coverage-overview">
+                  <div
+                    className="premium-trip-speed-coverage-ring"
+                    style={{ background: speedCoverageChartBackground }}
+                    role="progressbar"
+                    aria-label="Known speed-limit coverage"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(mappedCoverageForChart)}
+                  >
+                    <span>
+                      <strong>{Math.round(mappedCoverageForChart)}%</strong>
+                      <small>known</small>
+                    </span>
+                  </div>
+                  <div className="premium-trip-speed-coverage-metrics">
+                    <div data-coverage-kind="verified">
+                      <strong>{speedLimitIntelligence.verifiedCoveragePercent}%</strong>
+                      <span>Verified</span>
+                    </div>
+                    <div data-coverage-kind="estimated">
+                      <strong>{estimatedCoveragePercent}%</strong>
+                      <span>Estimated</span>
+                    </div>
+                    <div data-coverage-kind="missing">
+                      <strong>{missingCoveragePercent}%</strong>
+                      <span>Missing</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="mt-2 grid grid-cols-3 gap-2 text-center">
-                  <div className="rounded-xl bg-emerald-50 px-2 py-2 dark:bg-emerald-950/30">
-                    <div className="text-lg font-bold text-emerald-700 dark:text-emerald-300">{speedLimitIntelligence.verifiedCoveragePercent}%</div>
-                    <div className="text-[10px] font-semibold text-emerald-800/80 dark:text-emerald-200/80">Verified</div>
-                  </div>
-                  <div className="rounded-xl bg-amber-50 px-2 py-2 dark:bg-amber-950/30">
-                    <div className="text-lg font-bold text-amber-700 dark:text-amber-300">{estimatedCoveragePercent}%</div>
-                    <div className="text-[10px] font-semibold text-amber-800/80 dark:text-amber-200/80">Estimated</div>
-                  </div>
-                  <div className="rounded-xl bg-slate-100 px-2 py-2 dark:bg-slate-800">
-                    <div className="text-lg font-bold">{missingCoveragePercent}%</div>
-                    <div className="text-[10px] font-semibold text-muted-foreground">Missing</div>
-                  </div>
-                </div>
+                <button
+                  type="button"
+                  onClick={openSpeedLimitReview}
+                  data-review-needed={speedLimitReviewCount > 0}
+                >
+                  <MapPin />
+                  {speedLimitReviewCount > 0
+                    ? `Review ${speedLimitReviewCount} section${speedLimitReviewCount === 1 ? '' : 's'} on map`
+                    : 'Review road speeds'}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={openSpeedLimitReview}
-                className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold ${
-                  speedLimitReviewCount > 0
-                    ? 'bg-amber-600 text-white hover:bg-amber-700'
-                    : 'border border-border bg-secondary text-foreground hover:bg-secondary/80'
-                }`}
-              >
-                <MapPin className="h-3.5 w-3.5" />
-                {speedLimitReviewCount > 0
-                  ? `Review ${speedLimitReviewCount} section${speedLimitReviewCount === 1 ? '' : 's'} on map`
-                  : 'Review road speeds'}
-              </button>
+            </article>
+          ) : (
+            <div className="mb-3 rounded-2xl border border-border bg-card p-3 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Gauge className="h-4 w-4 text-primary" />
+                    <div className="font-semibold">Speed-limit coverage for this trip</div>
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+                    <div className="rounded-xl bg-emerald-50 px-2 py-2 dark:bg-emerald-950/30">
+                      <div className="text-lg font-bold text-emerald-700 dark:text-emerald-300">{speedLimitIntelligence.verifiedCoveragePercent}%</div>
+                      <div className="text-[10px] font-semibold text-emerald-800/80 dark:text-emerald-200/80">Verified</div>
+                    </div>
+                    <div className="rounded-xl bg-amber-50 px-2 py-2 dark:bg-amber-950/30">
+                      <div className="text-lg font-bold text-amber-700 dark:text-amber-300">{estimatedCoveragePercent}%</div>
+                      <div className="text-[10px] font-semibold text-amber-800/80 dark:text-amber-200/80">Estimated</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-100 px-2 py-2 dark:bg-slate-800">
+                      <div className="text-lg font-bold">{missingCoveragePercent}%</div>
+                      <div className="text-[10px] font-semibold text-muted-foreground">Missing</div>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={openSpeedLimitReview}
+                  className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold ${
+                    speedLimitReviewCount > 0
+                      ? 'bg-amber-600 text-white hover:bg-amber-700'
+                      : 'border border-border bg-secondary text-foreground hover:bg-secondary/80'
+                  }`}
+                >
+                  <MapPin className="h-3.5 w-3.5" />
+                  {speedLimitReviewCount > 0
+                    ? `Review ${speedLimitReviewCount} section${speedLimitReviewCount === 1 ? '' : 's'} on map`
+                    : 'Review road speeds'}
+                </button>
+              </div>
             </div>
-          </div>
+          )
         )}
         <div className="mb-2 flex flex-wrap justify-end gap-2">
           <button
@@ -2067,7 +2440,7 @@ export default function TripDetail() {
             Map and playback are unavailable because this trip's route coordinates reached their retention limit.
           </div>
         ) : (
-          <div className="rounded-2xl overflow-hidden border border-border shadow-sm">
+          <div className="relative overflow-hidden rounded-2xl border border-border shadow-sm">
             <Suspense fallback={<div className="flex h-[300px] items-center justify-center animate-pulse bg-secondary/50 text-sm text-muted-foreground">Loading trip map...</div>}>
               <TripMap
                 routePoints={trip.route_points || []}
@@ -2078,9 +2451,32 @@ export default function TripDetail() {
                 showRouteRisk={routeRiskSegments.length > 0}
                 routeRiskSegments={routeRiskSegments}
                 rawPointCount={trip.route_points_raw_count}
+                showRouteSummary={shouldShowStandardMapRouteSummary(premiumMapVisuals)}
                 height="300px"
               />
             </Suspense>
+            {premiumMapVisuals && (
+              showPremiumRouteDiagnostics ? (
+                <div className="premium-map-diagnostics-overlay">
+                  <PremiumMapDiagnostics
+                    trip={trip}
+                    units={units}
+                    onShowAll={() => navigate('/map')}
+                    onDismiss={() => setShowPremiumRouteDiagnostics(false)}
+                    overlay
+                  />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowPremiumRouteDiagnostics(true)}
+                  className="absolute bottom-3 left-3 z-10 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-muted-foreground shadow"
+                  aria-label="Show route diagnostics"
+                >
+                  Route diagnostics
+                </button>
+              )
+            )}
           </div>
         )}
       </motion.div>
@@ -2089,7 +2485,9 @@ export default function TripDetail() {
         ref={metadataSectionRef}
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
-        className="trip-detail-identity rounded-3xl border border-border bg-card p-5 shadow-sm"
+        className="trip-detail-identity trip-detail-premium-card rounded-3xl border border-border bg-card p-5 shadow-sm"
+        data-premium-card="identity"
+        data-premium-scene={premiumVisuals ? premiumTripDetail.scene : undefined}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -2182,7 +2580,11 @@ export default function TripDetail() {
       </motion.div>
 
       {routeRiskSegments.length > 0 && (
-        <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
+        <div
+          className="trip-detail-premium-card bg-card border border-border rounded-3xl p-5 shadow-sm"
+          data-premium-card="behavior"
+          data-premium-behavior={premiumVisuals ? premiumTripDetail.behaviorTone : undefined}
+        >
           <h2 className="font-semibold mb-3">Route history</h2>
           <div className="space-y-2">
             {displayedRouteRiskSegments.map((segment, index) => {
@@ -2219,13 +2621,20 @@ export default function TripDetail() {
         message="Something went wrong while preparing this trip's score summary. Reload to try again."
         resetKey={trip.id}
       >
-        <TripScoreOverview trip={trip} speedLimitSourceBreakdown={speedLimitSourceBreakdown} units={units} />
+        <TripScoreOverview
+          trip={trip}
+          speedLimitSourceBreakdown={speedLimitSourceBreakdown}
+          units={units}
+          premium={premiumVisuals}
+          nightSettings={settings}
+        />
       </SectionErrorBoundary>
       <motion.section
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.165 }}
-        className="rounded-3xl border border-border bg-card p-5 shadow-sm"
+        className="trip-detail-premium-card rounded-3xl border border-border bg-card p-5 shadow-sm"
+        data-premium-card="score"
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -2268,7 +2677,8 @@ export default function TripDetail() {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.18 }}
-          className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+          className="trip-detail-premium-card bg-card border border-border rounded-3xl p-5 shadow-sm"
+          data-premium-card="score"
           open
         >
           <summary className="cursor-pointer list-none font-semibold">By Road Type</summary>
@@ -2302,7 +2712,8 @@ export default function TripDetail() {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
-        className="bg-card border border-border rounded-3xl p-5 shadow-sm space-y-4"
+        className="trip-detail-premium-card bg-card border border-border rounded-3xl p-5 shadow-sm space-y-4"
+        data-premium-card="facts"
       >
         <h2 className="font-semibold">Trip Details</h2>
 
@@ -2394,7 +2805,8 @@ export default function TripDetail() {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.21 }}
-          className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+          className="trip-detail-premium-card bg-card border border-border rounded-3xl p-5 shadow-sm"
+          data-premium-card="score"
         >
           <h2 className="font-semibold mb-3">Speed Zones</h2>
           <div className="mb-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
@@ -2472,7 +2884,9 @@ export default function TripDetail() {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.22 }}
-        className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+        className="trip-detail-premium-card bg-card border border-border rounded-3xl p-5 shadow-sm"
+        data-premium-card="behavior"
+        data-premium-behavior={premiumVisuals ? premiumTripDetail.behaviorTone : undefined}
       >
         <h2 className="font-semibold mb-4">Driving Pattern</h2>
         <div className="grid grid-cols-2 gap-3 mb-4">
@@ -2704,7 +3118,9 @@ export default function TripDetail() {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.25 }}
-          className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+          className="trip-detail-premium-card bg-card border border-border rounded-3xl p-5 shadow-sm"
+          data-premium-card="behavior"
+          data-premium-behavior={premiumVisuals ? premiumTripDetail.behaviorTone : undefined}
         >
           <h2 className="font-semibold mb-4">
             Driving Events
@@ -3224,7 +3640,7 @@ function PostTripCalibrationSurvey({ trip, status, labelCount, isPending, error,
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.16 }}
-      className={'rounded-xl border transition-colors ' + (
+      className={'trip-score-review-card rounded-xl border transition-colors ' + (
         reviewOpen || editing
           ? 'border-border bg-card p-3 shadow-sm'
           : 'border-border/60 bg-secondary/20 px-3 py-2'
@@ -3471,8 +3887,15 @@ function PostTripCalibrationSurvey({ trip, status, labelCount, isPending, error,
   );
 }
 
-function TripScoreOverview({ trip, speedLimitSourceBreakdown = null, units = 'metric' }) {
+function TripScoreOverview({
+  trip,
+  speedLimitSourceBreakdown = null,
+  units = 'metric',
+  premium = false,
+  nightSettings = {},
+}) {
   const overallScore = getTripComponentScore(trip, 'overall');
+  const premiumTripDetail = getPremiumTripDetailPresentation(trip, nightSettings);
   const unavailableOverallScore = overallScore.value == null;
   const scoreProvenance = trip.score_provenance;
   const provenanceChange = trip.score_provenance_change;
@@ -3514,10 +3937,19 @@ function TripScoreOverview({ trip, speedLimitSourceBreakdown = null, units = 'me
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.15 }}
-      className="bg-card border border-border rounded-3xl p-5 shadow-sm"
+      className={`trip-score-overview trip-detail-premium-card bg-card border border-border rounded-3xl p-5 shadow-sm${premium ? ' premium-trip-score-overview' : ''}`}
+      data-premium-card={premium ? 'score' : undefined}
+      data-premium-scene={premium ? premiumTripDetail.scene : undefined}
+      data-premium-score={premium ? premiumTripDetail.scoreTone : undefined}
     >
-      <div className="flex items-center gap-6">
-        <div className="shrink-0 text-center">
+      {premium && (
+        <div className="premium-trip-score-kicker" aria-hidden="true">
+          <ShieldCheck />
+          <span>Drive intelligence</span>
+        </div>
+      )}
+      <div className="trip-score-overview-head flex items-center gap-6">
+        <div className="trip-score-overall shrink-0 text-center">
           <ScoreRing
             score={overallScore.value}
             size={100}
@@ -3537,7 +3969,7 @@ function TripScoreOverview({ trip, speedLimitSourceBreakdown = null, units = 'me
             <div className="mt-1 text-[10px] text-muted-foreground">{scoreConfidence.sampleText}</div>
           )}
         </div>
-        <div className="grid flex-1 grid-cols-3 gap-3">
+        <div className="trip-score-headlines grid flex-1 grid-cols-3 gap-3">
           {headlineScores.map(({ label, key, component }) => {
             const unavailable = component.value == null || component.evidence === 'unavailable';
             const { color: c } = unavailable ? { color: 'text-muted-foreground' } : getScoreColor(component.value || 0);
@@ -3545,7 +3977,7 @@ function TripScoreOverview({ trip, speedLimitSourceBreakdown = null, units = 'me
             return (
               <div
                 key={label}
-                className={`min-w-0 rounded-xl border px-2 py-2 text-center ${unavailable ? 'border-border bg-secondary/40' : 'border-border/60 bg-background/50'}`}
+                className={`trip-score-headline min-w-0 rounded-xl border px-2 py-2 text-center ${unavailable ? 'border-border bg-secondary/40' : 'border-border/60 bg-background/50'}`}
                 title={component.note || buildScoreExplanation(trip, `score_${key}`)}
               >
                 <div className={`font-grotesk text-xl font-bold ${c}`}>

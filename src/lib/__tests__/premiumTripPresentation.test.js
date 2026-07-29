@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getConfirmedPhoneUseCount,
+  getPremiumTripDetailPresentation,
   getPremiumTripEventCount,
   getPremiumTripScoreDelta,
   getPremiumTripScorePresentation,
@@ -25,6 +26,55 @@ describe('premium trip presentation', () => {
 
   it('uses a stable daytime fallback for an invalid timestamp', () => {
     expect(getPremiumTripTimePresentation('not-a-date')).toMatchObject({ period: 'day', hour: 12 });
+  });
+
+  it('uses saved night-driving evidence before hard-coded clock artwork', () => {
+    expect(getPremiumTripTimePresentation({
+      start_time: new Date(2026, 0, 1, 17, 30),
+      night_driving: true,
+    })).toMatchObject({ period: 'night', label: 'Night Drive' });
+
+    expect(getPremiumTripTimePresentation({
+      start_time: new Date(2026, 6, 18, 21, 30),
+      night_driving: false,
+    })).toMatchObject({ period: 'dusk', label: 'Evening Drive' });
+  });
+
+  it('can derive premium trip artwork timing from GPS solar context', () => {
+    expect(getPremiumTripTimePresentation({
+      start_time: new Date(2026, 0, 1, 17, 30),
+      route_points: [{ lat: 43.6532, lng: -79.3832 }],
+    })).toMatchObject({ period: 'night', label: 'Night Drive' });
+
+    expect(getPremiumTripTimePresentation({
+      start_time: new Date(2026, 0, 1, 15, 0),
+      route_points: [{ lat: 43.6532, lng: -79.3832 }],
+    })).toMatchObject({ period: 'day', label: 'Day Drive' });
+  });
+
+  it('honors custom windows and solar offsets when saved night evidence is missing', () => {
+    const winterEvening = {
+      start_time: new Date(2026, 0, 1, 17, 30),
+      route_points: [{ lat: 43.6532, lng: -79.3832 }],
+    };
+
+    expect(getPremiumTripTimePresentation(winterEvening, {
+      night_detection_mode: 'custom',
+      night_start_time: '22:00',
+      night_end_time: '05:00',
+    })).toMatchObject({ period: 'dusk', label: 'Evening Drive' });
+
+    expect(getPremiumTripTimePresentation(winterEvening, {
+      night_detection_mode: 'sunset',
+      night_sunset_offset_minutes: 120,
+      night_sunrise_offset_minutes: 0,
+    })).toMatchObject({ period: 'dusk', label: 'Evening Drive' });
+
+    expect(getPremiumTripTimePresentation(winterEvening, {
+      night_detection_mode: 'sunset',
+      night_sunset_offset_minutes: 0,
+      night_sunrise_offset_minutes: 0,
+    })).toMatchObject({ period: 'night', label: 'Night Drive' });
   });
 
   it.each([
@@ -86,6 +136,37 @@ describe('premium trip presentation', () => {
 
     expect(getConfirmedPhoneUseCount(trip)).toBe(1);
     expect(getPremiumTripEventCount(trip)).toBe(4);
+  });
+
+  it('selects calm, attention, and risk Trip Detail artwork from live trip evidence', () => {
+    expect(getPremiumTripDetailPresentation({
+      start_time: new Date(2026, 6, 18, 13, 0),
+      score_overall: 91,
+    })).toMatchObject({
+      behaviorTone: 'calm',
+      scene: 'day',
+      scoreTone: 'excellent',
+    });
+
+    expect(getPremiumTripDetailPresentation({
+      start_time: new Date(2026, 6, 18, 22, 0),
+      score_overall: 76,
+      sharp_turns_count: 1,
+    })).toMatchObject({
+      behaviorTone: 'attention',
+      scene: 'night',
+      scoreTone: 'good',
+    });
+
+    expect(getPremiumTripDetailPresentation({
+      start_time: new Date(2026, 6, 18, 19, 0),
+      score_overall: 48,
+      close_proximity_count: 1,
+    })).toMatchObject({
+      behaviorTone: 'risk',
+      scene: 'dusk-risk',
+      scoreTone: 'poor',
+    });
   });
 
   it('compares a trip with the previous scored trips in chronological order', () => {

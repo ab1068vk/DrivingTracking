@@ -40,6 +40,30 @@ describe('PremiumMapTripCard', () => {
     expect(buildPremiumMapTripCardModel(trip({ score_confidence_label: 'low' })).variant).toBe('violet');
   });
 
+  it('makes saved night evidence authoritative over score and evidence variants', () => {
+    const excellentTrip = {
+      score_overall: 96,
+      distance_km: 12,
+      harsh_brakes_count: 0,
+      sharp_turns_count: 0,
+    };
+
+    expect(buildPremiumMapTripCardModel(trip({
+      ...excellentTrip,
+      night_driving: true,
+    }))).toMatchObject({
+      timePeriod: 'night',
+      variant: 'blue',
+    });
+    expect(buildPremiumMapTripCardModel(trip({
+      ...excellentTrip,
+      night_driving: false,
+    }))).toMatchObject({
+      timePeriod: 'day',
+      variant: 'emerald',
+    });
+  });
+
   it('renders real GPS and map point counts with a selectable accessible target', () => {
     const onSelect = vi.fn();
     const html = renderToStaticMarkup(

@@ -1305,6 +1305,17 @@ export const preserveResolvedSpeedLimitReview = (incomingTrip = {}, storedTrip =
   };
 };
 
+export const buildPendingNativeTripRecord = (trip = {}, storedTrip = null) => (
+  preserveResolvedSpeedLimitReview({
+    ...trip,
+    imported_from_native: true,
+    needs_rescore: true,
+    score_status: trip.score_status || 'pending_javascript_scoring',
+    schema_version: TRIP_SCHEMA_VERSION,
+    updated_at: trip.updated_at || new Date().toISOString(),
+  }, storedTrip)
+);
+
 const importNativeCompletedTrips = async () => {
   if (!isAndroid()) return emptyNativeImportResult();
   if (nativeTripImportPromise) return nativeTripImportPromise;
@@ -1321,68 +1332,85 @@ const importNativeCompletedTrips = async () => {
         ? null
         : await getStoredTripById(trip.id).catch(() => null);
       const routePoints = trip.route_points || [];
-      const settings = localSettings.get();
-      const thresholds = buildDrivingThresholds(settings);
-      const scoreInputPrivacy = prepareScoreInputsForPrivacy({
-        routePoints,
-        events: [],
-        settings,
-      });
-      const scoringRoutePoints = scoreInputPrivacy.routePoints;
-      const privacyZones = scoreInputPrivacy.zones;
-      const stats = preserveNativePrivacyAggregateStats(
-        trip,
-        calculateTripStats(scoringRoutePoints, trip.start_time, trip.end_time, thresholds, {
-          ...trip,
-          raw_route_points: scoringRoutePoints,
-        })
-      );
-      const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(scoringRoutePoints, thresholds, trip.end_time, privacyZones);
-      const mergedPhoneUse = mergedPhoneUseForTrip(trip, scoringRoutePoints, stats, detectedPhoneUse);
-      const phoneFeedbackAdjusted = applyEventFeedbackToPhoneUse(
-        mergedPhoneUse,
-        trip.event_feedback,
-        stats.duration_seconds
-      );
-      const phoneUse = phoneFeedbackAdjusted.phoneUse;
-      const motionSamples = Array.isArray(trip.motion_samples) ? trip.motion_samples : [];
-      const sensorFusionSummary = motionSamples.length
-        ? buildSensorFusionSummary(motionSamples, scoringRoutePoints, null, events)
-        : trip.sensor_fusion_summary;
-      const scores = calculateTripScores(events, stats, scoringRoutePoints, thresholds, stats.duration_seconds, phoneUse, {
-        endTime: trip.end_time,
-        privacyZones,
-        motionSamples,
-        orientationCalibration: sensorFusionSummary?.phone_orientation,
-      });
-      const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, vehicleForTrip(trip, vehicles), settings);
-      const drivingEvents = prepareScoreInputsForPrivacy({
-        routePoints: [],
-        events: mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse),
-        settings,
-        zones: privacyZones,
-      }).events;
+      const pendingTrip = buildPendingNativeTripRecord(trip, storedTrip);
 
-      const importedTrip = preserveResolvedSpeedLimitReview({
-        ...trip,
-        ...stats,
-        ...scores,
-        co2_saved_kg: economics.co2_saved_kg,
-        route_points: scoringRoutePoints,
-        route_points_raw_count: Number(trip.route_points_raw_count) || routePoints.length,
-        route_points_map_count: Number(trip.route_points_map_count) || scoringRoutePoints.length,
-        score_input_masking_applied: true,
-        privacy_zone_touched: scoreInputPrivacy.touchesPrivacyZone,
-        privacy_trend_excluded: scoreInputPrivacy.trendExcluded,
-        ...(sensorFusionSummary ? { sensor_fusion_summary: sensorFusionSummary } : {}),
-        driving_events: drivingEvents,
-        imported_from_native: true,
-        schema_version: TRIP_SCHEMA_VERSION,
-        updated_at: trip.updated_at || new Date().toISOString(),
-      }, storedTrip);
-
-      await putTrip(importedTrip);
+      // Persist the native record before running optional scoring. A completed
+      // drive must remain visible and recoverable even if enrichment fails on a
+      // large or unusual sensor payload.
+      await putTrip(pendingTrip);
+      let importedTrip = pendingTrip;
       importedTrips.push(importedTrip);
+
+      try {
+        const settings = localSettings.get();
+        const thresholds = buildDrivingThresholds(settings);
+        const scoreInputPrivacy = prepareScoreInputsForPrivacy({
+          routePoints,
+          events: [],
+          settings,
+        });
+        const scoringRoutePoints = scoreInputPrivacy.routePoints;
+        const privacyZones = scoreInputPrivacy.zones;
+        const stats = preserveNativePrivacyAggregateStats(
+          trip,
+          calculateTripStats(scoringRoutePoints, trip.start_time, trip.end_time, thresholds, {
+            ...trip,
+            raw_route_points: scoringRoutePoints,
+          })
+        );
+        const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(scoringRoutePoints, thresholds, trip.end_time, privacyZones);
+        const mergedPhoneUse = mergedPhoneUseForTrip(trip, scoringRoutePoints, stats, detectedPhoneUse);
+        const phoneFeedbackAdjusted = applyEventFeedbackToPhoneUse(
+          mergedPhoneUse,
+          trip.event_feedback,
+          stats.duration_seconds
+        );
+        const phoneUse = phoneFeedbackAdjusted.phoneUse;
+        const motionSamples = Array.isArray(trip.motion_samples) ? trip.motion_samples : [];
+        const sensorFusionSummary = motionSamples.length
+          ? buildSensorFusionSummary(motionSamples, scoringRoutePoints, null, events)
+          : trip.sensor_fusion_summary;
+        const scores = calculateTripScores(events, stats, scoringRoutePoints, thresholds, stats.duration_seconds, phoneUse, {
+          endTime: trip.end_time,
+          privacyZones,
+          motionSamples,
+          orientationCalibration: sensorFusionSummary?.phone_orientation,
+        });
+        const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, vehicleForTrip(trip, vehicles), settings);
+        const drivingEvents = prepareScoreInputsForPrivacy({
+          routePoints: [],
+          events: mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse),
+          settings,
+          zones: privacyZones,
+        }).events;
+
+        importedTrip = preserveResolvedSpeedLimitReview({
+          ...trip,
+          ...stats,
+          ...scores,
+          co2_saved_kg: economics.co2_saved_kg,
+          route_points: scoringRoutePoints,
+          route_points_raw_count: Number(trip.route_points_raw_count) || routePoints.length,
+          route_points_map_count: Number(trip.route_points_map_count) || scoringRoutePoints.length,
+          score_input_masking_applied: true,
+          privacy_zone_touched: scoreInputPrivacy.touchesPrivacyZone,
+          privacy_trend_excluded: scoreInputPrivacy.trendExcluded,
+          ...(sensorFusionSummary ? { sensor_fusion_summary: sensorFusionSummary } : {}),
+          driving_events: drivingEvents,
+          imported_from_native: true,
+          schema_version: TRIP_SCHEMA_VERSION,
+          updated_at: trip.updated_at || new Date().toISOString(),
+        }, storedTrip);
+
+        await putTrip(importedTrip);
+        importedTrips[importedTrips.length - 1] = importedTrip;
+      } catch (error) {
+        logSystemFailure('native_completed_trip_enrichment', error, {
+          trip_id_present: trip?.id != null,
+          route_point_count: Array.isArray(routePoints) ? routePoints.length : 0,
+          motion_sample_count: Array.isArray(trip?.motion_samples) ? trip.motion_samples.length : 0,
+        });
+      }
 
       // The widget represents the newest completed drive, not the newest trip that
       // happened to satisfy the older parking-stop heuristic. Never walk backward
@@ -1427,7 +1455,8 @@ const importNativeCompletedTrips = async () => {
       importedTrips,
       matchedActiveTrip,
     };
-  })().catch(() => {
+  })().catch((error) => {
+    logSystemFailure('native_completed_trips_import', error);
     // The existing JS store remains usable if the native bridge is unavailable.
     return emptyNativeImportResult();
   }).finally(() => {

@@ -15,6 +15,7 @@ import {
 } from '@/lib/mapPopupHtml';
 import { buildSpeedSegments } from '@/lib/tripInsights';
 import { calculateBearing, formatDistance, formatDuration, formatSpeed, headingDiff, haversineDistance } from '@/lib/tripEngine';
+import { buildMapDiagnosticsAggregate } from '@/lib/mapDiagnostics';
 import { HEIGHTENED_PRIVACY_MODE_KEY } from '@/lib/privacyMode';
 import {
   getPrivacyZoneDisplayCircle,
@@ -592,6 +593,7 @@ export default function TripMap(props) {
 function TripMapContent({
   routePoints = EMPTY_ROUTE_POINTS,
   routes = EMPTY_ROUTES,
+  diagnosticTrips = undefined,
   events = EMPTY_EVENTS,
   showCurrentLocation = false,
   currentLocation = null,
@@ -693,10 +695,23 @@ function TripMapContent({
     [selectedRoute, smoothRoute]
   );
   const telemetry = useMemo(() => routeTelemetry(selectedRoutePoints), [selectedRoutePoints]);
-  const recordedPointCount = Number(
-    rawPointCount ?? selectedRoute.rawPointCount ?? selectedRoute.route_points_raw_count
-  ) || selectedRoutePoints.length;
-  const stopCount = useMemo(() => detectStops(selectedRoutePoints).length, [selectedRoutePoints]);
+  const overviewDiagnostics = useMemo(() => (
+    Array.isArray(diagnosticTrips) ? buildMapDiagnosticsAggregate(diagnosticTrips) : null
+  ), [diagnosticTrips]);
+  const diagnostics = overviewDiagnostics
+    ? {
+      distanceKm: overviewDiagnostics.distance_km,
+      durationSeconds: overviewDiagnostics.duration_seconds,
+      avgSpeedKmh: overviewDiagnostics.avg_speed_kmh,
+      maxSpeedKmh: overviewDiagnostics.max_speed_kmh,
+    }
+    : telemetry;
+  const recordedPointCount = overviewDiagnostics
+    ? overviewDiagnostics.route_points_raw_count
+    : Number(rawPointCount ?? selectedRoute.rawPointCount ?? selectedRoute.route_points_raw_count) || selectedRoutePoints.length;
+  const detectedStopCount = useMemo(() => detectStops(selectedRoutePoints).length, [selectedRoutePoints]);
+  const stopCount = overviewDiagnostics?.traffic_stop_count ?? detectedStopCount;
+  const diagnosticEventCount = overviewDiagnostics?.driving_events_count ?? events.length;
   const phoneEventCount = useMemo(
     () => (events || []).filter((event) => event?.type === 'phone_use' && event?.source === 'android_usage_access').length,
     [events]
@@ -1415,7 +1430,11 @@ function TripMapContent({
         >
           <div className="mb-2 flex items-center justify-between gap-3">
             <div className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Route diagnostics</div>
-            <div className="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">{heightenedPrivacy ? 'Local overlays' : TILE_STYLES[tileStyle].label}</div>
+            <div className="rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+              {Array.isArray(diagnosticTrips)
+                ? `${diagnosticTrips.length} route${diagnosticTrips.length === 1 ? '' : 's'}`
+                : heightenedPrivacy ? 'Local overlays' : TILE_STYLES[tileStyle].label}
+            </div>
           </div>
           {heightenedPrivacy && (
             <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
@@ -1424,15 +1443,15 @@ function TripMapContent({
           )}
           <div className="grid grid-cols-4 gap-2 text-center">
             <div>
-              <div className="font-grotesk text-lg font-bold">{formatDistance(telemetry.distanceKm, units)}</div>
+              <div className="font-grotesk text-lg font-bold">{formatDistance(diagnostics.distanceKm, units)}</div>
               <div className="text-[10px] text-muted-foreground">Distance</div>
             </div>
             <div>
-              <div className="font-grotesk text-lg font-bold">{formatSpeed(telemetry.maxSpeedKmh, units)}</div>
+              <div className="font-grotesk text-lg font-bold">{formatSpeed(diagnostics.maxSpeedKmh, units)}</div>
               <div className="text-[10px] text-muted-foreground">Maximum speed</div>
             </div>
             <div>
-              <div className="font-grotesk text-lg font-bold">{events.length}</div>
+              <div className="font-grotesk text-lg font-bold">{diagnosticEventCount}</div>
               <div className="text-[10px] text-muted-foreground">Events</div>
             </div>
             <div>
@@ -1440,12 +1459,12 @@ function TripMapContent({
               <div className="text-[10px] text-muted-foreground">Stops</div>
             </div>
           </div>
-          {telemetry.durationSeconds > 0 && (
+          {diagnostics.durationSeconds > 0 && (
             <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
-              <span>{formatDuration(telemetry.durationSeconds)}</span>
-              <span>{formatSpeed(telemetry.avgSpeedKmh, units)} average including stops</span>
+              <span>{formatDuration(diagnostics.durationSeconds)}</span>
+              <span>{formatSpeed(diagnostics.avgSpeedKmh, units)} average including stops</span>
               <span>{recordedPointCount} GPS</span>
-              {recordedPointCount !== telemetry.pointCount && <span>{telemetry.pointCount} map pts</span>}
+              {!overviewDiagnostics && recordedPointCount !== telemetry.pointCount && <span>{telemetry.pointCount} map pts</span>}
             </div>
           )}
           {phoneEventCount > 0 && (

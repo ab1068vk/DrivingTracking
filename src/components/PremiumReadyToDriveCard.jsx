@@ -2,15 +2,17 @@
 import {
   AlertTriangle,
   LocateFixed,
-  Play,
   RefreshCw,
   Satellite,
   ShieldCheck,
   Smartphone,
 } from 'lucide-react';
-import premiumReadyHero from '@/assets/premium-ready-hero-v2.png';
-import premiumReadyManual from '@/assets/premium-ready-manual-v2.png';
-import premiumReadyPrivate from '@/assets/premium-ready-private-v2.png';
+import premiumReadyHero from '@/assets/premium-ready-city-hero-v6.png';
+import premiumReadyManual from '@/assets/premium-ready-systems-v6.png';
+import premiumReadyPrivate from '@/assets/premium-ready-private-v6.png';
+import premiumReadyPrivateControl from '@/assets/premium-ready-private-control-generated-v1.png';
+import premiumReadyPrivateShield from '@/assets/premium-ready-private-shield-generated-v1.png';
+import premiumReadyStartControl from '@/assets/premium-ready-start-generated-v1.png';
 
 const MANUAL_SYSTEMS = Object.freeze([
   { id: 'location', label: 'Location', icon: LocateFixed },
@@ -79,33 +81,28 @@ export default function PremiumReadyToDriveCard({
     <section
       className="premium-ready-card"
       data-status={statusReady ? 'ready' : 'attention'}
+      data-manual-mode={isAndroidManualMode ? 'true' : 'false'}
       aria-labelledby="premium-ready-title"
     >
-      <div className="premium-ready-grid" aria-hidden="true" />
-      <div className="premium-ready-orbit premium-ready-orbit-one" aria-hidden="true" />
-      <div className="premium-ready-orbit premium-ready-orbit-two" aria-hidden="true" />
-
+      <img
+        className="premium-ready-card-background"
+        src={premiumReadyHero}
+        alt=""
+        aria-hidden="true"
+      />
       <div className="premium-ready-hero">
-        <div className="premium-ready-road-lines" aria-hidden="true" />
+        <img
+          className="premium-ready-hero-image"
+          src={premiumReadyHero}
+          alt=""
+          aria-hidden="true"
+        />
+        <div className="premium-ready-hero-shade" aria-hidden="true" />
+
         <div className="premium-ready-copy">
-          <div className="premium-ready-eyebrow">
-            <span className="premium-ready-live-dot" aria-hidden="true" />
-            Ready to drive?
-          </div>
+          <div className="premium-ready-eyebrow">Ready to drive?</div>
           <h2 id="premium-ready-title">Start a new trip</h2>
           <p>Tap to begin tracking your route</p>
-
-          <div className="premium-ready-status" data-status={statusReady ? 'ready' : 'attention'}>
-            {statusReady ? <ShieldCheck aria-hidden="true" /> : <AlertTriangle aria-hidden="true" />}
-            <span>
-              <strong>{statusReady ? 'Trip systems ready' : 'Setup needed'}</strong>
-              <small>
-                {isAndroidManualMode
-                  ? `${launchStatus.readyCount} of ${launchStatus.totalCount} checks ready`
-                  : 'Route tracking is standing by'}
-              </small>
-            </span>
-          </div>
 
           <button
             type="button"
@@ -115,28 +112,40 @@ export default function PremiumReadyToDriveCard({
             aria-busy={startingTrip || undefined}
             className="premium-ready-start"
           >
-            <span aria-hidden="true">
-              {startingTrip
-                ? <RefreshCw className="animate-spin" />
-                : <Play />}
+            <img
+              className="premium-ready-start-art"
+              src={premiumReadyStartControl}
+              alt=""
+              aria-hidden="true"
+            />
+            <span className="premium-ready-start-ring" aria-hidden="true">
+              {startingTrip ? (
+                <RefreshCw className="animate-spin" />
+              ) : (
+                <span className="premium-ready-start-label">
+                  <span>Start</span>
+                  <span>Trip</span>
+                </span>
+              )}
+              <span className="premium-ready-start-ready" />
             </span>
           </button>
-        </div>
-
-        <div className="premium-ready-visual">
-          <div className="premium-ready-art-halo" aria-hidden="true" />
-          <img src={premiumReadyHero} alt="" aria-hidden="true" />
         </div>
       </div>
 
       {isAndroidManualMode && (
         <div className="premium-ready-manual" data-status={manualReady ? 'ready' : 'attention'}>
-          <img className="premium-ready-manual-art" src={premiumReadyManual} alt="" aria-hidden="true" />
+          <img className="premium-ready-manual-image" src={premiumReadyManual} alt="" aria-hidden="true" />
+          <div className="premium-ready-manual-shade" aria-hidden="true" />
+
           <div className="premium-ready-manual-head">
             <div>
               <span className="premium-ready-manual-kicker">
                 {manualReady ? <ShieldCheck aria-hidden="true" /> : <AlertTriangle aria-hidden="true" />}
                 {manualReady ? 'Protected recording' : 'Action required'}
+              </span>
+              <span className="premium-ready-manual-count">
+                {launchStatus.readyCount} of {launchStatus.totalCount} checks ready
               </span>
               <strong>
                 {manualReady
@@ -182,18 +191,27 @@ export default function PremiumReadyToDriveCard({
         aria-busy={startingTrip || undefined}
         className="premium-ready-private"
       >
-        <span className="premium-ready-private-art" aria-hidden="true">
-          <img src={premiumReadyPrivate} alt="" />
-        </span>
+        <img className="premium-ready-private-image" src={premiumReadyPrivate} alt="" aria-hidden="true" />
+        <span className="premium-ready-private-shade" aria-hidden="true" />
+        <img
+          className="premium-ready-private-shield-art"
+          src={premiumReadyPrivateShield}
+          alt=""
+          aria-hidden="true"
+        />
         <span className="premium-ready-private-copy">
-          <span className="premium-ready-private-kicker">Privacy mode</span>
           <strong>{startingTrip ? 'Starting trip...' : 'Start Private Trip'}</strong>
           <small>
             <span>Save distance and duration only.</span>
             <span>No route, addresses, events, or score.</span>
           </small>
         </span>
-        <span className="premium-ready-private-arrow" aria-hidden="true">→</span>
+        <img
+          className="premium-ready-private-control-art"
+          src={premiumReadyPrivateControl}
+          alt=""
+          aria-hidden="true"
+        />
       </button>
     </section>
   );

@@ -57,9 +57,11 @@ describe('PremiumDrivingScoreCard', () => {
     );
 
     expect(html).toContain('class="premium-driving-score"');
-    expect(html).toContain('Performance telemetry');
+    expect(html).toContain('Performance');
+    expect(html).toContain('Telemetry');
     expect(html).toContain('Last 5 trips');
-    expect(html).toContain('data-evidence="developing"');
+    expect(html).toContain('Limited evidence');
+    expect(html).toContain('Average driving score: ~81 out of 100. Limited evidence.');
     expect(html).toContain('approximate');
     expect(html).toContain('Latest');
     expect(html).toContain('~79');
@@ -67,10 +69,28 @@ describe('PremiumDrivingScoreCard', () => {
     expect(html).toContain('~84');
     expect(html).toContain('Observed range');
     expect(html).toContain('~72–84');
-    expect(html).toContain('premium-driving-score-hero.png');
-    expect(html).toContain('premium-driving-score-trend.png');
-    expect(html).toContain('premium-driving-score-peak.png');
-    expect(html).toContain('premium-driving-score-range.png');
+    expect(html).toContain('premium-driving-score-hero-v2.webp');
+    expect(html).toContain('premium-driving-score-trend-v2.webp');
+    expect(html).toContain('premium-driving-score-peak-v3.webp');
+    expect(html).toContain('premium-driving-score-range-v3.webp');
+    expect(html).toContain('data-telemetry-icon="performance-gauge-alert"');
+    expect(html).toContain('data-telemetry-icon="performance-gauge"');
+    expect(html).toContain('data-telemetry-icon="trajectory-route"');
+    expect(html).toContain('data-telemetry-icon="summit-flag"');
+    expect(html).toContain('data-telemetry-icon="range-sliders"');
+    expect(html).toContain('premium-telemetry-header-gauge-generated.png');
+    expect(html).toContain('premium-telemetry-performance-gauge-generated.png');
+    expect(html).toContain('premium-telemetry-trajectory-generated.png');
+    expect(html).toContain('premium-telemetry-summit-generated-v3.png');
+    expect(html).toContain('premium-telemetry-sliders-generated-v2.png');
+    expect(html).toContain('premium-driving-score-gauge-outer-rim');
+    expect(html).toContain('premium-driving-score-gauge-rim-inset');
+    expect(html).toContain('premium-driving-score-gauge-inner-rim');
+    expect(html).toContain('premium-driving-score-gauge-value-glow');
+    expect(html).toContain('premium-driving-score-gauge-sheen');
+    expect(html).not.toContain('premium-driving-score-grid');
+    expect(html).not.toContain('lucide-award');
+    expect(html).toContain('stroke-dasharray="81 19"');
   });
 
   it('preserves empty and loading states without demonstration values', () => {
@@ -78,6 +98,8 @@ describe('PremiumDrivingScoreCard', () => {
     expect(emptyHtml).toContain('Complete more trips to see trend');
     expect(emptyHtml).toContain('0/3 scored trips ready');
     expect(emptyHtml).toContain('No scored trips yet');
+    expect(emptyHtml).toContain('Awaiting evidence');
+    expect(emptyHtml).not.toContain('stroke-dasharray=');
 
     const loadingHtml = renderToStaticMarkup(<PremiumDrivingScoreCard isLoading />);
     expect(loadingHtml).toContain('Loading driving score');

@@ -6,6 +6,8 @@ const EARTH_M_PER_DEG = 111320;
 const DEFAULT_EVENT_TYPES = ['harsh_brake', 'sharp_turn', 'speeding'];
 const PROXY_EVENT_TYPES = new Set(['near_miss', 'close_proximity', 'tailgate_cycle', 'stop_start_pattern']);
 const SEVERITY_POINTS = { high: 3, medium: 2, low: 1 };
+export const DANGER_ZONE_CELL_SIZE_M = 80;
+export const DANGER_ZONE_MIN_EVENTS = 3;
 
 const hashKey = (key) => {
   let hash = 0;
@@ -36,8 +38,8 @@ const dominantType = (breakdown = {}) => (
 );
 
 export function buildDangerZones(trips = [], options = {}) {
-  const cellSizeM = Number(options.cellSizeM) || 80;
-  const minEvents = Number(options.minEvents) || 3;
+  const cellSizeM = Number(options.cellSizeM) || DANGER_ZONE_CELL_SIZE_M;
+  const minEvents = Number(options.minEvents) || DANGER_ZONE_MIN_EVENTS;
   const eventTypes = new Set(options.eventTypes || DEFAULT_EVENT_TYPES);
   const groups = new Map();
 

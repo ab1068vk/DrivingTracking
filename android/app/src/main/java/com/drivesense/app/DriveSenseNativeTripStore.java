@@ -95,7 +95,17 @@ class DriveSenseNativeTripStore {
         }
     }
 
-    static void addCompletedTrip(Context context, JSONObject trip) {
+    static boolean hasCompletedTrip(Context context, String tripId) {
+        if (tripId == null || tripId.trim().isEmpty()) return false;
+        JSONArray trips = getCompletedTrips(context);
+        for (int index = 0; index < trips.length(); index++) {
+            JSONObject trip = trips.optJSONObject(index);
+            if (tripId.equals(trip == null ? "" : trip.optString("id", ""))) return true;
+        }
+        return false;
+    }
+
+    static boolean addCompletedTrip(Context context, JSONObject trip) {
         JSONArray current = getCompletedTrips(context);
         JSONArray next = new JSONArray();
         String tripId = trip == null ? "" : trip.optString("id", "");
@@ -115,7 +125,7 @@ class DriveSenseNativeTripStore {
             }
         }
         if (!replaced && trip != null) next.put(trip);
-        saveCompletedTrips(context, next.toString());
+        return saveCompletedTrips(context, next.toString());
     }
 
     static boolean acknowledgePendingEmergencyWorkflow(Context context, String acknowledgedAt) {
@@ -151,8 +161,7 @@ class DriveSenseNativeTripStore {
             if (tripChanged) changed = true;
             next.put(trip);
         }
-        if (changed) saveCompletedTrips(context, next.toString());
-        return changed;
+        return changed && saveCompletedTrips(context, next.toString());
     }
 
     static void clearCompletedTrips(Context context) {
@@ -161,11 +170,16 @@ class DriveSenseNativeTripStore {
         }
     }
 
-    private static void saveCompletedTrips(Context context, String raw) {
+    private static boolean saveCompletedTrips(Context context, String raw) {
         try {
             String encrypted = DriveSensePayloadCrypto.encryptForStorage(raw, COMPLETED_TRIPS_CONTEXT);
-            prefs(context).edit().putString(KEY_COMPLETED_TRIPS, encrypted).apply();
-        } catch (Exception ignored) {}
+            boolean committed = prefs(context).edit().putString(KEY_COMPLETED_TRIPS, encrypted).commit();
+            if (!committed) Log.e(TAG, "Completed trip cache commit failed");
+            return committed;
+        } catch (Exception error) {
+            Log.e(TAG, "Completed trip cache encryption failed", error);
+            return false;
+        }
     }
 
     static JSONArray getDiagnosticEvents(Context context) {

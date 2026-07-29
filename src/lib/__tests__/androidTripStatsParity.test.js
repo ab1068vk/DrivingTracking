@@ -138,6 +138,21 @@ describe('Android auto-tracking stats parity', () => {
     expect(source).not.toContain('trip.put("score_overall", 100');
   });
 
+  it('keeps active-trip crash recovery encrypted, throttled, and bounded', () => {
+    const serviceSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
+    const checkpointSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseActiveTripCheckpointStore.java', import.meta.url), 'utf8');
+
+    expect(serviceSource).toContain('ACTIVE_CHECKPOINT_INTERVAL_MS = 60_000L');
+    expect(serviceSource).toContain('ACTIVE_CHECKPOINT_RESUME_WINDOW_MS = 10 * 60_000L');
+    expect(serviceSource).toContain('finishTrip("checkpoint_recovery_finalize", true)');
+    expect(serviceSource).toContain('checkpoint.put("motion_samples_omitted", true)');
+    expect(serviceSource).toContain('DriveSenseActiveTripCheckpointStore.clear(this);');
+    expect(checkpointSource).toContain('MAX_ROUTE_POINTS = 1500');
+    expect(checkpointSource).toContain('MAX_ENCRYPTED_BYTES = 512 * 1024');
+    expect(checkpointSource).toContain('new AtomicFile(');
+    expect(checkpointSource).toContain('DriveSensePayloadCrypto');
+  });
+
   it('supports confirmed native manual trips for background alerts', () => {
     const serviceSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
     const pluginSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseActivityRecognitionPlugin.java', import.meta.url), 'utf8');

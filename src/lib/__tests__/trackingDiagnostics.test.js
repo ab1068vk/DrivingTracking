@@ -54,16 +54,81 @@ describe('tracking diagnostics', () => {
         phoneUsageAccess: 'granted',
         bluetooth: 'not_requested',
       },
-      nativeStatus: { enabled: true },
+      nativeStatus: {
+        enabled: true,
+        completedTripsCount: 1,
+        activeTripCheckpoint: {
+          supported: true,
+          state: 'protected',
+          present: true,
+          ageSeconds: 24,
+          encryptedBytes: 12_500,
+          maxEncryptedBytes: 524_288,
+        },
+      },
       batteryStatus: { batteryOptimizationIgnored: true },
       latestTrip: { parking_stop_detected: true, end_time: '2026-01-01T12:00:00.000Z' },
     });
 
     expect(health.find((item) => item.id === 'native')?.status).toBe('good');
+    expect(health.find((item) => item.id === 'native-handoff')).toMatchObject({
+      status: 'warn',
+      value: '1 pending',
+    });
+    expect(health.find((item) => item.id === 'active-checkpoint')).toMatchObject({
+      status: 'good',
+      value: 'Protected',
+    });
+    expect(health.find((item) => item.id === 'active-checkpoint')?.detail).toContain('13 KB');
     expect(health.find((item) => item.id === 'background')?.status).toBe('warn');
     expect(health.find((item) => item.id === 'motion')?.status).toBe('good');
     expect(health.find((item) => item.id === 'notifications')?.status).toBe('good');
     expect(health.find((item) => item.id === 'bluetooth')?.detail).toContain('OBD-II');
+  });
+
+  it('confirms when no temporary active-trip checkpoint is retained', () => {
+    const health = buildTrackingHealth({
+      nativeStatus: {
+        enabled: true,
+        recordingActive: false,
+        completedTripsCount: 0,
+        activeTripCheckpoint: {
+          supported: true,
+          state: 'none',
+          present: false,
+          encryptedBytes: 0,
+          maxEncryptedBytes: 524_288,
+        },
+      },
+    });
+
+    expect(health.find((item) => item.id === 'active-checkpoint')).toMatchObject({
+      status: 'good',
+      value: 'None stored',
+      detail: 'No temporary active-trip recovery file is retained.',
+    });
+  });
+
+  it('shows waiting while an active trip has not reached its first checkpoint', () => {
+    const health = buildTrackingHealth({
+      nativeStatus: {
+        enabled: true,
+        recordingActive: true,
+        completedTripsCount: 0,
+        activeTripCheckpoint: {
+          supported: true,
+          state: 'none',
+          present: false,
+          encryptedBytes: 0,
+          maxEncryptedBytes: 524_288,
+        },
+      },
+    });
+
+    expect(health.find((item) => item.id === 'active-checkpoint')).toMatchObject({
+      status: 'warn',
+      value: 'Waiting',
+    });
   });
 
   it('explains why dashboard auto tracking did not start from real permission state', () => {

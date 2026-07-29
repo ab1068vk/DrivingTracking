@@ -256,6 +256,7 @@ export function normalizeNativeActiveTrip(status) {
   return {
     id: String(trip.id || 'native_active_trip'),
     native_recording: true,
+    voice_alert_owner: 'native_android',
     state: trip.state === 'candidate' ? 'candidate' : 'recording',
     candidate: trip.candidate === true,
     candidate_near_parked: trip.candidate_near_parked === true,
@@ -452,6 +453,21 @@ export async function clearNativeCompletedTrips() {
     });
   } catch (error) {
     logSystemFailure('android_native_completed_trips_clear', error);
+    throw error;
+  }
+}
+
+export async function clearNativeActiveTripCheckpoint() {
+  if (!isAndroid()) return;
+  try {
+    await ActivityRecognition.clearNativeActiveTripCheckpoint();
+    recordSystemEvent('android_native_active_trip_checkpoint_cleared', {}, {
+      category: 'background',
+      source: 'android',
+      title: 'Native active-trip checkpoint cleared',
+    });
+  } catch (error) {
+    logSystemFailure('android_native_active_trip_checkpoint_clear', error);
     throw error;
   }
 }

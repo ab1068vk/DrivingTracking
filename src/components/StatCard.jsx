@@ -17,11 +17,11 @@ export default function StatCard({ icon: Icon, label, value, sub = '', gradient,
       {/* Background decoration */}
       <div className="stat-orb stat-orb-top absolute -top-4 -right-4 w-20 h-20 bg-white/10 rounded-full" />
       <div className="stat-orb stat-orb-bottom absolute -bottom-6 -left-6 w-24 h-24 bg-white/5 rounded-full" />
-      <IconComponent className="cyber-stat-schematic pointer-events-none absolute right-4 top-4 h-16 w-16 opacity-0" />
+      <IconComponent className="pointer-events-none absolute right-4 top-4 h-16 w-16 opacity-0" />
 
       <div className="relative">
         <div className="flex items-start justify-between mb-3">
-          <div className="cyber-stat-icon p-2 bg-white/20 rounded-xl">
+          <div className="p-2 bg-white/20 rounded-xl">
             <IconComponent className="w-5 h-5" />
           </div>
         </div>

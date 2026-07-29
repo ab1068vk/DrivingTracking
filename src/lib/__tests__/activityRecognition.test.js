@@ -32,6 +32,7 @@ describe('activityRecognition auto-stop logic', () => {
     })).toMatchObject({
       id: 'native-live',
       native_recording: true,
+      voice_alert_owner: 'native_android',
       state: 'recording',
       distance_km: 4.25,
       duration_seconds: 615,

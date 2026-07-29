@@ -76,6 +76,20 @@ export function buildTripHistorySummary(trips = [], units = 'metric') {
   const totalDistanceKm = safeTrips.reduce((sum, trip) => sum + (Number(trip?.distance_km) || 0), 0);
   const totalDurationSeconds = safeTrips.reduce((sum, trip) => sum + (Number(trip?.duration_seconds) || 0), 0);
   const scores = safeTrips.map((trip) => scoreValue(trip)).filter(Number.isFinite);
+  const scoreTrend = safeTrips
+    .map((trip, index) => ({
+      index,
+      score: scoreValue(trip),
+      time: new Date(trip?.start_time).getTime(),
+    }))
+    .filter(({ score }) => Number.isFinite(score))
+    .sort((a, b) => {
+      const aTime = Number.isFinite(a.time) ? a.time : a.index;
+      const bTime = Number.isFinite(b.time) ? b.time : b.index;
+      return aTime - bTime;
+    })
+    .slice(-12)
+    .map(({ score }) => score);
   const averageScore = scores.length
     ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)
     : null;
@@ -88,6 +102,7 @@ export function buildTripHistorySummary(trips = [], units = 'metric') {
     totalDistanceLabel: formatDistance(totalDistanceKm, units),
     totalDurationLabel: formatDuration(totalDurationSeconds),
     averageScoreLabel: averageScore == null ? 'No score yet' : `${averageScore}`,
+    scoreTrend,
     favoriteCount: safeTrips.filter((trip) => trip?.is_favorite === true).length,
     nightCount: safeTrips.filter((trip) => trip?.night_driving || normalizeTripTags(trip).includes('night')).length,
   };

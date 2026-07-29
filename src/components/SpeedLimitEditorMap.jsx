@@ -305,6 +305,7 @@ function SpeedLimitEditorMapContent({
   addPath = [],
   selectedSectionOverride = null,
   heightClassName = 'h-[28rem] min-h-[22rem]',
+  premium = false,
   onLayerChange = null,
   onSelect = null,
   onAddPoint = null,
@@ -672,7 +673,7 @@ function SpeedLimitEditorMapContent({
   };
 
   return (
-    <div className="relative z-0 isolate overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+    <div className={`relative z-0 isolate overflow-hidden rounded-2xl border border-border bg-card shadow-sm${premium ? ' premium-speed-live-map' : ''}`}>
       <div className={`relative w-full ${heightClassName}`}>
         <div ref={containerRef} className="h-full w-full" />
         {onLayerChange && (

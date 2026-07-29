@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildDangerZones, checkDangerZoneProximity } from '@/lib/dangerZoneEngine';
+import {
+  buildDangerZones,
+  checkDangerZoneProximity,
+  DANGER_ZONE_CELL_SIZE_M,
+  DANGER_ZONE_MIN_EVENTS,
+} from '@/lib/dangerZoneEngine';
 
 const event = (lat, lng, severity = 'low', type = 'harsh_brake') => ({
   type,
@@ -18,6 +23,20 @@ const trip = (events) => ({
 describe('dangerZoneEngine', () => {
   it('buildDangerZones with 0 trips returns []', () => {
     expect(buildDangerZones([])).toEqual([]);
+  });
+
+  it('keeps the premium evidence explanation aligned with engine defaults', () => {
+    expect(DANGER_ZONE_CELL_SIZE_M).toBe(80);
+    expect(DANGER_ZONE_MIN_EVENTS).toBe(3);
+    expect(buildDangerZones([trip([
+      event(43.6532, -79.3832),
+      event(43.6532, -79.3832),
+    ])])).toEqual([]);
+    expect(buildDangerZones([trip([
+      event(43.6532, -79.3832),
+      event(43.6532, -79.3832),
+      event(43.6532, -79.3832),
+    ])])).toHaveLength(1);
   });
 
   it('filters out events below minEvents threshold', () => {

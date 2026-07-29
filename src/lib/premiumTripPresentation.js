@@ -15,20 +15,180 @@ const TIME_PRESENTATIONS = Object.freeze({
   night: { label: 'Night Drive', shortLabel: 'Night' },
 });
 
+const TWILIGHT_PRESENTATION_WINDOW_MINUTES = 90;
+const DEFAULT_NIGHT_START_MINUTES = 22 * 60;
+const DEFAULT_NIGHT_END_MINUTES = 5 * 60;
+
 /**
- * Uses the same local clock interpretation as the card's formatted trip time.
- * @param {string|number|Date|null|undefined} startTime
+ * @param {unknown} value
+ * @returns {value is Record<string, any>}
  */
-export function getPremiumTripTimePresentation(startTime) {
-  const date = startTime instanceof Date ? startTime : new Date(startTime || 0);
-  const hour = Number.isFinite(date.getTime()) ? date.getHours() : 12;
-  const period = hour >= 5 && hour < 9
+const isPlainTripRecord = (value) => (
+  value != null &&
+  typeof value === 'object' &&
+  !(value instanceof Date) &&
+  (
+    Object.prototype.hasOwnProperty.call(value, 'start_time') ||
+    Object.prototype.hasOwnProperty.call(value, 'night_driving') ||
+    Object.prototype.hasOwnProperty.call(value, 'route_points')
+  )
+);
+
+const hasValidCoordinates = (point) => {
+  const lat = Number(point?.lat);
+  const lng = Number(point?.lng);
+  return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+};
+
+const representativeTripCoordinate = (trip = {}) => {
+  const points = Array.isArray(trip.route_points) ? trip.route_points : [];
+  const point = points.find(hasValidCoordinates);
+  return point ? { lat: Number(point.lat), lng: Number(point.lng) } : null;
+};
+
+const dayOfYear = (date) => {
+  const start = Date.UTC(date.getFullYear(), 0, 0);
+  const current = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  return Math.floor((current - start) / 86400000);
+};
+
+const toRad = (degrees) => degrees * Math.PI / 180;
+
+function sunEventMinutes(date, lat, lng, isSunrise) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 89.8) return null;
+
+  const zenith = 90.833;
+  const n = dayOfYear(date);
+  const lngHour = lng / 15;
+  const t = n + (((isSunrise ? 6 : 18) - lngHour) / 24);
+  const meanAnomaly = (0.9856 * t) - 3.289;
+  let trueLongitude = meanAnomaly
+    + (1.916 * Math.sin(toRad(meanAnomaly)))
+    + (0.020 * Math.sin(toRad(2 * meanAnomaly)))
+    + 282.634;
+  trueLongitude = ((trueLongitude % 360) + 360) % 360;
+
+  let rightAscension = Math.atan(0.91764 * Math.tan(toRad(trueLongitude))) * 180 / Math.PI;
+  rightAscension = ((rightAscension % 360) + 360) % 360;
+  const longitudeQuadrant = Math.floor(trueLongitude / 90) * 90;
+  const ascensionQuadrant = Math.floor(rightAscension / 90) * 90;
+  rightAscension = (rightAscension + longitudeQuadrant - ascensionQuadrant) / 15;
+
+  const sinDec = 0.39782 * Math.sin(toRad(trueLongitude));
+  const cosDec = Math.cos(Math.asin(sinDec));
+  const cosHour = (Math.cos(toRad(zenith)) - (sinDec * Math.sin(toRad(lat)))) / (cosDec * Math.cos(toRad(lat)));
+  if (cosHour > 1 || cosHour < -1) return null;
+
+  const hourAngle = isSunrise
+    ? 360 - (Math.acos(cosHour) * 180 / Math.PI)
+    : Math.acos(cosHour) * 180 / Math.PI;
+  const localMeanTime = (hourAngle / 15) + rightAscension - (0.06571 * t) - 6.622;
+  const utcMinutes = ((localMeanTime - lngHour) * 60) % (24 * 60);
+  return ((utcMinutes - date.getTimezoneOffset()) % (24 * 60) + (24 * 60)) % (24 * 60);
+}
+
+function isWithinClockWindow(minutes, startMinutes, endMinutes) {
+  const dayMinutes = 24 * 60;
+  const normalized = ((minutes % dayMinutes) + dayMinutes) % dayMinutes;
+  const start = ((startMinutes % dayMinutes) + dayMinutes) % dayMinutes;
+  const end = ((endMinutes % dayMinutes) + dayMinutes) % dayMinutes;
+  if (start === end) return false;
+  return start < end
+    ? normalized >= start && normalized < end
+    : normalized >= start || normalized < end;
+}
+
+function getClockTimePeriod(hour) {
+  return hour >= 5 && hour < 9
     ? PREMIUM_TRIP_TIME_PERIODS.DAWN
     : hour >= 9 && hour < 17
       ? PREMIUM_TRIP_TIME_PERIODS.DAY
       : hour >= 17 && hour < 21
         ? PREMIUM_TRIP_TIME_PERIODS.DUSK
         : PREMIUM_TRIP_TIME_PERIODS.NIGHT;
+}
+
+function parseClockMinutes(value, fallback) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(String(value || '').trim());
+  if (!match) return fallback;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
+    ? hour * 60 + minute
+    : fallback;
+}
+
+function finiteOffset(value) {
+  const offset = Number(value);
+  return Number.isFinite(offset) ? offset : 0;
+}
+
+function getConfiguredTimePeriod(date, coordinate, settings = {}) {
+  const minutes = date.getHours() * 60 + date.getMinutes();
+  const fallbackStart = parseClockMinutes(settings.night_start_time, DEFAULT_NIGHT_START_MINUTES);
+  const fallbackEnd = parseClockMinutes(settings.night_end_time, DEFAULT_NIGHT_END_MINUTES);
+  const customMode = settings.night_detection_mode === 'custom';
+  const sunrise = coordinate ? sunEventMinutes(date, coordinate.lat, coordinate.lng, true) : null;
+  const sunset = coordinate ? sunEventMinutes(date, coordinate.lat, coordinate.lng, false) : null;
+  const solarAvailable = sunrise != null && sunset != null;
+  const sunriseBoundary = solarAvailable
+    ? sunrise + finiteOffset(settings.night_sunrise_offset_minutes)
+    : null;
+  const sunsetBoundary = solarAvailable
+    ? sunset + finiteOffset(settings.night_sunset_offset_minutes)
+    : null;
+  const night = customMode || !solarAvailable
+    ? isWithinClockWindow(minutes, fallbackStart, fallbackEnd)
+    : isWithinClockWindow(minutes, sunsetBoundary, sunriseBoundary);
+
+  if (night) return PREMIUM_TRIP_TIME_PERIODS.NIGHT;
+  if (!solarAvailable) {
+    const clockPeriod = getClockTimePeriod(date.getHours());
+    return clockPeriod === PREMIUM_TRIP_TIME_PERIODS.NIGHT
+      ? date.getHours() < 12
+        ? PREMIUM_TRIP_TIME_PERIODS.DAWN
+        : PREMIUM_TRIP_TIME_PERIODS.DUSK
+      : clockPeriod;
+  }
+  if (isWithinClockWindow(minutes, sunriseBoundary, sunriseBoundary + TWILIGHT_PRESENTATION_WINDOW_MINUTES)) {
+    return PREMIUM_TRIP_TIME_PERIODS.DAWN;
+  }
+  if (isWithinClockWindow(minutes, sunsetBoundary - TWILIGHT_PRESENTATION_WINDOW_MINUTES, sunsetBoundary)) {
+    return PREMIUM_TRIP_TIME_PERIODS.DUSK;
+  }
+  if (isWithinClockWindow(minutes, sunset, sunrise)) {
+    return date.getHours() < 12
+      ? PREMIUM_TRIP_TIME_PERIODS.DAWN
+      : PREMIUM_TRIP_TIME_PERIODS.DUSK;
+  }
+  return PREMIUM_TRIP_TIME_PERIODS.DAY;
+}
+
+/**
+ * Uses saved trip evidence first, then GPS solar context, then the local clock
+ * fallback used by the formatted trip time.
+ * @param {string|number|Date|Record<string, any>|null|undefined} tripOrStartTime
+ * @param {Record<string, any>} [nightSettings]
+ */
+export function getPremiumTripTimePresentation(tripOrStartTime, nightSettings = {}) {
+  const trip = isPlainTripRecord(tripOrStartTime)
+    ? /** @type {Record<string, any>} */ (tripOrStartTime)
+    : null;
+  const startTime = trip ? trip.start_time : tripOrStartTime;
+  const date = startTime instanceof Date ? startTime : new Date(startTime || 0);
+  const hour = Number.isFinite(date.getTime()) ? date.getHours() : 12;
+  let period = getClockTimePeriod(hour);
+
+  if (trip && Number.isFinite(date.getTime())) {
+    if (trip.night_driving === true) {
+      period = PREMIUM_TRIP_TIME_PERIODS.NIGHT;
+    } else {
+      period = getConfiguredTimePeriod(date, representativeTripCoordinate(trip), nightSettings);
+      if (trip.night_driving === false && period === PREMIUM_TRIP_TIME_PERIODS.NIGHT) {
+        period = hour < 12 ? PREMIUM_TRIP_TIME_PERIODS.DAWN : PREMIUM_TRIP_TIME_PERIODS.DUSK;
+      }
+    }
+  }
 
   return { ...TIME_PRESENTATIONS[period], hour, period };
 }
@@ -109,6 +269,41 @@ export function getPremiumTripEventCount(trip = {}) {
     + (Number(trip.sharp_turns_count) || 0)
     + (Number(trip.speeding_events_count) || 0)
     + getConfirmedPhoneUseCount(trip);
+}
+
+/**
+ * Selects situational Trip Detail artwork from live trip evidence. Neutral
+ * fact cards stay stable; identity, score, and behavior surfaces can react to
+ * time of day and meaningful risk/evidence changes.
+ * @param {Record<string, any>} trip
+ * @param {Record<string, any>} [nightSettings]
+ */
+export function getPremiumTripDetailPresentation(trip = {}, nightSettings = {}) {
+  const time = getPremiumTripTimePresentation(trip, nightSettings);
+  const score = getPremiumTripScorePresentation(getTripComponentScore(trip, 'overall').value);
+  const eventCount = getPremiumTripEventCount(trip);
+  const proximityCount = Math.max(0, Number(trip.close_proximity_count) || 0);
+  const scene = getPremiumTripSceneVariant(time.period, score.tone, {
+    aggressive: ['assertive', 'aggressive'].includes(String(trip.aggressive_grade || '').toLowerCase()),
+    distanceKm: trip.distance_km,
+    eventCount,
+    proximityCount,
+  });
+  const behaviorTone = proximityCount > 0 ||
+    ['poor', 'risky'].includes(score.tone) ||
+    scene === 'dusk-risk'
+    ? 'risk'
+    : eventCount > 0 || score.tone === 'fair'
+      ? 'attention'
+      : 'calm';
+
+  return {
+    behaviorTone,
+    eventCount,
+    scene,
+    scoreTone: score.tone,
+    timePeriod: time.period,
+  };
 }
 
 /**

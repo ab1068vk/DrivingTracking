@@ -76,7 +76,7 @@ Design rules:
 - No decorative card wall.
 - Prefer fixed toolbar, left rail, inspector pane, bottom timeline region.
 - Use existing Tailwind tokens, but the tracking shell may have its own CSS classes in `src/index.css`.
-- Avoid one-note neon/cyber styling even though `.cyber-lab` exists. This mode should feel like a clear technical console, not a theme gimmick.
+- Avoid one-note neon styling. This mode should feel like a clear technical console, not a theme gimmick.
 
 Acceptance criteria:
 

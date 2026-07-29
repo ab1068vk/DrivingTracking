@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { Children } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import PremiumReadyToDriveCard, { buildTripLaunchStatus } from '@/components/PremiumReadyToDriveCard';
 
@@ -8,6 +9,18 @@ const actions = {
   onStartPrivateTrip: vi.fn(),
   onStartTrip: vi.fn(),
 };
+
+function findByClassName(node, className) {
+  if (!node || typeof node !== 'object') return null;
+  if (node.props?.className === className) return node;
+
+  for (const child of Children.toArray(node.props?.children)) {
+    const match = findByClassName(child, className);
+    if (match) return match;
+  }
+
+  return null;
+}
 
 describe('buildTripLaunchStatus', () => {
   it('summarizes the live manual tracking checks', () => {
@@ -48,13 +61,39 @@ describe('PremiumReadyToDriveCard', () => {
     expect(html).toContain('Start a new trip');
     expect(html).toContain('Tap to begin tracking your route');
     expect(html).toContain('aria-label="Start trip"');
-    expect(html).toContain('premium-ready-hero-v2.png');
+    expect(html).toContain('premium-ready-city-hero-v6.png');
+    expect(html).toContain('premium-ready-start-generated-v1.png');
     expect(html).toContain('Start Private Trip');
-    expect(html).toContain('Privacy mode');
-    expect(html).toContain('premium-ready-private-v2.png');
+    expect(html).not.toContain('Privacy mode');
+    expect(html).toContain('premium-ready-private-v6.png');
+    expect(html).toContain('premium-ready-private-shield-generated-v1.png');
+    expect(html).toContain('premium-ready-private-control-generated-v1.png');
     expect(html).toContain('Save distance and duration only.');
     expect(html).toContain('No route, addresses, events, or score.');
     expect(html).not.toContain('Manual background setup needed');
+  });
+
+  it('keeps both visible launcher buttons wired to their real trip actions', () => {
+    const onStartTrip = vi.fn();
+    const onStartPrivateTrip = vi.fn();
+    const tree = PremiumReadyToDriveCard({
+      ...actions,
+      onStartTrip,
+      onStartPrivateTrip,
+    });
+    const startButton = findByClassName(tree, 'premium-ready-start');
+    const privateButton = findByClassName(tree, 'premium-ready-private');
+
+    expect(startButton?.type).toBe('button');
+    expect(privateButton?.type).toBe('button');
+    expect(startButton?.props.disabled).toBe(false);
+    expect(privateButton?.props.disabled).toBe(false);
+
+    startButton.props.onClick();
+    privateButton.props.onClick();
+
+    expect(onStartTrip).toHaveBeenCalledOnce();
+    expect(onStartPrivateTrip).toHaveBeenCalledOnce();
   });
 
   it('renders real Android permission states and preserves setup controls', () => {
@@ -71,7 +110,7 @@ describe('PremiumReadyToDriveCard', () => {
     expect(html).toContain('2 of 3 checks ready');
     expect(html).toContain('Manual background setup needed');
     expect(html).toContain('Action required');
-    expect(html).toContain('premium-ready-manual-v2.png');
+    expect(html).toContain('premium-ready-systems-v6.png');
     expect(html).toContain('Location</span><small>Ready');
     expect(html).toContain('Background</span><small>Needed');
     expect(html).toContain('Notifications</span><small>Ready');

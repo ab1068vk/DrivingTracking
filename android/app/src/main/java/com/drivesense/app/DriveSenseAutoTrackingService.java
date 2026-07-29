@@ -43,6 +43,7 @@ import org.json.JSONObject;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -69,6 +70,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final int NOTIF_ID_POSSIBLE_INCIDENT = 4011;
     private static final int NIGHT_START_HOUR = 22;
     private static final int NIGHT_END_HOUR = 5;
+    private static final String NIGHT_DETECTION_MODE_SUNSET = "sunset";
+    private static final String NIGHT_DETECTION_MODE_CUSTOM = "custom";
+    private static final String DEFAULT_NIGHT_START_TIME = "22:00";
+    private static final String DEFAULT_NIGHT_END_TIME = "05:00";
+    private static final double SUN_ZENITH_DEGREES = 90.833d;
     private static final String CHANNEL_ID = "drivesense_native_auto_tracking";
     private static final String AUTO_STATUS_CHANNEL_ID = "drivesense_auto_status";
     private static final int MIN_VEHICLE_CONFIDENCE = 65;
@@ -113,6 +119,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
     private static final String SETTINGS_KEY = "drivesense_settings";
     private static final String SPEED_KNOWLEDGE_KEY = "speed_knowledge_v1";
+    private static final String DANGER_ZONES_KEY = "drivesense_danger_zones";
+    private static final String COACH_PROGRAM_KEY = "drivesense_coach_programs_v1";
     private static final String GEOHASH_BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
     private static final int SPEED_KNOWLEDGE_GEOHASH_PRECISION = 6;
     private static final double SPEED_KNOWLEDGE_MATCH_RADIUS_KM = 0.8d;
@@ -133,6 +141,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final long PHONE_WINDOW_COUNT_COOLDOWN_MS = 15_000L;
     private static final long LIVE_NOTIFICATION_MIN_INTERVAL_MS = 10_000L;
     private static final long LIVE_STATUS_MIN_INTERVAL_MS = 2_000L;
+    private static final long ACTIVE_CHECKPOINT_INTERVAL_MS = 60_000L;
+    private static final long ACTIVE_CHECKPOINT_RESUME_WINDOW_MS = 10 * 60_000L;
     private static final int MAX_LIVE_TELEMETRY_EVENTS = 40;
     private static final int MAX_LIVE_ROUTE_PREVIEW_POINTS = 160;
     private static final long STATS_MAX_SAMPLE_GAP_SECONDS = 120L;
@@ -144,6 +154,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final long SPEED_ALERT_ESTIMATED_COOLDOWN_MS = 90_000L;
     private static final long SPEED_ALERT_INFERRED_COOLDOWN_MS = 180_000L;
     private static final long TRACKING_READY_ALERT_RETRY_MS = 10_000L;
+    private static final long COACH_BRIEF_MIN_DELAY_MS = 12_000L;
+    private static final long COACH_BRIEF_MAX_DELAY_MS = 5 * 60_000L;
+    private static final long DANGER_ZONE_ALERT_COOLDOWN_MS = 60_000L;
+    private static final double DANGER_ZONE_ALERT_RADIUS_M = 300.0d;
     private static final long MANOEUVRE_ALERT_COOLDOWN_MS = 30_000L;
     private static final long CLOSE_MANOEUVRE_ALERT_COOLDOWN_MS = 120_000L;
     private static final long STOP_START_ALERT_COOLDOWN_MS = 60_000L;
@@ -206,6 +220,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private long lastNativePhoneWindowMs = 0L;
     private long lastLiveNotificationMs = 0L;
     private long lastLiveStatusMs = 0L;
+    private long lastActiveCheckpointMs = 0L;
+    private long checkpointRecoveryEndOverrideMs = 0L;
     private DriveSenseSpeechController speechController;
     private long speedingSinceMs = 0L;
     private long lastSpeedAlertMs = 0L;
@@ -222,10 +238,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private boolean trackingReadyAlertSpoken = false;
     private boolean trackingReadyAlertPending = false;
     private long lastTrackingReadyAlertAttemptMs = 0L;
+    private boolean coachBriefAlertSpoken = false;
+    private boolean coachBriefAlertPending = false;
+    private long lastDangerZoneAlertMs = 0L;
     private String nativeAutoStartReason = "";
     private String lastNativeAutoStopReason = "";
     private String nativeTripStartSource = "native_auto";
     private String nativeManualTripId = "";
+    private String nativeRecoveryTripId = "";
     private boolean candidateTrip = false;
     private boolean candidateNearParked = false;
     private boolean nativeManualTrip = false;
@@ -277,6 +297,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 }
             }
         };
+        restoreActiveTripCheckpointIfAvailable();
     }
 
     @Override
@@ -655,11 +676,16 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         lastNativePhoneWindowMs = 0L;
         lastLiveNotificationMs = 0L;
         lastLiveStatusMs = 0L;
+        lastActiveCheckpointMs = 0L;
+        checkpointRecoveryEndOverrideMs = 0L;
         resetNativeAlertState();
         nativeAutoStartReason = "manual_button";
         lastNativeAutoStopReason = "";
         nativeTripStartSource = "native_manual";
         nativeManualTripId = tripId == null ? "" : tripId.trim();
+        nativeRecoveryTripId = nativeManualTripId.isEmpty()
+            ? DriveSenseNativeTripStore.newTripId()
+            : nativeManualTripId;
         nativeManualTrip = true;
         candidateTrip = false;
         candidateNearParked = false;
@@ -702,11 +728,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         lastNativePhoneWindowMs = 0L;
         lastLiveNotificationMs = 0L;
         lastLiveStatusMs = 0L;
+        lastActiveCheckpointMs = 0L;
+        checkpointRecoveryEndOverrideMs = 0L;
         resetNativeAlertState();
         nativeAutoStartReason = reason;
         lastNativeAutoStopReason = "";
         nativeTripStartSource = "native_auto";
         nativeManualTripId = "";
+        nativeRecoveryTripId = DriveSenseNativeTripStore.newTripId();
         nativeManualTrip = false;
         candidateTrip = true;
         candidateNearParked = isInParkingCooldown(triggerLocation);
@@ -1084,13 +1113,17 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         nativeManualTrip = false;
         nativeTripStartSource = "native_auto";
         nativeManualTripId = "";
+        nativeRecoveryTripId = "";
         candidateConfirmedMs = 0L;
         lastLiveNotificationMs = 0L;
         lastLiveStatusMs = 0L;
+        lastActiveCheckpointMs = 0L;
+        checkpointRecoveryEndOverrideMs = 0L;
         resetNativeAlertState();
         recentHeadings.clear();
         nativeHeadingDriftWindow.clear();
         resetMotionState();
+        DriveSenseActiveTripCheckpointStore.clear(this);
         stopMotionSensors();
         stopLocationUpdates();
         if (keepArmed && DriveSenseNativeTripStore.isServiceEnabled(this)) {
@@ -1154,7 +1187,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             if (!isTripActive() || candidateTrip) return;
         }
 
-        long endMs = System.currentTimeMillis();
+        long endMs = checkpointRecoveryEndOverrideMs > 0L
+            ? checkpointRecoveryEndOverrideMs
+            : System.currentTimeMillis();
+        checkpointRecoveryEndOverrideMs = 0L;
+        persistActiveTripCheckpoint(endMs, true);
         JSONArray points = activePoints;
         JSONArray timeline = activeTimeline != null ? activeTimeline : new JSONArray();
         JSONArray motionSamples = activeMotionSamples != null ? activeMotionSamples : new JSONArray();
@@ -1168,6 +1205,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             : nativeTripStartSource;
         boolean completedManualTrip = nativeManualTrip;
         String completedManualTripId = nativeManualTripId == null ? "" : nativeManualTripId;
+        String completedRecoveryTripId = nativeRecoveryTripId == null ? "" : nativeRecoveryTripId;
         long stoppedSeconds = stillSinceMs > 0L ? Math.max(0L, (endMs - stillSinceMs) / 1000L) : 0L;
         lastNativeAutoStopReason = reason;
         recordTimeline("ending_review", "Ending review started.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
@@ -1201,8 +1239,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         nativeManualTrip = false;
         nativeTripStartSource = "native_auto";
         nativeManualTripId = "";
+        nativeRecoveryTripId = "";
         lastLiveNotificationMs = 0L;
         lastLiveStatusMs = 0L;
+        lastActiveCheckpointMs = 0L;
         resetNativeAlertState();
         recentHeadings.clear();
         nativeHeadingDriftWindow.clear();
@@ -1216,6 +1256,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
         TripStats stats = calculateStats(points, startMs, endMs);
         if (points.length() < MIN_POINTS_TO_SAVE || stats.durationSeconds < MIN_TRIP_MS / 1000L || stats.distanceKm < MIN_TRIP_KM) {
+            DriveSenseActiveTripCheckpointStore.clear(this);
             recordDiagnostic("trip_discarded", "Native trip was too short to save.", reason, 0d, stoppedSeconds, 0d);
             return;
         }
@@ -1223,7 +1264,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         JSONObject trip = new JSONObject();
         String tripId = completedManualTrip && !completedManualTripId.trim().isEmpty()
             ? completedManualTripId
-            : DriveSenseNativeTripStore.newTripId();
+            : !completedRecoveryTripId.trim().isEmpty()
+                ? completedRecoveryTripId
+                : DriveSenseNativeTripStore.newTripId();
         try {
             JSONObject phoneUsage = DriveSensePhoneUsageTracker.queryTripUsage(this, startMs, endMs);
             trip.put("id", tripId);
@@ -1293,7 +1336,28 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             trip.put("updated_at", iso(endMs));
         } catch (JSONException ignored) {}
 
-        DriveSenseNativeTripStore.addCompletedTrip(this, trip);
+        boolean completedTripSaved = DriveSenseNativeTripStore.addCompletedTrip(this, trip);
+        if (!completedTripSaved) {
+            recordDiagnostic(
+                "trip_save_failed",
+                "Native trip ended but could not be queued for app recovery.",
+                reason,
+                stats.maxSpeedKmh,
+                stoppedSeconds,
+                maxDriftSinceStopM
+            );
+            updateNotification("Trip save failed - open Road Sage");
+            return;
+        }
+        recordDiagnostic(
+            "trip_saved",
+            "Native trip safely queued for app import.",
+            reason,
+            stats.maxSpeedKmh,
+            stoppedSeconds,
+            maxDriftSinceStopM
+        );
+        DriveSenseActiveTripCheckpointStore.clear(this);
         JSONObject rawParkingEndpoint = points.optJSONObject(points.length() - 1);
         boolean privateParkingEndpoint = rawParkingEndpoint != null && PrivacyZoneChecker.isInsidePrivacyZone(
             this,
@@ -1330,6 +1394,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         stats.wallClockDurationSeconds = Math.max(0L, (endMs - startMs) / 1000L);
         stats.durationSeconds = stats.wallClockDurationSeconds;
         if (points == null || points.length() < 2) return stats;
+        NightSettings nightSettings = readNightSettings();
+        stats.nightDriving = isTripNightDriving(points, nightSettings);
 
         for (int i = 1; i < points.length(); i++) {
             JSONObject prev = points.optJSONObject(i - 1);
@@ -1369,7 +1435,6 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             if (speed >= STATIONARY_SPEED_KMH) stats.movingSeconds += dt;
             else stats.idleSeconds += dt;
 
-            if (isNightDrivingEpochMs(currMs)) stats.nightDriving = true;
         }
 
         JSONObject last = points.optJSONObject(points.length() - 1);
@@ -1568,7 +1633,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             maxDriftSinceStopM
         );
         sendPossibleIncidentNotification(emergencyWorkflow);
-        if (isSettingEnabled("voice_alerts_enabled", true)) {
+        if (isNativeVoiceAlertTypeEnabled("possible_incident")) {
             speakNativeAlert(workflowBody, true);
         }
         updateNotification(emergencyWorkflow ? "Possible incident - open Road Sage to check in" : "Possible incident signal recorded");
@@ -1848,6 +1913,39 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         });
     }
 
+    private boolean isNativeVoiceAlertTypeEnabled(String alertKey) {
+        if (!isSettingEnabled("voice_alerts_enabled", true)) return false;
+        String key = alertKey == null ? "" : alertKey.trim().toLowerCase(Locale.US);
+        if (key.startsWith("speeding")) {
+            return isSettingEnabled("voice_speed_alerts_enabled", true);
+        }
+        if (
+            key.equals("harsh_brake") ||
+            key.equals("rapid_accel") ||
+            key.equals("sharp_cornering") ||
+            key.equals("close_manoeuvre") ||
+            key.equals("stop_start_pattern") ||
+            key.equals("repeated_event_area")
+        ) {
+            return isSettingEnabled("voice_driving_event_alerts_enabled", true);
+        }
+        if (
+            key.equals("phone_use") ||
+            key.equals("heading_drift") ||
+            key.equals("possible_incident")
+        ) {
+            return isSettingEnabled("voice_attention_incident_alerts_enabled", true);
+        }
+        if (
+            key.startsWith("coach_program") ||
+            key.equals("fatigue") ||
+            key.equals("idle")
+        ) {
+            return isSettingEnabled("voice_coaching_reminder_alerts_enabled", true);
+        }
+        return true;
+    }
+
     private void recordNativeVoiceAlertAccepted(String text) {
         recordDiagnostic(
             "voice_alert_spoken",
@@ -1861,7 +1959,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     private String nativeVoiceAlertReason(String text) {
         String message = text == null ? "" : text.trim();
-        if (message.startsWith("Road Sage is tracking")) return "tracking_ready";
+        if (message.startsWith("Road Sage is tracking") || message.startsWith("Recording active.")) return "tracking_ready";
+        if (message.startsWith("Today's focus is")) return "coach_program_brief";
+        if (
+            message.startsWith("Repeated event area") ||
+            (message.startsWith("Repeated ") && message.contains(" area "))
+        ) {
+            return "repeated_event_area";
+        }
         if (message.startsWith("Speed warning.")) return "posted_speed_warning";
         if (message.startsWith("Speed check.")) return "estimated_speed_check";
         if (message.startsWith("Long drive reminder.")) return "long_drive";
@@ -1933,6 +2038,142 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         }
     }
 
+    @Nullable
+    private String nativeActiveCoachBriefMessage() {
+        try {
+            String raw = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE)
+                .getString(COACH_PROGRAM_KEY, null);
+            if (raw == null || raw.trim().isEmpty()) return null;
+            JSONObject active = new JSONObject(raw).optJSONObject("active");
+            if (active == null || !"active".equals(active.optString("status", ""))) return null;
+            switch (active.optString("focusId", "")) {
+                case "harsh_brakes":
+                    return "Today's focus is progressive braking. Lift early and build pressure smoothly.";
+                case "rapid_accel":
+                    return "Today's focus is smooth acceleration. Build throttle over three seconds.";
+                case "sharp_turns":
+                    return "Today's focus is cleaner turns. Set speed before steering.";
+                case "speeding":
+                    return "Today's focus is speed discipline. Settle below the alert threshold.";
+                case "phone_use":
+                    return "Today's focus is a phone-clear drive. Keep the phone out of reach.";
+                case "fatigue":
+                    return "Today's focus is alertness. Take a break before fatigue builds.";
+                case "consistency":
+                    return "Today's focus is repeating your strongest measured drive setup.";
+                default:
+                    return null;
+            }
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private void speakNativeCoachBriefOnce(long now, boolean voiceAlertsEnabled) {
+        if (
+            coachBriefAlertSpoken ||
+            coachBriefAlertPending ||
+            !voiceAlertsEnabled ||
+            !isNativeVoiceAlertTypeEnabled("coach_program_brief") ||
+            !isSettingEnabled("live_coaching_enabled", true) ||
+            activeStartMs <= 0L
+        ) {
+            return;
+        }
+        long tripAgeMs = now - activeStartMs;
+        if (tripAgeMs < COACH_BRIEF_MIN_DELAY_MS || tripAgeMs > COACH_BRIEF_MAX_DELAY_MS) return;
+        String message = nativeActiveCoachBriefMessage();
+        if (message == null || message.trim().isEmpty()) return;
+        coachBriefAlertPending = true;
+        speakNativeAlert(
+            message,
+            false,
+            () -> {
+                coachBriefAlertSpoken = true;
+                coachBriefAlertPending = false;
+            },
+            () -> coachBriefAlertPending = false
+        );
+    }
+
+    private String nativeRepeatedEventAreaMessage(String dominantType, double distanceM) {
+        String eventType = dominantType == null || dominantType.trim().isEmpty()
+            ? "risk event"
+            : dominantType.trim().replace('_', ' ');
+        if (isTechnicalVoiceAlertStyle()) {
+            return String.format(
+                Locale.US,
+                "Repeated event area ahead: %s, %d meters.",
+                eventType,
+                Math.round(distanceM)
+            );
+        }
+        return String.format(
+            Locale.US,
+            "Repeated %s area %d meters ahead. Ease off and leave extra room.",
+            eventType,
+            Math.round(distanceM)
+        );
+    }
+
+    private void evaluateRepeatedEventAreaAlert(Location location, long now, boolean voiceAlertsEnabled) {
+        if (
+            !voiceAlertsEnabled ||
+            !isNativeVoiceAlertTypeEnabled("repeated_event_area") ||
+            !isSettingEnabled("danger_zone_alerts_enabled", true) ||
+            now - lastDangerZoneAlertMs < DANGER_ZONE_ALERT_COOLDOWN_MS ||
+            PrivacyZoneChecker.isInsidePrivacyZone(this, location.getLatitude(), location.getLongitude())
+        ) {
+            return;
+        }
+        try {
+            String raw = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE)
+                .getString(DANGER_ZONES_KEY, null);
+            if (raw == null || raw.trim().isEmpty()) return;
+            JSONArray zones = new JSONArray(raw);
+            JSONObject nearest = null;
+            double nearestDistanceM = Double.POSITIVE_INFINITY;
+            for (int i = 0; i < zones.length(); i++) {
+                JSONObject zone = zones.optJSONObject(i);
+                if (zone == null) continue;
+                double zoneLat = zone.optDouble("lat", Double.NaN);
+                double zoneLng = zone.optDouble("lng", Double.NaN);
+                if (!Double.isFinite(zoneLat) || !Double.isFinite(zoneLng)) continue;
+                double distanceM = haversineKm(
+                    location.getLatitude(),
+                    location.getLongitude(),
+                    zoneLat,
+                    zoneLng
+                ) * 1000d;
+                if (distanceM <= DANGER_ZONE_ALERT_RADIUS_M && distanceM < nearestDistanceM) {
+                    nearest = zone;
+                    nearestDistanceM = distanceM;
+                }
+            }
+            if (nearest == null) return;
+            String dominantType = nearest.optString("dominantType", "risk event");
+            String message = nativeRepeatedEventAreaMessage(dominantType, nearestDistanceM);
+            recordLiveTelemetryEvent(
+                "repeated_event_area",
+                "Repeated event area approached",
+                nearestDistanceM,
+                "m",
+                now
+            );
+            lastDangerZoneAlertMs = now;
+            speakNativeAlert(message, false, () -> lastDangerZoneAlertMs = now);
+        } catch (Exception error) {
+            recordDiagnostic(
+                "danger_zone_alert_failed",
+                "Repeated event area data could not be evaluated.",
+                error.getMessage() == null ? "invalid_danger_zone_data" : error.getMessage(),
+                lastKnownSpeedKmh,
+                0L,
+                0d
+            );
+        }
+    }
+
     private String nativeSpeedAlertMessage(double speedKmh, double speedLimitKmh, boolean postedLimit, boolean estimatedLimit) {
         boolean technical = isTechnicalVoiceAlertStyle();
         if (technical) {
@@ -1971,7 +2212,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private void speakTrackingReadyOnce() {
-        if (trackingReadyAlertSpoken || !isSettingEnabled("voice_alerts_enabled", true)) return;
+        if (trackingReadyAlertSpoken || !isSettingEnabled("trip_start_voice_alert_enabled", true)) return;
         long now = System.currentTimeMillis();
         if (trackingReadyAlertPending || now - lastTrackingReadyAlertAttemptMs < TRACKING_READY_ALERT_RETRY_MS) return;
         trackingReadyAlertPending = true;
@@ -2002,7 +2243,6 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         double speedKmh
     ) {
         boolean voiceAlertsEnabled = isSettingEnabled("voice_alerts_enabled", true);
-        if (!voiceAlertsEnabled && speechController != null) speechController.stop();
 
         long now = System.currentTimeMillis();
         NativeSpeedLimit localSpeedLimit = resolveLocalSpeedLimit(
@@ -2021,7 +2261,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             ? getSettingDouble("estimated_voice_margin_kmh", 12.0d)
             : postedLimit
                 ? getSettingDouble("threshold_speed_over_kmh", 5.0d)
-                : getSettingDouble("inferred_voice_margin_kmh", 20.0d);
+                : getSettingDouble("estimated_voice_margin_kmh", 12.0d);
         boolean sourceVoiceAllowed = postedLimit
             ? isSettingEnabled("speak_posted_speed_warnings", true)
             : estimatedLimit
@@ -2041,7 +2281,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 String message = nativeSpeedAlertMessage(speedKmh, speedLimitKmh, postedLimit, estimatedLimit);
                 recordLiveTelemetryEvent("speed_threshold", "Speed threshold exceeded", speedKmh - speedLimitKmh, "km/h", now);
                 lastSpeedAlertMs = now;
-                if (voiceAlertsEnabled && sourceVoiceAllowed) speakNativeAlert(message, true, () -> lastSpeedAlertMs = now);
+                if (voiceAlertsEnabled && sourceVoiceAllowed && isNativeVoiceAlertTypeEnabled("speeding")) {
+                    speakNativeAlert(message, true, () -> lastSpeedAlertMs = now);
+                }
             }
         } else {
             speedingSinceMs = 0L;
@@ -2055,15 +2297,22 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             now - lastFatigueAlertMs >= FATIGUE_ALERT_COOLDOWN_MS) {
             recordLiveTelemetryEvent("long_drive", "Long-drive threshold exceeded", (now - activeStartMs) / 60_000d, "min", now);
             lastFatigueAlertMs = now;
-            if (voiceAlertsEnabled) speakNativeAlert(nativeAlertMessage("fatigue"), false, () -> lastFatigueAlertMs = now);
+            if (isNativeVoiceAlertTypeEnabled("fatigue")) {
+                speakNativeAlert(nativeAlertMessage("fatigue"), false, () -> lastFatigueAlertMs = now);
+            }
         }
 
         if (stillSinceMs > 0L && now - stillSinceMs >= 5 * 60_000L &&
             now - lastIdleAlertMs >= IDLE_ALERT_COOLDOWN_MS) {
             recordLiveTelemetryEvent("extended_stop", "Extended stop recorded", (now - stillSinceMs) / 1000d, "s", now);
             lastIdleAlertMs = now;
-            if (voiceAlertsEnabled) speakNativeAlert(nativeAlertMessage("idle"), false, () -> lastIdleAlertMs = now);
+            if (isNativeVoiceAlertTypeEnabled("idle")) {
+                speakNativeAlert(nativeAlertMessage("idle"), false, () -> lastIdleAlertMs = now);
+            }
         }
+
+        speakNativeCoachBriefOnce(now, voiceAlertsEnabled);
+        evaluateRepeatedEventAreaAlert(location, now, voiceAlertsEnabled);
 
         if (priorLocation == null) return;
         long priorMs = priorLocation.getTime();
@@ -2092,14 +2341,18 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             now - lastCloseManoeuvreAlertMs >= CLOSE_MANOEUVRE_ALERT_COOLDOWN_MS) {
             recordLiveTelemetryEvent("close_manoeuvre", "Combined braking and steering event recorded", accelerationMs2, "m/s²", now);
             lastCloseManoeuvreAlertMs = now;
-            if (voiceAlertsEnabled) speakNativeAlert(nativeAlertMessage("close_manoeuvre"), false, () -> lastCloseManoeuvreAlertMs = now);
+            if (isNativeVoiceAlertTypeEnabled("close_manoeuvre")) {
+                speakNativeAlert(nativeAlertMessage("close_manoeuvre"), false, () -> lastCloseManoeuvreAlertMs = now);
+            }
             return;
         }
         if (recordStopStartCycle(now, priorSpeedKmh, speedKmh, accelerationMs2) &&
             now - lastStopStartAlertMs >= STOP_START_ALERT_COOLDOWN_MS) {
             recordLiveTelemetryEvent("stop_start_pattern", "Stop/start pattern recorded", stopStartCycleCount, "cycles", now);
             lastStopStartAlertMs = now;
-            if (voiceAlertsEnabled) speakNativeAlert(nativeAlertMessage("stop_start_pattern"), false, () -> lastStopStartAlertMs = now);
+            if (isNativeVoiceAlertTypeEnabled("stop_start_pattern")) {
+                speakNativeAlert(nativeAlertMessage("stop_start_pattern"), false, () -> lastStopStartAlertMs = now);
+            }
             stopStartCycleCount = 0;
             stopStartWindowStartMs = now;
             return;
@@ -2109,7 +2362,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             now - lastHarshBrakeAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
             recordLiveTelemetryEvent("harsh_brake", "Braking threshold exceeded", accelerationMs2, "m/s²", now);
             lastHarshBrakeAlertMs = now;
-            if (voiceAlertsEnabled) speakNativeAlert(nativeAlertMessage("harsh_brake"), false, () -> lastHarshBrakeAlertMs = now);
+            if (isNativeVoiceAlertTypeEnabled("harsh_brake")) {
+                speakNativeAlert(nativeAlertMessage("harsh_brake"), false, () -> lastHarshBrakeAlertMs = now);
+            }
             return;
         }
         if (accelerationMs2 >= rapidAccelThreshold &&
@@ -2117,7 +2372,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             now - lastRapidAccelAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
             recordLiveTelemetryEvent("rapid_acceleration", "Acceleration threshold exceeded", accelerationMs2, "m/s²", now);
             lastRapidAccelAlertMs = now;
-            if (voiceAlertsEnabled) speakNativeAlert(nativeAlertMessage("rapid_accel"), false, () -> lastRapidAccelAlertMs = now);
+            if (isNativeVoiceAlertTypeEnabled("rapid_accel")) {
+                speakNativeAlert(nativeAlertMessage("rapid_accel"), false, () -> lastRapidAccelAlertMs = now);
+            }
             return;
         }
 
@@ -2130,7 +2387,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             now - lastCorneringAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
             recordLiveTelemetryEvent("sharp_cornering", "Cornering threshold exceeded", lateralG, "g", now);
             lastCorneringAlertMs = now;
-            if (voiceAlertsEnabled) speakNativeAlert(nativeAlertMessage("sharp_cornering"), false, () -> lastCorneringAlertMs = now);
+            if (isNativeVoiceAlertTypeEnabled("sharp_cornering")) {
+                speakNativeAlert(nativeAlertMessage("sharp_cornering"), false, () -> lastCorneringAlertMs = now);
+            }
             return;
         }
 
@@ -2139,7 +2398,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             now - lastHeadingDriftAlertMs >= HEADING_DRIFT_ALERT_COOLDOWN_MS) {
             recordLiveTelemetryEvent("heading_pattern", "Heading pattern recorded", headingDriftThreshold, "°", now);
             lastHeadingDriftAlertMs = now;
-            if (voiceAlertsEnabled) speakNativeAlert(nativeAlertMessage("heading_drift"), false, () -> lastHeadingDriftAlertMs = now);
+            if (isNativeVoiceAlertTypeEnabled("heading_drift")) {
+                speakNativeAlert(nativeAlertMessage("heading_drift"), false, () -> lastHeadingDriftAlertMs = now);
+            }
         }
     }
 
@@ -2537,6 +2798,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         trackingReadyAlertSpoken = false;
         trackingReadyAlertPending = false;
         lastTrackingReadyAlertAttemptMs = 0L;
+        coachBriefAlertSpoken = false;
+        coachBriefAlertPending = false;
+        lastDangerZoneAlertMs = 0L;
     }
 
     private double signedHeadingDiff(double h1, double h2) {
@@ -2772,6 +3036,168 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         return builder.build();
     }
 
+    private void restoreActiveTripCheckpointIfAvailable() {
+        long nowMs = System.currentTimeMillis();
+        JSONObject checkpoint = DriveSenseActiveTripCheckpointStore.load(this, nowMs);
+        if (checkpoint == null) return;
+
+        String checkpointTripId = checkpoint.optString("trip_id", "").trim();
+        if (DriveSenseNativeTripStore.hasCompletedTrip(this, checkpointTripId)) {
+            DriveSenseActiveTripCheckpointStore.clear(this);
+            return;
+        }
+
+        JSONArray checkpointPoints = checkpoint.optJSONArray("route_points");
+        if (checkpointPoints == null || checkpointPoints.length() < 2) {
+            DriveSenseActiveTripCheckpointStore.clear(this);
+            return;
+        }
+
+        activeStartMs = checkpoint.optLong("start_time_ms", 0L);
+        activePoints = checkpointPoints;
+        activeTimeline = checkpoint.optJSONArray("timeline");
+        if (activeTimeline == null) activeTimeline = new JSONArray();
+        activeMotionSamples = new JSONArray();
+        activeIncidentEvents = checkpoint.optJSONArray("incident_events");
+        if (activeIncidentEvents == null) activeIncidentEvents = new JSONArray();
+        activeTelemetryEvents = new JSONArray();
+        hasPermissionLoss = checkpoint.optBoolean("permission_loss", false);
+        previousLocation = null;
+        armedPreviousLocation = null;
+        armedMovingSinceMs = 0L;
+        stillSinceMs = checkpoint.optLong("still_since_ms", 0L);
+        if (stillSinceMs < activeStartMs || stillSinceMs > nowMs) stillSinceMs = 0L;
+        nonVehicleSinceMs = 0L;
+        lastKnownSpeedKmh = Math.max(0d, checkpoint.optDouble("last_speed_kmh", 0d));
+        lastLocationMs = checkpoint.optLong("last_location_ms", 0L);
+        stoppedAnchorLat = Double.NaN;
+        stoppedAnchorLng = Double.NaN;
+        maxDriftSinceStopM = 0.0d;
+        nativeMicroSteerCount = Math.max(0, checkpoint.optInt("native_phone_proxy_count", 0));
+        lastNativeProxyWindowMs = 0L;
+        lastNativePhoneWindowMs = 0L;
+        lastLiveNotificationMs = 0L;
+        lastLiveStatusMs = 0L;
+        lastActiveCheckpointMs = checkpoint.optLong("updated_at_ms", nowMs);
+        nativeAutoStartReason = checkpoint.optString("native_auto_start_reason", "checkpoint_recovery");
+        lastNativeAutoStopReason = "";
+        nativeTripStartSource = checkpoint.optString("start_source", "native_auto");
+        nativeManualTripId = checkpoint.optString("manual_trip_id", "");
+        nativeRecoveryTripId = checkpointTripId;
+        nativeManualTrip = checkpoint.optBoolean("manual", false);
+        candidateTrip = false;
+        candidateNearParked = checkpoint.optBoolean("candidate_near_parked", false);
+        candidateConfirmedMs = checkpoint.optLong("candidate_confirmed_ms", activeStartMs);
+        recentHeadings.clear();
+        nativeHeadingDriftWindow.clear();
+        resetNativeAlertState();
+        resetMotionState();
+        recordTimeline(
+            "checkpoint_recovered",
+            "Active trip recovered after Android restarted tracking.",
+            "encrypted_active_trip_checkpoint",
+            lastKnownSpeedKmh,
+            0L,
+            0d
+        );
+        recordDiagnostic(
+            "checkpoint_recovered",
+            "Active trip recovered after Android restarted tracking.",
+            "encrypted_active_trip_checkpoint",
+            lastKnownSpeedKmh,
+            0L,
+            0d
+        );
+        long checkpointAgeMs = Math.max(0L, nowMs - lastActiveCheckpointMs);
+        if (checkpointAgeMs > ACTIVE_CHECKPOINT_RESUME_WINDOW_MS) {
+            checkpointRecoveryEndOverrideMs = lastActiveCheckpointMs;
+            finishTrip("checkpoint_recovery_finalize", true);
+            return;
+        }
+        startMotionSensors();
+        startTripLocationUpdates();
+        persistActiveTripStatus(nowMs);
+    }
+
+    private void persistActiveTripCheckpoint(long nowMs, boolean force) {
+        if (
+            !isTripActive() ||
+            candidateTrip ||
+            activePoints == null ||
+            activePoints.length() < 2
+        ) {
+            return;
+        }
+        if (!force && nowMs - lastActiveCheckpointMs < ACTIVE_CHECKPOINT_INTERVAL_MS) return;
+        if (nativeRecoveryTripId == null || nativeRecoveryTripId.trim().isEmpty()) {
+            nativeRecoveryTripId = nativeManualTrip && nativeManualTripId != null && !nativeManualTripId.trim().isEmpty()
+                ? nativeManualTripId.trim()
+                : DriveSenseNativeTripStore.newTripId();
+        }
+
+        JSONObject checkpoint = new JSONObject();
+        try {
+            checkpoint.put("version", DriveSenseActiveTripCheckpointStore.VERSION);
+            checkpoint.put("trip_id", nativeRecoveryTripId);
+            checkpoint.put("start_time_ms", activeStartMs);
+            checkpoint.put("updated_at_ms", nowMs);
+            checkpoint.put("start_source", nativeTripStartSource);
+            checkpoint.put("manual", nativeManualTrip);
+            checkpoint.put("manual_trip_id", nativeManualTripId);
+            checkpoint.put("candidate_near_parked", candidateNearParked);
+            checkpoint.put("candidate_confirmed_ms", candidateConfirmedMs);
+            checkpoint.put("native_auto_start_reason", nativeAutoStartReason);
+            checkpoint.put("permission_loss", hasPermissionLoss);
+            checkpoint.put("last_speed_kmh", lastKnownSpeedKmh);
+            checkpoint.put("last_location_ms", lastLocationMs);
+            checkpoint.put("still_since_ms", stillSinceMs);
+            checkpoint.put("native_phone_proxy_count", nativeMicroSteerCount);
+            checkpoint.put("route_point_count_original", activePoints.length());
+            checkpoint.put(
+                "route_points",
+                DriveSenseActiveTripCheckpointStore.compactRoutePoints(activePoints)
+            );
+            checkpoint.put(
+                "timeline",
+                DriveSenseActiveTripCheckpointStore.compactTail(
+                    activeTimeline,
+                    DriveSenseActiveTripCheckpointStore.MAX_TIMELINE_EVENTS
+                )
+            );
+            checkpoint.put(
+                "incident_events",
+                DriveSenseActiveTripCheckpointStore.compactTail(
+                    activeIncidentEvents,
+                    DriveSenseActiveTripCheckpointStore.MAX_INCIDENT_EVENTS
+                )
+            );
+            checkpoint.put("motion_samples_omitted", true);
+        } catch (JSONException error) {
+            recordDiagnostic(
+                "checkpoint_save_failed",
+                "Active trip recovery checkpoint could not be prepared.",
+                "checkpoint_json_error",
+                lastKnownSpeedKmh,
+                0L,
+                0d
+            );
+            return;
+        }
+
+        if (DriveSenseActiveTripCheckpointStore.save(this, checkpoint)) {
+            lastActiveCheckpointMs = nowMs;
+        } else {
+            recordDiagnostic(
+                "checkpoint_save_failed",
+                "Active trip recovery checkpoint could not be saved.",
+                "checkpoint_storage_error",
+                lastKnownSpeedKmh,
+                0L,
+                0d
+            );
+        }
+    }
+
     private void persistActiveTripStatus(long nowMs) {
         if (!isTripActive()) {
             DriveSenseNativeTripStore.clearActiveTripStatus(this);
@@ -2802,7 +3228,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             status.put("candidate", candidateTrip);
             status.put("candidate_near_parked", candidateNearParked);
             status.put("manual", nativeManualTrip);
-            status.put("id", nativeManualTripId.isEmpty() ? "native_active_trip" : nativeManualTripId);
+            status.put("id", nativeRecoveryTripId.isEmpty() ? "native_active_trip" : nativeRecoveryTripId);
             status.put("start_time", iso(activeStartMs));
             status.put("start_time_ms", activeStartMs);
             status.put("start_source", nativeTripStartSource);
@@ -2877,8 +3303,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     private void persistActiveTripStatusIfDue() {
         long now = System.currentTimeMillis();
-        if (now - lastLiveStatusMs < LIVE_STATUS_MIN_INTERVAL_MS) return;
-        persistActiveTripStatus(now);
+        if (now - lastLiveStatusMs >= LIVE_STATUS_MIN_INTERVAL_MS) {
+            persistActiveTripStatus(now);
+        }
+        persistActiveTripCheckpoint(now, false);
     }
 
     private void checkAndroidUsageAccessPhoneUse(long nowMs) {
@@ -2900,7 +3328,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         lastNativePhoneWindowMs = startMs;
         if (nowMs - lastPhoneUseNotifyMs > PHONE_NOTIFY_COOLDOWN_MS) {
             sendPhoneUseWarningNotification();
-            if (isSettingEnabled("voice_alerts_enabled", true)) {
+            if (isNativeVoiceAlertTypeEnabled("phone_use")) {
                 speakNativeAlert(nativeAlertMessage("phone_use"), true);
             }
             lastPhoneUseNotifyMs = nowMs;
@@ -3109,11 +3537,165 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     static boolean isNightDrivingEpochMs(long timeMs) {
-        int hour = Instant.ofEpochMilli(timeMs).atZone(ZoneId.systemDefault()).getHour();
-        return hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR;
+        return isNightDrivingEpochMs(
+            timeMs,
+            NIGHT_START_HOUR * 60,
+            NIGHT_END_HOUR * 60
+        );
+    }
+
+    static boolean isNightDrivingEpochMs(long timeMs, int startMinutes, int endMinutes) {
+        ZonedDateTime localTime = Instant.ofEpochMilli(timeMs).atZone(ZoneId.systemDefault());
+        int minutes = localTime.getHour() * 60 + localTime.getMinute();
+        return isWithinClockWindow(minutes, startMinutes, endMinutes);
+    }
+
+    private NightSettings readNightSettings() {
+        String mode = getSettingString("night_detection_mode", NIGHT_DETECTION_MODE_SUNSET);
+        int startMinutes = parseClockMinutes(
+            getSettingString("night_start_time", DEFAULT_NIGHT_START_TIME),
+            NIGHT_START_HOUR * 60
+        );
+        int endMinutes = parseClockMinutes(
+            getSettingString("night_end_time", DEFAULT_NIGHT_END_TIME),
+            NIGHT_END_HOUR * 60
+        );
+        double sunsetOffset = getSettingDouble("night_sunset_offset_minutes", 0d);
+        double sunriseOffset = getSettingDouble("night_sunrise_offset_minutes", 0d);
+        return new NightSettings(
+            NIGHT_DETECTION_MODE_CUSTOM.equals(mode) ? NIGHT_DETECTION_MODE_CUSTOM : NIGHT_DETECTION_MODE_SUNSET,
+            startMinutes,
+            endMinutes,
+            sunsetOffset,
+            sunriseOffset
+        );
+    }
+
+    private static int parseClockMinutes(String value, int fallbackMinutes) {
+        if (value == null) return fallbackMinutes;
+        try {
+            String[] parts = value.trim().split(":");
+            if (parts.length < 2) return fallbackMinutes;
+            int hour = Integer.parseInt(parts[0]);
+            int minute = Integer.parseInt(parts[1]);
+            if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return fallbackMinutes;
+            return hour * 60 + minute;
+        } catch (NumberFormatException ignored) {
+            return fallbackMinutes;
+        }
+    }
+
+    static boolean isNightDrivingPoint(long timeMs, double lat, double lng, NightSettings settings) {
+        NightSettings resolvedSettings = settings != null
+            ? settings
+            : new NightSettings(
+                NIGHT_DETECTION_MODE_SUNSET,
+                NIGHT_START_HOUR * 60,
+                NIGHT_END_HOUR * 60,
+                0d,
+                0d
+            );
+        ZonedDateTime localTime = Instant.ofEpochMilli(timeMs).atZone(ZoneId.systemDefault());
+        int minutes = localTime.getHour() * 60 + localTime.getMinute();
+
+        if (NIGHT_DETECTION_MODE_SUNSET.equals(resolvedSettings.mode)) {
+            Double sunset = sunEventMinutes(localTime, lat, lng, false);
+            Double sunrise = sunEventMinutes(localTime, lat, lng, true);
+            if (sunset != null && sunrise != null) {
+                return isWithinClockWindow(
+                    minutes,
+                    sunset + resolvedSettings.sunsetOffsetMinutes,
+                    sunrise + resolvedSettings.sunriseOffsetMinutes
+                );
+            }
+        }
+
+        return isWithinClockWindow(minutes, resolvedSettings.startMinutes, resolvedSettings.endMinutes);
+    }
+
+    private static boolean isNightDrivingPoint(JSONObject point, long timeMs, NightSettings settings) {
+        double lat = point != null ? point.optDouble("lat", Double.NaN) : Double.NaN;
+        double lng = point != null ? point.optDouble("lng", Double.NaN) : Double.NaN;
+        return isNightDrivingPoint(timeMs, lat, lng, settings);
+    }
+
+    static boolean isTripNightDriving(JSONArray points, NightSettings settings) {
+        if (points == null) return false;
+        for (int i = 0; i < points.length(); i++) {
+            JSONObject point = points.optJSONObject(i);
+            if (point == null) continue;
+            long timeMs = parseIsoOrDefault(point.optString("timestamp"), Long.MIN_VALUE);
+            if (timeMs == Long.MIN_VALUE) continue;
+            if (isNightDrivingPoint(point, timeMs, settings)) return true;
+        }
+        return false;
+    }
+
+    private static Double sunEventMinutes(ZonedDateTime localTime, double lat, double lng, boolean sunrise) {
+        if (!Double.isFinite(lat) || !Double.isFinite(lng) || Math.abs(lat) > 89.8d || Math.abs(lng) > 180d) {
+            return null;
+        }
+
+        int dayOfYear = localTime.getDayOfYear();
+        double lngHour = lng / 15d;
+        double t = dayOfYear + (((sunrise ? 6d : 18d) - lngHour) / 24d);
+        double meanAnomaly = (0.9856d * t) - 3.289d;
+        double trueLongitude = meanAnomaly
+            + (1.916d * Math.sin(toRadians(meanAnomaly)))
+            + (0.020d * Math.sin(toRadians(2d * meanAnomaly)))
+            + 282.634d;
+        trueLongitude = normalizeDegrees(trueLongitude);
+
+        double rightAscension = Math.toDegrees(Math.atan(0.91764d * Math.tan(toRadians(trueLongitude))));
+        rightAscension = normalizeDegrees(rightAscension);
+        double longitudeQuadrant = Math.floor(trueLongitude / 90d) * 90d;
+        double ascensionQuadrant = Math.floor(rightAscension / 90d) * 90d;
+        rightAscension = (rightAscension + longitudeQuadrant - ascensionQuadrant) / 15d;
+
+        double sinDec = 0.39782d * Math.sin(toRadians(trueLongitude));
+        double cosDec = Math.cos(Math.asin(sinDec));
+        double cosHour = (
+            Math.cos(toRadians(SUN_ZENITH_DEGREES)) - (sinDec * Math.sin(toRadians(lat)))
+        ) / (cosDec * Math.cos(toRadians(lat)));
+        if (cosHour > 1d || cosHour < -1d) return null;
+
+        double hourAngle = sunrise
+            ? 360d - Math.toDegrees(Math.acos(cosHour))
+            : Math.toDegrees(Math.acos(cosHour));
+        double localMeanTime = (hourAngle / 15d) + rightAscension - (0.06571d * t) - 6.622d;
+        double utcMinutes = positiveModulo((localMeanTime - lngHour) * 60d, 24d * 60d);
+        double offsetMinutes = localTime.getOffset().getTotalSeconds() / 60d;
+        return positiveModulo(utcMinutes + offsetMinutes, 24d * 60d);
+    }
+
+    private static boolean isWithinClockWindow(double minutes, double startMinutes, double endMinutes) {
+        double dayMinutes = 24d * 60d;
+        double normalized = positiveModulo(minutes, dayMinutes);
+        double start = positiveModulo(startMinutes, dayMinutes);
+        double end = positiveModulo(endMinutes, dayMinutes);
+        if (start == end) return false;
+        return start < end
+            ? normalized >= start && normalized < end
+            : normalized >= start || normalized < end;
+    }
+
+    private static double normalizeDegrees(double value) {
+        return positiveModulo(value, 360d);
+    }
+
+    private static double positiveModulo(double value, double modulo) {
+        return ((value % modulo) + modulo) % modulo;
+    }
+
+    private static double toRadians(double value) {
+        return value * Math.PI / 180d;
     }
 
     private static long parseIso(String value) {
+        return parseIsoOrDefault(value, System.currentTimeMillis());
+    }
+
+    private static long parseIsoOrDefault(String value, long defaultValue) {
         try {
             return Instant.parse(value).toEpochMilli();
         } catch (DateTimeParseException | NullPointerException e) {
@@ -3123,7 +3705,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                     .toInstant()
                     .toEpochMilli();
             } catch (DateTimeParseException | NullPointerException ignored) {
-                return System.currentTimeMillis();
+                return defaultValue;
             }
         }
     }
@@ -3154,6 +3736,28 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         long durationSeconds = 0L;
         int speedSamples = 0;
         boolean nightDriving = false;
+    }
+
+    static class NightSettings {
+        final String mode;
+        final int startMinutes;
+        final int endMinutes;
+        final double sunsetOffsetMinutes;
+        final double sunriseOffsetMinutes;
+
+        NightSettings(
+            String mode,
+            int startMinutes,
+            int endMinutes,
+            double sunsetOffsetMinutes,
+            double sunriseOffsetMinutes
+        ) {
+            this.mode = mode;
+            this.startMinutes = startMinutes;
+            this.endMinutes = endMinutes;
+            this.sunsetOffsetMinutes = sunsetOffsetMinutes;
+            this.sunriseOffsetMinutes = sunriseOffsetMinutes;
+        }
     }
 
     private static class TailTrimResult {

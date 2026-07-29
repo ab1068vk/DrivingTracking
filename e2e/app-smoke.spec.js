@@ -45,10 +45,10 @@ test('navigates the core dashboard and settings flow', async ({ page }) => {
   await expect(page.getByRole('button', { name: /OSRM timeout and endpoint.*Speed & Road Data/i })).toBeVisible();
 });
 
-test('keeps destructive settings dialogs responsive in cyber mode', async ({ page }) => {
+test('keeps destructive settings dialogs responsive in dark mode', async ({ page }) => {
   await page.addInitScript(() => {
     const settings = JSON.parse(localStorage.getItem('drivesense_settings') || '{}');
-    localStorage.setItem('drivesense_settings', JSON.stringify({ ...settings, dark_mode: 'cyber' }));
+    localStorage.setItem('drivesense_settings', JSON.stringify({ ...settings, dark_mode: 'dark' }));
   });
   await page.goto('/settings');
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();

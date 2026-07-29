@@ -79,7 +79,7 @@ export default function TripCard({
 
   if (compact) {
     return (
-      <div className="cyber-trip-card render-lazy group relative rounded-xl border border-border bg-card p-3 transition-colors hover:border-primary/30">
+      <div className="render-lazy group relative rounded-xl border border-border bg-card p-3 transition-colors hover:border-primary/30">
         <button
           type="button"
           onPointerDown={() => onIntent?.(trip)}
@@ -87,7 +87,7 @@ export default function TripCard({
           onFocus={() => onIntent?.(trip)}
           onClick={openTrip}
           aria-label={`Open trip: ${title}`}
-          className="cyber-trip-open-target absolute inset-0 cursor-pointer rounded-xl"
+          className="absolute inset-0 cursor-pointer rounded-xl"
         />
         <div className="pointer-events-none relative flex min-w-0 items-start gap-2.5">
           <div className="min-w-0 flex-1">
@@ -171,7 +171,7 @@ export default function TripCard({
             </button>
             <div className="flex flex-col items-center gap-0.5">
               <div
-                className={`cyber-trip-score flex h-11 w-11 items-center justify-center rounded-xl border ${bg}`}
+                className={`flex h-11 w-11 items-center justify-center rounded-xl border ${bg}`}
                 title={unavailableScore ? scoreUnavailableMessage : lowScoreConfidence ? 'Score based on limited available evidence.' : buildScoreExplanation(trip, 'score_overall')}
               >
                 <span className={`font-grotesk text-base font-bold ${color}`}>
@@ -193,7 +193,7 @@ export default function TripCard({
   }
 
   return (
-    <div className="cyber-trip-card render-lazy relative bg-card border border-border rounded-2xl p-4 hover:border-primary/30 transition-colors group">
+    <div className="render-lazy relative bg-card border border-border rounded-2xl p-4 hover:border-primary/30 transition-colors group">
       <button
         type="button"
         onPointerDown={() => onIntent?.(trip)}
@@ -201,9 +201,9 @@ export default function TripCard({
         onFocus={() => onIntent?.(trip)}
         onClick={openTrip}
         aria-label={`Open trip: ${title}`}
-        className="cyber-trip-open-target absolute inset-0 rounded-2xl cursor-pointer"
+        className="absolute inset-0 rounded-2xl cursor-pointer"
       />
-      <div className="cyber-trip-content pointer-events-none relative flex items-start justify-between gap-3">
+      <div className="pointer-events-none relative flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <div className="mb-2 flex items-center gap-2">
             <div className="min-w-0 flex-1">
@@ -246,7 +246,7 @@ export default function TripCard({
             </div>
           )}
 
-          <div className="cyber-trip-metrics flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <Navigation className="w-3.5 h-3.5" />
               <span className="font-medium text-foreground">{formatDistance(trip.distance_km || 0, units)}</span>
@@ -389,7 +389,7 @@ export default function TripCard({
 
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
           <div
-            className={`cyber-trip-score w-12 h-12 rounded-2xl ${bg} flex items-center justify-center border`}
+            className={`w-12 h-12 rounded-2xl ${bg} flex items-center justify-center border`}
             title={unavailableScore ? scoreUnavailableMessage : lowScoreConfidence ? 'Score based on limited available evidence.' : buildScoreExplanation(trip, 'score_overall')}
           >
             <span className={`font-grotesk font-bold text-lg ${color}`}>

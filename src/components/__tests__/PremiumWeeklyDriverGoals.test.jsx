@@ -78,17 +78,38 @@ describe('premium weekly driver cards', () => {
     expect(html).toContain('class="premium-weekly-goals-card"');
     expect(html).toContain('data-tone="attention"');
     expect(html).toContain('Focus needed');
-    expect(html).toContain('premium-weekly-goals-telemetry.png');
-    expect(html.match(/class="premium-weekly-goal-glyph"/g)).toHaveLength(5);
-    expect(html).toContain('lucide-disc3');
-    expect(html).toContain('lucide-gauge');
-    expect(html).toContain('lucide-chart-no-axes-column-increasing');
-    expect(html).toContain('lucide-route');
-    expect(html).toContain('lucide-car-front');
-    expect(html.match(/lucide-moon-star/g)).toHaveLength(2);
+    expect(html).toContain('premium-weekly-goals-hero-v3.jpg');
+    expect(html).toContain('premium-weekly-goal-braking-v3.jpg');
+    expect(html).toContain('premium-weekly-goal-speeding-v3.jpg');
+    expect(html).toContain('premium-weekly-goal-score-v3.jpg');
+    expect(html).toContain('premium-weekly-goal-night-distance-v3.jpg');
+    expect(html).toContain('premium-weekly-goal-night-trips-v3.jpg');
+    expect(html.match(/class="premium-weekly-goal-ring"/g)).toHaveLength(5);
     expect(html.match(/role="progressbar"/g)).toHaveLength(5);
     expect(html).toContain('aria-label="Average score: 79/80+. Needs attention"');
+    expect(html).toContain('stroke-dasharray="98.75 100"');
     expect(html).toContain('0 m / 20.0 km');
+  });
+
+  it('renders responsive evidence copy and a deliberate empty state without fake values', () => {
+    const buildingHtml = renderToStaticMarkup(<PremiumWeeklyGoalsCard goals={[{
+      id: 'harsh_brakes',
+      label: 'Harsh brakes',
+      value: 0,
+      target: 5,
+      direction: 'under',
+      qualified: false,
+      met: false,
+      status: 'building_evidence',
+      evidence,
+    }]} />);
+    const emptyHtml = renderToStaticMarkup(<PremiumWeeklyGoalsCard goals={[]} />);
+
+    expect(buildingHtml).toContain('Goals activate after 4 trips and 40.0 km.');
+    expect(buildingHtml).toContain('not awarding easy completions');
+    expect(buildingHtml).toContain('2/4 trips · 20.0 km / 40.0 km');
+    expect(emptyHtml).toContain('Weekly goals will appear when Road Sage has trip evidence to evaluate.');
+    expect(emptyHtml).not.toContain('0/3 trips');
   });
 
   it('changes the panel emblem and border state when every live goal is met', () => {

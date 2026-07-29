@@ -24,6 +24,67 @@ import org.junit.Test;
 public class DriveSenseAutoTrackingServiceTest {
 
     @Test
+    public void activeTripCheckpointCompactsLongRoutesWithinHardLimit() throws Exception {
+        JSONArray points = new JSONArray();
+        long startMs = Instant.parse("2026-07-22T17:17:00Z").toEpochMilli();
+        for (int index = 0; index < 12_000; index++) {
+            JSONObject point = routePoint(
+                43.65d + index * 0.000001d,
+                -79.38d,
+                startMs + index * 2_000L,
+                54d
+            );
+            point.put("unbounded_debug_field", "must-not-enter-checkpoint");
+            points.put(point);
+        }
+
+        JSONArray compacted = DriveSenseActiveTripCheckpointStore.compactRoutePoints(points);
+        JSONObject payload = new JSONObject()
+            .put("version", DriveSenseActiveTripCheckpointStore.VERSION)
+            .put("trip_id", "native-trip-size-test")
+            .put("start_time_ms", startMs)
+            .put("updated_at_ms", startMs + 24_000_000L)
+            .put("route_points", compacted)
+            .put("timeline", new JSONArray())
+            .put("incident_events", new JSONArray());
+
+        assertEquals(DriveSenseActiveTripCheckpointStore.MAX_ROUTE_POINTS, compacted.length());
+        assertEquals(points.getJSONObject(0).getDouble("lat"), compacted.getJSONObject(0).getDouble("lat"), 0d);
+        assertEquals(
+            points.getJSONObject(points.length() - 1).getDouble("lat"),
+            compacted.getJSONObject(compacted.length() - 1).getDouble("lat"),
+            0d
+        );
+        assertFalse(compacted.getJSONObject(0).has("unbounded_debug_field"));
+        assertTrue(
+            DriveSenseActiveTripCheckpointStore.utf8Size(payload) <
+                DriveSenseActiveTripCheckpointStore.MAX_PLAINTEXT_BYTES
+        );
+    }
+
+    @Test
+    public void activeTripCheckpointBoundsTimelineAndIncidentHistory() throws Exception {
+        JSONArray events = new JSONArray();
+        for (int index = 0; index < 100; index++) {
+            events.put(new JSONObject().put("id", index));
+        }
+
+        JSONArray timeline = DriveSenseActiveTripCheckpointStore.compactTail(
+            events,
+            DriveSenseActiveTripCheckpointStore.MAX_TIMELINE_EVENTS
+        );
+        JSONArray incidents = DriveSenseActiveTripCheckpointStore.compactTail(
+            events,
+            DriveSenseActiveTripCheckpointStore.MAX_INCIDENT_EVENTS
+        );
+
+        assertEquals(DriveSenseActiveTripCheckpointStore.MAX_TIMELINE_EVENTS, timeline.length());
+        assertEquals(60, timeline.getJSONObject(0).optInt("id"));
+        assertEquals(DriveSenseActiveTripCheckpointStore.MAX_INCIDENT_EVENTS, incidents.length());
+        assertEquals(96, incidents.getJSONObject(0).optInt("id"));
+    }
+
+    @Test
     public void nightDrivingUsesDeviceLocalTimeAcrossMidnight() {
         TimeZone original = TimeZone.getDefault();
         try {
@@ -46,6 +107,108 @@ public class DriveSenseAutoTrackingServiceTest {
             assertTrue(DriveSenseAutoTrackingService.isNightDrivingEpochMs(localEvening));
             assertTrue(DriveSenseAutoTrackingService.isNightDrivingEpochMs(beforeLocalEnd));
             assertFalse(DriveSenseAutoTrackingService.isNightDrivingEpochMs(atLocalEnd));
+        } finally {
+            TimeZone.setDefault(original);
+        }
+    }
+
+    @Test
+    public void nightDrivingUsesGpsSunsetModeWhenCoordinatesExist() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/Toronto"));
+            ZoneId deviceZone = ZoneId.systemDefault();
+            DriveSenseAutoTrackingService.NightSettings sunsetSettings =
+                new DriveSenseAutoTrackingService.NightSettings("sunset", 22 * 60, 5 * 60, 0d, 0d);
+
+            long winterEvening = LocalDateTime.of(2026, 1, 1, 17, 30)
+                .atZone(deviceZone)
+                .toInstant()
+                .toEpochMilli();
+            long winterNoon = LocalDateTime.of(2026, 1, 1, 12, 0)
+                .atZone(deviceZone)
+                .toInstant()
+                .toEpochMilli();
+
+            assertTrue(DriveSenseAutoTrackingService.isNightDrivingPoint(
+                winterEvening,
+                43.6532d,
+                -79.3832d,
+                sunsetSettings
+            ));
+            assertFalse(DriveSenseAutoTrackingService.isNightDrivingPoint(
+                winterNoon,
+                43.6532d,
+                -79.3832d,
+                sunsetSettings
+            ));
+        } finally {
+            TimeZone.setDefault(original);
+        }
+    }
+
+    @Test
+    public void nightDrivingFallsBackToCustomWindowWhenGpsCoordinatesAreMissing() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/Toronto"));
+            ZoneId deviceZone = ZoneId.systemDefault();
+            DriveSenseAutoTrackingService.NightSettings sunsetSettings =
+                new DriveSenseAutoTrackingService.NightSettings("sunset", 21 * 60, 4 * 60, 0d, 0d);
+
+            long insideCustomFallback = LocalDateTime.of(2026, 7, 1, 21, 30)
+                .atZone(deviceZone)
+                .toInstant()
+                .toEpochMilli();
+            long outsideCustomFallback = LocalDateTime.of(2026, 7, 1, 20, 30)
+                .atZone(deviceZone)
+                .toInstant()
+                .toEpochMilli();
+
+            assertTrue(DriveSenseAutoTrackingService.isNightDrivingPoint(
+                insideCustomFallback,
+                Double.NaN,
+                Double.NaN,
+                sunsetSettings
+            ));
+            assertFalse(DriveSenseAutoTrackingService.isNightDrivingPoint(
+                outsideCustomFallback,
+                Double.NaN,
+                Double.NaN,
+                sunsetSettings
+            ));
+        } finally {
+            TimeZone.setDefault(original);
+        }
+    }
+
+    @Test
+    public void tripNightDrivingIncludesFirstPointAndIgnoresInvalidTimestamps() throws Exception {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/Toronto"));
+            ZoneId deviceZone = ZoneId.systemDefault();
+            DriveSenseAutoTrackingService.NightSettings customSettings =
+                new DriveSenseAutoTrackingService.NightSettings("custom", 22 * 60, 5 * 60, 0d, 0d);
+            long beforeNightWindowEnds = LocalDateTime.of(2026, 1, 2, 4, 59)
+                .atZone(deviceZone)
+                .toInstant()
+                .toEpochMilli();
+            long afterNightWindowEnds = LocalDateTime.of(2026, 1, 2, 5, 1)
+                .atZone(deviceZone)
+                .toInstant()
+                .toEpochMilli();
+            JSONArray points = new JSONArray()
+                .put(routePoint(43.6532d, -79.3832d, beforeNightWindowEnds, 30d))
+                .put(new JSONObject().put("timestamp", "invalid"))
+                .put(routePoint(43.6542d, -79.3832d, afterNightWindowEnds, 30d));
+
+            assertTrue(DriveSenseAutoTrackingService.isTripNightDriving(points, customSettings));
+
+            JSONArray daytimeOnly = new JSONArray()
+                .put(new JSONObject().put("timestamp", "invalid"))
+                .put(routePoint(43.6542d, -79.3832d, afterNightWindowEnds, 30d));
+            assertFalse(DriveSenseAutoTrackingService.isTripNightDriving(daytimeOnly, customSettings));
         } finally {
             TimeZone.setDefault(original);
         }

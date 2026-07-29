@@ -137,10 +137,11 @@ describe('driver progression', () => {
 
   it('does not mark under-limit weekly goals complete before evidence qualifies', () => {
     const emptyGoals = calculateWeeklyDrivingGoals([], {});
+    const thisWeek = new Date().toISOString();
     const qualifiedGoals = calculateWeeklyDrivingGoals([
-      trip(0),
-      trip(1, { start_time: new Date(NOW.getTime() - 60 * 60 * 1000).toISOString() }),
-      trip(2, { start_time: new Date(NOW.getTime() - 2 * 60 * 60 * 1000).toISOString() }),
+      trip(0, { start_time: thisWeek }),
+      trip(1, { start_time: thisWeek }),
+      trip(2, { start_time: thisWeek }),
     ], {});
 
     expect(emptyGoals.every((goal) => goal.met === false && goal.status === 'building_evidence')).toBe(true);

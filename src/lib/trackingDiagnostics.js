@@ -94,6 +94,10 @@ function nativeEventTitle(type) {
     ending_review: 'Trip ending reviewed',
     tail_trimmed: 'Trip tail trimmed',
     trip_ended: 'Trip ended',
+    trip_saved: 'Trip safely queued',
+    trip_save_failed: 'Trip save failed',
+    checkpoint_recovered: 'Active trip recovered',
+    checkpoint_save_failed: 'Active trip checkpoint failed',
     trip_discarded: 'Trip discarded',
     phone_usage_access: 'Phone usage access checked',
   };
@@ -179,6 +183,31 @@ export function buildParkingTimeline(trip = {}) {
 }
 
 export function buildTrackingHealth(/** @type {any} */ { permissionStatus = {}, nativeStatus = {}, batteryStatus = {}, latestTrip = null } = {}) {
+  const pendingNativeTrips = Number(nativeStatus?.completedTripsCount);
+  const pendingNativeTripsKnown = Number.isFinite(pendingNativeTrips);
+  const checkpoint = nativeStatus?.activeTripCheckpoint;
+  const checkpointKnown = checkpoint?.supported === true && typeof checkpoint?.state === 'string';
+  const checkpointProtected = checkpointKnown && checkpoint.state === 'protected' && checkpoint.present === true;
+  const checkpointInvalidRemoved = checkpointKnown && checkpoint.state === 'invalid_removed';
+  const checkpointBytes = Number(checkpoint?.encryptedBytes);
+  const checkpointAgeSeconds = Number(checkpoint?.ageSeconds);
+  const checkpointSizeLabel = Number.isFinite(checkpointBytes) && checkpointBytes > 0
+    ? `${Math.max(1, Math.ceil(checkpointBytes / 1024))} KB`
+    : null;
+  const checkpointAgeLabel = Number.isFinite(checkpointAgeSeconds)
+    ? checkpointAgeSeconds < 60
+      ? 'less than a minute ago'
+      : `${Math.floor(checkpointAgeSeconds / 60)} minute${Math.floor(checkpointAgeSeconds / 60) === 1 ? '' : 's'} ago`
+    : null;
+  const checkpointState = !checkpointKnown
+    ? 'unknown'
+    : checkpointProtected
+      ? 'protected'
+      : checkpointInvalidRemoved
+        ? 'removed'
+        : nativeStatus?.recordingActive
+          ? 'waiting'
+          : 'none';
   const checks = [
     {
       id: 'native',
@@ -186,6 +215,46 @@ export function buildTrackingHealth(/** @type {any} */ { permissionStatus = {}, 
       status: nativeStatus?.enabled ? 'good' : 'warn',
       value: nativeStatus?.enabled ? 'Armed' : 'Not running',
       detail: nativeStatus?.enabled ? 'Android can detect trips in the background.' : 'Background auto tracking is not armed.',
+    },
+    {
+      id: 'native-handoff',
+      label: 'Completed-trip handoff',
+      status: !pendingNativeTripsKnown ? 'unknown' : pendingNativeTrips > 0 ? 'warn' : 'good',
+      value: !pendingNativeTripsKnown
+        ? 'Unknown'
+        : pendingNativeTrips > 0
+          ? `${pendingNativeTrips} pending`
+          : 'Up to date',
+      detail: pendingNativeTrips > 0
+        ? 'Android still has a completed trip queued for recovery. Refresh Diagnostics or reopen Road Sage to retry the import.'
+        : 'No completed Android trips are waiting to be imported.',
+    },
+    {
+      id: 'active-checkpoint',
+      label: 'Active-trip recovery',
+      status: checkpointState === 'protected' || checkpointState === 'none'
+        ? 'good'
+        : checkpointState === 'unknown'
+          ? 'unknown'
+          : 'warn',
+      value: checkpointState === 'protected'
+        ? 'Protected'
+        : checkpointState === 'waiting'
+          ? 'Waiting'
+          : checkpointState === 'removed'
+            ? 'Removed'
+            : checkpointState === 'none'
+              ? 'None stored'
+              : 'Unknown',
+      detail: checkpointState === 'protected'
+        ? `An encrypted recovery checkpoint was saved ${checkpointAgeLabel || 'recently'}${checkpointSizeLabel ? ` (${checkpointSizeLabel}, maximum 512 KB)` : ''}. No route details are shown here.`
+        : checkpointState === 'waiting'
+          ? 'A trip is active, but its first confirmed recovery checkpoint has not been saved yet. It normally appears within about one minute after confirmation.'
+          : checkpointState === 'removed'
+            ? 'An expired or unreadable checkpoint was safely removed. A new confirmed trip will create a fresh protected checkpoint.'
+            : checkpointState === 'none'
+              ? 'No temporary active-trip recovery file is retained.'
+              : 'Checkpoint status is available in the Android app.',
     },
     {
       id: 'location',

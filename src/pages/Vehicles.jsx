@@ -7,6 +7,8 @@ import { vehicleService } from '@/api/vehicles';
 import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle, Zap, ClipboardCheck, Route, CalendarClock, TrendingUp, Sparkles } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
 import VehicleMaintenancePanel from '@/components/VehicleMaintenancePanel';
+import PremiumVehicleOverview from '@/components/PremiumVehicleOverview';
+import PremiumFleetIntelligenceCard from '@/components/PremiumFleetIntelligenceCard';
 import { estimateTripEconomics, getVehicleOdometerKm, getVehicleTripDistanceKm } from '@/lib/tripInsights';
 import { buildVehicleCostSummary } from '@/lib/mediumInsights';
 import { buildVehicleAssignmentSuggestions } from '@/lib/vehicleSuggestions';
@@ -399,6 +401,7 @@ export default function Vehicles() {
 
   const {
     data: recentTrips = [],
+    isLoading: recentTripsLoading,
     isSuccess: recentTripsLoaded,
   } = useQuery({
     ...limitedTripSummaryQueryOptions(100),
@@ -593,6 +596,14 @@ export default function Vehicles() {
         </div>
       </div>
 
+      {settings.premium_visual_experience === true ? (
+        <PremiumVehicleOverview
+          summary={fleetIntelligence}
+          formattedMonthlyCost={formatCurrencyAmount(fleetIntelligence.monthlyCost, currencySymbol)}
+          formattedTotalDistance={formatDistanceScope(fleetIntelligence.totalKm, units)}
+          loading={isLoading || recentTripsLoading}
+        />
+      ) : (
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="grid gap-3 md:grid-cols-4">
         <div className="rounded-2xl border border-border bg-card p-4">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -641,8 +652,16 @@ export default function Vehicles() {
           <div className="text-xs text-muted-foreground">maintenance item{fleetIntelligence.serviceDueCount === 1 ? '' : 's'} due soon</div>
         </div>
       </motion.div>
+      )}
 
       {(fleetIntelligence.busiestVehicle || fleetIntelligence.bestScoreVehicle || fleetIntelligence.assignmentReviewCount > 0) && (
+        settings.premium_visual_experience === true ? (
+          <PremiumFleetIntelligenceCard
+            intelligence={fleetIntelligence}
+            highConfidenceAssignmentCount={highConfidenceAssignments.length}
+            units={units}
+          />
+        ) : (
         <div className="rounded-2xl border border-border bg-card p-4">
           <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
             <TrendingUp className="h-4 w-4 text-primary" />
@@ -699,6 +718,7 @@ export default function Vehicles() {
             </div>
           </div>
         </div>
+        )
       )}
 
       {vehicles.length > 0 && assignmentReviewTrips.length > 0 && (

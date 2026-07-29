@@ -2,46 +2,46 @@
 import { useMemo, useState } from 'react';
 import {
   Activity,
-  BarChart3,
+  CalendarClock,
   CalendarDays,
   CarFront,
   CircleDashed,
   Clock3,
+  Gauge,
   MapPinned,
   Mountain,
   Route,
-  ShieldCheck,
   TrendingDown,
   TrendingUp,
 } from 'lucide-react';
-import { formatDistance } from '@/lib/tripEngine';
-import premiumDashboardHero from '@/assets/premium-dashboard-hero.png';
-import premiumDashboardSprites from '@/assets/premium-dashboard-sprites.png';
-import premiumDashboardCalendar from '@/assets/premium-dashboard-calendar.png';
-import premiumBaselineWeek from '@/assets/premium-baseline-week.png';
-import premiumBaselineReference from '@/assets/premium-baseline-reference.png';
-import premiumBaselinePercentile from '@/assets/premium-baseline-percentile.png';
-import premiumBaselineStress from '@/assets/premium-baseline-stress.png';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
+import { buildDashboardActivityStats } from '@/lib/dashboardStats';
+import { formatDistance, formatDuration } from '@/lib/tripEngine';
+import premiumTotalsHero from '@/assets/premium-totals-hero-v2.webp';
+import premiumTotalsDistance from '@/assets/premium-totals-distance-v2.webp';
+import premiumTotalsDuration from '@/assets/premium-totals-duration-v2.webp';
+import premiumTotalsTrips from '@/assets/premium-totals-trips-v2.webp';
+import premiumTotalsDays from '@/assets/premium-totals-days-v4.webp';
+import premiumTotalsAverage from '@/assets/premium-totals-average-v2.webp';
+import premiumTotalsLongest from '@/assets/premium-totals-longest-v2.webp';
+import premiumBaselineHero from '@/assets/premium-baseline-hero-v2.jpg';
+import premiumBaselineWeek from '@/assets/premium-baseline-week-v3.jpg';
+import premiumBaselineReference from '@/assets/premium-baseline-reference-v3.jpg';
+import premiumBaselinePercentile from '@/assets/premium-baseline-percentile-v4.jpg';
+import premiumBaselineStressSafe from '@/assets/premium-baseline-stress-safe-v1.jpg';
+import premiumBaselineStressCaution from '@/assets/premium-baseline-stress-caution-v1.jpg';
+import premiumBaselineStressWarning from '@/assets/premium-baseline-stress-warning-v1.jpg';
+import premiumBaselineStressAlert from '@/assets/premium-baseline-stress-alert-v1.jpg';
+import premiumBaselineStressLearning from '@/assets/premium-baseline-stress-learning-v1.jpg';
+import premiumBaselineStressSceneSafe from '@/assets/premium-baseline-stress-scene-safe-v1.jpg';
+import premiumBaselineStressSceneCaution from '@/assets/premium-baseline-stress-scene-caution-v1.jpg';
+import premiumBaselineStressSceneWarning from '@/assets/premium-baseline-stress-scene-warning-v1.jpg';
+import premiumBaselineStressSceneAlert from '@/assets/premium-baseline-stress-scene-alert-v1.jpg';
+import premiumBaselineStressSceneLearning from '@/assets/premium-baseline-stress-scene-learning-v1.jpg';
 
 const PERIODS = Object.freeze({
   ALL_TIME: 'all_time',
   SEVEN_DAYS: 'seven_days',
 });
-
-function validTripDate(trip) {
-  const timestamp = new Date(trip?.start_time || trip?.end_time || 0).getTime();
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
-function compactDuration(totalSeconds) {
-  const minutes = Math.max(0, Math.round((Number(totalSeconds) || 0) / 60));
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  if (!hours) return `${remainingMinutes}m`;
-  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
-}
 
 /**
  * @param {Array<Record<string, any>>} trips
@@ -49,39 +49,31 @@ function compactDuration(totalSeconds) {
  * @param {number} now
  */
 export function buildPremiumTotals(trips = [], period = PERIODS.ALL_TIME, now = Date.now()) {
-  const earliest = now - 7 * DAY_MS;
-  const selectedTrips = (trips || []).filter((trip) => (
-    period === PERIODS.ALL_TIME || validTripDate(trip) >= earliest
+  const completedTrips = (Array.isArray(trips) ? trips : []).map((trip) => (
+    trip?.status ? trip : { ...trip, status: 'completed' }
   ));
-  const distanceKm = selectedTrips.reduce((sum, trip) => sum + Math.max(0, Number(trip?.distance_km) || 0), 0);
-  const durationSeconds = selectedTrips.reduce((sum, trip) => sum + Math.max(0, Number(trip?.duration_seconds) || 0), 0);
-  const longestDistanceKm = selectedTrips.reduce((longest, trip) => (
-    Math.max(longest, Math.max(0, Number(trip?.distance_km) || 0))
-  ), 0);
-  const activeDays = new Set(selectedTrips.map((trip) => {
-    const timestamp = validTripDate(trip);
-    if (!timestamp) return null;
-    const date = new Date(timestamp);
-    return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-  }).filter(Boolean)).size;
+  const stats = buildDashboardActivityStats(completedTrips, {
+    now: new Date(now),
+    periodDays: period === PERIODS.ALL_TIME ? null : 7,
+  });
 
   return {
-    activeDays,
-    averageDistanceKm: selectedTrips.length ? distanceKm / selectedTrips.length : 0,
-    distanceKm,
-    durationSeconds,
-    longestDistanceKm,
-    tripCount: selectedTrips.length,
+    activeDays: stats.activeDays,
+    averageDistanceKm: stats.averageTripKm,
+    distanceKm: stats.distanceKm,
+    durationSeconds: stats.drivingSeconds,
+    longestDistanceKm: stats.longestTripKm,
+    tripCount: stats.tripCount,
   };
 }
 
 const METRIC_STYLES = [
-  { id: 'distance', icon: MapPinned, accent: 'cyan', label: 'Distance', sprite: '0% 0%' },
-  { id: 'duration', icon: Clock3, accent: 'blue', label: 'Time driving', sprite: '50% 0%' },
-  { id: 'trips', icon: CarFront, accent: 'green', label: 'Trips', sprite: '100% 0%' },
-  { id: 'days', icon: CalendarDays, accent: 'purple', label: 'Active days', sprite: 'center', asset: premiumDashboardCalendar },
-  { id: 'average', icon: Route, accent: 'amber', label: 'Average trip', sprite: '50% 100%' },
-  { id: 'longest', icon: Mountain, accent: 'royal', label: 'Longest trip', sprite: '100% 100%' },
+  { id: 'distance', icon: MapPinned, accent: 'blue', label: 'Distance', asset: premiumTotalsDistance },
+  { id: 'duration', icon: Clock3, accent: 'green', label: 'Time driving', asset: premiumTotalsDuration },
+  { id: 'trips', icon: CarFront, accent: 'purple', label: 'Trips', asset: premiumTotalsTrips },
+  { id: 'days', icon: CalendarDays, accent: 'orange', label: 'Active days', asset: premiumTotalsDays },
+  { id: 'average', icon: Route, accent: 'cyan', label: 'Average trip', asset: premiumTotalsAverage },
+  { id: 'longest', icon: Mountain, accent: 'amber', label: 'Longest trip', asset: premiumTotalsLongest },
 ];
 
 /**
@@ -92,9 +84,9 @@ export default function PremiumTotalsCard({ trips = [], units = 'metric' }) {
   const totals = useMemo(() => buildPremiumTotals(trips, period), [period, trips]);
   const values = {
     distance: formatDistance(totals.distanceKm, units),
-    duration: compactDuration(totals.durationSeconds),
+    duration: formatDuration(Math.round(totals.durationSeconds)),
     trips: String(totals.tripCount),
-    days: String(totals.activeDays),
+    days: period === PERIODS.SEVEN_DAYS ? `${totals.activeDays}/7` : String(totals.activeDays),
     average: formatDistance(totals.averageDistanceKm, units),
     longest: formatDistance(totals.longestDistanceKm, units),
   };
@@ -103,17 +95,24 @@ export default function PremiumTotalsCard({ trips = [], units = 'metric' }) {
     distance: 'completed trips',
     duration: 'recorded time',
     trips: period === PERIODS.ALL_TIME ? 'all time' : 'last 7 days',
-    days: `${activeDayRate.toFixed(1)} trips / active day`,
+    days: totals.activeDays ? `${activeDayRate.toFixed(1)} trips / active day` : 'no driving days',
     average: 'typical distance',
     longest: period === PERIODS.ALL_TIME ? 'all time' : 'last 7 days',
   };
   const periodLabel = period === PERIODS.ALL_TIME ? 'All-time totals' : 'Last 7 days';
 
   return (
-    <section className="premium-totals-card" aria-labelledby="premium-totals-title">
-      <img className="premium-totals-hero" src={premiumDashboardHero} alt="" aria-hidden="true" />
+    <section
+      className="premium-totals-card"
+      data-empty={totals.tripCount === 0 ? 'true' : 'false'}
+      data-period={period}
+      aria-labelledby="premium-totals-title"
+    >
+      <img className="premium-totals-hero" src={premiumTotalsHero} alt="" aria-hidden="true" />
+      <div className="premium-totals-hero-shade" aria-hidden="true" />
 
       <div className="premium-totals-heading">
+        <span className="premium-totals-emblem" aria-hidden="true"><Gauge /></span>
         <div>
           <h2 id="premium-totals-title">{periodLabel}</h2>
           <p>{period === PERIODS.ALL_TIME ? 'Everything recorded on this device' : 'Your most recent seven days'}</p>
@@ -126,6 +125,7 @@ export default function PremiumTotalsCard({ trips = [], units = 'metric' }) {
           aria-pressed={period === PERIODS.ALL_TIME}
           onClick={() => setPeriod(PERIODS.ALL_TIME)}
         >
+          <CalendarClock aria-hidden="true" />
           All time
         </button>
         <button
@@ -133,22 +133,21 @@ export default function PremiumTotalsCard({ trips = [], units = 'metric' }) {
           aria-pressed={period === PERIODS.SEVEN_DAYS}
           onClick={() => setPeriod(PERIODS.SEVEN_DAYS)}
         >
+          <CalendarDays aria-hidden="true" />
           7 days
         </button>
       </div>
 
-      <div className="premium-metric-grid">
-        {METRIC_STYLES.map(({ id, icon: Icon, accent, label, sprite, asset }) => (
-          <article key={id} className="premium-metric" data-accent={accent}>
-            <div
-              className="premium-metric-art"
-              aria-hidden="true"
-              style={{
-                backgroundImage: `url(${asset || premiumDashboardSprites})`,
-                backgroundPosition: sprite,
-                backgroundSize: asset ? 'contain' : undefined,
-              }}
-            />
+      <div className="premium-metric-grid" aria-live="polite">
+        {METRIC_STYLES.map(({ id, icon: Icon, accent, label, asset }) => (
+          <article
+            key={id}
+            className="premium-metric"
+            data-accent={accent}
+            aria-label={`${label}: ${values[id]}. ${sublabels[id]}`}
+          >
+            <img className="premium-metric-art" src={asset} alt="" aria-hidden="true" />
+            <div className="premium-metric-shade" aria-hidden="true" />
             <div className="premium-metric-icon" aria-hidden="true"><Icon /></div>
             <div className="premium-metric-copy">
               <strong>{values[id]}</strong>
@@ -174,6 +173,29 @@ const BASELINE_TRENDS = Object.freeze({
   declining: { icon: TrendingDown, label: 'Declining' },
   steady: { icon: Activity, label: 'Steady' },
   learning: { icon: CircleDashed, label: 'Building' },
+});
+
+const BASELINE_STRESS_STATES = Object.freeze({
+  safe: {
+    iconAsset: premiumBaselineStressSafe,
+    sceneAsset: premiumBaselineStressSceneSafe,
+  },
+  caution: {
+    iconAsset: premiumBaselineStressCaution,
+    sceneAsset: premiumBaselineStressSceneCaution,
+  },
+  warning: {
+    iconAsset: premiumBaselineStressWarning,
+    sceneAsset: premiumBaselineStressSceneWarning,
+  },
+  alert: {
+    iconAsset: premiumBaselineStressAlert,
+    sceneAsset: premiumBaselineStressSceneAlert,
+  },
+  learning: {
+    iconAsset: premiumBaselineStressLearning,
+    sceneAsset: premiumBaselineStressSceneLearning,
+  },
 });
 
 function stressTone(peakStress = {}) {
@@ -218,6 +240,8 @@ export function buildPremiumBaselineViewModel(baseline = {}, baselineRangeLabel 
       : baseline?.baseline_avg == null
         ? `${recentTripCount}/10 recent scored trips`
         : `${recentTripCount} recent scored trips`,
+    baselineRange: baseline?.baseline_avg == null ? '' : baselineRangeLabel,
+    baselineScoreLabel: baseline?.baseline_avg == null ? 'Building' : String(baseline.baseline_avg),
     baselineValue,
     delta,
     deltaLabel: delta == null
@@ -226,6 +250,9 @@ export function buildPremiumBaselineViewModel(baseline = {}, baselineRangeLabel 
     percentileMeta: baseline?.percentile == null
       ? `Needs ${percentileMinimum} scored weeks`
       : `${weeksAnalyzed} scored weeks analyzed`,
+    percentileProgress: baseline?.percentile == null
+      ? 0
+      : Math.max(0, Math.min(100, Number(baseline.percentile) || 0)),
     percentileValue,
     score,
     scoreDegrees: (score || 0) * 2.7,
@@ -246,17 +273,20 @@ export function buildPremiumBaselineViewModel(baseline = {}, baselineRangeLabel 
 export function PremiumBaselineCard({ baseline, baselineRangeLabel = '', baselineText, peakStress }) {
   const model = buildPremiumBaselineViewModel(baseline, baselineRangeLabel, peakStress);
   const TrendIcon = BASELINE_TRENDS[model.tone].icon;
+  const stressState = BASELINE_STRESS_STATES[model.stressTone];
 
   return (
     <section className="premium-baseline-card" data-tone={model.tone} aria-labelledby="premium-baseline-title">
-      <div className="premium-baseline-ambient" aria-hidden="true" />
+      <img className="premium-baseline-hero" src={premiumBaselineHero} alt="" aria-hidden="true" />
       <div className="premium-baseline-head">
         <div>
-          <div className="premium-baseline-kicker"><span /> Driver profile</div>
-          <h2 id="premium-baseline-title">Personal Baseline</h2>
+          <div className="premium-baseline-title-row">
+            <span className="premium-baseline-title-icon" aria-hidden="true"><Activity /></span>
+            <h2 id="premium-baseline-title">Personal Baseline</h2>
+          </div>
           <p>{baselineText}</p>
         </div>
-        <div className="premium-baseline-trend"><TrendIcon /> {model.trendLabel}</div>
+        <div className="premium-baseline-trend"><span aria-hidden="true" /><TrendIcon /> {model.trendLabel}</div>
       </div>
 
       <div className="premium-baseline-layout">
@@ -265,38 +295,28 @@ export function PremiumBaselineCard({ baseline, baselineRangeLabel = '', baselin
           data-state={model.score == null ? 'learning' : 'ready'}
           aria-label={`This week score: ${model.scoreLabel}. ${model.deltaLabel}`}
         >
-          <div className="premium-baseline-week-copy">
-            <div
-              className="premium-score-gauge"
-              role="img"
-              aria-label={model.score == null ? 'This week score is still building' : `This week score ${model.scoreLabel} out of 100`}
-              style={/** @type {import('react').CSSProperties & Record<string, string>} */ ({ '--premium-score': `${model.scoreDegrees}deg` })}
-            >
-              <div>
-                <strong>{model.scoreLabel}</strong>
-                <span>THIS WEEK</span>
-              </div>
-            </div>
-            <div className="premium-score-summary">
-              <span className="premium-baseline-tile-label"><Activity /> Weekly score</span>
-              <strong>{model.deltaLabel}</strong>
-              <small>{model.delta == null ? 'Record a scored trip this week' : 'Compared with your recent baseline'}</small>
-            </div>
-          </div>
           <img src={premiumBaselineWeek} alt="" aria-hidden="true" className="premium-baseline-art" />
+          <div className="premium-baseline-week-copy">
+            <span className="premium-baseline-tile-label">This Week</span>
+            <strong>{model.scoreLabel}</strong>
+            <span className="premium-baseline-delta" data-direction={model.delta == null ? 'learning' : model.delta >= 0 ? 'up' : 'down'}>
+              {model.delta == null ? 'Building comparison' : `${model.delta >= 0 ? '↗' : '↘'} ${model.delta >= 0 ? '+' : ''}${model.delta}`}
+            </span>
+            {model.delta == null && <small>Record a scored trip this week</small>}
+          </div>
         </article>
 
         <article
           className="premium-baseline-tile premium-baseline-reference"
-          aria-label={`Approximate personal baseline: ${model.baselineValue}`}
+          aria-label={`Approximate personal baseline: ${model.baselineValue}. ${model.baselineMeta}`}
         >
-          <div className="premium-baseline-tile-copy">
-            <span className="premium-baseline-tile-label"><Route /> Reference range</span>
-            <strong>{model.baselineValue}</strong>
-            <span>Approx baseline</span>
-            <small>{model.baselineMeta}</small>
-          </div>
           <img src={premiumBaselineReference} alt="" aria-hidden="true" className="premium-baseline-art" />
+          <div className="premium-baseline-tile-copy">
+            <span className="premium-baseline-tile-label">Approx Baseline</span>
+            <strong>{model.baselineScoreLabel}</strong>
+            {model.baselineRange && <span className="premium-baseline-range">({model.baselineRange})</span>}
+            <small>Recent trips</small>
+          </div>
         </article>
 
         <article
@@ -304,13 +324,22 @@ export function PremiumBaselineCard({ baseline, baselineRangeLabel = '', baselin
           data-state={baseline?.percentile == null ? 'learning' : 'ready'}
           aria-label={`Personal percentile: ${model.percentileValue}. ${model.percentileMeta}`}
         >
-          <div className="premium-baseline-tile-copy">
-            <span className="premium-baseline-tile-label"><BarChart3 /> Personal rank</span>
-            <strong>{model.percentileValue}</strong>
-            <span>Recorded-week percentile</span>
-            <small>{model.percentileMeta}</small>
-          </div>
           <img src={premiumBaselinePercentile} alt="" aria-hidden="true" className="premium-baseline-art" />
+          <div className="premium-baseline-tile-copy">
+            <strong>{model.percentileValue}</strong>
+            <span>Percentile among<br />your recorded weeks</span>
+          </div>
+          <div
+            className="premium-baseline-percentile-progress"
+            role="img"
+            aria-label={baseline?.percentile == null
+              ? model.percentileMeta
+              : `${model.percentileProgress}% of personal percentile scale`}
+          >
+            <span style={{ width: `${model.percentileProgress}%` }} />
+          </div>
+          <div className="premium-baseline-progress-scale" aria-hidden="true"><span>0%</span><span>100%</span></div>
+          {baseline?.percentile == null && <small>{model.percentileMeta}</small>}
         </article>
 
         <article
@@ -318,13 +347,21 @@ export function PremiumBaselineCard({ baseline, baselineRangeLabel = '', baselin
           data-stress={model.stressTone}
           aria-label={`Rush hour behaviour: ${model.stressLabel}. ${model.stressMeta}`}
         >
+          <img
+            src={stressState.sceneAsset}
+            alt=""
+            aria-hidden="true"
+            className="premium-baseline-art premium-baseline-stress-scene"
+            data-scene={model.stressTone}
+          />
           <div className="premium-baseline-tile-copy">
-            <span className="premium-baseline-tile-label"><ShieldCheck /> Traffic composure</span>
+            <span className="premium-baseline-stress-icon" data-icon={model.stressTone} aria-hidden="true">
+              <img className="premium-baseline-stress-state-art" src={stressState.iconAsset} alt="" />
+            </span>
             <strong>{model.stressLabel}</strong>
-            <span>Rush hour behaviour</span>
-            <small>{model.stressMeta}</small>
+            <span>Rush hour<br />behaviour</span>
+            {peakStress?.insufficient_data !== false && <small>{model.stressMeta}</small>}
           </div>
-          <img src={premiumBaselineStress} alt="" aria-hidden="true" className="premium-baseline-art" />
         </article>
       </div>
     </section>

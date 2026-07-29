@@ -14,13 +14,85 @@ const DEFAULT_PITCH = 1;
 const DEFAULT_LANGUAGE = 'en-US';
 const DEFAULT_QUEUE_MODE = 'add';
 
-export function isVoiceAlertEnabled(settings = {}) {
-  const raw = settings.voice_alerts_enabled;
+export const VOICE_ALERT_CONTROL_GROUPS = Object.freeze([
+  Object.freeze({
+    settingKey: 'voice_speed_alerts_enabled',
+    label: 'Speed warnings',
+    alerts: 'Speed-limit warnings',
+  }),
+  Object.freeze({
+    settingKey: 'voice_driving_event_alerts_enabled',
+    label: 'Driving event warnings',
+    alerts: 'Harsh braking, rapid acceleration, sharp corners, close manoeuvres, stop/start patterns, and repeated-event areas',
+  }),
+  Object.freeze({
+    settingKey: 'voice_attention_incident_alerts_enabled',
+    label: 'Attention and incident warnings',
+    alerts: 'Phone use, heading drift, and possible incidents',
+  }),
+  Object.freeze({
+    settingKey: 'voice_coaching_reminder_alerts_enabled',
+    label: 'Coaching and reminders',
+    alerts: 'Coach briefing, long-drive reminders, and extended-idle reminders',
+  }),
+]);
+
+const ALERT_GROUP_SETTING_BY_KEY = Object.freeze({
+  speeding: 'voice_speed_alerts_enabled',
+  harsh_brake: 'voice_driving_event_alerts_enabled',
+  rapid_accel: 'voice_driving_event_alerts_enabled',
+  sharp_turn: 'voice_driving_event_alerts_enabled',
+  sharp_cornering: 'voice_driving_event_alerts_enabled',
+  close_proximity: 'voice_driving_event_alerts_enabled',
+  close_manoeuvre: 'voice_driving_event_alerts_enabled',
+  stop_start: 'voice_driving_event_alerts_enabled',
+  stop_start_pattern: 'voice_driving_event_alerts_enabled',
+  repeated_event_area: 'voice_driving_event_alerts_enabled',
+  phone_use: 'voice_attention_incident_alerts_enabled',
+  heading_drift: 'voice_attention_incident_alerts_enabled',
+  heading_drift_beta: 'voice_attention_incident_alerts_enabled',
+  possible_incident: 'voice_attention_incident_alerts_enabled',
+  long_drive: 'voice_coaching_reminder_alerts_enabled',
+  fatigue: 'voice_coaching_reminder_alerts_enabled',
+  idle: 'voice_coaching_reminder_alerts_enabled',
+});
+
+function settingIsEnabled(raw, defaultValue = true) {
   if (raw === false || raw === 0) return false;
-  if (typeof raw !== 'string') return true;
+  if (raw === true || raw === 1) return true;
+  if (typeof raw !== 'string') return defaultValue;
   const value = raw.trim().toLowerCase();
-  if (!value || value === 'undefined' || value === 'null') return true;
+  if (!value || value === 'undefined' || value === 'null') return defaultValue;
   return !['false', '0', 'off', 'no', 'disabled'].includes(value);
+}
+
+export function isVoiceAlertEnabled(settings = {}) {
+  return settingIsEnabled(settings.voice_alerts_enabled);
+}
+
+export function isTripStartVoiceAlertEnabled(settings = {}) {
+  return settingIsEnabled(settings.trip_start_voice_alert_enabled);
+}
+
+export function voiceAlertGroupSettingForKey(key) {
+  const normalizedKey = String(key || '').trim().toLowerCase();
+  if (!normalizedKey) return null;
+  if (normalizedKey.startsWith('speeding_')) return 'voice_speed_alerts_enabled';
+  if (normalizedKey.startsWith('coach_program_brief_')) return 'voice_coaching_reminder_alerts_enabled';
+  if (normalizedKey.startsWith('coach_program_')) {
+    const matchedEventKey = Object.keys(ALERT_GROUP_SETTING_BY_KEY)
+      .find((eventKey) => normalizedKey.endsWith(`_${eventKey}`));
+    return matchedEventKey
+      ? ALERT_GROUP_SETTING_BY_KEY[matchedEventKey]
+      : 'voice_coaching_reminder_alerts_enabled';
+  }
+  return ALERT_GROUP_SETTING_BY_KEY[normalizedKey] || null;
+}
+
+export function isVoiceAlertTypeEnabled(key, settings = {}) {
+  if (!isVoiceAlertEnabled(settings)) return false;
+  const settingKey = voiceAlertGroupSettingForKey(key);
+  return settingKey ? settingIsEnabled(settings[settingKey]) : true;
 }
 
 export function shouldMuteWebViewVoiceForTrip(trip = {}, { isAndroidPlatform = false } = {}) {
@@ -38,10 +110,26 @@ export function getVoiceAlertDeliveryStatus({
   tracking = false,
 } = {}) {
   if (!isVoiceAlertEnabled(settings)) {
+    const tripStartEnabled = isTripStartVoiceAlertEnabled(settings);
     return {
       status: 'disabled',
-      label: 'Voice alerts off',
-      detail: 'Live voice alerts are disabled in Settings.',
+      label: 'Live alerts off',
+      detail: tripStartEnabled
+        ? 'Recurring live voice alerts are off; the one-time trip-start confirmation remains on.'
+        : 'Live voice alerts and the trip-start confirmation are disabled in Settings.',
+    };
+  }
+
+  const enabledGroupCount = VOICE_ALERT_CONTROL_GROUPS
+    .filter((group) => settingIsEnabled(settings[group.settingKey]))
+    .length;
+  if (enabledGroupCount === 0) {
+    return {
+      status: 'groups_disabled',
+      label: 'Recurring groups off',
+      detail: isTripStartVoiceAlertEnabled(settings)
+        ? 'All recurring voice groups are off; the one-time trip-start confirmation remains on.'
+        : 'All recurring voice groups and the trip-start confirmation are off.',
     };
   }
 
@@ -104,7 +192,9 @@ export function markSafetyAlertSpoken(key, now = Date.now()) {
 
 export async function speakSafetyAlert(text, settings = localSettings.get(), speechParams = {}) {
   const message = String(text || '').trim();
+  const alertKey = speechParams.alertKey || '';
   if (!message || !isVoiceAlertEnabled(settings)) return false;
+  if (alertKey && !isVoiceAlertTypeEnabled(alertKey, settings)) return false;
   const tuning = normalizeSpeechParams(speechParams);
 
   if (isNativePlatform()) {
@@ -189,9 +279,26 @@ export async function stopSafetyAlerts() {
 }
 
 export async function speakSafetyAlertOnce(key, text, settings = localSettings.get(), cooldownMs = 0, now = Date.now(), speechParams = {}) {
-  if (!canSpeakSafetyAlert(key, cooldownMs, now)) return false;
-  const spoken = await speakSafetyAlert(text, settings, speechParams);
+  if (!isVoiceAlertTypeEnabled(key, settings) || !canSpeakSafetyAlert(key, cooldownMs, now)) return false;
+  const spoken = await speakSafetyAlert(text, settings, { ...speechParams, alertKey: key });
   if (spoken && key) markSafetyAlertSpoken(key, now);
+  return spoken;
+}
+
+export async function speakTripStartConfirmationOnce(
+  text,
+  settings = localSettings.get(),
+  cooldownMs = 0,
+  now = Date.now(),
+  speechParams = {}
+) {
+  const key = 'tracking_ready';
+  if (!isTripStartVoiceAlertEnabled(settings) || !canSpeakSafetyAlert(key, cooldownMs, now)) return false;
+  const spoken = await speakSafetyAlert(text, {
+    ...settings,
+    voice_alerts_enabled: true,
+  }, speechParams);
+  if (spoken) markSafetyAlertSpoken(key, now);
   return spoken;
 }
 
@@ -203,7 +310,10 @@ export function testVoiceAlert(settings = localSettings.get()) {
   const message = resolveVoiceAlertMessageStyle(settings) === 'technical'
     ? buildVoiceAlertMessage('tracking_ready', {}, { settings })
     : 'Road Sage voice alerts are ready. Coaching alerts will speak during active trips.';
-  return speakSafetyAlert(message, settings, {
+  return speakSafetyAlert(message, {
+    ...settings,
+    voice_alerts_enabled: true,
+  }, {
     interrupt: true,
   });
 }

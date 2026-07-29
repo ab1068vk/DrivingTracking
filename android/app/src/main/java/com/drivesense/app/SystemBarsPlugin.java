@@ -17,7 +17,6 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 public class SystemBarsPlugin extends Plugin {
     private static final int LIGHT_SURFACE = Color.WHITE;
     private static final int DARK_SURFACE = Color.rgb(15, 17, 23);
-    private static final int CYBER_SURFACE = Color.rgb(3, 11, 16);
 
     @PluginMethod
     public void setStyle(PluginCall call) {
@@ -50,7 +49,6 @@ public class SystemBarsPlugin extends Plugin {
     }
 
     private int getSurfaceColor(String resolvedTheme) {
-        if ("cyber_lab".equals(resolvedTheme)) return CYBER_SURFACE;
         if ("dark".equals(resolvedTheme)) return DARK_SURFACE;
         return LIGHT_SURFACE;
     }
