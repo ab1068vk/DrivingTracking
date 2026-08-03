@@ -1,5 +1,8 @@
 import { tripService } from '@/api/trips';
-import { buildOpenSourceTripContextPatch } from '@/lib/openSourceTripContext';
+import {
+  buildOpenSourceTripContextPatch,
+  buildWeatherOnlyTripContextPatch,
+} from '@/lib/openSourceTripContext';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { localSettings } from '@/lib/trackingStore';
 import { recordSystemEvent } from '@/lib/systemLog';
@@ -36,7 +39,12 @@ export async function runRoadContextRefresh(trip, settings = localSettings.get()
   const job = (async () => {
     await rememberTrip(tripId);
     recordSystemEvent('road_context_job_queued', { trip_id: tripId }, { category: 'road_context' });
-    const patch = await buildOpenSourceTripContextPatch(trip, settings, {
+    const roadOnlySettings = {
+      ...settings,
+      // Defense in depth: Get Road Data is never authorized to request weather.
+      weather_context_enabled: false,
+    };
+    const patch = await buildOpenSourceTripContextPatch(trip, roadOnlySettings, {
       ...options,
       immediateRequests: options.immediateRequests !== false,
     });
@@ -47,6 +55,27 @@ export async function runRoadContextRefresh(trip, settings = localSettings.get()
   })().finally(() => activeJobs.delete(tripId));
 
   activeJobs.set(tripId, job);
+  return job;
+}
+
+export async function runWeatherContextRefresh(trip, settings = localSettings.get(), options = {}) {
+  if (!trip?.id) throw new Error('Trip not loaded');
+  const tripId = String(trip.id);
+  const jobKey = `weather:${tripId}`;
+  if (activeJobs.has(jobKey)) return activeJobs.get(jobKey);
+
+  const job = (async () => {
+    recordSystemEvent('weather_context_job_started', { trip_id: tripId }, { category: 'weather' });
+    const patch = await buildWeatherOnlyTripContextPatch(trip, settings, {
+      ...options,
+      immediateRequests: options.immediateRequests !== false,
+    });
+    const updatedTrip = await tripService.update(tripId, patch);
+    recordSystemEvent('weather_context_job_completed', { trip_id: tripId }, { category: 'weather' });
+    return updatedTrip;
+  })().finally(() => activeJobs.delete(jobKey));
+
+  activeJobs.set(jobKey, job);
   return job;
 }
 

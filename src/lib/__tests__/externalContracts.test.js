@@ -11,7 +11,11 @@ vi.mock('@/lib/requestObfuscator', () => ({
 import { resetRetryCircuits } from '@/lib/retry';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { annotateRouteSpeedLimits, loadOsmSpeedLimitWays } from '@/lib/speedLimitSource';
-import { fetchWeatherContextForTrip } from '@/lib/weatherContext';
+import { buildWeatherOnlyTripContextPatch } from '@/lib/openSourceTripContext';
+import {
+  fetchWeatherContextForTrip,
+  resolveCachedWeatherContextForTrip,
+} from '@/lib/weatherContext';
 import { loadTransmissionLog } from '@/lib/transmissionLog';
 
 const route = [
@@ -414,6 +418,150 @@ describe('external service contracts', () => {
     });
   });
 
+  it('reuses fresh on-device weather without another network disclosure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        utc_offset_seconds: -14400,
+        hourly: {
+          time: ['2026-05-23T10:00'],
+          temperature_2m: [12],
+          precipitation: [0.3],
+          precipitation_probability: [75],
+          rain: [0.3],
+          snowfall: [0],
+          weather_code: [61],
+          visibility: [7000],
+          wind_speed_10m: [22],
+          wind_gusts_10m: [40],
+          freezing_level_height: [1800],
+        },
+      }),
+    })));
+
+    await fetchWeatherContextForTrip(route, route[0].timestamp, route.at(-1).timestamp, {
+      privacy_zones: [],
+    });
+    fetch.mockClear();
+
+    const cached = await resolveCachedWeatherContextForTrip(
+      route,
+      route[0].timestamp,
+      route.at(-1).timestamp,
+      { privacy_zones: [] }
+    );
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(cached).toMatchObject({
+      source: 'open_meteo',
+      status: 'cache_hit_local',
+      network_used: false,
+      precipitation_probability_pct: 75,
+    });
+  });
+
+  it('keeps weather-only refresh isolated from OSM and OSRM', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        utc_offset_seconds: -14400,
+        hourly: {
+          time: ['2026-05-23T10:00'],
+          temperature_2m: [12],
+          precipitation: [0],
+          precipitation_probability: [0],
+          rain: [0],
+          snowfall: [0],
+          weather_code: [1],
+          visibility: [10000],
+          wind_speed_10m: [10],
+          wind_gusts_10m: [15],
+          freezing_level_height: [2500],
+        },
+      }),
+    })));
+
+    const patch = await buildWeatherOnlyTripContextPatch({
+      id: 'weather-only-trip',
+      start_time: route[0].timestamp,
+      end_time: route.at(-1).timestamp,
+      route_points: route,
+      driving_events: [],
+    }, {
+      heightened_privacy_mode: false,
+      weather_context_enabled: true,
+      speed_limit_lookup_enabled: true,
+      map_matching_enabled: true,
+      osrm_map_matching_url: 'https://osrm.example',
+      osrm_data_sharing_consented: true,
+      privacy_zones: [],
+    }, {
+      immediateRequests: true,
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const requestedOrigins = fetch.mock.calls.map(([url]) => new URL(String(url)).origin);
+    expect(requestedOrigins).toEqual(['https://api.open-meteo.com']);
+    expect(patch.weather_context).toMatchObject({
+      source: 'open_meteo',
+      status: 'fetched',
+    });
+    expect(patch.speed_limit_context).toBeUndefined();
+    expect(patch.map_matching_context).toBeUndefined();
+  });
+
+  it('ends a manual weather lookup with a useful timeout instead of hanging forever', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+
+    const lookup = buildWeatherOnlyTripContextPatch({
+      id: 'weather-timeout-trip',
+      start_time: route[0].timestamp,
+      end_time: route.at(-1).timestamp,
+      route_points: route,
+      driving_events: [],
+    }, {
+      heightened_privacy_mode: false,
+      weather_context_enabled: true,
+      privacy_zones: [],
+    }, {
+      immediateRequests: true,
+    });
+    const timeoutExpectation = expect(lookup).rejects.toThrow(
+      'Weather lookup timed out. Check your connection and try again.'
+    );
+
+    await vi.advanceTimersByTimeAsync(20001);
+
+    await timeoutExpectation;
+  });
+
+  it('blocks weather-only refresh completely in heightened privacy mode', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const patch = await buildWeatherOnlyTripContextPatch({
+      id: 'private-weather-trip',
+      start_time: route[0].timestamp,
+      end_time: route.at(-1).timestamp,
+      route_points: route,
+      driving_events: [],
+    }, {
+      heightened_privacy_mode: true,
+      weather_context_enabled: true,
+      speed_limit_lookup_enabled: true,
+      map_matching_enabled: true,
+      osrm_map_matching_url: 'https://osrm.example',
+      osrm_data_sharing_consented: true,
+    }, {
+      immediateRequests: true,
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(patch.weather_context).toMatchObject({
+      source: 'unavailable',
+      status: 'disabled_heightened_privacy',
+    });
+  });
+
   it('uses a privacy-safe route point for Open-Meteo instead of a private midpoint', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url) => ({
       ok: true,
@@ -497,6 +645,37 @@ describe('external service contracts', () => {
       zonesSuppressed: ['Home'],
     });
     expect(entry.privacyVerificationWarnings).toEqual([]);
+  });
+
+  it('blocks a point when four-decimal rounding would move it into the privacy guard', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const point = {
+      lat: 43.00094,
+      lng: -79,
+      timestamp: '2026-05-23T14:00:00.000Z',
+    };
+
+    const result = await fetchWeatherContextForTrip(
+      [point],
+      point.timestamp,
+      point.timestamp,
+      {
+        heightened_privacy_mode: false,
+        privacy_zones: [{
+          id: 'rounding-edge',
+          label: 'Rounding edge',
+          lat: 43,
+          lng: -79,
+          radius_m: 3,
+        }],
+      }
+    );
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      status: 'skipped_privacy',
+      weather_skipped_reason: 'all_points_within_privacy_zones',
+    });
   });
 
   it('calls OSRM match with ordered lon-lat coordinates and per-point radiuses', async () => {

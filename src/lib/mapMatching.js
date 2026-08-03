@@ -1,4 +1,8 @@
-import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import {
+  getEncryptedJson,
+  removeEncryptedJson,
+  setEncryptedJson,
+} from '@/lib/securePayloadCrypto';
 import { withRetry } from '@/lib/retry';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
@@ -8,7 +12,7 @@ import { getPrivacyZones, isPointInPrivacyZone, routeTouchesPrivacyZone } from '
 import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 import { describeEndpointValidationError, normalizeHttpsEndpoint } from '@/lib/urlSecurity';
 
-const CACHE_KEY = 'drivesense_map_matching_cache_v2';
+export const MAP_MATCHING_CACHE_KEY = 'drivesense_map_matching_cache_v2';
 const MAX_MATCH_POINTS = 100;
 export const DEFAULT_OSRM_TIMEOUT_MS = 12000;
 export const OSRM_TIMEOUT_MS = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS) || DEFAULT_OSRM_TIMEOUT_MS;
@@ -267,7 +271,7 @@ export async function checkOsrmEndpointHealth(endpoint) {
 }
 
 export async function clearMapMatchingCache() {
-  await removeJson(CACHE_KEY);
+  await removeEncryptedJson(MAP_MATCHING_CACHE_KEY);
 }
 
 function nearestMatchedPoint(original, geometry = []) {
@@ -521,7 +525,7 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
   }
 
   const key = gapCount ? routeCacheKey(segments) : routeCacheKeyForFlatPoints(segments[0] || []);
-  const cache = await getJson(CACHE_KEY, {});
+  const cache = await getEncryptedJson(MAP_MATCHING_CACHE_KEY, {});
   if (cache[key]) return { ...cache[key], status: 'cache_hit', provider: 'osrm', isOsrmDemoUrl };
 
   try {
@@ -585,7 +589,7 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       privacy_gap_count: gapCount,
       isOsrmDemoUrl,
     };
-    await setJson(CACHE_KEY, { ...cache, [key]: result });
+    await setEncryptedJson(MAP_MATCHING_CACHE_KEY, { ...cache, [key]: result });
     recordSystemEvent('osrm_map_matching_completed', {
       status: result.status,
       snapped_coverage: result.snapped_coverage,

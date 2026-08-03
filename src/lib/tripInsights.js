@@ -1,12 +1,7 @@
 import { clamp } from '@/lib/mathUtils';
-import {
-  isEveningRushHour,
-  isMorningRushHour,
-  isNightRiskHour,
-  NIGHT_END_HOUR,
-  NIGHT_START_HOUR,
-} from '@/lib/appConstants';
+import { NIGHT_END_HOUR, NIGHT_START_HOUR } from '@/lib/appConstants';
 import { routeKeyForTrip as commuteRouteKeyForTrip } from '@/lib/commuteMatching';
+import { inferTripTags } from '@/lib/tripTagIntelligence';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
 import {
   CO2_KG_PER_LITER,
@@ -333,11 +328,9 @@ export function buildDriverSignature(trips) {
   const featureRows = completed.map((trip) => {
     const aggressiveScore = finiteScore(trip.aggressive_driving_score);
     const smoothnessScore = finiteScore(trip.score_smoothness ?? trip.smoothness_score);
-    const ecoScore = finiteScore(trip.score_eco ?? trip.eco_score);
     return {
       aggression: aggressiveScore == null ? null : clamp(1 - (aggressiveScore / 100), 0, 1),
       smoothness: smoothnessScore == null ? null : clamp(smoothnessScore / 100, 0, 1),
-      ecoMindedness: ecoScore == null ? null : clamp(ecoScore / 100, 0, 1),
       powertrainStress: finiteScore(trip.engine_stress_score) == null || (Number(trip.obd_powertrain_sample_count) || 0) <= 0
         ? null
         : clamp(1 - (Number(trip.engine_stress_score) / 100), 0, 1),
@@ -353,7 +346,7 @@ export function buildDriverSignature(trips) {
     };
   });
 
-  const numericKeys = ['aggression', 'smoothness', 'ecoMindedness', 'powertrainStress', 'speedTolerance', 'consistencyIdx'];
+  const numericKeys = ['aggression', 'smoothness', 'powertrainStress', 'speedTolerance', 'consistencyIdx'];
   const keys = [...numericKeys, 'brakingStyle'];
   const avgDim = (rows, key) => {
     const validValues = rows.map((row) => row[key]).filter(Number.isFinite);
@@ -368,14 +361,11 @@ export function buildDriverSignature(trips) {
 
   const aggression = dimensions.aggression ?? 0;
   const smoothness = dimensions.smoothness ?? 0;
-  const ecoMindedness = dimensions.ecoMindedness ?? 0;
   const speedTolerance = dimensions.speedTolerance ?? 0;
   const consistency = dimensions.consistencyIdx ?? 0;
   const archetype = aggression > 0.55 && speedTolerance > 0.6
     ? 'aggressive_commuter'
-    : ecoMindedness > 0.75 && smoothness > 0.7
-      ? 'eco_conscious'
-      : consistency > 0.85
+    : consistency > 0.85
         ? 'precision_driver'
         : smoothness > 0.75 && aggression < 0.3
           ? 'smooth_cruiser'
@@ -560,40 +550,16 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
 }
 
 export function suggestTripTag(trip = {}) {
-  const start = new Date(trip.start_time || trip.created_at || Date.now());
-  const hour = start.getHours();
-  const dow = start.getDay();
-  const durationMin = (Number(trip.duration_seconds) || 0) / 60;
-  const distanceKm = Number(trip.distance_km) || 0;
-  const weekday = dow >= 1 && dow <= 5;
-  const weekend = dow === 0 || dow === 6;
-  const rushHour = isMorningRushHour(hour) || isEveningRushHour(hour);
-
-  if (trip.night_driving || isNightRiskHour(hour)) {
-    return { auto_tag: 'night', auto_tag_confidence: trip.night_driving ? 'high' : 'medium' };
-  }
-  if (trip.slippery_proxy === 'likely_wet' || trip.slippery_proxy === 'possible_wet') {
-    return { auto_tag: 'rain', auto_tag_confidence: 'medium' };
-  }
-  if (trip.dominant_road_type === 'highway' || trip.road_type === 'highway') {
-    return { auto_tag: 'highway', auto_tag_confidence: 'medium' };
-  }
-  if (weekday && rushHour && durationMin >= 10 && durationMin <= 90 && distanceKm >= 5 && distanceKm <= 80) {
-    return { auto_tag: 'commute', auto_tag_confidence: 'high' };
-  }
-  if (weekday && hour >= 6 && hour <= 18 && durationMin >= 15) {
-    return { auto_tag: 'commute', auto_tag_confidence: 'medium' };
-  }
-  if (durationMin < 20 && distanceKm < 10) {
-    return { auto_tag: 'errand', auto_tag_confidence: 'medium' };
-  }
-  if (weekend && hour >= 9 && hour <= 17 && distanceKm < 20) {
-    return { auto_tag: 'errand', auto_tag_confidence: 'medium' };
-  }
-  if (distanceKm < 8 && durationMin >= 10) {
-    return { auto_tag: 'practice', auto_tag_confidence: 'low' };
-  }
-  return { auto_tag: 'city', auto_tag_confidence: 'low' };
+  const intelligence = inferTripTags(trip);
+  const primary = intelligence.primary;
+  return {
+    auto_tag: primary?.tag || 'city',
+    auto_tag_confidence: primary?.confidence_label || 'low',
+    auto_tag_reason: primary?.reason || 'Not enough evidence for a strong tag yet.',
+    auto_tags: intelligence.recommended_tags,
+    tag_candidates: intelligence.candidates,
+    tag_intelligence_version: intelligence.version,
+  };
 }
 
 export function buildScoreTips(trips = []) {
@@ -1135,7 +1101,7 @@ export function calculateCarbonImpact(completedTrips = [], settings = {}, vehicl
       : totalCo2SavedKg >= 50
         ? 'Green Driver'
         : totalCo2SavedKg >= 20
-          ? 'Eco Aware'
+          ? 'Efficiency Aware'
           : totalCo2SavedKg >= 5
             ? 'Getting There'
             : 'Starting Out',
@@ -1726,11 +1692,6 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
   const cleanNightTrips = cleanTrips.filter((trip) => trip.night_driving).length;
   const highScoreTrips = completed.filter((trip) => (trip.score_overall || 0) >= 90).length;
   const excellentScoreTrips = completed.filter((trip) => (trip.score_overall || 0) >= 95).length;
-  const allRounderTrips = completed.filter((trip) => (
-    (trip.score_safety ?? trip.safety_score ?? 0) >= 85 &&
-    (trip.score_smoothness ?? trip.smoothness_score ?? 0) >= 85 &&
-    (trip.score_eco ?? trip.eco_driving_score ?? 0) >= 85
-  )).length;
   const recentFive = [...completed]
     .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
     .slice(0, 5);
@@ -1905,16 +1866,6 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       category: 'Score',
       earned: excellentScoreTrips >= 5,
       current: Math.min(5, excellentScoreTrips),
-      target: 5,
-      unit: 'trips',
-    },
-    {
-      id: 'all_rounder',
-      label: 'All-Rounder',
-      description: 'Score 85+ in safety, smoothness, and eco on 5 trips.',
-      category: 'Score',
-      earned: allRounderTrips >= 5,
-      current: Math.min(5, allRounderTrips),
       target: 5,
       unit: 'trips',
     },
@@ -2102,7 +2053,7 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       id: 'tree_planter',
       label: 'Tree Planter',
       description: 'Save at least one tree-year of estimated CO2 versus the baseline.',
-      category: 'Eco',
+      category: 'Efficiency',
       earned: carbon.total_co2_saved_kg >= 21,
       current: Math.min(21, Math.round(carbon.total_co2_saved_kg)),
       target: 21,
@@ -2112,7 +2063,7 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       id: 'green_fleet',
       label: 'Green Fleet',
       description: 'Save five tree-years of estimated CO2 versus the baseline.',
-      category: 'Eco',
+      category: 'Efficiency',
       earned: carbon.total_co2_saved_kg >= 105,
       current: Math.min(105, Math.round(carbon.total_co2_saved_kg)),
       target: 105,
@@ -2122,7 +2073,7 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       id: 'climate_champion',
       label: 'Climate Champion',
       description: 'Reach the Climate Champion carbon grade.',
-      category: 'Eco',
+      category: 'Efficiency',
       earned: carbon.carbon_grade === 'Climate Champion',
       current: carbon.carbon_grade === 'Climate Champion' ? 1 : 0,
       target: 1,
@@ -2131,7 +2082,7 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       id: 'cruise_master',
       label: 'Cruise Master',
       description: 'Achieve excellent cruise band on 5 highway trips.',
-      category: 'Eco',
+      category: 'Efficiency',
       earned: cruiseMasterTrips >= 5,
       current: Math.min(5, cruiseMasterTrips),
       target: 5,

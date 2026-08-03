@@ -436,7 +436,7 @@ export function buildDriverInsightBrief(trips = [], settings = {}, options = {})
       id: 'phone_use',
       priority: 'high',
       title: 'Remove phone-use exposure first',
-      detail: `${phoneUseSummary.tripsWithConfirmedUse} trip${phoneUseSummary.tripsWithConfirmedUse === 1 ? '' : 's'} include confirmed phone-use windows. Set navigation/audio before moving and use Do Not Disturb.`,
+      detail: `${phoneUseSummary.tripsWithConfirmedUse} trip${phoneUseSummary.tripsWithConfirmedUse === 1 ? '' : 's'} include moving foreground-app windows. Review incorrect detections, set navigation/audio before moving, and use Do Not Disturb.`,
       metric: `${phoneUseSummary.coveragePct}% Usage Access coverage`,
     });
   }

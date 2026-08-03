@@ -182,7 +182,7 @@ export default function PrivacyZoneProtectionCheck({
             : geometryReady ? 'A local GPS point is available. The exact coordinate is not shown in this check.' : 'No local GPS point is available yet.'}
         </EvidenceRow>
         <EvidenceRow label="Saved data">
-          Raw route points and driving-event coordinates inside the protected area are erased or replaced with privacy gaps before local trip storage. Existing saved GPS inside this area is purged when the zone is saved.
+          Raw route points and driving-event coordinates inside the protected area are erased or replaced with privacy gaps before local trip storage. Saving the zone also purges existing GPS plus derived saved road-speed cells, rules, Road Memory corridors, replay markers, and coordinate-bearing speed history that intersect it.
         </EvidenceRow>
         <EvidenceRow label="Outbound requests">
           {sensitivity === 'high'

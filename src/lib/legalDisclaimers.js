@@ -2,9 +2,9 @@ export const LEGAL_DISCLAIMER_SHORT =
   'Personal-use informational estimates only. Not legal, insurance, navigation, emergency, medical, maintenance, tax, employment, fleet, compliance, or safety-critical advice.';
 
 export const LEGAL_DISCLAIMER_SUMMARY =
-  `${LEGAL_DISCLAIMER_SHORT} Road Sage estimates driving patterns from device sensors, GPS, maps, weather, route, vehicle, cost, emissions, phone-use, OBD, and optional third-party data that can be incomplete, delayed, unavailable, stale, misclassified, or wrong. You remain responsible for safe driving, posted signs, traffic laws, road conditions, vehicle condition, permissions, consent, data sharing, exports, backups, and every decision made from app outputs.`;
+  `${LEGAL_DISCLAIMER_SHORT} Road Sage estimates driving patterns from device sensors, GPS, optional on-device camera analysis, maps, weather, route, vehicle, cost, emissions, phone-use, OBD, and optional third-party data that can be incomplete, delayed, unavailable, stale, misclassified, or wrong. You remain responsible for safe driving, posted signs, traffic laws, road conditions, vehicle condition, permissions, consent, data sharing, exports, backups, and every decision made from app outputs.`;
 
-export const LEGAL_NOTICE_ACK_VERSION = 7;
+export const LEGAL_NOTICE_ACK_VERSION = 9;
 
 export const LEGAL_NOTICE_INTRO =
   'Road Sage is a local-first driving log and coaching app for personal information and self-coaching. Read this notice before using tracking, background auto tracking, scores, maps, alerts, reports, exports, backups, privacy zones, external road data, phone-use checks, OBD features, vehicle features, or survey tools.';
@@ -14,7 +14,8 @@ export const LEGAL_NOTICE_KEY_POINTS = [
   'Scores, alerts, maps, speed limits, costs, emissions, fatigue signals, phone-use signals, possible incident signals, crash-related signals, driving-load signals, and maintenance reminders are estimates and may be wrong.',
   'Road Sage is not legal, insurance, emergency, navigation, medical, tax, employment, fleet, compliance, repair, maintenance, or safety-critical advice.',
   'If Background Auto is enabled, Road Sage may collect location and activity signals while the app is minimized or in the background, but Android may stop tracking if the app is fully closed or force-stopped.',
-  'Your data stays local by default. Saved road-speed reviews can reduce repeated OpenStreetMap lookups, but road-data features may still share limited route, location, date, or public road-area data with outside services when you tap Get Road Data, enable automatic road-data lookup, or approve route matching.',
+    'Optional speed-sign scanning must be started while parked from either the visible, time-limited Mounted Ready screen for an automatic trip or Start Trip + Camera for a manual trip. The camera stays off while waiting for the selected trip to be confirmed. It analyzes images on the Android device, discards full frames and recognized text, and may retain one tightly cropped sign image in encrypted no-backup storage for parked review. The crop is deleted after your decision and becomes unavailable after 24 hours.',
+  'Your data stays local by default. Saved road-speed reviews can reduce repeated OpenStreetMap lookups, but enabled external features may still share limited route, location, date, or public road-area data with outside services when you separately choose Get Road Data or Get Weather, enable automatic external context, or approve route matching.',
   'Do not use Road Sage to monitor another person, worker, vehicle, family member, minor, or shared device without all legally required consent, notice, and permissions.',
   'You are responsible for safe driving, traffic laws, posted signs, road conditions, your vehicle, permissions, consent, exports, backups, and any decisions made from app information.',
 ];
@@ -37,6 +38,12 @@ export const LEGAL_DATA_PRACTICES = [
     access: 'Motion sensor samples, Android Usage Access summaries, Bluetooth/OBD readings, notification state, battery and device capability checks when enabled.',
     use: 'Used for driving-quality estimates, phone-use evidence, possible incident or crash-related signals, OBD vehicle context, diagnostics, alerts, and readiness checks.',
     sharing: 'Local by default. Bluetooth pairing and OS permissions are controlled by Android and the connected adapter/device.',
+  },
+  {
+    title: 'Optional on-device speed-sign scanning',
+    access: 'Android camera frames, bundled offline text recognition, current trip state, a privacy-guarded location fix, battery level, and thermal state only while the dedicated scanner screen is visibly open.',
+    use: 'Used to create an unconfirmed parked-review prompt after the same supported regulatory sign wording and number repeat across frames. Ambiguous and understood conditional text is rejected. A camera prompt never affects scoring or voice alerts unless you personally confirm the posted sign after parking.',
+    sharing: 'No full camera frame or recognized text is retained or sent off device. One tightly cropped sign image may remain encrypted in app-private no-backup storage solely for parked confirmation. It is deleted after confirm, adjust, or reject; choosing Not sure keeps it only until its original 24-hour expiry. It is not included in exports or backups.',
   },
   {
     title: 'Reports, backups, logs, and surveys',
@@ -94,6 +101,11 @@ export const LEGAL_DISCLAIMER_ITEMS = [
     body: 'GPS, sensors, Android activity recognition, Usage Access, Bluetooth, OBD, network state, battery optimization, map data, weather data, and time calculations can fail, drift, lag, lose precision, be unavailable, or be affected by device model, OS settings, mounts, tunnels, garages, tall buildings, and user edits.',
   },
   {
+    group: 'Accuracy limits',
+    title: 'Camera sign prompts require your confirmation',
+    body: 'On-device camera text recognition can miss signs or confuse regulatory, advisory, school, construction, conditional, vehicle-specific, irrelevant, damaged, obscured, or foreign signs. It is an optional review aid, not sign recognition you can rely on while driving. Do not confirm a prompt unless you personally saw and understood the posted sign for that road.',
+  },
+  {
     group: 'Records, exports & decisions',
     title: 'Not official records',
     body: 'Reports, backups, exports, maps, GPS traces, event labels, score cards, charts, and summaries are not insurer-validated ratings, official records, legal evidence, proof of work, proof of tax treatment, proof of compliance, or proof of fault.',
@@ -116,7 +128,7 @@ export const LEGAL_DISCLAIMER_ITEMS = [
   {
     group: 'Privacy & data',
     title: 'Optional external requests',
-    body: 'Saved and reviewed road speeds can reduce repeated OpenStreetMap lookups for roads you already maintain locally. Road-data lookup can send privacy-filtered public road boxes to OpenStreetMap and one privacy-safe route point plus date to Open-Meteo when you tap Get Road Data or enable automatic road-data lookup. Route matching can send sampled public GPS segments to the OSRM endpoint you configure and explicitly approve. Public or third-party services have their own availability, logging, privacy, retention, security, rate-limit, and policy practices.',
+    body: 'Saved and reviewed road speeds can reduce repeated OpenStreetMap lookups for roads you already maintain locally. Get Road Data can send privacy-filtered public road boxes to OpenStreetMap and sampled public GPS segments to an OSRM endpoint you explicitly approve; it never requests weather. The separate Get Weather action can send one rounded route point outside privacy-zone guards plus the trip date to Open-Meteo. Automatic external context can run enabled speed and weather lookups independently after consent. Public or third-party services have their own availability, logging, privacy, retention, security, rate-limit, and policy practices.',
   },
   {
     group: 'Privacy & data',

@@ -28,10 +28,10 @@ import MapErrorBoundary from '@/components/MapErrorBoundary';
 import { useLocalSettingSelector } from '@/hooks/useLocalSettings';
 import usePrivacyZonesRevision from '@/hooks/usePrivacyZonesRevision';
 import { beginMeasure, measureSync } from '@/lib/performanceTriage';
+import { DEFAULT_MAP_CENTER_ARRAY } from '@/lib/mapDefaults';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-const TORONTO_CENTER = [43.6532, -79.3832];
 const TILE_STYLES = {
   standard: {
     label: 'Standard',
@@ -598,6 +598,9 @@ function TripMapContent({
   showCurrentLocation = false,
   currentLocation = null,
   parkedLocation = null,
+  parkedLocationDraggable = false,
+  onParkedLocationMove = null,
+  showPrivacyZones = true,
   showCorneringHeatmap = false,
   showDangerZones = false,
   dangerZones = EMPTY_DANGER_ZONES,
@@ -619,6 +622,7 @@ function TripMapContent({
   const layersRef = useRef(null);
   const tileLayerRef = useRef(null);
   const onEventSelectRef = useRef(onEventSelect);
+  const onParkedLocationMoveRef = useRef(onParkedLocationMove);
   const focusLayerRef = useRef(null);
   const lastBoundsRef = useRef(null);
   const lastFitRouteKeyRef = useRef('');
@@ -634,6 +638,7 @@ function TripMapContent({
   const heightenedPrivacy = settings?.[HEIGHTENED_PRIVACY_MODE_KEY] === true;
   const privacyZonesRevision = usePrivacyZonesRevision();
   onEventSelectRef.current = onEventSelect;
+  onParkedLocationMoveRef.current = onParkedLocationMove;
 
   useEffect(() => {
     const map = leafletMapRef.current;
@@ -744,7 +749,7 @@ function TripMapContent({
         });
 
         leafletMapRef.current = map;
-        safeMapSetView(map, TORONTO_CENTER, 12);
+        safeMapSetView(map, DEFAULT_MAP_CENTER_ARRAY, 12);
 
         resetTileFailureTracking();
 
@@ -855,7 +860,7 @@ function TripMapContent({
       currentLocation,
       parkedLocation,
     ];
-    const displayPrivacyZones = privacySettings.show_privacy_circles === true
+    const displayPrivacyZones = showPrivacyZones && privacySettings.show_privacy_circles === true
       ? getPrivacyZones(privacySettings)
         .map((zone) => getPrivacyZoneDisplayCircle(zone, undefined, privacyDisplayReferences))
         .filter(hasValidLatLng)
@@ -1180,6 +1185,13 @@ function TripMapContent({
       window.L.marker(latLngs[latLngs.length - 1], { icon: endIcon })
         .bindPopup(endedStopped ? '<b>Parked / trip ended</b>' : '<b>End</b>')
         .addTo(layers);
+    } else if (safeParkedLocation) {
+      const bounds = window.L.latLngBounds([
+        [safeParkedLocation.lat, safeParkedLocation.lng],
+      ]);
+      drawPrivacyZones();
+      lastBoundsRef.current = bounds;
+      safeMapSetView(map, [safeParkedLocation.lat, safeParkedLocation.lng], 17);
     } else if (displayPrivacyZones.length > 0) {
       const bounds = window.L.latLngBounds([]);
       drawPrivacyZones(bounds);
@@ -1188,7 +1200,7 @@ function TripMapContent({
     } else if (safeCurrentLocation) {
       safeMapSetView(map, [safeCurrentLocation.lat, safeCurrentLocation.lng], 15);
     } else {
-      safeMapSetView(map, TORONTO_CENTER, 12);
+      safeMapSetView(map, DEFAULT_MAP_CENTER_ARRAY, 12);
     }
 
     if (mapEvents && mapEvents.length > 0) {
@@ -1279,9 +1291,20 @@ function TripMapContent({
         iconSize: [22, 22],
         iconAnchor: [11, 11],
       });
-      window.L.marker([safeParkedLocation.lat, safeParkedLocation.lng], { icon: parkedIcon })
+      const parkedMarker = window.L.marker(
+        [safeParkedLocation.lat, safeParkedLocation.lng],
+        { icon: parkedIcon, draggable: parkedLocationDraggable === true }
+      )
         .bindPopup(`<b>Parked here</b><br>${escapeHtml(safeParkedLocation.address || `${safeParkedLocation.lat.toFixed(5)}, ${safeParkedLocation.lng.toFixed(5)}`)}`)
         .addTo(layers);
+      if (parkedLocationDraggable === true) {
+        parkedMarker.on('dragend', (event) => {
+          const next = event.target?.getLatLng?.();
+          if (Number.isFinite(next?.lat) && Number.isFinite(next?.lng)) {
+            onParkedLocationMoveRef.current?.({ lat: next.lat, lng: next.lng });
+          }
+        });
+      }
     }
     } catch (error) {
       console.error('Trip map drawing failed', error);
@@ -1290,7 +1313,7 @@ function TripMapContent({
     } finally {
       endDraw({ outcome: 'complete' });
     }
-  }, [mapFailed, ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings, privacyZonesRevision]);
+  }, [mapFailed, ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, parkedLocationDraggable, showPrivacyZones, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings, privacyZonesRevision]);
 
   useEffect(() => {
     const safeCurrentLocation = validLatLngPoint(currentLocation);
@@ -1470,7 +1493,7 @@ function TripMapContent({
           {phoneEventCount > 0 && (
             <div className="mt-2 flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-700 dark:bg-red-950/30 dark:text-red-300">
               <Smartphone className="h-3.5 w-3.5" />
-              {phoneEventCount} confirmed phone-use marker{phoneEventCount === 1 ? '' : 's'} shown on the route
+              {phoneEventCount} foreground-activity marker{phoneEventCount === 1 ? '' : 's'} shown on the route
             </div>
           )}
         </button>

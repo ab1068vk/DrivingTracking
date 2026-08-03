@@ -70,7 +70,21 @@ const packageMatches = (packageName, pattern) => pattern.test(String(packageName
 
 export function classifyPhoneUseActivity(event = {}) {
   const explicit = String(event.activity_type || event.activityType || '').toLowerCase();
-  if (explicit.includes('unlock')) return { key: 'unlock_or_screen_check', label: 'Unlock or screen check' };
+  const interactionContext = String(event.interaction_context || event.interactionContext || '').toLowerCase();
+  if (
+    event.started_after_unlock === true ||
+    interactionContext === 'after_unlock' ||
+    explicit.includes('unlock')
+  ) {
+    return { key: 'foreground_after_unlock', label: 'Foreground activity after unlock' };
+  }
+  if (
+    event.started_after_screen_on === true ||
+    interactionContext === 'after_screen_on' ||
+    explicit.includes('screen_on')
+  ) {
+    return { key: 'foreground_after_screen_on', label: 'Foreground activity after screen-on' };
+  }
   if (explicit.includes('call')) return { key: 'call', label: 'Call activity' };
   if (explicit.includes('message') || explicit.includes('text')) return { key: 'messaging', label: 'Messaging' };
 
@@ -137,6 +151,11 @@ export function buildPhoneUseEventContext(trip = {}, event = {}) {
   else if (speedKmh >= 50) contextLabels.push('Moving at 50 km/h or more');
   if (weather?.condition && weather.condition !== 'clear') {
     contextLabels.push(`${titleCase(weather.condition)} conditions`);
+  }
+  if (event.started_after_unlock === true || event.interaction_context === 'after_unlock') {
+    contextLabels.push('Started within 10 seconds of an unlock');
+  } else if (event.started_after_screen_on === true || event.interaction_context === 'after_screen_on') {
+    contextLabels.push('Started within 10 seconds of screen-on');
   }
   relatedEvents.slice(0, 2).forEach((candidate) => {
     contextLabels.push(`Near ${titleCase(candidate.type)}`);
@@ -216,7 +235,7 @@ const chooseWorstEvent = (events = []) => (
 const coachingMessageFor = ({ isPassenger, scoreAvailable, timeline, worstEvent }) => {
   if (isPassenger) return 'This trip was marked as a passenger trip. Keep the evidence for review, but do not treat it as driver behavior.';
   if (!scoreAvailable) return 'Enable Android Usage Access before driving so phone-use coverage and scoring are available.';
-  if (!timeline.length) return 'No confirmed phone-use windows were recorded. Keep navigation and audio set before moving.';
+  if (!timeline.length) return 'No scored foreground-app windows were recorded. Keep navigation and audio set before moving.';
   if ((worstEvent?.speedKmh || 0) >= 100) return 'The highest-risk use happened at highway speed. Set navigation, calls, and audio before moving.';
   if ((worstEvent?.durationSeconds || 0) >= 20) return 'A sustained phone-use window was recorded. Pull over before handling messages, apps, or calls.';
   if (timeline.length >= 3) return 'Several short checks accumulated during this trip. Use Do Not Disturb and voice controls before departure.';
@@ -311,7 +330,10 @@ export function summarizeTripPhoneUse(trip = {}, options = {}) {
     worstEvent,
     activityBreakdown,
     scoreComparison,
-    unlockClassificationAvailable: timeline.some((event) => event.activityKey === 'unlock_or_screen_check'),
+    unlockClassificationAvailable: timeline.some((event) => (
+      event.activityKey === 'foreground_after_unlock' ||
+      event.activityKey === 'foreground_after_screen_on'
+    )),
     coachingMessage: coachingMessageFor({
       isPassenger: passenger,
       scoreAvailable,

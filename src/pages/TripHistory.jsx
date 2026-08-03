@@ -18,12 +18,15 @@ import { formatDistance, formatDuration, getTripComponentScore } from '@/lib/tri
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { SAVED_FILTERS_KEY } from '@/lib/appConstants';
 import {
+  TRIP_TAG_CATEGORIES,
   TRIP_TAG_OPTIONS,
   buildTripSearchText,
   calculateRecentBrakingImprovement,
+  getTripTagOption,
   isHighRiskTrip,
   normalizeTripTags,
 } from '@/lib/tripMetadata';
+import { getEffectiveTripTags } from '@/lib/tripTagIntelligence';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
 import { PageHeader } from '@/components/PageChrome';
@@ -177,6 +180,116 @@ export const matchesTripDateFilter = (trip, filter = 'all', dateFrom = '', dateT
   return true;
 };
 
+export const matchesTripTags = (trip, selectedTags = [], mode = 'all') => {
+  const selected = Array.isArray(selectedTags) ? selectedTags.filter(Boolean) : [];
+  if (!selected.length) return true;
+  const tripTags = new Set(normalizeTripTags(trip));
+  return mode === 'any'
+    ? selected.some((tag) => tripTags.has(tag))
+    : selected.every((tag) => tripTags.has(tag));
+};
+
+export const buildTripTagCounts = (trips = []) => {
+  const counts = new Map();
+  (Array.isArray(trips) ? trips : []).forEach((trip) => {
+    normalizeTripTags(trip).forEach((tag) => counts.set(tag, (counts.get(tag) || 0) + 1));
+  });
+  return counts;
+};
+
+function SmartTagFilter({
+  options,
+  counts,
+  selectedTags,
+  matchMode,
+  onToggle,
+  onClear,
+  onMatchModeChange,
+}) {
+  const selected = new Set(selectedTags);
+  return (
+    <div className="space-y-3" data-testid="smart-tag-filter">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+            <Tag className="h-3.5 w-3.5 text-primary" />
+            Smart tags
+          </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Saved tags and high-confidence on-device route, road, time, and weather signals.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClear}
+          aria-pressed={selectedTags.length === 0}
+          className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
+            selectedTags.length === 0
+              ? 'border-primary bg-primary text-primary-foreground'
+              : 'border-border bg-background text-muted-foreground'
+          }`}
+        >
+          All trips
+        </button>
+      </div>
+
+      {selectedTags.length > 1 && (
+        <div className="inline-flex rounded-lg border border-border bg-background p-0.5 text-[11px]" aria-label="Tag matching mode">
+          <button
+            type="button"
+            onClick={() => onMatchModeChange('all')}
+            aria-pressed={matchMode === 'all'}
+            className={`rounded-md px-2 py-1 ${matchMode === 'all' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+          >
+            Match all
+          </button>
+          <button
+            type="button"
+            onClick={() => onMatchModeChange('any')}
+            aria-pressed={matchMode === 'any'}
+            className={`rounded-md px-2 py-1 ${matchMode === 'any' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+          >
+            Match any
+          </button>
+        </div>
+      )}
+
+      {TRIP_TAG_CATEGORIES.map((category) => {
+        const categoryOptions = options.filter((option) => option.category === category.id);
+        if (!categoryOptions.length) return null;
+        return (
+          <div key={category.id}>
+            <div className="mb-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{category.label}</span>
+              <span className="ml-2 text-[10px] text-muted-foreground">{category.description}</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {categoryOptions.map((option) => {
+                const count = counts.get(option.id) || 0;
+                const active = selected.has(option.id);
+                return (
+                  <button
+                    type="button"
+                    key={option.id}
+                    onClick={() => onToggle(option.id)}
+                    aria-pressed={active}
+                    title={option.description}
+                    className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                      active ? 'border-primary bg-primary text-primary-foreground' : option.className
+                    } ${count === 0 && !active ? 'opacity-55' : ''}`}
+                  >
+                    {option.label} <span className={active ? 'text-primary-foreground/75' : 'opacity-65'}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function TripHistory() {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -187,7 +300,8 @@ export default function TripHistory() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(0);
-  const [selectedTag, setSelectedTag] = useState('all');
+  const [selectedTags, setSelectedTags] = useState([]);
+  const [tagMatchMode, setTagMatchMode] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
   const [presetName, setPresetName] = useState('');
   const [savedFilters, setSavedFilters] = useState([]);
@@ -220,7 +334,11 @@ export default function TripHistory() {
     enabled: recentTripsLoaded && recentCompleted.length >= 100,
     select: (trips) => trips.filter((trip) => trip.status === 'completed'),
   });
-  const completed = fullHistoryCompleted.length > 0 ? fullHistoryCompleted : recentCompleted;
+  const storedCompleted = fullHistoryCompleted.length > 0 ? fullHistoryCompleted : recentCompleted;
+  const completed = useMemo(() => storedCompleted.map((trip) => ({
+    ...trip,
+    tags: getEffectiveTripTags(trip, storedCompleted),
+  })), [storedCompleted]);
   const isFetching = recentFetching || fullHistoryFetching;
 
   const { data: vehicles = [] } = useQuery({
@@ -257,13 +375,23 @@ export default function TripHistory() {
     () => [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()),
     [completed]
   );
+  const tagCounts = useMemo(() => buildTripTagCounts(completed), [completed]);
+  const availableTagOptions = useMemo(() => {
+    const builtInIds = new Set(TRIP_TAG_OPTIONS.map((option) => option.id));
+    const customOptions = [...tagCounts.keys()]
+      .filter((tag) => !builtInIds.has(tag))
+      .map(getTripTagOption)
+      .filter(Boolean)
+      .sort((left, right) => left.label.localeCompare(right.label));
+    return [...TRIP_TAG_OPTIONS, ...customOptions];
+  }, [tagCounts]);
 
   const normalizedSearch = search.trim().toLowerCase();
   const sorted = useMemo(() => {
     const filtered = completed.filter((trip) => {
       if (!matchesQuickFilter(trip, filterBy)) return false;
       if (!matchesTripDateFilter(trip, dateFilter, dateFrom, dateTo)) return false;
-      if (selectedTag !== 'all' && !normalizeTripTags(trip).includes(selectedTag)) return false;
+      if (!matchesTripTags(trip, selectedTags, tagMatchMode)) return false;
       if (normalizedSearch) {
         const indexedText = tripSearchIndex.get(String(trip.id)) || '';
         if (!matchesTripSearchText(indexedText, normalizedSearch)) return false;
@@ -282,7 +410,7 @@ export default function TripHistory() {
         default: return 0;
       }
     });
-  }, [completed, dateFilter, dateFrom, dateTo, filterBy, normalizedSearch, selectedTag, sortBy, tripSearchIndex]);
+  }, [completed, dateFilter, dateFrom, dateTo, filterBy, normalizedSearch, selectedTags, sortBy, tagMatchMode, tripSearchIndex]);
   const pageCount = Math.max(1, Math.ceil(sorted.length / TRIP_HISTORY_PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pageStart = safePage * TRIP_HISTORY_PAGE_SIZE;
@@ -303,10 +431,12 @@ export default function TripHistory() {
     : dateFilter === 'custom'
       ? [dateFrom, dateTo].filter(Boolean).join(' – ') || 'Choose a date range'
       : DATE_FILTERS.find((option) => option.id === dateFilter)?.label || 'Any date';
-  const activeTagLabel = selectedTag === 'all'
+  const activeTagLabel = selectedTags.length === 0
     ? 'All tags'
-    : TRIP_TAG_OPTIONS.find((option) => option.id === selectedTag)?.label || 'Selected tag';
-  const hasActiveFilters = Boolean(searchInput) || filterBy !== 'all' || dateFilter !== 'all' || selectedTag !== 'all' || sortBy !== 'date_desc';
+    : selectedTags
+      .map((tag) => getTripTagOption(tag)?.label || tag)
+      .join(tagMatchMode === 'any' ? ' or ' : ' + ');
+  const hasActiveFilters = Boolean(searchInput) || filterBy !== 'all' || dateFilter !== 'all' || selectedTags.length > 0 || sortBy !== 'date_desc';
   const setTripSearch = (value) => {
     setSearchInput(value);
     startFilterTransition(() => {
@@ -316,7 +446,14 @@ export default function TripHistory() {
   const setTripSort = (value) => startFilterTransition(() => setSortBy(value));
   const setTripFilter = (value) => startFilterTransition(() => setFilterBy(value));
   const setTripDateFilter = (value) => startFilterTransition(() => setDateFilter(value));
-  const setTripTag = (value) => startFilterTransition(() => setSelectedTag(value));
+  const toggleTripTag = (value) => startFilterTransition(() => {
+    setSelectedTags((current) => (
+      current.includes(value)
+        ? current.filter((tag) => tag !== value)
+        : [...current, value]
+    ));
+  });
+  const clearTripTags = () => startFilterTransition(() => setSelectedTags([]));
   const handleTripIntent = useCallback((trip) => {
     if (!trip?.id) return;
     qc.prefetchQuery(tripDetailQueryOptions(trip.id)).catch(() => {});
@@ -342,7 +479,8 @@ export default function TripHistory() {
       setDateFilter('all');
       setDateFrom('');
       setDateTo('');
-      setSelectedTag('all');
+      setSelectedTags([]);
+      setTagMatchMode('all');
       setSortBy('date_desc');
     });
   };
@@ -367,7 +505,7 @@ export default function TripHistory() {
   useEffect(() => {
     setPage(0);
     setCurrentPage(0);
-  }, [dateFilter, dateFrom, dateTo, filterBy, premiumVisuals, search, selectedTag, sortBy]);
+  }, [dateFilter, dateFrom, dateTo, filterBy, premiumVisuals, search, selectedTags, sortBy, tagMatchMode]);
 
   useEffect(() => {
     if (page > pageCount - 1) setPage(Math.max(0, pageCount - 1));
@@ -389,7 +527,8 @@ export default function TripHistory() {
       dateFilter,
       dateFrom,
       dateTo,
-      selectedTag,
+      selectedTags,
+      tagMatchMode,
     };
     setSavedFilters((current) => [preset, ...current.filter((item) => item.name.toLowerCase() !== name.toLowerCase())].slice(0, 8));
     setPresetName('');
@@ -404,7 +543,12 @@ export default function TripHistory() {
       setDateFilter(preset.dateFilter || 'all');
       setDateFrom(preset.dateFrom || '');
       setDateTo(preset.dateTo || '');
-      setSelectedTag(preset.selectedTag || 'all');
+      setSelectedTags(Array.isArray(preset.selectedTags)
+        ? preset.selectedTags
+        : preset.selectedTag && preset.selectedTag !== 'all'
+          ? [preset.selectedTag]
+          : []);
+      setTagMatchMode(preset.tagMatchMode === 'any' ? 'any' : 'all');
     });
   };
 
@@ -454,15 +598,15 @@ export default function TripHistory() {
 
   const premiumFilterDetails = showFilters ? (
     <div className="premium-history-expanded-filters space-y-4 rounded-2xl border border-border bg-card p-3">
-      <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-        <Tag className="h-3.5 w-3.5" /> Tags
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={() => setTripTag('all')} aria-pressed={selectedTag === 'all'} className={`rounded-full border px-2.5 py-1 text-xs font-medium ${selectedTag === 'all' ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground'}`}>All tags</button>
-        {TRIP_TAG_OPTIONS.map((option) => (
-          <button type="button" key={option.id} onClick={() => setTripTag(option.id)} aria-pressed={selectedTag === option.id} className={`rounded-full border px-2.5 py-1 text-xs font-medium ${selectedTag === option.id ? 'border-primary bg-primary text-primary-foreground' : option.className}`}>{option.label}</button>
-        ))}
-      </div>
+      <SmartTagFilter
+        options={availableTagOptions}
+        counts={tagCounts}
+        selectedTags={selectedTags}
+        matchMode={tagMatchMode}
+        onToggle={toggleTripTag}
+        onClear={clearTripTags}
+        onMatchModeChange={(mode) => startFilterTransition(() => setTagMatchMode(mode))}
+      />
       <div className="border-t border-border pt-3">
         <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground"><Star className="h-3.5 w-3.5" /> Saved filters</div>
         <div className="flex gap-2">
@@ -577,7 +721,7 @@ export default function TripHistory() {
             onClick={() => setShowFilters((value) => !value)}
             aria-expanded={showFilters}
             className={`mt-4 inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border px-3 text-xs font-semibold transition-colors lg:mt-4 ${
-              showFilters || selectedTag !== 'all'
+              showFilters || selectedTags.length > 0
                 ? 'border-primary bg-primary text-primary-foreground'
                 : 'border-border bg-background text-muted-foreground hover:border-primary/50'
             }`}
@@ -635,37 +779,15 @@ export default function TripHistory() {
 
         {showFilters && (
           <div className="space-y-4 rounded-xl border border-border bg-secondary/20 p-3">
-            <div>
-              <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                <Tag className="h-3.5 w-3.5" />
-                Trip tags
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setTripTag('all')}
-                  aria-pressed={selectedTag === 'all'}
-                  className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
-                    selectedTag === 'all' ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-background text-muted-foreground'
-                  }`}
-                >
-                  All tags
-                </button>
-                {TRIP_TAG_OPTIONS.map((option) => (
-                  <button
-                    type="button"
-                    key={option.id}
-                    onClick={() => setTripTag(option.id)}
-                    aria-pressed={selectedTag === option.id}
-                    className={`rounded-full border px-2.5 py-1 text-xs font-medium ${
-                      selectedTag === option.id ? 'border-primary bg-primary text-primary-foreground' : option.className
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <SmartTagFilter
+              options={availableTagOptions}
+              counts={tagCounts}
+              selectedTags={selectedTags}
+              matchMode={tagMatchMode}
+              onToggle={toggleTripTag}
+              onClear={clearTripTags}
+              onMatchModeChange={(mode) => startFilterTransition(() => setTagMatchMode(mode))}
+            />
 
             <div className="border-t border-border pt-3">
               <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted-foreground">
@@ -732,7 +854,7 @@ export default function TripHistory() {
             <div className="flex flex-wrap items-center justify-end gap-1.5">
               <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">{activeDateLabel}</span>
               {filterBy !== 'all' && <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">{activeFilterLabel}</span>}
-              {selectedTag !== 'all' && <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">{activeTagLabel}</span>}
+              {selectedTags.length > 0 && <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">{activeTagLabel}</span>}
               {hasActiveFilters && (
                 <button type="button" onClick={clearFilters} className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-muted-foreground hover:bg-secondary" aria-label="Clear all trip filters">
                   <X className="h-3.5 w-3.5" />

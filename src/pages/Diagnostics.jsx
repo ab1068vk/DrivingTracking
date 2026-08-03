@@ -36,15 +36,27 @@ import {
   normalizeNativeDiagnosticEvents,
 } from '@/lib/trackingDiagnostics';
 import { activeTripStore } from '@/lib/trackingStore';
+import { syncNativeCompletedTrips } from '@/lib/localTripRepository';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDateTime, formatDistance, formatSpeed } from '@/lib/tripEngine';
 import { buildLocalFeatureTestTrips, LOCAL_TEST_TRIP_PREFIX } from '@/lib/localTestTrips';
+import {
+  clearPendingPostDriveReview,
+  loadPendingPostDriveReview,
+  markLatestTripForPostDriveReview,
+} from '@/lib/postDriveReview';
 import { getBuildIntegrityInfo } from '@/lib/buildIntegrity';
 import {
   buildMotionSensorDiagnostics,
   requestMotionSensorPermission,
 } from '@/lib/sensorFusionModel';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
+import {
+  getPerformanceTriageEntries,
+  setPerformanceTriageContext,
+} from '@/lib/performanceTriage';
+import { buildTripDataProfile } from '@/lib/appExperienceDiagnostics';
+import AppExperienceDiagnosticsPanel from '@/components/AppExperienceDiagnosticsPanel';
 
 const statusStyle = {
   good: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300',
@@ -66,8 +78,13 @@ const typeIcon = {
   trip_ended: MapPin,
   trip_saved: CheckCircle2,
   trip_save_failed: AlertTriangle,
+  trip_save_recovered: CheckCircle2,
+  manual_start_blocked: AlertTriangle,
   checkpoint_recovered: RefreshCw,
   checkpoint_save_failed: AlertTriangle,
+  service_restart_requested: RefreshCw,
+  service_restart_failed: AlertTriangle,
+  service_restart_skipped: AlertTriangle,
   auto_stop: MapPin,
   trip_discarded: AlertTriangle,
   parking_detected: MapPin,
@@ -110,6 +127,7 @@ function HealthIcon({ id }) {
     native: Shield,
     'native-handoff': RefreshCw,
     'active-checkpoint': Shield,
+    'recovery-storage': Shield,
     location: MapPin,
     background: Satellite,
     activity: Activity,
@@ -174,18 +192,24 @@ export default function Diagnostics() {
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [nativeStatus, setNativeStatus] = useState(null);
   const [batteryStatus, setBatteryStatus] = useState(null);
-  const [nativeDiagnostics, setNativeDiagnostics] = useState({ enabled: false, events: [] });
+  const [nativeDiagnostics, setNativeDiagnostics] = useState({ enabled: false, events: [], watchdog: null });
   const [webDiagnostics, setWebDiagnostics] = useState(() => getTrackingDiagnostics());
   const [activeTrip, setActiveTrip] = useState(() => activeTripStore.get());
   const [refreshing, setRefreshing] = useState(false);
   const [motionPermissionBusy, setMotionPermissionBusy] = useState(false);
   const [testDataBusy, setTestDataBusy] = useState(false);
   const [testDataNotice, setTestDataNotice] = useState('');
+  const [performanceEntries, setPerformanceEntries] = useState(() => getPerformanceTriageEntries());
 
   const { data: trips = [], refetch } = useQuery({
     queryKey: ['diagnostics-trips'],
     queryFn: () => tripService.listSummaries({ sort: '-start_time', limit: 20 }),
     staleTime: 2 * 60 * 1000,
+  });
+  const { data: allTripSummaries = [], refetch: refetchAllTripSummaries } = useQuery({
+    queryKey: ['diagnostics-trip-data-profile'],
+    queryFn: () => tripService.listAllSummaries({ sort: '-start_time' }),
+    staleTime: 5 * 60 * 1000,
   });
   const { data: storedTestTrips = [], refetch: refetchStoredTestTrips } = useQuery({
     queryKey: ['diagnostics-local-test-trips'],
@@ -204,8 +228,14 @@ export default function Diagnostics() {
     setRefreshing(true);
     recordSystemEvent('diagnostics_refresh_started', {}, { category: 'diagnostics', title: 'Diagnostics refresh started' });
     setWebDiagnostics(getTrackingDiagnostics());
+    setPerformanceEntries(getPerformanceTriageEntries());
     setActiveTrip(activeTripStore.get());
     try {
+      if (isAndroid()) {
+        await syncNativeCompletedTrips().catch((error) => {
+          logSystemFailure('diagnostics_native_trip_recovery', error);
+        });
+      }
       const [permissions, native, battery, nativeLog] = await Promise.all([
         getPermissionStatus(),
         isAndroid() ? getNativeAutoTrackingStatus().catch((error) => {
@@ -218,16 +248,17 @@ export default function Diagnostics() {
         }) : Promise.resolve(null),
         isAndroid() ? getNativeDiagnostics().catch((error) => {
           logSystemFailure('diagnostics_native_log', error);
-          return { enabled: false, events: [] };
-        }) : Promise.resolve({ enabled: false, events: [] }),
+          return { enabled: false, events: [], watchdog: null };
+        }) : Promise.resolve({ enabled: false, events: [], watchdog: null }),
       ]);
       setPermissionStatus(permissions);
       setNativeStatus(native);
       setBatteryStatus(battery);
-      setNativeDiagnostics(nativeLog || { enabled: false, events: [] });
+      setNativeDiagnostics(nativeLog || { enabled: false, events: [], watchdog: null });
       setActiveTrip(activeTripStore.get());
       await Promise.all([
         refetch(),
+        refetchAllTripSummaries(),
         import.meta.env.DEV ? refetchStoredTestTrips() : Promise.resolve(),
       ]);
       recordSystemEvent('diagnostics_refresh_completed', {
@@ -237,6 +268,7 @@ export default function Diagnostics() {
     } catch (error) {
       logSystemFailure('diagnostics_refresh', error);
     } finally {
+      setPerformanceEntries(getPerformanceTriageEntries());
       setRefreshing(false);
     }
   };
@@ -276,6 +308,19 @@ export default function Diagnostics() {
     [settings]
   );
   const buildIntegrity = useMemo(() => getBuildIntegrityInfo(), []);
+  const tripDataProfile = useMemo(() => buildTripDataProfile(allTripSummaries), [allTripSummaries]);
+
+  useEffect(() => {
+    setPerformanceTriageContext({
+      trip_count: tripDataProfile.trip_count,
+      completed_trip_count: tripDataProfile.completed_trip_count,
+      total_distance_km: tripDataProfile.total_distance_km,
+      route_point_count: tripDataProfile.total_route_point_count,
+      data_size_bytes: tripDataProfile.approximate_summary_bytes,
+      experience_mode: settings.experience_mode,
+      tracking_mode: settings.tracking_paused ? 'paused' : settings.tracking_mode,
+    });
+  }, [tripDataProfile, settings.experience_mode, settings.tracking_mode, settings.tracking_paused]);
 
   const clearLogs = async () => {
     clearTrackingDiagnostics();
@@ -310,6 +355,7 @@ export default function Diagnostics() {
       const seeded = await tripService.upsertMany(buildLocalFeatureTestTrips(new Date(), {
         allowSyntheticTestData: import.meta.env.DEV === true,
       }));
+      await markLatestTripForPostDriveReview(seeded, 'diagnostics_test_trip');
       await refresh();
       setTestDataNotice(`${seeded.length} synthetic trips are available in this local profile.`);
       recordSystemEvent('diagnostics_test_trips_seeded', { count: seeded.length }, { category: 'diagnostics', title: 'Local test trips seeded' });
@@ -324,6 +370,10 @@ export default function Diagnostics() {
     setTestDataBusy(true);
     try {
       await Promise.all(storedTestTrips.map((trip) => tripService.delete(trip.id)));
+      const pendingReview = await loadPendingPostDriveReview();
+      if (pendingReview?.tripId?.startsWith(LOCAL_TEST_TRIP_PREFIX)) {
+        await clearPendingPostDriveReview(pendingReview.tripId);
+      }
       await refresh();
       setTestDataNotice(`${storedTestTrips.length} synthetic trips removed from this local profile.`);
       recordSystemEvent('diagnostics_test_trips_removed', { count: storedTestTrips.length }, { category: 'diagnostics', title: 'Local test trips removed' });
@@ -362,6 +412,15 @@ export default function Diagnostics() {
           </button>
         </div>
       </div>
+
+      <AppExperienceDiagnosticsPanel
+        trips={allTripSummaries}
+        performanceEntries={performanceEntries}
+        trackingEvents={combinedEvents}
+        settings={settings}
+        buildInfo={buildIntegrity}
+        nativeWatchdog={nativeDiagnostics.watchdog}
+      />
 
       <section aria-label="Recovery compatibility snapshot" className="rounded-2xl border border-border bg-card p-4">
         <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">

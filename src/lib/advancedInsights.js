@@ -14,7 +14,6 @@ const COMPONENTS = [
   ['safety', 'Safety', 'score_safety', 'safety'],
   ['smoothness', 'Smoothness', 'score_smoothness', 'smoothness'],
   ['intersection', 'Intersection approach', 'intersection_score', 'intersection'],
-  ['eco', 'Eco estimate', 'score_eco', 'eco', true],
 ];
 const EVENTS = [
   ['harsh_brakes', 'Harsh braking', 'harsh_brakes_count', 'Begin braking earlier and leave more space before the next three stops.'],
@@ -81,19 +80,19 @@ function contextsFor(trips) {
 
 function scoreMovement(current, previous) {
   const weights = scoringValue('OVERALL_SCORE_BLEND_WEIGHTS') || {};
-  const rows = COMPONENTS.map(([id, label, field, weightKey, separate]) => ({
-    id, label, field, separate, current: score(current, field), previous: score(previous, field),
+  const rows = COMPONENTS.map(([id, label, field, weightKey]) => ({
+    id, label, field, current: score(current, field), previous: score(previous, field),
     weight: Math.max(0, num(weights[weightKey]) || 0),
   }));
-  const totalWeight = rows.filter((row) => !row.separate && row.current != null && row.previous != null)
+  const totalWeight = rows.filter((row) => row.current != null && row.previous != null)
     .reduce((sum, row) => sum + row.weight, 0);
   return rows.map((row) => {
     const delta = row.current == null || row.previous == null ? null : round(row.current - row.previous, 1);
     return {
       id: row.id, label: row.label, current: row.current, previous: row.previous, delta,
-      estimatedImpact: delta == null || row.separate || totalWeight <= 0 ? null : round(delta * row.weight / totalWeight, 1),
-      isHeadlineComponent: !row.separate && row.weight > 0,
-      note: row.separate ? 'Reported separately from the headline score' : null,
+      estimatedImpact: delta == null || totalWeight <= 0 ? null : round(delta * row.weight / totalWeight, 1),
+      isHeadlineComponent: row.weight > 0,
+      note: null,
     };
   }).filter((row) => row.current != null || row.previous != null);
 }

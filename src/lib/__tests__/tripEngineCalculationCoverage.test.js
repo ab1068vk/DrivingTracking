@@ -463,7 +463,7 @@ describe('trip engine calculation coverage', () => {
     expect(vehicleSpeedKmh(pointWithGoodGps, DEFAULT_THRESHOLDS)).toBe(8);
   });
 
-  it('adds OBD powertrain evidence to eco scoring and component sources', () => {
+  it('adds OBD powertrain evidence to internal efficiency diagnostics', () => {
     const route = Array.from({ length: 12 }, (_, index) => point(index, {
       speed_kmh: 4,
       accuracy: 25,
@@ -479,7 +479,8 @@ describe('trip engine calculation coverage', () => {
     expect(eco.obd_powertrain_sample_count).toBe(route.length);
     expect(eco.obd_idle_seconds).toBeGreaterThan(0);
     expect(eco.obd_over_rev_count).toBe(1);
-    expect(scores.component_scores.eco.dataSource).toContain('obd_bluetooth');
+    expect(scores.component_scores).not.toHaveProperty('eco');
+    expect(scores.component_scores.eco_driving.dataSource).toContain('obd_bluetooth');
   });
 
   it('keeps confirmed phone-use distraction scoring independent of trip distance', () => {

@@ -16,7 +16,7 @@ describe('read-only trip score explanations', () => {
     expect(explainTripScoreDrivers(trip)).toEqual([
       expect.objectContaining({ factor: 'braking_efficiency', score: 58, deficit: 42 }),
       expect.objectContaining({ factor: 'speed_limit_compliance', score: 76, deficit: 24 }),
-      expect.objectContaining({ factor: 'eco_driving', score: 82, deficit: 18 }),
+      expect.objectContaining({ factor: 'cornering_consistency', score: 91, deficit: 9 }),
     ]);
     expect(trip).toEqual(before);
   });
@@ -25,7 +25,6 @@ describe('read-only trip score explanations', () => {
     expect(explainTripScoreDrivers({
       score_safety: 72,
       score_smoothness: 88,
-      score_eco: 91,
       harsh_brakes_count: 2,
     })).toEqual([
       expect.objectContaining({ factor: 'safety', score: 72 }),

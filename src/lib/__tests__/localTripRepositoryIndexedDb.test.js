@@ -591,6 +591,10 @@ describe('localTripRepository IndexedDB migrations', () => {
     await expect(verifyTripsPersistedForNativeAcknowledge([
       { id: 'missing-native-trip' },
     ])).rejects.toThrow('Native trip import was not persisted: missing-native-trip');
+    await expect(verifyTripsPersistedForNativeAcknowledge([{
+      ...importedTrip,
+      route_points: [...importedTrip.route_points, { lat: 43.7, lng: -79.4 }],
+    }])).rejects.toThrow('Native trip import was not persisted: native-imported-trip');
   });
 
   it('opens one trip by key and serves lightweight summaries without scanning full trip records', async () => {
@@ -1083,6 +1087,18 @@ describe('localTripRepository IndexedDB migrations', () => {
         score_smoothness: 1,
         score_eco: 1,
         score_provenance: currentProvenance,
+        night_driving: true,
+        night_classification: {
+          version: 1,
+          is_night: true,
+          mode: 'civil_twilight',
+          method: 'civil_twilight',
+          decision_point_at: '2026-06-17T12:00:00.000Z',
+          timezone_id: 'America/Toronto',
+          utc_offset_minutes: -240,
+        },
+        trip_timezone_id: 'America/Toronto',
+        trip_utc_offset_minutes: -240,
         schema_version: TRIP_SCHEMA_VERSION,
       },
       {
@@ -1114,6 +1130,107 @@ describe('localTripRepository IndexedDB migrations', () => {
     expect(rescored.score_overall).not.toBe(1);
     expect(rescored.needs_rescore).toBe(false);
     expect(rescored.score_provenance.scoring_version).toBe(SCORING_VERSION);
+    expect(rescored.night_classification).toMatchObject({
+      version: 1,
+      mode: 'civil_twilight',
+      method: 'civil_twilight',
+      decision_point_at: '2026-06-17T12:00:00.000Z',
+      timezone_id: 'America/Toronto',
+      utc_offset_minutes: -240,
+    });
+    expect(rescored.trip_timezone_id).toBe('America/Toronto');
+    expect(rescored.trip_utc_offset_minutes).toBe(-240);
+  });
+
+  it('preserves a locally confirmed weather score adjustment across repository re-scores and reads', async () => {
+    vi.stubGlobal('indexedDB', undefined);
+    const values = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    const at = (seconds) => new Date(Date.UTC(2026, 6, 17, 12, 0, seconds)).toISOString();
+    const routePoints = [
+      { lat: 43.6500, lng: -79.3800, speed_kmh: 100, accuracy: 8, timestamp: at(0) },
+      { lat: 43.6502, lng: -79.3800, speed_kmh: 96, accuracy: 8, timestamp: at(2) },
+      { lat: 43.6504, lng: -79.3800, speed_kmh: 0, accuracy: 8, timestamp: at(4) },
+      { lat: 43.6506, lng: -79.3800, speed_kmh: 0, accuracy: 8, timestamp: at(6) },
+      { lat: 43.6508, lng: -79.3800, speed_kmh: 45, accuracy: 8, timestamp: at(10) },
+      ...Array.from({ length: 30 }, (_, index) => ({
+        lat: 43.6518 + index * 0.001,
+        lng: -79.3800,
+        speed_kmh: 45,
+        accuracy: 8,
+        timestamp: at(20 + index * 10),
+      })),
+    ];
+    const trip = (id, weatherContext) => ({
+      id,
+      status: 'completed',
+      start_time: routePoints[0].timestamp,
+      end_time: routePoints.at(-1).timestamp,
+      route_points: routePoints,
+      weather_context: weatherContext,
+      needs_rescore: true,
+      schema_version: TRIP_SCHEMA_VERSION,
+    });
+    values.set('drivesense_trips', JSON.stringify([
+      trip('weather-clear', {
+        source: 'user_confirmed',
+        condition: 'clear',
+        riskScore: 0,
+        riskMultiplier: 1,
+        riskLevel: 'low',
+        network_used: false,
+      }),
+      trip('weather-rain', {
+        source: 'user_confirmed',
+        condition: 'rain',
+        riskScore: 35,
+        riskMultiplier: 1.25,
+        riskLevel: 'moderate',
+        network_used: false,
+      }),
+    ]));
+
+    await localTripRepository.rescoreCompletedTrips();
+    const clear = await localTripRepository.getById('weather-clear');
+    const rain = await localTripRepository.getById('weather-rain');
+    const rainReadAgain = await localTripRepository.getById('weather-rain');
+    const rainSummary = (await localTripRepository.listSummaries())
+      .find((item) => item.id === 'weather-rain');
+
+    expect(rain.harsh_brakes_count).toBeGreaterThan(0);
+    expect(rain.weather_context).toMatchObject({ source: 'user_confirmed', condition: 'rain' });
+    expect(rain.weather_score_adjustment).toBeLessThan(0);
+    expect(rain.score_safety).toBeLessThan(clear.score_safety);
+    expect(rain.score_overall).toBeLessThan(clear.score_overall);
+    expect(rain.component_scores.safety.dataSource).toContain('user_confirmed_weather');
+    expect(rain.component_scores.overall.value).toBe(rain.score_overall);
+    expect(rainReadAgain.score_overall).toBe(rain.score_overall);
+    expect(rainReadAgain.weather_score_adjustment).toBe(rain.weather_score_adjustment);
+    expect(rainSummary.score_overall).toBe(rain.score_overall);
+    expect(rainSummary.weather_score_adjustment).toBe(rain.weather_score_adjustment);
+
+    // Recreate the old failure state: the Rain context and its adjustment were
+    // retained, but a later repository rescore replaced the displayed scores
+    // and component provenance with the dry/base result.
+    await localTripRepository.update('weather-rain', {
+      score_safety: clear.score_safety,
+      score_overall: clear.score_overall,
+      component_scores: clear.component_scores,
+      weather_score_adjustment: rain.weather_score_adjustment,
+    });
+
+    const repairedSummary = (await localTripRepository.listSummaries())
+      .find((item) => item.id === 'weather-rain');
+    const repairedDetail = await localTripRepository.getById('weather-rain');
+    expect(repairedSummary.score_overall).toBe(rain.score_overall);
+    expect(repairedSummary.component_scores.overall.dataSource).toContain('user_confirmed_weather');
+    expect(repairedDetail.score_overall).toBe(rain.score_overall);
+    expect(repairedDetail.component_scores.overall.dataSource).toContain('user_confirmed_weather');
   });
 
   it('renames retired lane-change events once before listing stored trips', async () => {

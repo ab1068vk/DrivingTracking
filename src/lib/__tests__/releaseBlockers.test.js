@@ -46,7 +46,7 @@ const completedTrip = (patch = {}) => ({
 });
 
 const expectNullGuardedTripScores = (value) => {
-  for (const key of ['score_overall', 'score_safety', 'score_smoothness', 'score_eco']) {
+  for (const key of ['score_overall', 'score_safety', 'score_smoothness']) {
     expect(value[key] == null || Number.isFinite(value[key])).toBe(true);
   }
   expect(value.component_scores?.overall).toMatchObject({
@@ -323,7 +323,7 @@ describe('release blocker regressions', () => {
     expect(expectedImpact).toBe(12);
     expect(tripDetailSource).toContain('PHONE_USE_SAFETY_WEIGHT');
     expect(tripDetailSource).toContain('phoneUseSafetyImpactPoints');
-    expect(tripDetailSource).toContain(`Phone use reduced your Safety score by about {phoneUseSafetyImpactPoints}`);
+    expect(tripDetailSource).toContain(`Scored foreground-app activity reduced your Safety score by about {phoneUseSafetyImpactPoints}`);
     expect(tripDetailSource).not.toContain('* 0.05');
   });
 
@@ -851,7 +851,9 @@ describe('release blocker regressions', () => {
     expect(tripDetailSource).toContain('context="trip_detail_score_overview"');
     expect(tripDetailSource).toContain('<TripScoreOverview');
     expect(tripDetailSource).toContain('speedLimitSourceBreakdown={speedLimitSourceBreakdown}');
-    expect(tripDetailSource).toContain('premium={settings.premium_visual_experience === true}');
+    expect(tripDetailSource).toContain('const premiumVisuals = false;');
+    expect(tripDetailSource).toContain('const premiumMapVisuals = settings.premium_visual_experience === true;');
+    expect(tripDetailSource).toContain('premium={premiumVisuals}');
     expect(dashboardSource).toContain('context="dashboard_risk_panel"');
     expect(dashboardSource).toContain('<DashboardRiskPanel');
     expect(tripMapSource).toContain('context="trip_map"');
@@ -1013,6 +1015,7 @@ describe('release blocker regressions', () => {
 
   it('does not hard-code London as the Trip Playback default map center', () => {
     const tripPlaybackSource = readFileSync(new URL('../../components/TripPlayback.jsx', import.meta.url), 'utf8');
+    const mapDefaultsSource = readFileSync(new URL('../mapDefaults.js', import.meta.url), 'utf8');
     const legacyLondonLat = ['51', '505'].join('.');
     const legacyLondonLng = ['-0', '09'].join('.');
 
@@ -1020,8 +1023,8 @@ describe('release blocker regressions', () => {
     expect(tripPlaybackSource).not.toContain(legacyLondonLng);
     expect(tripPlaybackSource).toContain('resolveFallbackMapCenter');
     expect(tripPlaybackSource).toContain('last_map_center');
-    expect(tripPlaybackSource).toContain('VITE_DEFAULT_MAP_LAT');
-    expect(tripPlaybackSource).toContain('VITE_DEFAULT_MAP_LNG');
+    expect(mapDefaultsSource).toContain('VITE_DEFAULT_MAP_LAT');
+    expect(mapDefaultsSource).toContain('VITE_DEFAULT_MAP_LNG');
   });
 
   it('keeps Trip Playback Leaflet cleanup from racing map animations', () => {
@@ -1039,7 +1042,7 @@ describe('release blocker regressions', () => {
     const tripMapSource = readFileSync(new URL('../../components/TripMap.jsx', import.meta.url), 'utf8');
     const mapStart = tripMapSource.indexOf('const map = window.L.map(mapRef.current');
     const tileStart = tripMapSource.indexOf('window.L.tileLayer(tileConfig.url', mapStart);
-    const setViewStart = tripMapSource.indexOf('safeMapSetView(map, TORONTO_CENTER, 12);', mapStart);
+    const setViewStart = tripMapSource.indexOf('safeMapSetView(map, DEFAULT_MAP_CENTER_ARRAY, 12);', mapStart);
 
     expect(mapStart).toBeGreaterThan(-1);
     expect(setViewStart).toBeGreaterThan(mapStart);
@@ -1086,10 +1089,34 @@ describe('release blocker regressions', () => {
 
     expect(speedLimitsSource).toContain('Saved roads are ready. Adding recent trip evidence in the background');
     expect(speedLimitsSource).toContain('Trip evidence could not load. The saved-road map is still available.');
+    expect(speedLimitsSource).toContain(": tripId ? 'review' : 'map';");
+    expect(speedLimitsSource).toContain('SPEED_MAP_LAYER_FAST_DEFAULTS');
+    expect(speedLimitsSource).toContain('Fast start is on: only saved posted-sign roads are loaded.');
     expect(speedLimitsSource).not.toContain('!mapModelLoaded ? (');
     expect(speedLimitEditorMapSource).toContain('const SECTION_DRAW_BATCH_SIZE = 60;');
     expect(speedLimitEditorMapSource).toContain('window.requestAnimationFrame(drawBatch)');
     expect(speedLimitEditorMapSource).toContain('window.cancelAnimationFrame(frameId)');
     expect(speedLimitEditorMapSource).toContain("finishMeasure('cancelled')");
+  });
+
+  it('uses a native data-rights erasure path that cannot finalize a new trip', () => {
+    const serviceSource = readFileSync(new URL(
+      '../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java',
+      import.meta.url
+    ), 'utf8');
+    const storeSource = readFileSync(new URL(
+      '../../../android/app/src/main/java/com/drivesense/app/DriveSenseNativeTripStore.java',
+      import.meta.url
+    ), 'utf8');
+    const pluginSource = readFileSync(new URL(
+      '../../../android/app/src/main/java/com/drivesense/app/DriveSenseActivityRecognitionPlugin.java',
+      import.meta.url
+    ), 'utf8');
+
+    expect(serviceSource).toContain('if (!dataErasureInProgress)');
+    expect(serviceSource).toContain('static void stopForDataErasure(Context context)');
+    expect(storeSource).toContain('static void eraseAllForDataRights(Context context)');
+    expect(storeSource).toContain('nativePreferences.edit().clear().commit();');
+    expect(pluginSource).toContain('public void eraseNativeLocalData(PluginCall call)');
   });
 });

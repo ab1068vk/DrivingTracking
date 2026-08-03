@@ -11,10 +11,12 @@ export function speedLimitSourceLabel(source, { short = false } = {}) {
       return short ? 'OSM estimate' : 'OSM road-type estimate';
     case 'region_default_estimate':
       return short ? 'Regional estimate' : 'Regional default estimate';
+    case 'local_road_memory':
+      return short ? 'Road Memory' : 'Local Road Memory estimate';
     case 'learned_local':
     case 'trip_consensus':
     case 'time_of_day_bucket':
-      return short ? 'Local learned' : 'Local learned estimate';
+      return short ? 'Learned' : 'Local learned estimate';
     case 'inferred':
       return short ? 'GPS inferred' : 'GPS-inferred estimate';
     case 'missing_posted_review':
@@ -30,7 +32,7 @@ export function speedLimitSourceBadgeClass(source) {
   if (source === 'openstreetmap' || source === 'user_confirmed_posted_sign') {
     return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200';
   }
-  if (source === 'user_entered_estimate' || source === 'user_correction' || source === 'voice_user_estimate' || source === 'learned_local' || source === 'trip_consensus' || source === 'time_of_day_bucket') {
+  if (source === 'user_entered_estimate' || source === 'user_correction' || source === 'voice_user_estimate' || source === 'learned_local' || source === 'local_road_memory' || source === 'trip_consensus' || source === 'time_of_day_bucket') {
     return 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-200';
   }
   if (source === 'voice_user_posted_sign') {

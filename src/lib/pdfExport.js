@@ -205,8 +205,8 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   doc.text('Safety and Smoothness include only GPS-derived behavioral proxies where applicable; see the cover limitation note.', 14, 27, { maxWidth: 180 });
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
-  const widths = [24, 22, 22, 18, 18, 20, 16, 20, 20];
-  writeRow(doc, ['Date', 'Distance', 'Duration', 'Overall', 'Safety', 'Smooth', 'Eco', 'Brakes', 'Speeding'], 38, widths);
+  const widths = [26, 23, 23, 20, 20, 20, 19, 19];
+  writeRow(doc, ['Date', 'Distance', 'Duration', 'Overall', 'Safety', 'Smooth', 'Brakes', 'Speeding'], 38, widths);
   doc.setFont('helvetica', 'normal');
   y = 46;
   tripList.slice(0, 24).forEach((trip) => {
@@ -221,7 +221,6 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
       formatScoreWithProvenance(trip.score_overall, trip.score_provenance, { empty: '' }),
       formatScoreWithProvenance(trip.score_safety, trip.score_provenance, { empty: '' }),
       formatScoreWithProvenance(trip.score_smoothness, trip.score_provenance, { empty: '' }),
-      formatScoreWithProvenance(trip.score_eco, trip.score_provenance, { empty: '' }),
       trip.harsh_brakes_count ?? 0,
       trip.speeding_events_count ?? 0,
     ], y, widths);

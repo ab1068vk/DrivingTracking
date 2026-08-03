@@ -14,6 +14,7 @@ const REVIEWABLE_SPEED_LIMIT_SOURCES = new Set([
   'user_entered_estimate',
   'trip_consensus',
   'learned_local',
+  'local_road_memory',
   'time_of_day_bucket',
   'osm_highway_default',
   'region_default_estimate',
@@ -140,10 +141,10 @@ export function isDashboardSpeedLimitReviewDismissed(dismissedFingerprint = '', 
   return currentItems.every((item) => dismissedItems.has(item));
 }
 
-/**
- * @returns {Array<Record<string, any>>}
- */
-export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {}) {
+function buildTripSpeedLimitCells(trip = {}, {
+  maxCells = 8,
+  reviewOnly = true,
+} = {}) {
   const points = Array.isArray(trip.route_points) ? trip.route_points.filter(validPublicPoint) : [];
   if (!points.length) return [];
 
@@ -157,6 +158,9 @@ export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {})
         sampleLat: Number(point.lat),
         sampleLng: Number(point.lng),
         sampleTimestamp: point.timestamp ?? point.recorded_at ?? point.timestamp_ms ?? null,
+        sampleUtcOffsetMinutes: point.utc_offset_minutes ?? point.utcOffsetMinutes ??
+          trip.trip_utc_offset_minutes ?? null,
+        sampleHeadingDeg: point.heading ?? point.bearing ?? point.course ?? null,
         limits: [],
         sources: new Set(),
         roads: new Set(),
@@ -180,8 +184,8 @@ export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {})
     const nativeDeferred = trip.speed_limit_review_required === true ||
       trip.start_source === 'native_auto' ||
       trip.imported_from_native === true;
-    if (hasPostedSource && !nativeDeferred) continue;
-    if (!hasEstimatedSource && !hasMissingLimit && !nativeDeferred) continue;
+    const requiresDecision = nativeDeferred || hasMissingLimit || !hasPostedSource;
+    if (reviewOnly && !requiresDecision) continue;
 
     const identity = buildRoadSectionIdentity(trip, group.geohash);
     const source = hasMissingLimit ? 'missing_posted_review' : sources[0];
@@ -195,6 +199,8 @@ export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {})
       lng: group.sampleLng,
       coordinateSource: 'driven_route_sample',
       sampleTimestamp: group.sampleTimestamp,
+      sampleUtcOffsetMinutes: group.sampleUtcOffsetMinutes,
+      sampleHeadingDeg: group.sampleHeadingDeg,
       limitKmh: mostCommon(group.limits),
       suggestedLimitKmh: mostCommon(group.limits),
       source,
@@ -203,8 +209,11 @@ export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {})
       sources,
       roads: [...group.roads].slice(0, 3),
       tripReview: true,
+      requiresDecision,
       conflict: false,
-      reviewReason: reviewReasonForTrip(trip, hasMissingLimit, hasEstimatedSource),
+      reviewReason: requiresDecision
+        ? reviewReasonForTrip(trip, hasMissingLimit, hasEstimatedSource)
+        : 'A trusted speed source was used for this part of the trip.',
       evidence,
       ...(identity || {}),
     };
@@ -219,4 +228,21 @@ export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {})
   return candidates
     .sort((a, b) => b.reviewPriority.score - a.reviewPriority.score || b.sampleCount - a.sampleCount)
     .slice(0, maxCells);
+}
+
+/**
+ * Builds only road sections that still require a parked decision.
+ * @returns {Array<Record<string, any>>}
+ */
+export function buildTripSpeedLimitReviewCells(trip = {}, { maxCells = 8 } = {}) {
+  return buildTripSpeedLimitCells(trip, { maxCells, reviewOnly: true });
+}
+
+/**
+ * Builds the complete speed-source coverage for a trip, including sections
+ * already covered by trusted or saved local rules.
+ * @returns {Array<Record<string, any>>}
+ */
+export function buildTripSpeedLimitCoverageCells(trip = {}, { maxCells = Infinity } = {}) {
+  return buildTripSpeedLimitCells(trip, { maxCells, reviewOnly: false });
 }

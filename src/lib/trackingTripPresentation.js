@@ -25,7 +25,11 @@ export function trackingTripEventCount(trip = {}) {
 export function trackingTripRoutePointCount(trip = {}) {
   if (Array.isArray(trip.route_points)) return trip.route_points.length;
   const count = finiteNumber(
-    trip.route_point_count ?? trip.route_points_count ?? trip.route_points_retained ?? trip.gps_point_count
+    trip.route_points_map_count
+      ?? trip.route_point_count
+      ?? trip.route_points_count
+      ?? trip.route_points_retained
+      ?? trip.gps_point_count
   );
   return count == null ? null : Math.max(0, Math.round(count));
 }

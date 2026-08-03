@@ -12,6 +12,9 @@ import android.content.SharedPreferences;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -36,6 +39,7 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     private Map<String, Object> nativePrefsSnapshot;
     private Map<String, Object> capacitorPrefsSnapshot;
     private Map<String, Object> driveSenseSettingsPrefsSnapshot;
+    private Map<String, byte[]> completedTripJournalSnapshot;
 
     @Before
     public void setUp() {
@@ -43,6 +47,8 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
         nativePrefsSnapshot = snapshotPrefs(DriveSenseNativeTripStore.prefs(context));
         capacitorPrefsSnapshot = snapshotPrefs(context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE));
         driveSenseSettingsPrefsSnapshot = snapshotPrefs(context.getSharedPreferences("DriveSenseSettings", Context.MODE_PRIVATE));
+        completedTripJournalSnapshot = snapshotJournal(context);
+        DriveSenseCompletedTripJournal.clear(context);
         DriveSenseNativeTripStore.prefs(context).edit().clear().commit();
         context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE).edit().clear().commit();
         context.getSharedPreferences("DriveSenseSettings", Context.MODE_PRIVATE).edit().clear().commit();
@@ -50,6 +56,8 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
 
     @After
     public void tearDown() {
+        DriveSenseCompletedTripJournal.clear(context);
+        restoreJournal(context, completedTripJournalSnapshot);
         restorePrefs(DriveSenseNativeTripStore.prefs(context), nativePrefsSnapshot);
         restorePrefs(context.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE), capacitorPrefsSnapshot);
         restorePrefs(context.getSharedPreferences("DriveSenseSettings", Context.MODE_PRIVATE), driveSenseSettingsPrefsSnapshot);
@@ -93,22 +101,71 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     }
 
     @Test
-    public void completedTripsRecoverFromMalformedStorage() throws Exception {
+    public void malformedLegacyCompletedTripsArePreservedAndReported() throws Exception {
         SharedPreferences prefs = DriveSenseNativeTripStore.prefs(context);
         prefs.edit().putString("completed_trips", "{not-json").commit();
 
         assertEquals(0, DriveSenseNativeTripStore.getCompletedTrips(context).length());
+        assertFalse(DriveSenseNativeTripStore.getCompletedTripJournalStatus(context).getBoolean("queueReadable"));
 
         JSONObject trip = new JSONObject();
         trip.put("id", "native-trip-1");
-        DriveSenseNativeTripStore.addCompletedTrip(context, trip);
+        assertTrue(DriveSenseNativeTripStore.addCompletedTrip(context, trip));
 
         JSONArray trips = DriveSenseNativeTripStore.getCompletedTrips(context);
         assertEquals(1, trips.length());
         assertEquals("native-trip-1", trips.getJSONObject(0).getString("id"));
         String stored = prefs.getString("completed_trips", "");
-        assertTrue(stored.startsWith("enc:v1:"));
-        assertFalse(stored.contains("native-trip-1"));
+        assertEquals("{not-json", stored);
+        assertFalse(DriveSenseNativeTripStore.getCompletedTripJournalStatus(context).getBoolean("queueReadable"));
+    }
+
+    @Test
+    public void completedTripsAreAcknowledgedIndividually() throws Exception {
+        assertTrue(DriveSenseNativeTripStore.addCompletedTrip(
+            context,
+            new JSONObject().put("id", "native-trip-a")
+        ));
+        assertTrue(DriveSenseNativeTripStore.addCompletedTrip(
+            context,
+            new JSONObject().put("id", "native-trip-b")
+        ));
+
+        JSONObject result = DriveSenseNativeTripStore.acknowledgeCompletedTrips(
+            context,
+            new JSONArray().put("native-trip-a")
+        );
+
+        assertTrue(result.getBoolean("success"));
+        assertEquals(1, result.getInt("removed"));
+        JSONArray remaining = DriveSenseNativeTripStore.getCompletedTrips(context);
+        assertEquals(1, remaining.length());
+        assertEquals("native-trip-b", remaining.getJSONObject(0).getString("id"));
+    }
+
+    @Test
+    public void largeCompletedTripsUseBoundedEncryptedChunks() throws Exception {
+        StringBuilder padding = new StringBuilder();
+        for (int index = 0; index < 700_000; index++) padding.append((char) ('a' + (index % 26)));
+        JSONObject trip = new JSONObject()
+            .put("id", "native-trip-large")
+            .put("route_points", new JSONArray()
+                .put(new JSONObject().put("lat", 43.65).put("lng", -79.38))
+                .put(new JSONObject().put("lat", 44.65).put("lng", -80.38)))
+            .put("test_padding", padding.toString());
+
+        assertTrue(DriveSenseNativeTripStore.addCompletedTrip(context, trip));
+        assertEquals(
+            padding.length(),
+            DriveSenseNativeTripStore.getCompletedTrips(context)
+                .getJSONObject(0)
+                .getString("test_padding")
+                .length()
+        );
+        JSONObject status = DriveSenseNativeTripStore.getCompletedTripJournalStatus(context);
+        assertTrue(status.getBoolean("queueReadable"));
+        assertTrue(status.getLong("largestFileBytes") <= status.getLong("maxFileBytes"));
+        assertTrue(status.getLong("encryptedBytes") <= status.getLong("maxTotalBytes"));
     }
 
     @Test
@@ -223,6 +280,35 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
     }
 
     @Test
+    public void privateReturnKeepsSafePublicRecordButReportsProtectedParkingState() throws Exception {
+        long shopMs = Instant.parse("2026-07-18T17:00:00Z").toEpochMilli();
+        long homeMs = Instant.parse("2026-07-18T18:00:00Z").toEpochMilli();
+        DriveSenseNativeTripStore.saveLastParkedLocation(
+            context,
+            43.7001,
+            -79.4101,
+            shopMs,
+            "shop-trip",
+            "native_parking_stop"
+        );
+
+        DriveSenseNativeTripStore.suppressLastParkedLocation(
+            context,
+            homeMs,
+            "home-trip",
+            "privacy_zone"
+        );
+
+        assertNull(DriveSenseNativeTripStore.getLastParkedLocation(context));
+        JSONObject state = DriveSenseNativeTripStore.getLastParkingState(context);
+        assertNotNull(state);
+        assertEquals("private", state.getString("status"));
+        assertEquals("home-trip", state.getString("tripId"));
+        assertTrue(DriveSenseNativeTripStore.prefs(context).contains("last_parked_location"));
+        assertTrue(DriveSenseNativeTripStore.prefs(context).contains("last_parking_state"));
+    }
+
+    @Test
     public void parkingResolverUsesStableStopInsteadOfNoisyFinalFix() throws Exception {
         JSONArray points = new JSONArray()
             .put(parkingPoint(43.6500, -79.3800, "2026-07-18T18:00:00Z", 35d, 8d))
@@ -240,8 +326,143 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
         assertNotNull(resolved);
         assertEquals("terminal_stop_cluster", resolved.getString("strategy"));
         assertEquals("high", resolved.getString("confidence"));
+        assertTrue(resolved.getInt("confidence_score") >= 75);
+        assertTrue(resolved.getJSONArray("evidence").length() > 0);
         assertTrue(Math.abs(resolved.getDouble("lat") - 43.6512) < 0.0001);
         assertTrue(Math.abs(resolved.getDouble("lat") - 43.65155) > 0.0001);
+    }
+
+    @Test
+    public void parkingResolverScoresPostStopRefinementAndActivityEvidence() throws Exception {
+        JSONArray points = new JSONArray()
+            .put(parkingPoint(43.6500, -79.3800, "2026-07-18T18:00:00Z", 30d, 8d))
+            .put(parkingPoint(43.65120, -79.38000, "2026-07-18T18:00:20Z", 0d, 7d))
+            .put(parkingPoint(43.65121, -79.38001, "2026-07-18T18:00:25Z", 0d, 6d).put("parking_refinement", true))
+            .put(parkingPoint(43.65119, -79.38000, "2026-07-18T18:00:30Z", 0d, 7d).put("parking_refinement", true))
+            .put(parkingPoint(43.65120, -79.38001, "2026-07-18T18:00:35Z", 0d, 6d).put("parking_refinement", true));
+        JSONObject signals = new JSONObject()
+            .put("stopped_seconds", 35)
+            .put("last_moving_speed_kmh", 30)
+            .put("activity_type", "still")
+            .put("activity_confidence", 90)
+            .put("gps_drift_m", 4);
+
+        JSONObject resolved = DriveSenseParkingResolver.resolve(
+            points,
+            Instant.parse("2026-07-18T18:00:35Z").toEpochMilli(),
+            signals
+        );
+
+        assertNotNull(resolved);
+        assertEquals("post_stop_refinement", resolved.getString("strategy"));
+        assertEquals(3, resolved.getInt("refinement_count"));
+        assertTrue(resolved.getInt("confidence_score") >= 90);
+        assertTrue(resolved.getJSONArray("evidence").toString().contains("post_stop_refinement"));
+        assertTrue(resolved.getJSONArray("evidence").toString().contains("activity_still"));
+    }
+
+    @Test
+    public void parkingResolverKeepsExistingParkingForDriveThroughPattern() throws Exception {
+        JSONArray points = new JSONArray()
+            .put(parkingPoint(43.6500, -79.3800, "2026-07-18T18:00:00Z", 25d, 7d))
+            .put(parkingPoint(43.6502, -79.3800, "2026-07-18T18:00:10Z", 0d, 7d))
+            .put(parkingPoint(43.6503, -79.3800, "2026-07-18T18:00:20Z", 4d, 7d))
+            .put(parkingPoint(43.6504, -79.3800, "2026-07-18T18:00:30Z", 0d, 7d))
+            .put(parkingPoint(43.6505, -79.3800, "2026-07-18T18:00:40Z", 3d, 7d))
+            .put(parkingPoint(43.6506, -79.3800, "2026-07-18T18:00:50Z", 0d, 7d))
+            .put(parkingPoint(43.6507, -79.3800, "2026-07-18T18:01:00Z", 2d, 7d));
+        JSONObject signals = new JSONObject()
+            .put("stopped_seconds", 60)
+            .put("activity_type", "in_vehicle")
+            .put("activity_confidence", 90);
+
+        JSONObject resolved = DriveSenseParkingResolver.resolve(
+            points,
+            Instant.parse("2026-07-18T18:01:00Z").toEpochMilli(),
+            signals
+        );
+
+        assertNotNull(resolved);
+        assertEquals("possible_drive_through", resolved.getString("ignored_reason"));
+        assertFalse(resolved.has("lat"));
+    }
+
+    @Test
+    public void parkingResolverRetainsGarageEntranceAndExitEvidence() throws Exception {
+        JSONArray points = new JSONArray()
+            .put(parkingPoint(43.6500, -79.3800, "2026-07-18T18:00:00Z", 30d, 8d))
+            .put(parkingPoint(43.6510, -79.3800, "2026-07-18T18:00:10Z", 10d, 12d))
+            .put(parkingPoint(43.6512, -79.3800, "2026-07-18T18:00:20Z", 0d, 42d))
+            .put(parkingPoint(43.6512, -79.3801, "2026-07-18T18:00:30Z", 0d, 38d))
+            .put(parkingPoint(43.6511, -79.3800, "2026-07-18T18:00:40Z", 0d, 40d));
+        JSONObject signals = new JSONObject()
+            .put("stopped_seconds", 40)
+            .put("vehicle_exit_transition", true);
+
+        JSONObject resolved = DriveSenseParkingResolver.resolve(
+            points,
+            Instant.parse("2026-07-18T18:00:40Z").toEpochMilli(),
+            signals
+        );
+
+        assertNotNull(resolved);
+        assertTrue(resolved.getBoolean("indoor_estimated"));
+        assertTrue(resolved.has("garage_entrance"));
+        assertTrue(resolved.getJSONArray("evidence").toString().contains("activity_vehicle_exit_transition"));
+    }
+
+    @Test
+    public void parkingResolverUsesLocalLearningForWeakAutomaticStops() throws Exception {
+        JSONArray points = new JSONArray()
+            .put(parkingPoint(43.6500, -79.3800, "2026-07-18T18:00:00Z", 25d, 8d))
+            .put(parkingPoint(43.6501, -79.3800, "2026-07-18T18:00:20Z", 0d, 50d));
+        JSONObject profile = new JSONObject()
+            .put("feedback_count", 2)
+            .put("strictness_level", 2)
+            .put("short_stop_max_seconds", 65)
+            .put("in_vehicle_stop_max_seconds", 180)
+            .put("minimum_automatic_confidence", 60);
+        JSONObject signals = new JSONObject()
+            .put("stopped_seconds", 70)
+            .put("activity_type", "still")
+            .put("activity_confidence", 85)
+            .put("parking_learning_profile", profile);
+
+        JSONObject resolved = DriveSenseParkingResolver.resolve(
+            points,
+            Instant.parse("2026-07-18T18:00:20Z").toEpochMilli(),
+            signals
+        );
+
+        assertNotNull(resolved);
+        assertEquals("learned_low_confidence_stop", resolved.getString("ignored_reason"));
+    }
+
+    @Test
+    public void parkingResolverKeepsStrongExitEvidenceDespiteLocalLearning() throws Exception {
+        JSONArray points = new JSONArray()
+            .put(parkingPoint(43.6500, -79.3800, "2026-07-18T18:00:00Z", 25d, 8d))
+            .put(parkingPoint(43.6501, -79.3800, "2026-07-18T18:00:20Z", 0d, 50d));
+        JSONObject profile = new JSONObject()
+            .put("feedback_count", 2)
+            .put("strictness_level", 2)
+            .put("minimum_automatic_confidence", 60);
+        JSONObject signals = new JSONObject()
+            .put("stopped_seconds", 70)
+            .put("activity_type", "still")
+            .put("activity_confidence", 85)
+            .put("vehicle_exit_transition", true)
+            .put("parking_learning_profile", profile);
+
+        JSONObject resolved = DriveSenseParkingResolver.resolve(
+            points,
+            Instant.parse("2026-07-18T18:00:20Z").toEpochMilli(),
+            signals
+        );
+
+        assertNotNull(resolved);
+        assertTrue(resolved.has("lat"));
+        assertTrue(resolved.getJSONArray("evidence").toString().contains("personalized_parking_learning"));
     }
 
     @Test
@@ -250,6 +471,18 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
             .put(parkingPoint(0d, 0d, "2026-07-18T18:00:00Z", 0d, 5d));
 
         assertNull(DriveSenseParkingResolver.resolve(points, System.currentTimeMillis()));
+    }
+
+    @Test
+    public void parkingResolverRejectsStaleOrVeryInaccurateEndpoints() throws Exception {
+        long recordedMs = Instant.parse("2026-07-18T18:00:00Z").toEpochMilli();
+        JSONArray stale = new JSONArray()
+            .put(parkingPoint(43.65, -79.38, "2026-07-18T18:00:00Z", 0d, 8d));
+        JSONArray inaccurate = new JSONArray()
+            .put(parkingPoint(43.65, -79.38, "2026-07-18T18:00:00Z", 0d, 120d));
+
+        assertNull(DriveSenseParkingResolver.resolve(stale, recordedMs + 3 * 60_000L));
+        assertNull(DriveSenseParkingResolver.resolve(inaccurate, recordedMs));
     }
 
     private static JSONObject parkingPoint(
@@ -720,6 +953,34 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
             }
         }
         return snapshot;
+    }
+
+    private static Map<String, byte[]> snapshotJournal(Context context) {
+        Map<String, byte[]> snapshot = new HashMap<>();
+        File directory = new File(context.getNoBackupFilesDir(), "completed_trip_journal_v1");
+        File[] files = directory.listFiles();
+        if (files == null) return snapshot;
+        for (File file : files) {
+            if (!file.isFile()) continue;
+            try (FileInputStream input = new FileInputStream(file)) {
+                snapshot.put(file.getName(), input.readAllBytes());
+            } catch (Exception ignored) {}
+        }
+        return snapshot;
+    }
+
+    private static void restoreJournal(Context context, Map<String, byte[]> snapshot) {
+        if (snapshot == null || snapshot.isEmpty()) return;
+        File directory = new File(context.getNoBackupFilesDir(), "completed_trip_journal_v1");
+        if (!directory.exists() && !directory.mkdirs()) return;
+        for (Map.Entry<String, byte[]> entry : snapshot.entrySet()) {
+            File file = new File(directory, entry.getKey());
+            try (FileOutputStream output = new FileOutputStream(file)) {
+                output.write(entry.getValue());
+                output.flush();
+                output.getFD().sync();
+            } catch (Exception ignored) {}
+        }
     }
 
     private static void restorePrefs(SharedPreferences prefs, Map<String, Object> snapshot) {

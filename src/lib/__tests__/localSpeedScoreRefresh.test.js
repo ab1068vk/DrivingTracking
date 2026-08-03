@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   trips: [],
@@ -32,9 +32,16 @@ import {
   refreshTripsForLocalSpeedCorrections,
   refreshTripsForLocalSpeedKnowledgeChanges,
 } from '@/lib/localSpeedScoreRefresh';
+import { setJson } from '@/lib/mobileStorage';
+import {
+  getRescoringQueue,
+  processRescoringQueue,
+  RESCORING_QUEUE_KEY,
+} from '@/lib/rescoringQueue';
 
 describe('local speed score refresh', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await setJson(RESCORING_QUEUE_KEY, []);
     state.trips = [];
     state.buildPatch.mockReset();
     state.update.mockReset();
@@ -62,6 +69,10 @@ describe('local speed score refresh', () => {
     });
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('recalculates each affected trip once when speed knowledge is restored', async () => {
     const matchingPoint = { lat: 43.6532, lng: -79.3832 };
     const geohash = geohashEncode(matchingPoint.lat, matchingPoint.lng);
@@ -76,6 +87,10 @@ describe('local speed score refresh', () => {
         ...matchingPoint,
         limitKmh: 60,
         directionMode: 'both',
+        sectionPoints: [
+          { lat: 43.6532, lng: -79.3842 },
+          { lat: 43.6532, lng: -79.3822 },
+        ],
       }],
     };
     const after = {
@@ -85,6 +100,10 @@ describe('local speed score refresh', () => {
         ...matchingPoint,
         limitKmh: 50,
         directionMode: 'both',
+        sectionPoints: [
+          { lat: 43.6532, lng: -79.3842 },
+          { lat: 43.6532, lng: -79.3822 },
+        ],
       }],
     };
 
@@ -247,5 +266,96 @@ describe('local speed score refresh', () => {
     expect(updated).toHaveLength(1);
     expect(state.buildPatch).toHaveBeenCalledTimes(1);
     expect(state.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a completed zero-trip marker when only the durable knowledge revision changes', async () => {
+    const updated = await refreshTripsForLocalSpeedKnowledgeChanges(
+      { schemaVersion: 2, knowledgeRevision: 10, cells: {}, corrections: [] },
+      { schemaVersion: 2, knowledgeRevision: 11, cells: {}, corrections: [] },
+      {}
+    );
+    const queue = await getRescoringQueue();
+
+    expect(updated).toHaveLength(0);
+    expect(updated.totalAffectedTripCount).toBe(0);
+    expect(updated.queuedTripCount).toBe(0);
+    expect(updated.targetKnowledgeRevision).toBe(11);
+    expect(queue.at(-1)).toMatchObject({
+      reason: 'speed_knowledge_rules_changed',
+      status: 'complete',
+      total: 0,
+      completed: 0,
+      knowledgeRevision: 11,
+    });
+    expect(state.update).not.toHaveBeenCalled();
+  });
+
+  it('recalculates a trip when an exclusion alone starts suppressing an unchanged rule', async () => {
+    const point = { lat: 43.6532, lng: -79.3832 };
+    const rule = {
+      id: 'unchanged-rule',
+      geohash: geohashEncode(point.lat, point.lng),
+      ...point,
+      limitKmh: 50,
+      directionMode: 'both',
+      sectionPoints: [
+        { lat: 43.6530, lng: -79.3834 },
+        { lat: 43.6534, lng: -79.3830 },
+      ],
+    };
+    const exclusion = {
+      id: 'new-private-section',
+      geohash: rule.geohash,
+      ...point,
+      directionMode: 'both',
+      sectionPoints: rule.sectionPoints,
+    };
+    state.trips = [{ id: 'affected-by-exclusion', status: 'completed', route_points: [point] }];
+
+    const updated = await refreshTripsForLocalSpeedKnowledgeChanges(
+      { schemaVersion: 2, knowledgeRevision: 20, cells: {}, corrections: [rule], excludedSections: [] },
+      { schemaVersion: 2, knowledgeRevision: 21, cells: {}, corrections: [rule], excludedSections: [exclusion] },
+      {}
+    );
+
+    expect(updated).toHaveLength(1);
+    expect(updated.totalAffectedTripCount).toBe(1);
+    expect(state.update).toHaveBeenCalledWith('affected-by-exclusion', expect.any(Object));
+  });
+
+  it('reports the 20 processed and 5 durably queued trips truthfully for a 25-trip change', async () => {
+    const storage = new Map();
+    vi.stubGlobal('localStorage', {
+      get length() { return storage.size; },
+      key: (index) => [...storage.keys()][index] ?? null,
+      getItem: (key) => storage.has(key) ? storage.get(key) : null,
+      setItem: (key, value) => storage.set(key, String(value)),
+      removeItem: (key) => storage.delete(key),
+      clear: () => storage.clear(),
+    });
+    await setJson(RESCORING_QUEUE_KEY, []);
+    const point = { lat: 43.6532, lng: -79.3832 };
+    const geohash = geohashEncode(point.lat, point.lng);
+    state.trips = Array.from({ length: 25 }, (_, index) => ({
+      id: `trip-${index}`,
+      status: 'completed',
+      route_points: [point],
+    }));
+
+    const updated = await refreshTripsCrossingLocalSpeedCell(geohash, {});
+
+    expect(updated).toHaveLength(20);
+    expect(updated.totalAffectedTripCount).toBe(25);
+    expect(updated.queuedTripCount).toBe(5);
+    expect(state.update).toHaveBeenCalledTimes(20);
+
+    await processRescoringQueue();
+    expect(state.update).toHaveBeenCalledTimes(25);
+    expect((await getRescoringQueue()).at(-1)).toMatchObject({
+      status: 'complete',
+      total: 25,
+      completed: 25,
+      remainingTripIds: [],
+    });
   });
 });

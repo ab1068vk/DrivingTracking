@@ -29,6 +29,13 @@ import {
   redactRoutePointForPrivacyStorage,
   sanitizeTripForPrivacyStorage,
 } from '@/lib/privacyZones';
+import {
+  isParkingPhotoExpired,
+  recordParkingHistoryState,
+} from '@/lib/parkingHistory';
+import ActivityRecognition from '@/lib/driveSenseNativePlugin';
+import { isNativePlatform } from '@/lib/nativePlatform';
+import { recordParkingDiagnostic } from '@/lib/parkingDiagnostics';
 
 // CHANGES (session):
 // - Added Phase 2 speed estimate guidance defaults and validation ranges.
@@ -38,6 +45,7 @@ import {
 export const ACTIVE_TRIP_KEY = 'drivesense_active_trip';
 export const SETTINGS_KEY = 'drivesense_settings';
 export const LAST_PARKED_KEY = 'drivesense_last_parked';
+export const LAST_PARKING_STATE_KEY = 'drivesense_last_parking_state';
 export const SETTINGS_CHANGED_EVENT = 'roadsage-settings-changed';
 export const ACTIVE_TRIP_CHANGED_EVENT = 'roadsage-active-trip-changed';
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
@@ -47,7 +55,7 @@ let settingsCacheSerialized = '';
 let memorySettings = null;
 let activeTripMemory = null;
 let activeTripWriteQueue = Promise.resolve();
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 19;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 22;
 const SYSTEM_THEME_QUERY = '(prefers-color-scheme: dark)';
 const THEME_MODE_VALUES = Object.freeze(['system', 'light', 'dark']);
 let activeThemeMode = 'system';
@@ -144,6 +152,73 @@ const isPrivateParkedLocation = async (location, settings = localSettings.get())
   return Boolean(isPointInPrivacyZone(location, zones, PARKED_LOCATION_PRIVACY_GUARD_M));
 };
 
+const refreshNativeParkingWidget = async () => {
+  if (typeof window === 'undefined') return;
+  try {
+    const { Capacitor } = await import('@capacitor/core');
+    if (!Capacitor.isNativePlatform()) return;
+    await ActivityRecognition.refreshWhereIParkedWidget();
+  } catch (error) {
+    logError('parking_widget_refresh', error);
+  }
+};
+
+const parkingSyncTimeout = (promise, timeoutMs = 8_000) => Promise.race([
+  promise,
+  new Promise((_, reject) => {
+    globalThis.setTimeout(() => reject(new Error('Android parking synchronization timed out.')), timeoutMs);
+  }),
+]);
+
+const commitNativeParkingSnapshot = async (state, location = null) => {
+  if (!isNativePlatform()) return { state, location };
+  const committed = await parkingSyncTimeout(
+    ActivityRecognition.commitNativeParkingSnapshot({ state, location }),
+  );
+  const committedState = committed?.state;
+  if (
+    !committedState ||
+    parkingStateRevision(committedState) !== parkingStateRevision(state) ||
+    committedState.status !== state.status
+  ) {
+    throw new Error('Android rejected the parking revision because a newer or safer record exists.');
+  }
+  return committed;
+};
+
+const restoreParkingSnapshot = async (records) => {
+  await Promise.all([
+    records?.parkedLocation
+      ? setEncryptedJson(LAST_PARKED_KEY, records.parkedLocation)
+      : removeEncryptedJson(LAST_PARKED_KEY),
+    records?.state
+      ? setEncryptedJson(LAST_PARKING_STATE_KEY, records.state)
+      : removeEncryptedJson(LAST_PARKING_STATE_KEY),
+  ]);
+  if (!isNativePlatform()) return;
+  await ActivityRecognition.clearNativeParkingState();
+  if (records?.state) {
+    await commitNativeParkingSnapshot(
+      records.state,
+      records.state.status === 'saved' ? records.parkedLocation : null,
+    );
+  }
+};
+
+const sameParkingTrip = (first, second) => {
+  const firstId = first?.tripId ?? first?.location?.tripId;
+  const secondId = second?.tripId ?? second?.location?.tripId;
+  return firstId != null && secondId != null && String(firstId) === String(secondId);
+};
+
+const shouldPreserveHigherConfidenceParking = (existingState, incomingState) => {
+  if (!existingState || !incomingState || !sameParkingTrip(existingState, incomingState)) return false;
+  if (incomingState.verified === true) return false;
+  const existingScore = Number(existingState.confidence_score) || 0;
+  const incomingScore = Number(incomingState.confidence_score) || 0;
+  return existingState.verified === true || existingScore > incomingScore;
+};
+
 const syncSettingsForNative = (settings, serialized = JSON.stringify(settings)) => {
   if (typeof window === 'undefined') return;
   if (serialized === lastNativeSettingsSync) return;
@@ -191,7 +266,10 @@ const dispatchActiveTripChanged = () => {
 // - Added BACKUP_EXCLUDED_KEYS for local-only storage keys.
 // - Allowed combined regional default settings such as CA-ON and US-TX.
 
-export const BACKUP_EXCLUDED_KEYS = Object.freeze([]);
+export const BACKUP_EXCLUDED_KEYS = Object.freeze([
+  'drivesense_parking_learning_v1',
+  'drivesense_speed_sign_evidence_v1',
+]);
 
 const STATUTORY_REGION_SETTING_VALUES = Object.freeze([
   'global',
@@ -265,6 +343,7 @@ export const DEFAULT_SETTINGS = {
   night_end_time: NIGHT_END_TIME,
   night_sunset_offset_minutes: 0,
   night_sunrise_offset_minutes: 0,
+  night_boundary_tolerance_minutes: 5,
   threshold_manoeuvre_alert_brake_ms2: scoringValue('MANOEUVRE_ALERT_BRAKE_MS2'),
   threshold_manoeuvre_alert_turn_degs: scoringValue('MANOEUVRE_ALERT_TURN_DEG_S'),
   threshold_heading_drift_std_degs: scoringValue('HEADING_DRIFT_STD_DEG'),
@@ -290,6 +369,8 @@ export const DEFAULT_SETTINGS = {
   speed_warning_enabled: true,
   speed_limit_lookup_enabled: false,
   speed_estimates_enabled: true,
+  speed_sign_scanner_enabled: false,
+  speed_sign_mounted_mode_enabled: false,
   speak_posted_speed_warnings: true,
   speak_estimated_speed_checks: true,
   estimated_voice_margin_kmh: 12,
@@ -425,6 +506,10 @@ export function migrateDefaultSettings(parsed = {}) {
     merged.phone_proxy_max_accuracy_m = 20;
   }
 
+  if (version < 20 && parsed.night_boundary_tolerance_minutes == null) {
+    merged.night_boundary_tolerance_minutes = 5;
+  }
+
   if (parsed.threshold_stop_start_decel_ms2 == null && parsed.threshold_tailgate_decel_ms2 != null) {
     merged.threshold_stop_start_decel_ms2 = parsed.threshold_tailgate_decel_ms2;
   }
@@ -521,6 +606,7 @@ const IMPORT_NUMBER_RANGES = {
   threshold_long_drive_minutes: [5, 1440],
   night_sunset_offset_minutes: [-180, 180],
   night_sunrise_offset_minutes: [-180, 180],
+  night_boundary_tolerance_minutes: [0, 30],
   threshold_manoeuvre_alert_brake_ms2: [0.5, 15],
   threshold_manoeuvre_alert_turn_degs: [1, 180],
   threshold_heading_drift_std_degs: [1, 90],
@@ -562,7 +648,7 @@ const SETTINGS_ENUMS = {
   units: ['metric', 'imperial'],
   currencySymbol: CURRENCY_SYMBOL_OPTIONS.map((option) => option.value),
   dark_mode: THEME_MODE_VALUES,
-  night_detection_mode: ['sunset', 'custom'],
+  night_detection_mode: ['sunset', 'civil_twilight', 'custom'],
   phone_use_sensitivity: ['low', 'medium', 'high'],
   configurable_country_defaults: STATUTORY_REGION_SETTING_VALUES,
   decoy_traffic_mode: ['off', 'first_party'],
@@ -575,6 +661,8 @@ const IMPORT_ENUMS = {
 };
 
 const IMPORT_STRIPPED_KEYS = new Set([
+  'speed_sign_scanner_enabled',
+  'speed_sign_mounted_mode_enabled',
   'external_context_auto_fetch_enabled',
   'external_context_auto_fetch_consented_at',
   'osrm_map_matching_url',
@@ -759,38 +847,384 @@ export function validateSettingsPatch(patch = {}) {
   return { valid: errors.length === 0, errors };
 }
 
-export async function getLastParkedLocation() {
-  const parkedLocation = await getEncryptedJson(LAST_PARKED_KEY, null);
-  if (parkedLocation?.suppressed === true) return null;
-  if (parkedLocation && await isPrivateParkedLocation(parkedLocation)) {
-    await suppressLastParkedLocation({
-      timestamp: parkedLocation.timestamp,
-      source: 'privacy_zone',
-    });
-    return null;
-  }
-  return parkedLocation;
-}
-
 const parkedTimestampMs = (value) => {
   const parsed = Date.parse(String(value?.timestamp || ''));
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-/** @param {{timestamp?: string | null, source?: string}} [options] */
+export const parkingStateRevision = (value) => {
+  const revision = Number(value?.state_revision);
+  return Number.isSafeInteger(revision) && revision > 0
+    ? revision
+    : parkedTimestampMs(value);
+};
+
+const nextParkingStateRevision = (records, requestedRevision = null) => {
+  const requested = Number(requestedRevision);
+  if (Number.isSafeInteger(requested) && requested > 0) return requested;
+  const newest = Math.max(
+    parkingStateRevision(records?.state),
+    parkingStateRevision(records?.parkedLocation),
+  );
+  return Math.max(Date.now(), newest + 1);
+};
+
+const parkingStatusForSource = (source) => (
+  source === 'privacy_zone' ? 'private' : 'unavailable'
+);
+
+const legacyParkingState = (parkedLocation) => {
+  if (!parkedLocation || typeof parkedLocation !== 'object') return null;
+  if (parkedLocation.suppressed === true) {
+    return {
+      version: 2,
+      status: parkingStatusForSource(parkedLocation.source),
+      timestamp: parkedLocation.timestamp || null,
+      source: parkedLocation.source || 'trip_end_unavailable',
+      tripId: parkedLocation.tripId ?? null,
+      state_revision: parkingStateRevision(parkedLocation),
+    };
+  }
+  return {
+    version: 2,
+    status: 'saved',
+    timestamp: parkedLocation.timestamp || null,
+    source: parkedLocation.source || 'trip_end',
+    tripId: parkedLocation.tripId ?? null,
+    state_revision: parkingStateRevision(parkedLocation),
+    confidence: parkedLocation.confidence || 'estimated',
+    confidence_score: parkedLocation.confidence_score ?? null,
+    evidence: Array.isArray(parkedLocation.evidence) ? parkedLocation.evidence : [],
+    strategy: parkedLocation.strategy || 'last_trip_point',
+    refinement_count: Number(parkedLocation.refinement_count) || 0,
+  };
+};
+
+const latestParkingEvent = (state, parkedLocation) => {
+  const legacyState = legacyParkingState(parkedLocation);
+  if (!state) return legacyState;
+  if (!legacyState) return state;
+  const stateRevision = parkingStateRevision(state);
+  const legacyRevision = parkingStateRevision(legacyState);
+  if (stateRevision !== legacyRevision) return stateRevision > legacyRevision ? state : legacyState;
+  return parkedTimestampMs(state) >= parkedTimestampMs(legacyState) ? state : legacyState;
+};
+
+const readParkingRecords = async () => {
+  const [state, parkedLocation] = await Promise.all([
+    getEncryptedJson(LAST_PARKING_STATE_KEY, null),
+    getEncryptedJson(LAST_PARKED_KEY, null),
+  ]);
+  return {
+    state: latestParkingEvent(state, parkedLocation),
+    parkedLocation: parkedLocation?.suppressed === true ? null : parkedLocation,
+  };
+};
+
+/**
+ * Returns the newest parking outcome without exposing coordinates for a
+ * privacy-protected stop. `location` is present only for a confirmed public
+ * parking location.
+ */
+export async function getLastParkingState() {
+  const records = await readParkingRecords();
+  if (!records.state) return null;
+  if (records.state.status !== 'saved') return records.state;
+  let parkedLocation = records.parkedLocation;
+  if (isParkingPhotoExpired(parkedLocation)) {
+    if (isNativePlatform() && parkedLocation?.photo_file_id) {
+      await ActivityRecognition.deleteParkingPhoto({ photoId: parkedLocation.photo_file_id }).catch(() => {});
+    }
+    parkedLocation = {
+      ...parkedLocation,
+      photo_data_url: null,
+      photo_file_id: null,
+      photo_expires_at: null,
+      photo_retention_hours: null,
+    };
+    await setEncryptedJson(LAST_PARKED_KEY, parkedLocation);
+  }
+  if (!parkedLocation) {
+    return {
+      ...records.state,
+      status: 'unavailable',
+      source: 'parking_record_incomplete',
+    };
+  }
+  if (await isPrivateParkedLocation(parkedLocation)) {
+    await suppressLastParkedLocation({
+      timestamp: records.state.timestamp || parkedLocation.timestamp,
+      source: 'privacy_zone',
+      tripId: records.state.tripId ?? parkedLocation.tripId,
+    });
+    await removeEncryptedJson(LAST_PARKED_KEY);
+    return {
+      version: 2,
+      status: 'private',
+      timestamp: records.state.timestamp || parkedLocation.timestamp,
+      source: 'privacy_zone',
+      tripId: records.state.tripId ?? parkedLocation.tripId ?? null,
+    };
+  }
+  return {
+    ...records.state,
+    status: 'saved',
+    location: parkedLocation,
+  };
+}
+
+export async function getLastParkedLocation() {
+  const state = await getLastParkingState();
+  return state?.status === 'saved' ? state.location || null : null;
+}
+
+/** @param {{timestamp?: string | null, source?: string, tripId?: string | number | null, stateRevision?: number | null, vehicleId?: string | number | null, vehicleName?: string | null}} [options] */
 export async function suppressLastParkedLocation(options = {}) {
-  const { timestamp, source = 'trip_end_unavailable' } = options;
+  const {
+    timestamp,
+    source = 'trip_end_unavailable',
+    tripId = null,
+    stateRevision = null,
+    vehicleId = null,
+    vehicleName = null,
+  } = options;
+  const records = await readParkingRecords();
   const suppression = {
-    suppressed: true,
+    version: 2,
+    status: parkingStatusForSource(source),
     timestamp: timestamp || new Date().toISOString(),
     source,
+    tripId,
+    vehicle_id: vehicleId ?? null,
+    vehicle_name: String(vehicleName || '').trim().slice(0, 80) || null,
+    state_revision: nextParkingStateRevision(records, stateRevision),
   };
-  const existing = await getEncryptedJson(LAST_PARKED_KEY, null);
-  if (parkedTimestampMs(existing) > parkedTimestampMs(suppression)) {
-    return existing?.suppressed === true ? null : existing;
+  if (parkedTimestampMs(records.state) > parkedTimestampMs(suppression)) {
+    return records.state?.status === 'saved' ? records.parkedLocation : null;
   }
-  await setEncryptedJson(LAST_PARKED_KEY, suppression);
+  if (
+    source !== 'privacy_zone' &&
+    shouldPreserveHigherConfidenceParking(records.state, suppression)
+  ) {
+    await recordParkingDiagnostic(
+      'confidence_downgrade_blocked',
+      'A lower-confidence suppression was prevented from replacing the current parking event.',
+      { tripId, source },
+    ).catch(() => {});
+    return records.state?.status === 'saved' ? records.parkedLocation : null;
+  }
+  await setEncryptedJson(LAST_PARKING_STATE_KEY, suppression);
+  try {
+    await commitNativeParkingSnapshot(suppression, null);
+  } catch (error) {
+    if (records.state) await setEncryptedJson(LAST_PARKING_STATE_KEY, records.state);
+    else await removeEncryptedJson(LAST_PARKING_STATE_KEY);
+    await recordParkingDiagnostic('atomic_sync_rollback', error?.message, {
+      operation: 'suppress',
+      tripId,
+      source,
+    }).catch(() => {});
+    throw error;
+  }
+  try {
+    const historyRecord = await recordParkingHistoryState(suppression);
+    if (
+      !historyRecord ||
+      historyRecord.status !== suppression.status ||
+      parkingStateRevision(historyRecord) !== suppression.state_revision
+    ) {
+      throw new Error('The protected parking-history record did not confirm its revision.');
+    }
+  } catch (error) {
+    logError('parking_history_suppression_save', error, {
+      source: suppression.source,
+      status: suppression.status,
+    });
+    try {
+      await restoreParkingSnapshot(records);
+    } catch (rollbackError) {
+      await recordParkingDiagnostic(
+        'parking_history_rollback_failed',
+        rollbackError?.message || 'Protected parking rollback failed.',
+        { source, tripId, requestedRevision: suppression.state_revision },
+      ).catch(() => {});
+      throw new Error('Protected parking history failed and Android rollback needs review. Reopen Parking before using the widget.');
+    }
+    await refreshNativeParkingWidget();
+    throw new Error('Protected parking was not saved because its history record could not be verified. Your previous parking was restored.');
+  }
+  // Migrate the old one-key suppression format without deleting a retained
+  // public location from the newer two-record model.
+  const legacy = await getEncryptedJson(LAST_PARKED_KEY, null);
+  if (legacy?.suppressed === true) {
+    await removeEncryptedJson(LAST_PARKED_KEY);
+  } else if (legacy?.photo_data_url) {
+    await setEncryptedJson(LAST_PARKED_KEY, {
+      ...legacy,
+      photo_data_url: null,
+      photo_expires_at: null,
+      photo_retention_hours: null,
+    });
+  }
+  await refreshNativeParkingWidget();
+  await recordParkingDiagnostic('parking_suppressed', 'Parking state synchronized without coordinates.', {
+    status: suppression.status,
+    revision: suppression.state_revision,
+    source,
+  }).catch(() => {});
   return null;
+}
+
+export async function removeLastParkedPhoto() {
+  const parkedLocation = await getEncryptedJson(LAST_PARKED_KEY, null);
+  if (!parkedLocation?.photo_data_url && !parkedLocation?.photo_file_id) return false;
+  if (isNativePlatform() && parkedLocation.photo_file_id) {
+    await ActivityRecognition.deleteParkingPhoto({ photoId: parkedLocation.photo_file_id }).catch(() => {});
+  }
+  await setEncryptedJson(LAST_PARKED_KEY, {
+    ...parkedLocation,
+    photo_data_url: null,
+    photo_file_id: null,
+    photo_expires_at: null,
+    photo_retention_hours: null,
+  });
+  await refreshNativeParkingWidget();
+  return true;
+}
+
+export async function clearCurrentParkingState() {
+  const [previousLocation, previousState] = await Promise.all([
+    getEncryptedJson(LAST_PARKED_KEY, null),
+    getEncryptedJson(LAST_PARKING_STATE_KEY, null),
+  ]);
+  await Promise.all([
+    removeEncryptedJson(LAST_PARKED_KEY),
+    removeEncryptedJson(LAST_PARKING_STATE_KEY),
+  ]);
+  try {
+    await ActivityRecognition.clearNativeParkingState();
+  } catch (error) {
+    await Promise.all([
+      previousLocation
+        ? setEncryptedJson(LAST_PARKED_KEY, previousLocation)
+        : removeEncryptedJson(LAST_PARKED_KEY),
+      previousState
+        ? setEncryptedJson(LAST_PARKING_STATE_KEY, previousState)
+        : removeEncryptedJson(LAST_PARKING_STATE_KEY),
+    ]);
+    await recordParkingDiagnostic('parking_clear_rollback', 'Native clear failed; local parking state was restored.', {
+      message: error?.message || String(error),
+    }).catch(() => {});
+    logError('parking_native_clear', error);
+    throw error;
+  }
+  await refreshNativeParkingWidget();
+}
+
+export async function inspectParkingSyncStatus() {
+  if (!isNativePlatform()) return { status: 'not_applicable' };
+  const [snapshot, localState] = await Promise.all([
+    ActivityRecognition.getNativeParkingSnapshot(),
+    getLastParkingState(),
+  ]);
+  const nativeState = snapshot?.state || null;
+  if (!nativeState && !localState) return { status: 'empty' };
+  if (!nativeState) return { status: 'native_missing', localRevision: parkingStateRevision(localState) };
+  if (!localState) return { status: 'app_missing', nativeRevision: parkingStateRevision(nativeState) };
+  const nativeRevision = parkingStateRevision(nativeState);
+  const localRevision = parkingStateRevision(localState);
+  const matching = nativeRevision === localRevision &&
+    nativeState.status === localState.status &&
+    sameParkingTrip(nativeState, localState);
+  return matching
+    ? { status: 'synced', nativeRevision, localRevision }
+    : {
+      status: 'conflict',
+      nativeRevision,
+      localRevision,
+      nativeStatus: nativeState.status,
+      localStatus: localState.status,
+    };
+}
+
+export async function reconcileNativeParkingState() {
+  let snapshot;
+  try {
+    snapshot = await ActivityRecognition.getNativeParkingSnapshot();
+  } catch {
+    return getLastParkingState();
+  }
+  const nativeState = snapshot?.state;
+  if (!nativeState?.status) {
+    const localOnlyState = await getLastParkingState();
+    if (localOnlyState?.status) {
+      await commitNativeParkingSnapshot(
+        localOnlyState,
+        localOnlyState.status === 'saved' ? localOnlyState.location : null,
+      );
+      await recordParkingDiagnostic(
+        'native_widget_record_repaired',
+        'Android had no parking record, so the verified app record was restored to the widget.',
+        { revision: parkingStateRevision(localOnlyState), status: localOnlyState.status },
+      ).catch(() => {});
+    }
+    return localOnlyState;
+  }
+
+  const localState = await getLastParkingState();
+  const nativeRevision = parkingStateRevision(nativeState);
+  const localRevision = parkingStateRevision(localState);
+  if (
+    localState &&
+    (localRevision > nativeRevision ||
+      (localRevision === nativeRevision &&
+        !(nativeState.status === 'private' && localState.status !== 'private') &&
+        parkedTimestampMs(localState) >= parkedTimestampMs(nativeState)))
+  ) {
+    if (
+      localRevision !== nativeRevision ||
+      localState.status !== nativeState.status ||
+      !sameParkingTrip(localState, nativeState)
+    ) {
+      await commitNativeParkingSnapshot(
+        localState,
+        localState.status === 'saved' ? localState.location : null,
+      );
+      await recordParkingDiagnostic(
+        'parking_conflict_repaired',
+        'The newer verified app record replaced a stale Android widget record.',
+        {
+          localRevision,
+          nativeRevision,
+          localStatus: localState.status,
+          nativeStatus: nativeState.status,
+        },
+      ).catch(() => {});
+    }
+    return localState;
+  }
+
+  if (nativeState.status === 'saved' && snapshot.location) {
+    await saveLastParkedLocation({
+      ...snapshot.location,
+      timestamp: nativeState.timestamp || snapshot.location.timestamp,
+      tripId: nativeState.tripId ?? snapshot.location.tripId,
+      source: nativeState.source || snapshot.location.source || 'native_parking_sync',
+      stateRevision: nativeRevision,
+    });
+  } else {
+    await suppressLastParkedLocation({
+      timestamp: nativeState.timestamp,
+      source: nativeState.status === 'private'
+        ? 'privacy_zone'
+        : nativeState.source || 'trip_end_unavailable',
+      tripId: nativeState.tripId ?? null,
+      stateRevision: nativeRevision,
+      vehicleId: nativeState.vehicle_id ?? null,
+      vehicleName: nativeState.vehicle_name ?? null,
+    });
+  }
+  return getLastParkingState();
 }
 
 const shortenParkedAddress = (address) => {
@@ -834,10 +1268,45 @@ export async function saveLastParkedLocation({
   address = null,
   source = 'trip_end',
   confidence = 'estimated',
+  confidenceScore = null,
+  confidence_score: storedConfidenceScore = null,
+  evidence = [],
   accuracyM = null,
+  accuracy_m: storedAccuracyM = null,
   strategy = 'last_trip_point',
   sampleCount = 1,
+  sample_count: storedSampleCount = null,
+  refinementCount = 0,
+  refinement_count: storedRefinementCount = null,
   spreadM = null,
+  spread_m: storedSpreadM = null,
+  indoorEstimated,
+  indoor_estimated: storedIndoorEstimated = false,
+  garageEntrance,
+  garage_entrance: storedGarageEntrance = null,
+  note = null,
+  photoDataUrl,
+  photo_data_url: storedPhotoDataUrl = null,
+  photoExpiresAt,
+  photo_expires_at: storedPhotoExpiresAt = null,
+  photoRetentionHours,
+  photo_retention_hours: storedPhotoRetentionHours = null,
+  photoFileId,
+  photo_file_id: storedPhotoFileId = null,
+  stateRevision = null,
+  state_revision: storedStateRevision = null,
+  vehicleId = null,
+  vehicle_id: storedVehicleId = null,
+  vehicleName = null,
+  vehicle_name: storedVehicleName = null,
+  garageHint = null,
+  garage_hint: storedGarageHint = null,
+  verified = false,
+  correctionReason = null,
+  correction_reason: storedCorrectionReason = null,
+  correctedAt = null,
+  corrected_at: storedCorrectedAt = null,
+  recordHistory = true,
 }) {
   const parsedLat = Number(lat);
   const parsedLng = Number(lng);
@@ -850,31 +1319,201 @@ export async function saveLastParkedLocation({
     Math.abs(parsedLng) > 180
   ) return null;
   const normalizedTimestamp = timestamp || new Date().toISOString();
-  const existing = await getEncryptedJson(LAST_PARKED_KEY, null);
-  if (parkedTimestampMs(existing) > parkedTimestampMs({ timestamp: normalizedTimestamp })) {
-    return existing?.suppressed === true ? null : existing;
+  const records = await readParkingRecords();
+  if (parkedTimestampMs(records.state) > parkedTimestampMs({ timestamp: normalizedTimestamp })) {
+    return records.state?.status === 'saved' ? records.parkedLocation : null;
   }
   if (
     await isPrivateParkedLocation({ lat: parsedEndpointLat, lng: parsedEndpointLng }) ||
     await isPrivateParkedLocation({ lat: parsedLat, lng: parsedLng })
   ) {
-    return suppressLastParkedLocation({ timestamp: normalizedTimestamp, source: 'privacy_zone' });
+    const result = await suppressLastParkedLocation({
+      timestamp: normalizedTimestamp,
+      source: 'privacy_zone',
+      tripId,
+      stateRevision: stateRevision ?? storedStateRevision,
+    });
+    if (records.parkedLocation && await isPrivateParkedLocation(records.parkedLocation)) {
+      await removeEncryptedJson(LAST_PARKED_KEY);
+    }
+    return result;
   }
+
+  const requestedGarageEntrance = garageEntrance !== undefined
+    ? garageEntrance
+    : storedGarageEntrance;
+  const normalizedGarageEntrance = requestedGarageEntrance &&
+    Number.isFinite(Number(requestedGarageEntrance.lat)) &&
+    Number.isFinite(Number(requestedGarageEntrance.lng))
+    ? {
+      lat: Number(requestedGarageEntrance.lat),
+      lng: Number(requestedGarageEntrance.lng),
+      accuracy_m: Number.isFinite(Number(requestedGarageEntrance.accuracy_m))
+        ? Math.max(0, Math.round(Number(requestedGarageEntrance.accuracy_m)))
+        : null,
+    }
+    : null;
+  const safeGarageEntrance = normalizedGarageEntrance &&
+    !await isPrivateParkedLocation(normalizedGarageEntrance)
+    ? normalizedGarageEntrance
+    : null;
+  const requestedPhotoDataUrl = photoDataUrl !== undefined
+    ? photoDataUrl
+    : storedPhotoDataUrl;
+  const requestedPhotoExpiresAt = photoExpiresAt !== undefined
+    ? photoExpiresAt
+    : storedPhotoExpiresAt;
+  const requestedPhotoRetentionHours = photoRetentionHours !== undefined
+    ? photoRetentionHours
+    : storedPhotoRetentionHours;
+  const requestedPhotoFileId = photoFileId !== undefined ? photoFileId : storedPhotoFileId;
+  const safePhotoDataUrl = /^data:image\/(?:jpeg|png|webp);base64,/i
+    .test(String(requestedPhotoDataUrl || '')) &&
+    String(requestedPhotoDataUrl).length <= 1_600_000
+    ? String(requestedPhotoDataUrl)
+    : null;
+  const parsedPhotoExpiresAt = Date.parse(String(requestedPhotoExpiresAt || ''));
+  const parsedPhotoRetentionHours = Number(requestedPhotoRetentionHours);
+  const resolvedStateRevision = nextParkingStateRevision(
+    records,
+    stateRevision ?? storedStateRevision,
+  );
 
   const parkedLocation = {
     lat: parsedLat,
     lng: parsedLng,
     timestamp: normalizedTimestamp,
     tripId: tripId ?? null,
+    state_revision: resolvedStateRevision,
+    vehicle_id: vehicleId ?? storedVehicleId ?? null,
+    vehicle_name: String(vehicleName ?? storedVehicleName ?? '').trim().slice(0, 80) || null,
     address: shortenParkedAddress(address),
     source,
     confidence: ['high', 'medium', 'estimated'].includes(confidence) ? confidence : 'estimated',
-    accuracy_m: Number.isFinite(Number(accuracyM)) ? Math.max(0, Math.round(Number(accuracyM))) : null,
+    confidence_score: Number.isFinite(Number(confidenceScore ?? storedConfidenceScore))
+      ? Math.max(0, Math.min(100, Math.round(Number(confidenceScore ?? storedConfidenceScore))))
+      : null,
+    evidence: Array.from(new Set(
+      (Array.isArray(evidence) ? evidence : [])
+        .map((item) => String(item || '').trim().slice(0, 64))
+        .filter(Boolean)
+    )).slice(0, 16),
+    accuracy_m: Number.isFinite(Number(accuracyM ?? storedAccuracyM))
+      ? Math.max(0, Math.round(Number(accuracyM ?? storedAccuracyM)))
+      : null,
     strategy,
-    sample_count: Math.max(1, Math.round(Number(sampleCount) || 1)),
-    spread_m: Number.isFinite(Number(spreadM)) ? Math.max(0, Math.round(Number(spreadM))) : null,
+    sample_count: Math.max(1, Math.round(Number(storedSampleCount ?? sampleCount) || 1)),
+    refinement_count: Math.max(0, Math.round(Number(storedRefinementCount ?? refinementCount) || 0)),
+    spread_m: Number.isFinite(Number(spreadM ?? storedSpreadM))
+      ? Math.max(0, Math.round(Number(spreadM ?? storedSpreadM)))
+      : null,
+    indoor_estimated: indoorEstimated !== undefined
+      ? indoorEstimated === true
+      : storedIndoorEstimated === true,
+    garage_entrance: safeGarageEntrance,
+    garage_hint: String(garageHint ?? storedGarageHint ?? '').trim().slice(0, 160) || null,
+    note: String(note || '').trim().slice(0, 160) || null,
+    photo_data_url: safePhotoDataUrl,
+    photo_file_id: /^[0-9a-fA-F-]{36}$/.test(String(requestedPhotoFileId || ''))
+      ? String(requestedPhotoFileId)
+      : null,
+    photo_expires_at: safePhotoDataUrl && Number.isFinite(parsedPhotoExpiresAt)
+      ? new Date(parsedPhotoExpiresAt).toISOString()
+      : null,
+    photo_retention_hours: safePhotoDataUrl && Number.isFinite(parsedPhotoRetentionHours)
+      ? Math.max(0, Math.min(720, Math.round(parsedPhotoRetentionHours)))
+      : null,
+    verified: verified === true,
+    correction_reason: String(correctionReason || storedCorrectionReason || '').trim().slice(0, 80) || null,
+    corrected_at: correctedAt || storedCorrectedAt || null,
   };
+  const parkingState = {
+    version: 2,
+    status: 'saved',
+    timestamp: normalizedTimestamp,
+    tripId: tripId ?? null,
+    state_revision: resolvedStateRevision,
+    source,
+    confidence: parkedLocation.confidence,
+    confidence_score: parkedLocation.confidence_score,
+    evidence: parkedLocation.evidence,
+    strategy: parkedLocation.strategy,
+    refinement_count: parkedLocation.refinement_count,
+    verified: parkedLocation.verified,
+    correction_reason: parkedLocation.correction_reason,
+    corrected_at: parkedLocation.corrected_at,
+  };
+  if (shouldPreserveHigherConfidenceParking(records.state, parkingState)) {
+    await recordParkingDiagnostic(
+      'confidence_downgrade_blocked',
+      'A lower-confidence location was prevented from replacing the same parking event.',
+      {
+        tripId,
+        existingScore: records.state?.confidence_score,
+        incomingScore: parkingState.confidence_score,
+        source,
+      },
+    ).catch(() => {});
+    return records.parkedLocation;
+  }
   await setEncryptedJson(LAST_PARKED_KEY, parkedLocation);
+  await setEncryptedJson(LAST_PARKING_STATE_KEY, parkingState);
+  try {
+    await commitNativeParkingSnapshot(parkingState, parkedLocation);
+  } catch (error) {
+    if (records.parkedLocation) await setEncryptedJson(LAST_PARKED_KEY, records.parkedLocation);
+    else await removeEncryptedJson(LAST_PARKED_KEY);
+    if (records.state) await setEncryptedJson(LAST_PARKING_STATE_KEY, records.state);
+    else await removeEncryptedJson(LAST_PARKING_STATE_KEY);
+    await recordParkingDiagnostic('atomic_sync_rollback', error?.message, {
+      operation: 'save',
+      tripId,
+      source,
+      requestedRevision: parkingState.state_revision,
+    }).catch(() => {});
+    throw error;
+  }
+  if (recordHistory) {
+    try {
+      const historyRecord = await recordParkingHistoryState({
+        ...parkingState,
+        location: parkedLocation,
+      });
+      if (
+        !historyRecord ||
+        historyRecord.status !== 'saved' ||
+        parkingStateRevision(historyRecord) !== resolvedStateRevision
+      ) {
+        throw new Error('The parking-history record did not confirm the saved revision.');
+      }
+    } catch (error) {
+      logError('parking_history_location_save', error, {
+        source,
+        tripId: tripId ?? null,
+      });
+      try {
+        await restoreParkingSnapshot(records);
+      } catch (rollbackError) {
+        await recordParkingDiagnostic(
+          'parking_history_rollback_failed',
+          rollbackError?.message || 'Parking rollback failed after a history write error.',
+          { source, tripId: tripId ?? null, requestedRevision: resolvedStateRevision },
+        ).catch(() => {});
+        throw new Error(
+          'Parking history could not be saved and Android rollback needs review. Reopen Parking before using directions.',
+        );
+      }
+      await refreshNativeParkingWidget();
+      throw new Error('Parking was not saved because its history record could not be verified. Your previous parking was restored.');
+    }
+  }
+  await refreshNativeParkingWidget();
+  await recordParkingDiagnostic('parking_saved', 'Parking page and Android widget committed the same revision.', {
+    tripId,
+    revision: parkingState.state_revision,
+    confidenceScore: parkingState.confidence_score,
+    source,
+  }).catch(() => {});
   return parkedLocation;
 }
 

@@ -57,6 +57,15 @@ describe('tracking diagnostics', () => {
       nativeStatus: {
         enabled: true,
         completedTripsCount: 1,
+        completedTripJournal: {
+          queueReadable: true,
+          pendingCount: 1,
+          unreadableCount: 0,
+          encryptedBytes: 700_000,
+          maxTotalBytes: 32 * 1024 * 1024,
+          maxFileBytes: 512 * 1024,
+          availableDeviceBytes: 4 * 1024 * 1024 * 1024,
+        },
         activeTripCheckpoint: {
           supported: true,
           state: 'protected',
@@ -80,10 +89,61 @@ describe('tracking diagnostics', () => {
       value: 'Protected',
     });
     expect(health.find((item) => item.id === 'active-checkpoint')?.detail).toContain('13 KB');
+    expect(health.find((item) => item.id === 'recovery-storage')).toMatchObject({
+      status: 'good',
+      value: 'Bounded',
+    });
+    expect(health.find((item) => item.id === 'recovery-storage')?.detail).toContain('32 MB total');
     expect(health.find((item) => item.id === 'background')?.status).toBe('warn');
     expect(health.find((item) => item.id === 'motion')?.status).toBe('good');
     expect(health.find((item) => item.id === 'notifications')?.status).toBe('good');
     expect(health.find((item) => item.id === 'bluetooth')?.detail).toContain('OBD-II');
+  });
+
+  it('preserves and surfaces an unreadable native handoff queue', () => {
+    const health = buildTrackingHealth({
+      nativeStatus: {
+        enabled: true,
+        completedTripsCount: 0,
+        completedTripJournal: {
+          queueReadable: false,
+          pendingCount: 0,
+          unreadableCount: 1,
+          encryptedBytes: 2048,
+          maxTotalBytes: 32 * 1024 * 1024,
+          maxFileBytes: 512 * 1024,
+        },
+      },
+    });
+
+    expect(health.find((item) => item.id === 'native-handoff')).toMatchObject({
+      status: 'bad',
+      value: 'Needs attention',
+    });
+    expect(health.find((item) => item.id === 'native-handoff')?.detail).toContain('preserves it');
+  });
+
+  it('warns when protected recovery storage is nearly full', () => {
+    const health = buildTrackingHealth({
+      nativeStatus: {
+        enabled: true,
+        completedTripsCount: 3,
+        completedTripJournal: {
+          queueReadable: true,
+          pendingCount: 3,
+          unreadableCount: 0,
+          encryptedBytes: 27 * 1024 * 1024,
+          maxTotalBytes: 32 * 1024 * 1024,
+          maxFileBytes: 512 * 1024,
+          availableDeviceBytes: 2 * 1024 * 1024 * 1024,
+        },
+      },
+    });
+
+    expect(health.find((item) => item.id === 'recovery-storage')).toMatchObject({
+      status: 'warn',
+      value: 'Journal nearly full',
+    });
   });
 
   it('confirms when no temporary active-trip checkpoint is retained', () => {

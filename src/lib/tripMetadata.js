@@ -1,11 +1,24 @@
+export const TRIP_TAG_CATEGORIES = [
+  { id: 'purpose', label: 'Purpose', description: 'Why you made the trip' },
+  { id: 'route', label: 'Route', description: 'Where and how the trip was driven' },
+  { id: 'condition', label: 'Conditions', description: 'Weather, light, and traffic context' },
+  { id: 'custom', label: 'Your tags', description: 'Personal labels you created' },
+];
+
 export const TRIP_TAG_OPTIONS = [
-  { id: 'commute', label: 'Commute', className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800/50' },
-  { id: 'errand', label: 'Errand', className: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/30 dark:text-orange-300 dark:border-orange-800/50' },
-  { id: 'highway', label: 'Highway', className: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800/50' },
-  { id: 'city', label: 'City', className: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800/50' },
-  { id: 'practice', label: 'Practice', className: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/30 dark:text-violet-300 dark:border-violet-800/50' },
-  { id: 'night', label: 'Night', className: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700' },
-  { id: 'rain', label: 'Rain', className: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-950/30 dark:text-cyan-300 dark:border-cyan-800/50' },
+  { id: 'commute', label: 'Commute', category: 'purpose', description: 'A repeated workday route', className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800/50' },
+  { id: 'errand', label: 'Errand', category: 'purpose', description: 'A short practical trip', className: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/30 dark:text-orange-300 dark:border-orange-800/50' },
+  { id: 'school_run', label: 'School run', category: 'purpose', description: 'School or childcare travel', className: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-950/30 dark:text-fuchsia-300 dark:border-fuchsia-800/50' },
+  { id: 'appointment', label: 'Appointment', category: 'purpose', description: 'A scheduled visit or meeting', className: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/30 dark:text-rose-300 dark:border-rose-800/50' },
+  { id: 'leisure', label: 'Leisure', category: 'purpose', description: 'Personal or recreational travel', className: 'bg-pink-50 text-pink-700 border-pink-200 dark:bg-pink-950/30 dark:text-pink-300 dark:border-pink-800/50' },
+  { id: 'practice', label: 'Practice', category: 'purpose', description: 'Driving practice or training', className: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/30 dark:text-violet-300 dark:border-violet-800/50' },
+  { id: 'highway', label: 'Highway', category: 'route', description: 'Mostly highway driving', className: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800/50' },
+  { id: 'city', label: 'City', category: 'route', description: 'Mostly urban or residential roads', className: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800/50' },
+  { id: 'rural', label: 'Rural', category: 'route', description: 'Mostly rural roads', className: 'bg-lime-50 text-lime-700 border-lime-200 dark:bg-lime-950/30 dark:text-lime-300 dark:border-lime-800/50' },
+  { id: 'night', label: 'Night', category: 'condition', description: 'Driven during night-risk hours', className: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700' },
+  { id: 'rain', label: 'Rain', category: 'condition', description: 'Rain or wet-road evidence', className: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-950/30 dark:text-cyan-300 dark:border-cyan-800/50' },
+  { id: 'snow', label: 'Snow / ice', category: 'condition', description: 'Snow or freezing-condition evidence', className: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-300 dark:border-indigo-800/50' },
+  { id: 'heavy_traffic', label: 'Heavy traffic', category: 'condition', description: 'Congested traffic evidence', className: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-800/50' },
 ];
 
 const LEGACY_TAG_MAP = {
@@ -21,8 +34,6 @@ const SCORE_LABELS = {
   score_safety: 'Safety score',
   smoothness: 'Smoothness score',
   score_smoothness: 'Smoothness score',
-  eco: 'Eco score',
-  score_eco: 'Eco score',
   aggressive: 'Aggression score',
   aggressive_driving_score: 'Aggression score',
   defensive: 'Defensive driving estimate',
@@ -30,6 +41,64 @@ const SCORE_LABELS = {
 };
 
 const TAG_BY_ID = new Map(TRIP_TAG_OPTIONS.map((tag) => [tag.id, tag]));
+const CUSTOM_TAG_CLASS = 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800/50';
+const WEATHER_TAG_IDS = new Set(['rain', 'snow']);
+const WEATHER_BADGE_PRESENTATION = Object.freeze({
+  clear: {
+    label: 'Clear',
+    className: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800/50',
+  },
+  cloudy: {
+    label: 'Cloudy',
+    className: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700',
+  },
+  fog: {
+    label: 'Fog',
+    className: 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-600',
+  },
+  rain: {
+    label: 'Rain',
+    className: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-950/30 dark:text-cyan-300 dark:border-cyan-800/50',
+    replacesTag: 'rain',
+  },
+  snow: {
+    label: 'Snow / ice',
+    className: 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-300 dark:border-indigo-800/50',
+    replacesTag: 'snow',
+  },
+  freezing_precipitation: {
+    label: 'Ice / freezing rain',
+    className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800/50',
+    replacesTag: 'snow',
+  },
+  storm: {
+    label: 'Thunderstorm',
+    className: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/30 dark:text-violet-300 dark:border-violet-800/50',
+    replacesTag: 'rain',
+  },
+});
+
+const titleCaseTag = (id = '') => String(id)
+  .replace(/[_-]+/g, ' ')
+  .replace(/\b\w/g, (character) => character.toUpperCase());
+
+/**
+ * Normalize a built-in or user-created tag to a safe local identifier.
+ * @param {any} value
+ * @returns {string}
+ */
+export function normalizeTripTagId(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  const legacy = LEGACY_TAG_MAP[raw] || raw;
+  const normalized = legacy
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/^[_-]+|[_-]+$/g, '')
+    .replace(/[_-]{2,}/g, '_')
+    .slice(0, 40);
+  return /^[a-z0-9][a-z0-9_-]{0,39}$/.test(normalized) ? normalized : '';
+}
 
 /**
  * @param {any} tripOrTags
@@ -43,16 +112,90 @@ export function normalizeTripTags(tripOrTags = []) {
       tripOrTags?.tag,
     ];
 
-  return [...new Set(input
-    .map((tag) => LEGACY_TAG_MAP[String(tag || '').toLowerCase()] || String(tag || '').toLowerCase())
-    .filter((tag) => TAG_BY_ID.has(tag)))];
+  const normalized = [...new Set(input
+    .map(normalizeTripTagId)
+    .filter(Boolean))];
+  if (Array.isArray(tripOrTags)) return normalized;
+
+  const weatherSource = String(tripOrTags?.weather_context?.source || '').toLowerCase();
+  const weatherCondition = String(tripOrTags?.weather_context?.condition || '').toLowerCase();
+  if (!['open_meteo', 'user_confirmed'].includes(weatherSource) || !weatherCondition) {
+    return normalized;
+  }
+
+  const expectedWeatherTag = /(snow|ice|freez|sleet)/.test(weatherCondition)
+    ? 'snow'
+    : /(rain|wet|storm)/.test(weatherCondition)
+      ? 'rain'
+      : null;
+  return normalized.filter((tag) => (
+    !WEATHER_TAG_IDS.has(tag) ||
+    tripOrTags?.tag_sources?.[tag]?.source !== 'weather_evidence' ||
+    tag === expectedWeatherTag
+  ));
+}
+
+/**
+ * Build a display-only weather badge from saved trusted weather evidence.
+ * Clear, fog, storm, and freezing conditions are intentionally not persisted as
+ * trip tags, but should still remain visible on trip summary cards.
+ *
+ * @param {any} trip
+ * @returns {{id:string,label:string,className:string,title:string,replacesTag:string|null,source:string}|null}
+ */
+export function getTripWeatherBadge(trip = {}) {
+  const weather = trip?.weather_context;
+  const rawSource = String(weather?.source || weather?.provider || '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_');
+  const source = rawSource === 'openmeteo' ? 'open_meteo' : rawSource;
+  if (!['open_meteo', 'user_confirmed'].includes(source)) return null;
+
+  const rawCondition = String(weather?.condition || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const condition = /(snow|sleet)/.test(rawCondition)
+    ? 'snow'
+    : /(freez|ice)/.test(rawCondition)
+      ? 'freezing_precipitation'
+      : /(rain|wet|shower|drizzle)/.test(rawCondition)
+        ? 'rain'
+        : /(storm|thunder)/.test(rawCondition)
+          ? 'storm'
+          : /(fog|mist)/.test(rawCondition)
+            ? 'fog'
+            : /(cloud|overcast)/.test(rawCondition)
+              ? 'cloudy'
+              : /(clear|dry)/.test(rawCondition)
+                ? 'clear'
+                : rawCondition;
+  const presentation = WEATHER_BADGE_PRESENTATION[condition];
+  if (!presentation) return null;
+
+  const sourceLabel = source === 'user_confirmed' ? 'confirmed by you' : 'Open-Meteo';
+  return {
+    id: `weather:${condition}`,
+    label: presentation.label,
+    className: presentation.className,
+    title: `Weather: ${presentation.label} (${sourceLabel})`,
+    replacesTag: presentation.replacesTag || null,
+    source,
+  };
 }
 
 /**
  * @param {string} id
  */
 export function getTripTagOption(id) {
-  return TAG_BY_ID.get(id) || null;
+  const normalized = normalizeTripTagId(id);
+  if (!normalized) return null;
+  return TAG_BY_ID.get(normalized) || {
+    id: normalized,
+    label: titleCaseTag(normalized),
+    category: 'custom',
+    description: 'Your personal trip tag',
+    className: CUSTOM_TAG_CLASS,
+    custom: true,
+  };
 }
 
 /**
@@ -155,7 +298,6 @@ export function buildTripSearchText(trip = {}, vehicle = null) {
     ['overall', trip.score_overall],
     ['safety', trip.score_safety],
     ['smoothness', trip.score_smoothness],
-    ['eco', trip.score_eco],
   ].flatMap(([label, value]) => searchableNumberForms(value, 0).flatMap((number) => [
     number,
     `${label} ${number}`,
@@ -302,16 +444,31 @@ export function calculateRecentBrakingImprovement(trips = []) {
  * @param {any} parkedLocation
  */
 export function formatParkingReminder(parkedLocation) {
-  if (!parkedLocation?.timestamp) return null;
-  const parkedAt = new Date(parkedLocation.timestamp).getTime();
+  const parkingState = parkedLocation?.status ? parkedLocation : null;
+  const location = parkingState?.status === 'saved'
+    ? parkingState.location
+    : parkedLocation;
+  const timestamp = parkingState?.timestamp || location?.timestamp;
+  if (!timestamp) return null;
+  const parkedAt = new Date(timestamp).getTime();
   if (!Number.isFinite(parkedAt)) return null;
   const elapsedMinutes = Math.max(0, Math.floor((Date.now() - parkedAt) / 60000));
   const hours = Math.floor(elapsedMinutes / 60);
   const minutes = elapsedMinutes % 60;
   const duration = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-  const place = parkedLocation.address ||
-    (Number.isFinite(parkedLocation.lat) && Number.isFinite(parkedLocation.lng)
-      ? `${parkedLocation.lat.toFixed(5)}, ${parkedLocation.lng.toFixed(5)}`
+  if (parkingState?.status === 'private') {
+    return `Parked ${duration} ago in a privacy zone. The exact location is intentionally hidden.`;
+  }
+  if (parkingState?.status === 'unavailable') {
+    return `Parking update from ${duration} ago needs review because the trip ended without a trustworthy public GPS fix.`;
+  }
+  const place = location?.address ||
+    (Number.isFinite(location?.lat) && Number.isFinite(location?.lng)
+      ? `${location.lat.toFixed(5)}, ${location.lng.toFixed(5)}`
       : 'your last saved spot');
-  return `Parked ${duration} ago near ${place}.`;
+  const confidenceScore = Number(location?.confidence_score ?? parkingState?.confidence_score);
+  const confidence = Number.isFinite(confidenceScore) && confidenceScore > 0
+    ? ` ${Math.round(confidenceScore)}% parking confidence${location?.strategy === 'post_stop_refinement' || Number(location?.refinement_count) > 0 ? ' after GPS refinement' : ''}.`
+    : '';
+  return `Parked ${duration} ago near ${place}.${confidence}`;
 }

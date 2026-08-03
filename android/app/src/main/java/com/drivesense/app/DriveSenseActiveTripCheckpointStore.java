@@ -24,7 +24,8 @@ final class DriveSenseActiveTripCheckpointStore {
     static final int MAX_INCIDENT_EVENTS = 4;
     static final int MAX_PLAINTEXT_BYTES = 360 * 1024;
     static final int MAX_ENCRYPTED_BYTES = 512 * 1024;
-    static final long MAX_AGE_MS = 24 * 60 * 60_000L;
+    static final long MAX_AGE_MS = 7L * 24L * 60L * 60_000L;
+    static final long MAX_CANDIDATE_AGE_MS = 24L * 60L * 60_000L;
 
     private static final String[] ROUTE_POINT_KEYS = new String[] {
         "lat",
@@ -139,10 +140,13 @@ final class DriveSenseActiveTripCheckpointStore {
             JSONObject payload = new JSONObject(raw);
             long updatedAtMs = payload.optLong("updated_at_ms", 0L);
             long ageMs = Math.max(0L, nowMs - updatedAtMs);
+            long allowedAgeMs = payload.optBoolean("candidate", false)
+                ? MAX_CANDIDATE_AGE_MS
+                : MAX_AGE_MS;
             if (
                 payload.optInt("version", 0) != VERSION ||
                 updatedAtMs <= 0L ||
-                ageMs > MAX_AGE_MS ||
+                ageMs > allowedAgeMs ||
                 payload.optLong("start_time_ms", 0L) <= 0L ||
                 payload.optString("trip_id", "").trim().isEmpty() ||
                 payload.optJSONArray("route_points") == null ||
@@ -171,6 +175,7 @@ final class DriveSenseActiveTripCheckpointStore {
             status.put("ageSeconds", JSONObject.NULL);
             status.put("encryptedBytes", 0L);
             status.put("maxEncryptedBytes", MAX_ENCRYPTED_BYTES);
+            status.put("maxAgeSeconds", MAX_AGE_MS / 1_000L);
             if (context == null) return status;
 
             File baseFile = atomicFile(context).getBaseFile();
@@ -186,6 +191,12 @@ final class DriveSenseActiveTripCheckpointStore {
             long updatedAtMs = payload.optLong("updated_at_ms", 0L);
             status.put("state", "protected");
             status.put("present", true);
+            status.put(
+                "maxAgeSeconds",
+                payload.optBoolean("candidate", false)
+                    ? MAX_CANDIDATE_AGE_MS / 1_000L
+                    : MAX_AGE_MS / 1_000L
+            );
             status.put("updatedAtMs", updatedAtMs);
             status.put("ageSeconds", Math.max(0L, (nowMs - updatedAtMs) / 1_000L));
             status.put("encryptedBytes", encryptedBytes);

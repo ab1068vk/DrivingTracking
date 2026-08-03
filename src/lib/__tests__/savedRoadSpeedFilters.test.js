@@ -41,6 +41,8 @@ describe('saved road speed filters', () => {
     expect(matchesSavedRoadSpeedFilter(posted, null, 'estimates')).toBe(false);
     expect(matchesSavedRoadSpeedFilter(estimate, null, 'timeRules')).toBe(true);
     expect(matchesSavedRoadSpeedFilter(estimate, null, 'expiring')).toBe(true);
+    expect(matchesSavedRoadSpeedFilter({ ...posted, historicalVersion: true }, null, 'historical')).toBe(true);
+    expect(matchesSavedRoadSpeedFilter(posted, null, 'historical')).toBe(false);
     expect(matchesSavedRoadSpeedFilter(posted, { deltaKmh: 10 }, 'conflicts')).toBe(true);
     expect(matchesSavedRoadSpeedFilter(posted, null, 'all')).toBe(true);
   });

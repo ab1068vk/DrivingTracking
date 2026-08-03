@@ -14,6 +14,12 @@ import androidx.appcompat.app.AppCompatDelegate;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+    private static volatile boolean appVisible = false;
+
+    static boolean isAppVisible() {
+        return appVisible;
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
@@ -26,7 +32,9 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(SecureBridgePlugin.class);
         registerPlugin(RoadDataQueuePlugin.class);
         registerPlugin(AuditAnchorPlugin.class);
+        registerPlugin(SpeedSignScannerPlugin.class);
         super.onCreate(savedInstanceState);
+        AppExperienceWatchdog.start(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         applyInitialSystemBars();
         WebView webView = getBridge().getWebView();
@@ -39,6 +47,38 @@ public class MainActivity extends BridgeActivity {
                 settings.setForceDark(WebSettings.FORCE_DARK_OFF);
             }
         }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        appVisible = true;
+        AppExperienceWatchdog.onResume(this);
+    }
+
+    @Override
+    public void onPause() {
+        appVisible = false;
+        AppExperienceWatchdog.onPause(this);
+        super.onPause();
+    }
+
+    @Override
+    public void onDestroy() {
+        AppExperienceWatchdog.onDestroy(this);
+        super.onDestroy();
+    }
+
+    @Override
+    public void onTrimMemory(int level) {
+        AppExperienceWatchdog.onTrimMemory(this, level);
+        super.onTrimMemory(level);
+    }
+
+    @Override
+    public void onLowMemory() {
+        AppExperienceWatchdog.onLowMemory(this);
+        super.onLowMemory();
     }
 
     private void applyInitialSystemBars() {

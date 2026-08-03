@@ -80,6 +80,31 @@ export function normalizeNativeDiagnosticEvents(nativePayload = {}) {
     speed_kmh: event.speed_kmh ?? null,
     drift_m: event.drift_m ?? null,
     stopped_seconds: event.stopped_seconds ?? null,
+    duration_ms: event.duration_ms ?? null,
+    reason_code: event.reason_code ?? null,
+    reason_label: event.reason_label ?? null,
+    trim_level: event.trim_level ?? null,
+    critical: event.critical === true,
+    memory_available_bytes: event.memory_available_bytes ?? null,
+    memory_total_bytes: event.memory_total_bytes ?? null,
+    memory_low: event.memory_low === true,
+    heap_used_bytes: event.heap_used_bytes ?? null,
+    heap_max_bytes: event.heap_max_bytes ?? null,
+    pss_kb: event.pss_kb ?? null,
+    rss_kb: event.rss_kb ?? null,
+    storage_usable_bytes: event.storage_usable_bytes ?? null,
+    storage_total_bytes: event.storage_total_bytes ?? null,
+    thermal_status: event.thermal_status ?? null,
+    thermal_label: event.thermal_label ?? null,
+    battery_temperature_c: event.battery_temperature_c ?? null,
+    last_operation: event.last_operation && typeof event.last_operation === 'object'
+      ? {
+        operation: event.last_operation.operation || 'unknown',
+        phase: event.last_operation.phase || 'unknown',
+        pathname: event.last_operation.pathname || '',
+        timestamp: event.last_operation.timestamp || null,
+      }
+      : null,
   }));
 }
 
@@ -100,6 +125,12 @@ function nativeEventTitle(type) {
     checkpoint_save_failed: 'Active trip checkpoint failed',
     trip_discarded: 'Trip discarded',
     phone_usage_access: 'Phone usage access checked',
+    android_ui_stall: 'App UI stopped responding',
+    android_ui_stall_recovered: 'App UI responded again',
+    android_previous_session_interrupted: 'Previous app session ended unexpectedly',
+    android_process_exit: 'Previous Android process exit',
+    android_memory_pressure: 'Android memory pressure',
+    android_low_memory: 'Android low-memory warning',
   };
   return labels[type] || 'Native tracking event';
 }
@@ -185,12 +216,40 @@ export function buildParkingTimeline(trip = {}) {
 export function buildTrackingHealth(/** @type {any} */ { permissionStatus = {}, nativeStatus = {}, batteryStatus = {}, latestTrip = null } = {}) {
   const pendingNativeTrips = Number(nativeStatus?.completedTripsCount);
   const pendingNativeTripsKnown = Number.isFinite(pendingNativeTrips);
+  const completedJournal = nativeStatus?.completedTripJournal;
+  const completedJournalKnown = typeof completedJournal?.queueReadable === 'boolean';
+  const completedJournalReadable = completedJournal?.queueReadable === true;
+  const unreadableCompletedJournalEntries = Math.max(1, Number(completedJournal?.unreadableCount) || 0);
+  const completedJournalBytes = Number(completedJournal?.encryptedBytes);
+  const completedJournalMaxBytes = Number(completedJournal?.maxTotalBytes);
+  const completedJournalAvailableBytes = Number(completedJournal?.availableDeviceBytes);
+  const completedJournalEntryLimit = Number(completedJournal?.entryLimit);
+  const completedJournalEntryRatio =
+    Number.isFinite(pendingNativeTrips) &&
+    Number.isFinite(completedJournalEntryLimit) &&
+    completedJournalEntryLimit > 0
+      ? pendingNativeTrips / completedJournalEntryLimit
+      : 0;
+  const completedJournalUsageRatio =
+    Number.isFinite(completedJournalBytes) &&
+    Number.isFinite(completedJournalMaxBytes) &&
+    completedJournalMaxBytes > 0
+      ? completedJournalBytes / completedJournalMaxBytes
+      : 0;
+  const completedJournalLowStorage =
+    Number.isFinite(completedJournalAvailableBytes) &&
+    completedJournalAvailableBytes > 0 &&
+    completedJournalAvailableBytes < 100 * 1024 * 1024;
   const checkpoint = nativeStatus?.activeTripCheckpoint;
   const checkpointKnown = checkpoint?.supported === true && typeof checkpoint?.state === 'string';
   const checkpointProtected = checkpointKnown && checkpoint.state === 'protected' && checkpoint.present === true;
   const checkpointInvalidRemoved = checkpointKnown && checkpoint.state === 'invalid_removed';
   const checkpointBytes = Number(checkpoint?.encryptedBytes);
   const checkpointAgeSeconds = Number(checkpoint?.ageSeconds);
+  const checkpointMaxAgeSeconds = Number(checkpoint?.maxAgeSeconds);
+  const checkpointMaxAgeDays = Number.isFinite(checkpointMaxAgeSeconds) && checkpointMaxAgeSeconds > 0
+    ? Math.max(1, Math.round(checkpointMaxAgeSeconds / 86_400))
+    : 7;
   const checkpointSizeLabel = Number.isFinite(checkpointBytes) && checkpointBytes > 0
     ? `${Math.max(1, Math.ceil(checkpointBytes / 1024))} KB`
     : null;
@@ -219,15 +278,44 @@ export function buildTrackingHealth(/** @type {any} */ { permissionStatus = {}, 
     {
       id: 'native-handoff',
       label: 'Completed-trip handoff',
-      status: !pendingNativeTripsKnown ? 'unknown' : pendingNativeTrips > 0 ? 'warn' : 'good',
-      value: !pendingNativeTripsKnown
+      status: completedJournalKnown && !completedJournalReadable
+        ? 'bad'
+        : !pendingNativeTripsKnown
+          ? 'unknown'
+          : pendingNativeTrips > 0
+            ? 'warn'
+            : 'good',
+      value: completedJournalKnown && !completedJournalReadable
+        ? 'Needs attention'
+        : !pendingNativeTripsKnown
         ? 'Unknown'
         : pendingNativeTrips > 0
           ? `${pendingNativeTrips} pending`
           : 'Up to date',
-      detail: pendingNativeTrips > 0
-        ? 'Android still has a completed trip queued for recovery. Refresh Diagnostics or reopen Road Sage to retry the import.'
-        : 'No completed Android trips are waiting to be imported.',
+      detail: completedJournalKnown && !completedJournalReadable
+        ? `${unreadableCompletedJournalEntries} protected queue entr${unreadableCompletedJournalEntries === 1 ? 'y is' : 'ies are'} unreadable. Road Sage preserves ${unreadableCompletedJournalEntries === 1 ? 'it' : 'them'} instead of overwriting ${unreadableCompletedJournalEntries === 1 ? 'it' : 'them'}.`
+        : pendingNativeTrips > 0
+          ? `Android still has ${pendingNativeTrips} completed trip${pendingNativeTrips === 1 ? '' : 's'} queued for recovery. Refresh Diagnostics or reopen Road Sage to retry the verified import.`
+          : 'No completed Android trips are waiting to be imported. Each queue entry is removed after its matching trip is verified in app storage.',
+    },
+    {
+      id: 'recovery-storage',
+      label: 'Recovery storage',
+      status: !completedJournalKnown
+        ? 'unknown'
+        : completedJournalLowStorage || completedJournalUsageRatio >= 0.8 || completedJournalEntryRatio >= 0.8
+          ? 'warn'
+          : 'good',
+      value: !completedJournalKnown
+        ? 'Unknown'
+        : completedJournalLowStorage
+          ? 'Phone storage low'
+          : completedJournalUsageRatio >= 0.8 || completedJournalEntryRatio >= 0.8
+            ? 'Journal nearly full'
+            : 'Bounded',
+      detail: !completedJournalKnown
+        ? 'Detailed recovery-storage status is available in the Android app.'
+        : `Completed trips use separate atomic encrypted files in app-private storage that is excluded from Android cloud backup, limited to ${formatStorageBytes(completedJournal?.maxFileBytes || 512 * 1024)} each and ${formatStorageBytes(completedJournalMaxBytes || 32 * 1024 * 1024)} total. ${formatStorageBytes(completedJournalBytes || 0)} is currently retained${Number.isFinite(completedJournalEntryLimit) && completedJournalEntryLimit > 0 ? ` across ${Math.max(0, pendingNativeTrips || 0)} of ${completedJournalEntryLimit} queue slots` : ''}${Number.isFinite(completedJournalAvailableBytes) && completedJournalAvailableBytes > 0 ? `; the phone has ${formatStorageBytes(completedJournalAvailableBytes)} available` : ''}. Abandoned incomplete-write chunks are removed after 24 hours.`,
     },
     {
       id: 'active-checkpoint',
@@ -247,7 +335,7 @@ export function buildTrackingHealth(/** @type {any} */ { permissionStatus = {}, 
               ? 'None stored'
               : 'Unknown',
       detail: checkpointState === 'protected'
-        ? `An encrypted recovery checkpoint was saved ${checkpointAgeLabel || 'recently'}${checkpointSizeLabel ? ` (${checkpointSizeLabel}, maximum 512 KB)` : ''}. No route details are shown here.`
+        ? `An encrypted recovery checkpoint was saved ${checkpointAgeLabel || 'recently'}${checkpointSizeLabel ? ` (${checkpointSizeLabel}, maximum 512 KB)` : ''}. It is removed after verified recovery, or expires after ${checkpointMaxAgeDays} days. No route details are shown here.`
         : checkpointState === 'waiting'
           ? 'A trip is active, but its first confirmed recovery checkpoint has not been saved yet. It normally appears within about one minute after confirmation.'
           : checkpointState === 'removed'
@@ -321,6 +409,13 @@ export function buildTrackingHealth(/** @type {any} */ { permissionStatus = {}, 
     },
   ];
   return checks;
+}
+
+function formatStorageBytes(value) {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 * 1024 ? 0 : 1)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
+  return `${Math.max(0, Math.ceil(bytes / 1024))} KB`;
 }
 
 function formatDecisionTime(value) {

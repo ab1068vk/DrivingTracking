@@ -15,6 +15,7 @@ import premiumSavedRoadsMap from '@/assets/premium-saved-roads-map.webp';
 import premiumSavedRoadsReview from '@/assets/premium-saved-roads-review.webp';
 import premiumSavedRoadsSaved from '@/assets/premium-saved-roads-saved.webp';
 import { speedLimitColor } from '@/lib/speedLimitMapSections';
+import { convertSpeedKmh, speedUnitLabel } from '@/lib/unitFormatting';
 
 const WORKSPACES = Object.freeze([
   {
@@ -207,6 +208,7 @@ const SPEED_LEGEND = [30, 40, 50, 60, 80, 100];
  *  onRestoreHidden: () => void,
  *  onToggleAdd: () => void,
  *  onToggleAutoSnap: () => void,
+ *  units?: string,
  * }} props
  */
 export function PremiumRoadSpeedMapHero({
@@ -222,6 +224,7 @@ export function PremiumRoadSpeedMapHero({
   onRestoreHidden,
   onToggleAdd,
   onToggleAutoSnap,
+  units = 'metric',
 }) {
   return (
     <div className="premium-speed-map-hero">
@@ -262,7 +265,7 @@ export function PremiumRoadSpeedMapHero({
         {excludedSpeedSectionCount > 0 && (
           <button type="button" onClick={onRestoreExcluded} className="premium-speed-action" data-tone="neutral">
             <Undo2 />
-            <span>Restore parking/private {excludedSpeedSectionCount}</span>
+            <span>Allow learning again {excludedSpeedSectionCount}</span>
           </button>
         )}
         {addMode && (
@@ -299,10 +302,10 @@ export function PremiumRoadSpeedMapHero({
         {SPEED_LEGEND.map((limit) => (
           <span key={limit}>
             <i style={{ backgroundColor: speedLimitColor(limit) }} />
-            {limit}
+            {Math.round(convertSpeedKmh(limit, units) || limit)}
           </span>
         ))}
-        <span className="premium-speed-map-unit">km/h</span>
+        <span className="premium-speed-map-unit">{speedUnitLabel(units)}</span>
       </div>
     </div>
   );

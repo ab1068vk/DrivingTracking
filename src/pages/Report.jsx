@@ -455,7 +455,6 @@ export default function Reports() {
   const componentScores = [
     { label: 'Safety', value: averageComponentScore(trips, 'safety'), icon: ShieldCheck },
     { label: 'Smoothness', value: averageComponentScore(trips, 'smoothness'), icon: Activity },
-    { label: 'Eco', value: averageComponentScore(trips, 'eco'), icon: Leaf },
   ];
   const distanceDeltaLabel = reportInsights.distanceDelta == null
     ? 'Need prior period'
@@ -590,7 +589,7 @@ export default function Reports() {
                     </div>
                   ))}
                 </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   {componentScores.map(({ label, value, icon: Icon }) => (
                     <div key={label} className="flex items-center gap-3 rounded-xl bg-secondary/40 p-3">
                       <Icon className="h-4 w-4 text-muted-foreground" />
@@ -819,7 +818,7 @@ export default function Reports() {
               className="bg-card border border-border rounded-3xl p-5 shadow-sm"
             >
               <h2 className="font-semibold mb-1">Road Type Breakdown</h2>
-              <p className="text-xs text-muted-foreground mb-4">Trip classification from speed distribution</p>
+              <p className="text-xs text-muted-foreground mb-4">Classification from your confirmations, optional map context, or local GPS patterns</p>
               <DeferredRecharts height={180}>
                 {({ ResponsiveContainer, PieChart, Pie, Cell, Tooltip }) => (
                   <ResponsiveContainer width="100%" height={180}>

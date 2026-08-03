@@ -9,6 +9,7 @@ import {
   isTrackingExperienceMode,
   localSettings,
   migrateDefaultSettings,
+  parkingStateRevision,
   sanitizeImportedSettings,
   validateSettingsPatch,
 } from '@/lib/trackingStore';
@@ -17,6 +18,17 @@ import {
 // - Added validation coverage for blank numeric setting drafts during input editing.
 
 describe('tracking store default settings', () => {
+  it('uses an explicit parking revision before the timestamp fallback', () => {
+    expect(parkingStateRevision({
+      state_revision: 9001,
+      timestamp: '2026-07-29T12:00:00.000Z',
+    })).toBe(9001);
+    expect(parkingStateRevision({
+      timestamp: '2026-07-29T12:00:00.000Z',
+    })).toBe(Date.parse('2026-07-29T12:00:00.000Z'));
+    expect(parkingStateRevision({ state_revision: -1, timestamp: 'invalid' })).toBe(0);
+  });
+
   it('defaults to coaching experience mode and normalizes invalid saved values', () => {
     expect(DEFAULT_EXPERIENCE_MODE).toBe(EXPERIENCE_MODES.COACHING);
     expect(DEFAULT_SETTINGS.experience_mode).toBe(EXPERIENCE_MODES.COACHING);
@@ -28,7 +40,7 @@ describe('tracking store default settings', () => {
     })).toMatchObject({
       changed: true,
       settings: {
-        settings_defaults_version: 19,
+        settings_defaults_version: 22,
         experience_mode: EXPERIENCE_MODES.COACHING,
       },
     });
@@ -38,12 +50,12 @@ describe('tracking store default settings', () => {
     })).toMatchObject({
       changed: true,
       settings: {
-        settings_defaults_version: 19,
+        settings_defaults_version: 22,
         experience_mode: EXPERIENCE_MODES.COACHING,
       },
     });
     expect(migrateDefaultSettings({
-      settings_defaults_version: 19,
+      settings_defaults_version: 22,
       experience_mode: EXPERIENCE_MODES.TRACKING,
       voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
     })).toMatchObject({
@@ -76,12 +88,12 @@ describe('tracking store default settings', () => {
     })).toMatchObject({
       changed: true,
       settings: {
-        settings_defaults_version: 19,
+        settings_defaults_version: 22,
         voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
       },
     });
     expect(migrateDefaultSettings({
-      settings_defaults_version: 19,
+      settings_defaults_version: 22,
       voice_alert_style: 'robot',
     })).toMatchObject({
       changed: true,
@@ -100,7 +112,7 @@ describe('tracking store default settings', () => {
   it('keeps the trip-start voice confirmation independent from live voice alerts', () => {
     expect(DEFAULT_SETTINGS.trip_start_voice_alert_enabled).toBe(true);
     expect(migrateDefaultSettings({
-      settings_defaults_version: 19,
+      settings_defaults_version: 22,
       experience_mode: EXPERIENCE_MODES.COACHING,
       voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
       voice_alerts_enabled: false,
@@ -116,6 +128,32 @@ describe('tracking store default settings', () => {
       voice_alerts_enabled: true,
     });
     expect(validateSettingsPatch({ trip_start_voice_alert_enabled: false })).toEqual({ valid: true, errors: [] });
+  });
+
+  it('keeps on-device speed-sign scanning opt-in and validates the local setting', () => {
+    expect(DEFAULT_SETTINGS.speed_sign_scanner_enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.speed_sign_mounted_mode_enabled).toBe(false);
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 21,
+    }).settings).toMatchObject({
+      settings_defaults_version: 22,
+      speed_sign_scanner_enabled: false,
+      speed_sign_mounted_mode_enabled: false,
+    });
+    expect(sanitizeImportedSettings({
+      speed_sign_scanner_enabled: true,
+      speed_sign_mounted_mode_enabled: true,
+    })).toEqual(expect.not.objectContaining({
+      speed_sign_scanner_enabled: expect.anything(),
+      speed_sign_mounted_mode_enabled: expect.anything(),
+    }));
+    expect(validateSettingsPatch({
+      speed_sign_scanner_enabled: true,
+      speed_sign_mounted_mode_enabled: true,
+    })).toEqual({
+      valid: true,
+      errors: [],
+    });
   });
 
   it('defaults every recurring voice group on and validates independent user choices', () => {
@@ -140,12 +178,12 @@ describe('tracking store default settings', () => {
     })).toMatchObject({
       changed: true,
       settings: {
-        settings_defaults_version: 19,
+        settings_defaults_version: 22,
         premium_visual_experience: false,
       },
     });
     expect(migrateDefaultSettings({
-      settings_defaults_version: 19,
+      settings_defaults_version: 22,
       experience_mode: EXPERIENCE_MODES.COACHING,
       voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
       premium_visual_experience: true,
@@ -182,7 +220,7 @@ describe('tracking store default settings', () => {
     expect(migrateDefaultSettings({
       settings_defaults_version: 13,
     }).settings).toMatchObject({
-      settings_defaults_version: 19,
+      settings_defaults_version: 22,
       heightened_privacy_mode: true,
       weather_context_enabled: false,
       speed_limit_lookup_enabled: false,
@@ -409,6 +447,7 @@ describe('tracking store default settings', () => {
   it('uses the shared fixed-hour night fallback by default', () => {
     expect(DEFAULT_SETTINGS.night_start_time).toBe('22:00');
     expect(DEFAULT_SETTINGS.night_end_time).toBe('05:00');
+    expect(DEFAULT_SETTINGS.night_boundary_tolerance_minutes).toBe(5);
     expect(DEFAULT_SETTINGS.raw_gps_retention_days).toBe(30);
   });
 
@@ -427,10 +466,25 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(19);
+    expect(legacySunset.settings_defaults_version).toBe(22);
     expect(legacySunset.raw_gps_retention_days).toBe(30);
     expect(legacyCustom.night_end_time).toBe('06:00');
     expect(legacyCustom.raw_gps_retention_days).toBe(30);
+  });
+
+  it('accepts civil twilight and validates the boundary tolerance', () => {
+    expect(validateSettingsPatch({
+      night_detection_mode: 'civil_twilight',
+      night_boundary_tolerance_minutes: 10,
+    })).toEqual({ valid: true, errors: [] });
+    expect(validateSettingsPatch({ night_boundary_tolerance_minutes: 31 })).toMatchObject({ valid: false });
+    expect(sanitizeImportedSettings({
+      night_detection_mode: 'civil_twilight',
+      night_boundary_tolerance_minutes: 7,
+    })).toMatchObject({
+      night_detection_mode: 'civil_twilight',
+      night_boundary_tolerance_minutes: 7,
+    });
   });
 
   it('migrates unsupported proxy setting names to neutral metric names', () => {

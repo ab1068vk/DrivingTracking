@@ -117,7 +117,7 @@ describe('PremiumSavedRoadSpeeds', () => {
     expect(html).toContain('Cancel adding');
     expect(html).toContain('Review conflict');
     expect(html).toContain('Restore hidden unset 7');
-    expect(html).toContain('Restore parking/private 2');
+    expect(html).toContain('Allow learning again 2');
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain('value="county road 80"');
     expect(html).toContain('aria-label="Road speed map legend"');
@@ -142,7 +142,7 @@ describe('PremiumSavedRoadSpeeds', () => {
     expect(html).toContain('Add road speed');
     expect(html).not.toContain('Review conflict');
     expect(html).not.toContain('Restore hidden unset');
-    expect(html).not.toContain('Restore parking/private');
+    expect(html).not.toContain('Allow learning again');
     expect(html).not.toContain('Auto snap');
   });
 

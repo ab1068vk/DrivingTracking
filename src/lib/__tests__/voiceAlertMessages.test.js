@@ -60,6 +60,9 @@ describe('voice alert message catalog', () => {
     expect(buildVoiceAlertMessage('harsh_brake')).toBe(
       'Hard braking detected. Open your following space and brake earlier.'
     );
+    expect(buildVoiceAlertMessage('phone_use')).toBe(
+      'Phone activity detected. Eyes on the road. Review it when parked.'
+    );
     expect(buildVoiceAlertMessage('harsh_brake', {}, { settings: { experience_mode: 'tracking', voice_alert_style: 'mode_default' } })).toBe(
       'Hard braking event recorded.'
     );
@@ -74,7 +77,7 @@ describe('voice alert message catalog', () => {
     }, { settings })).toBe('Speed threshold exceeded: 74 km/h in posted 60 km/h zone.');
     expect(buildVoiceAlertMessage('phone_use', {
       source: 'android_usage_access',
-    }, { settings })).toBe('Phone-use window detected from Android Usage Access.');
+    }, { settings })).toBe('Foreground phone activity detected from Android Usage Access.');
     expect(buildVoiceAlertMessage('speeding', {
       tier: 'GPS_INFERRED',
     }, { settings })).toBe('Route speed source is estimated; check posted signs.');
@@ -82,7 +85,7 @@ describe('voice alert message catalog', () => {
 
   it('supports alternate wording without changing alert behavior', () => {
     expect(buildVoiceAlertMessage('phone_use', {}, { messageIndex: 1 })).toBe(
-      'Phone distraction warning. Eyes on the road; deal with it when parked.'
+      'Phone activity detected. Eyes forward. Review it when parked.'
     );
     expect(buildVoiceAlertMessage('rapid_accel', {}, { escalationLevel: 99 })).toBe(
       'Quick acceleration detected. Keep the launch smooth and steady.'

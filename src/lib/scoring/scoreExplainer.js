@@ -7,15 +7,11 @@ const COMPONENT_FACTORS = [
   { key: 'speed_variability', label: 'Speed consistency', category: 'Smoothness', legacyKeys: ['svi_score'] },
   { key: 'brake_onset_smoothness', label: 'Brake onset smoothness', category: 'Smoothness', legacyKeys: ['brake_onset_smoothness_score'] },
   { key: 'cornering_consistency', label: 'Cornering consistency', category: 'Smoothness', legacyKeys: ['cornering_consistency_score'] },
-  { key: 'eco_driving', label: 'Eco-driving pattern', category: 'Eco', legacyKeys: ['eco_driving_score'] },
-  { key: 'fuel_band', label: 'Efficient cruising', category: 'Eco', legacyKeys: ['fuel_band_score'] },
-  { key: 'engine_stress', label: 'Engine stress estimate', category: 'Eco', legacyKeys: ['engine_stress_score'] },
 ];
 
 const HEADLINE_FACTORS = [
   { key: 'safety', label: 'Safety', category: 'Overall', legacyKeys: ['score_safety'] },
   { key: 'smoothness', label: 'Smoothness', category: 'Overall', legacyKeys: ['score_smoothness'] },
-  { key: 'eco', label: 'Eco', category: 'Overall', legacyKeys: ['score_eco'] },
 ];
 
 const EVENT_FACTORS = [
@@ -23,7 +19,7 @@ const EVENT_FACTORS = [
   { key: 'speeding_events_count', singular: 'speeding event', category: 'Safety' },
   { key: 'rapid_accel_count', singular: 'rapid acceleration', category: 'Smoothness' },
   { key: 'sharp_turns_count', singular: 'sharp turn', category: 'Smoothness' },
-  { key: 'phone_use_window_count', singular: 'confirmed phone-use window', category: 'Safety' },
+  { key: 'phone_use_window_count', singular: 'moving foreground-app window', category: 'Safety' },
 ];
 
 const finiteScore = (value) => {

@@ -86,9 +86,9 @@ describe('metric registry', () => {
       score_overall: 82,
       score_safety: 80,
       score_smoothness: 84,
-      score_eco: 83,
     }]);
 
-    expect(csv).toContain('"~82","~80","~84","~83"');
+    expect(csv).toContain('"~82","~80","~84"');
+    expect(csv).not.toContain('"Eco Score Estimate"');
   });
 });

@@ -8,6 +8,7 @@ const actions = {
   onRefreshTrackingStatus: vi.fn(),
   onStartPrivateTrip: vi.fn(),
   onStartTrip: vi.fn(),
+  onStartTripWithCamera: vi.fn(),
 };
 
 function findByClassName(node, className) {
@@ -127,6 +128,7 @@ describe('PremiumReadyToDriveCard', () => {
         foregroundLocationReady
         backgroundLocationReady
         notificationsReady
+        speedSignScannerEnabled
       />,
     );
 
@@ -134,7 +136,34 @@ describe('PremiumReadyToDriveCard', () => {
     expect(html).toContain('3 of 3 checks ready');
     expect(html).toContain('Protected recording');
     expect(html).toContain('Manual trips will use Background GPS');
+    expect(html).toContain('Start Trip + Camera');
     expect(html).not.toContain('Enable Background Tracking');
+  });
+
+  it('keeps the parked manual camera launcher available for setup and start', () => {
+    const onStartTripWithCamera = vi.fn();
+    const disabledTree = PremiumReadyToDriveCard({
+      ...actions,
+      isAndroidManualMode: true,
+      onStartTripWithCamera,
+    });
+    const disabledButton = findByClassName(disabledTree, 'premium-ready-camera-start');
+
+    expect(disabledButton.props.disabled).toBe(false);
+    expect(disabledButton.props.children).toContain('Enable Sign Scan in Settings');
+    disabledButton.props.onClick();
+
+    const enabledTree = PremiumReadyToDriveCard({
+      ...actions,
+      isAndroidManualMode: true,
+      onStartTripWithCamera,
+      speedSignScannerEnabled: true,
+    });
+    const enabledButton = findByClassName(enabledTree, 'premium-ready-camera-start');
+
+    expect(enabledButton.props.disabled).toBe(false);
+    enabledButton.props.onClick();
+    expect(onStartTripWithCamera).toHaveBeenCalledTimes(2);
   });
 
   it('keeps the start control accessible during its loading state', () => {

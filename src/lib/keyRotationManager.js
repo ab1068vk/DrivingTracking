@@ -15,9 +15,19 @@ export const KEY_ROTATION_DAYS = 30;
 export const KEY_ROTATION_MS = KEY_ROTATION_DAYS * 24 * 60 * 60 * 1000;
 export const ROTATING_ENCRYPTED_JSON_KEYS = [
   'drivesense_active_trip',
+  'drivesense_danger_zones',
   'drivesense_last_parked',
+  'drivesense_last_parking_state',
+  'drivesense_parking_history_v1',
+  'drivesense_parking_vehicle_states_v1',
+  'drivesense_map_matching_cache_v2',
+  'drivesense_open_meteo_weather_cache_v1',
+  'drivesense_osm_speed_limit_cache_v2',
+  'drivesense_speed_sign_evidence_v1',
+  'drivesense_speed_geometry_index_v1',
   'drivesense_privacy_zone_stats_v1',
   'drivesense_privacy_zones_config_v1',
+  'drivesense_route_risk_index',
   'drivesense_transmission_log_v1',
 ];
 export const KEY_ROTATION_LOG_KEY = 'drivesense_key_rotation_log_v1';

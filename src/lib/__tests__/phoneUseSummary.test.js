@@ -226,6 +226,27 @@ describe('phone use summary', () => {
     ]));
   });
 
+  it('classifies privacy-preserving unlock context without an app package name', () => {
+    const event = phoneUseEvent({ durationS: 12, speedKmh: 45 });
+    event.started_after_screen_on = true;
+    event.started_after_unlock = true;
+    event.interaction_context = 'after_unlock';
+    const contextual = buildPhoneUseEventContext({
+      start_time: '2026-06-18T12:00:00.000Z',
+      route_points: [{
+        timestamp: event.timestamp,
+        speed_kmh: 45,
+      }],
+    }, event);
+
+    expect(contextual).toMatchObject({
+      activityKey: 'foreground_after_unlock',
+      activityLabel: 'Foreground activity after unlock',
+    });
+    expect(contextual.contextLabels).toContain('Started within 10 seconds of an unlock');
+    expect(contextual).not.toHaveProperty('package_name');
+  });
+
   it('excludes passenger trips and computes a deterministic seven-day trend', () => {
     const trips = [
       {

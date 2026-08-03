@@ -15,6 +15,7 @@ import {
   LayoutDashboard,
   History,
   Map,
+  MapPin,
   BarChart3,
   Settings,
   Menu,
@@ -73,6 +74,7 @@ const navSections = [
     icon: LayoutDashboard,
     items: [
       { path: '/', label: 'Dashboard', icon: LayoutDashboard },
+      { path: '/parking', label: 'Parking', icon: MapPin },
       { path: '/map', label: 'Map', icon: Map },
     ],
   },
@@ -125,6 +127,7 @@ const commandGroups = [
     label: 'Go to',
     items: [
       { path: '/', label: 'Dashboard', hint: 'Today', icon: LayoutDashboard, keywords: ['home', 'today', 'start'] },
+      { path: '/parking', label: 'Parking', hint: 'Where I parked', icon: MapPin, keywords: ['parked car', 'where i parked', 'parking history', 'save parking'] },
       { path: '/trips', label: 'Trips', hint: 'History', icon: History, keywords: ['drive history', 'trip log', 'recent drives'] },
       { path: '/reports', label: 'Reports', hint: 'Review', icon: BarChart3, keywords: ['exports', 'summary', 'review'] },
       { path: '/settings', label: 'Settings', hint: 'Setup', icon: Settings, keywords: ['preferences', 'options', 'configure'] },

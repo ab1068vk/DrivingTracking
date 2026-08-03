@@ -6,7 +6,7 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { calibrationLabelService } from '@/api/calibrationLabels';
 import {
-  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, ArrowLeft, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff, Sparkles
+  Moon, Sun, Monitor, Trash2, Download, Upload, Shield, ChevronRight, ArrowLeft, Info, AlertTriangle, Check, Bell, Clock, Lock, Unlock, SlidersHorizontal, Focus, MapPin, Plus, LocateFixed, Gauge, Droplets, Bluetooth, Volume2, Route, Target, Search, X, Leaf, Zap, Banknote, Smartphone, Eye, EyeOff, Sparkles, Camera
 } from 'lucide-react';
 import {
   Dialog,
@@ -45,7 +45,12 @@ import {
   requestForegroundLocationPermission,
   requestNotificationPermission,
 } from '@/lib/permissions';
-import { isAndroid } from '@/lib/nativePlatform';
+import { isAndroid, openNativeSettings } from '@/lib/nativePlatform';
+import {
+  armMountedSpeedSignScanner,
+  getSpeedSignScannerStatus,
+  requestSpeedSignCameraPermission,
+} from '@/lib/speedSignScanner';
 import {
   addBackupExportCancelListener,
   finishBackupExportProgressNotification,
@@ -141,6 +146,11 @@ import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import { PageHeader } from '@/components/PageChrome';
 import { HEIGHTENED_PRIVACY_MODE_EFFECTS } from '@/lib/privacyMode';
 import PrivacyZoneProtectionCheck from '@/components/PrivacyZoneProtectionCheck';
+import {
+  buildHeightenedPrivacyCleanupPresentation,
+  buildPrivacyCleanupPresentation,
+} from '@/lib/privacyCleanupPresentation';
+import { purgeLocalSpeedKnowledgeForPrivacyZones } from '@/lib/speedKnowledgePrivacy';
 import {
   invalidateSelfTestCache,
   selfTestPrivacyZoneProtection,
@@ -422,11 +432,12 @@ const SETTINGS_SECTIONS = [
     group: 'driving-device',
     title: 'Android Permissions',
     icon: Shield,
-    detail: 'Location, activity, notification, battery, and native service setup.',
-    keywords: 'location activity notification battery unrestricted native service usage bluetooth permission granted denied prompt',
+    detail: 'Location, camera, activity, notification, battery, and native service setup.',
+    keywords: 'location camera speed sign activity notification battery unrestricted native service usage bluetooth permission granted denied prompt',
     searchItems: [
       { label: 'Foreground location permission', targetLabel: 'Location', keywords: 'gps while using app' },
       { label: 'Background location permission', targetLabel: 'Background Location', keywords: 'always allow location' },
+      { label: 'Camera permission', targetLabel: 'Camera', keywords: 'speed sign scanner offline ocr' },
       { label: 'Activity recognition permission', targetLabel: 'Physical Activity', keywords: 'physical activity driving detection' },
       { label: 'Notification permission', targetLabel: 'Notifications', keywords: 'alerts prompt' },
       { label: 'Battery optimization', keywords: 'unrestricted battery background service' },
@@ -439,8 +450,9 @@ const SETTINGS_SECTIONS = [
     title: 'Feature Permissions',
     icon: Info,
     detail: 'See which app features need setup before they can work.',
-    keywords: 'blocked unavailable permission feature status',
+    keywords: 'blocked unavailable permission feature status camera speed sign scanner',
     searchItems: [
+      { label: 'On-device speed-sign scanning', keywords: 'camera permission offline ocr mounted' },
       { label: 'Motion sensor access', keywords: 'accelerometer gyroscope crash detection' },
       { label: 'Phone Usage Access', keywords: 'distraction foreground app android' },
       { label: 'OBD-II Bluetooth diagnostics', keywords: 'nearby devices ble adapter' },
@@ -580,6 +592,8 @@ const SETTINGS_SECTIONS = [
     keywords: 'speed limits overpass osm warning margin over limit openstreetmap road data weather',
     searchItems: [
       { label: 'Live speed check', keywords: 'over limit alert coaching' },
+      { label: 'On-device speed-sign scan', keywords: 'camera offline ocr mounted battery private notification auto start' },
+      { label: 'Mounted Ready screen', keywords: 'arm next drive auto manual start camera visible foreground trip parked safety no touch awake timeout' },
       { label: 'Speed limits from OpenStreetMap', keywords: 'osm posted maxspeed' },
       { label: 'Fallback estimate country', keywords: 'canada united states global regional estimate' },
       { label: 'Weather from Open-Meteo', keywords: 'rain snow fog ice' },
@@ -814,6 +828,8 @@ export default function Settings() {
   const location = useLocation();
   const [saved, setSaved] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState(null);
+  const [speedSignCameraStatus, setSpeedSignCameraStatus] = useState(null);
+  const [speedSignCameraBusy, setSpeedSignCameraBusy] = useState(false);
   const [nativeTrackingStatus, setNativeTrackingStatus] = useState(null);
   const [batteryStatus, setBatteryStatus] = useState(null);
   const [legalNoticeOpen, setLegalNoticeOpen] = useState(false);
@@ -1095,6 +1111,31 @@ export default function Settings() {
   }, [activeSettingsSection]);
 
   useEffect(() => {
+    if (
+      !isAndroid() ||
+      ![
+        'settings-android-permissions',
+        'settings-feature-permissions',
+        'settings-speed-warning',
+      ].includes(activeSettingsSection)
+    ) return;
+    let active = true;
+    const refresh = () => getSpeedSignScannerStatus()
+      .then((status) => {
+        if (active) setSpeedSignCameraStatus(status);
+      })
+      .catch((error) => logSystemFailure('settings_speed_sign_camera_status', error));
+    void refresh();
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [activeSettingsSection, cfg.speed_sign_scanner_enabled]);
+
+  useEffect(() => {
     if (!privacyDeleteZone) {
       setPrivacyDeleteImpact({ loading: false, tripCount: null });
       setPrivacyDeletePurge(false);
@@ -1136,16 +1177,6 @@ export default function Settings() {
       return currentCfg;
     }
     const nextCfg = { ...currentCfg, ...patch };
-    const touchesEcoMultipliers = Object.prototype.hasOwnProperty.call(patch, 'eco_cruise_score_multiplier') ||
-      Object.prototype.hasOwnProperty.call(patch, 'eco_idle_penalty_multiplier');
-    if (touchesEcoMultipliers && wouldDisableEcoScore(nextCfg)) {
-      toast({
-        title: 'Eco setting not saved',
-        description: 'Eco scoring needs either the cruise multiplier or idle multiplier above 0.',
-        variant: 'destructive',
-      });
-      return currentCfg;
-    }
     cfgRef.current = nextCfg;
     setCfg(nextCfg);
 
@@ -1601,20 +1632,6 @@ export default function Settings() {
     if (parsed >= max - span * 0.12) return 'Very lenient';
     return null;
   };
-  const effectiveEcoMultiplier = (value) => {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
-  };
-  const wouldDisableEcoScore = (settings) => (
-    effectiveEcoMultiplier(settings.eco_cruise_score_multiplier) === 0 &&
-    effectiveEcoMultiplier(settings.eco_idle_penalty_multiplier) === 0
-  );
-  const ecoScoreWarning = (key, value = cfg[key]) => {
-    if (!['eco_cruise_score_multiplier', 'eco_idle_penalty_multiplier'].includes(key)) return null;
-    const next = { ...cfg, [key]: value };
-    return wouldDisableEcoScore(next) ? 'Eco score unavailable' : null;
-  };
-
   const updateTheme = (mode) => {
     const updated = updateCfg({ dark_mode: mode });
     applyThemeMode(updated.dark_mode);
@@ -1626,6 +1643,86 @@ export default function Settings() {
       ? 'Test voice accepted by the device speech output.'
       : 'Test voice failed. Check Android text-to-speech, media volume, and audio routing.');
     setTimeout(() => setVoiceTestStatus(''), 3000);
+  };
+
+  const requestSpeedSignCameraAccess = async () => {
+    if (!isAndroid() || speedSignCameraBusy) return null;
+    setSpeedSignCameraBusy(true);
+    try {
+      if (speedSignCameraStatus?.cameraPermission === 'denied') {
+        await openNativeSettings();
+        toast({
+          title: 'Camera permission needs Android settings',
+          description: 'Allow Camera for Road Sage, then return here to refresh its status.',
+        });
+        return speedSignCameraStatus;
+      }
+      const status = await requestSpeedSignCameraPermission();
+      setSpeedSignCameraStatus(status);
+      toast({
+        title: status?.cameraPermission === 'granted'
+          ? 'Speed-sign camera ready'
+          : 'Camera access not granted',
+        description: status?.cameraPermission === 'granted'
+          ? 'Camera access is ready. Arm an automatic drive in Settings or use Start Trip + Camera from the parked manual-trip screen.'
+          : 'The scanner remains enabled, but it cannot open the camera until Android permission is granted.',
+        variant: status?.cameraPermission === 'granted' ? 'default' : 'destructive',
+      });
+      return status;
+    } catch (error) {
+      logSystemFailure('speed_sign_camera_permission_from_settings', error);
+      toast({
+        title: 'Camera permission could not be requested',
+        description: error?.message || 'Open Android app settings and allow Camera for Road Sage.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSpeedSignCameraBusy(false);
+    }
+    return null;
+  };
+
+  const updateSpeedSignScannerEnabled = async (enabled) => {
+    const nextEnabled = enabled === true;
+    updateCfg({
+      speed_sign_scanner_enabled: nextEnabled,
+      ...(!nextEnabled ? { speed_sign_mounted_mode_enabled: false } : {}),
+    });
+    if (!nextEnabled) return;
+    await requestSpeedSignCameraAccess();
+  };
+
+  const armMountedCameraForNextDrive = async () => {
+    if (!isAndroid() || speedSignCameraBusy) return;
+    let status = speedSignCameraStatus;
+    if (status?.cameraPermission !== 'granted') {
+      status = await requestSpeedSignCameraAccess();
+    }
+    if (status?.cameraPermission !== 'granted') return;
+    setSpeedSignCameraBusy(true);
+    try {
+      const result = await armMountedSpeedSignScanner({ units: cfgRef.current.units || 'metric' });
+      setSpeedSignCameraStatus({
+        ...status,
+        ...result,
+        scannerActive: true,
+        armedForNextTrip: true,
+        mountedModeEnabled: true,
+      });
+      toast({
+        title: result?.alreadyArmed ? 'Mounted scan already armed' : 'Ready for the next drive',
+        description: 'Keep the mounted Ready screen visible. The display stays awake, the camera remains off while waiting, and arming expires after 15 minutes.',
+      });
+    } catch (error) {
+      logSystemFailure('speed_sign_mounted_arm_from_settings', error);
+      toast({
+        title: 'Mounted scan could not be armed',
+        description: error?.message || 'Remain parked, confirm the camera permission, and try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSpeedSignCameraBusy(false);
+    }
   };
 
   const runCalibration = async () => {
@@ -1770,7 +1867,7 @@ export default function Settings() {
     try {
       const confirmed = await requestAppConfirm({
         title: 'Turn on heightened privacy?',
-        message: 'Turn on heightened privacy mode? Existing raw GPS inside every configured privacy zone will be permanently erased. Scores, distance, duration, and summaries will remain.',
+        message: 'Turn on heightened privacy mode? Existing raw GPS, saved road-speed cells and rules, Road Memory corridors, and coordinate-bearing speed history inside every configured privacy zone will be permanently erased. Scores, distance, duration, and summaries will remain.',
         confirmLabel: 'Turn on',
         destructive: true,
       });
@@ -1783,12 +1880,10 @@ export default function Settings() {
           ...cfgRef.current,
           heightened_privacy_mode: true,
         });
-        if (result.pointsPurged > 0 || result.eventsPurged > 0) {
-          toast({
-            title: 'Heightened privacy enabled',
-            description: `Removed ${result.pointsPurged} stored GPS point${result.pointsPurged === 1 ? '' : 's'} and ${result.eventsPurged} event location${result.eventsPurged === 1 ? '' : 's'} from configured privacy zones.`,
-          });
-        }
+        toast({
+          title: 'Heightened privacy enabled',
+          description: buildHeightenedPrivacyCleanupPresentation(result),
+        });
       } catch (error) {
         logSystemFailure('heightened_privacy_existing_gps_purge', error);
         toast({
@@ -2371,7 +2466,9 @@ export default function Settings() {
       purge_existing_gps: true,
     };
     try {
-      const updated = await upsertPrivacyZone(zoneToSave, cfg);
+      const operation = await upsertPrivacyZone(zoneToSave, cfg, { includeOperationResult: true });
+      const updated = operation.settings;
+      const cleanup = buildPrivacyCleanupPresentation(operation);
       void invalidateRouteRiskIndex();
       setCfg(updated);
       setSaved(true);
@@ -2381,12 +2478,12 @@ export default function Settings() {
         setPrivacyCorridorWaypoints([]);
         toast({
           title: 'Route corridor protected',
-          description: 'Exact corridor geometry was discarded. Hashed protection coverage remains active for storage and outbound-data guards.',
+          description: `Exact corridor geometry was discarded. Hashed protection coverage remains active for storage and outbound-data guards. ${cleanup.description}`,
         });
       } else {
         toast({
           title: 'Privacy circle protected',
-          description: 'The zone is active for route storage and outbound-data guards.',
+          description: `The zone is active for route storage and outbound-data guards. ${cleanup.description}`,
         });
       }
       return true;
@@ -2492,8 +2589,10 @@ export default function Settings() {
     try {
       if (!await requireSensitiveAuthentication('Verify to delete this privacy zone')) return;
       let purgeResult = null;
+      let speedKnowledgeCleanup = null;
       const tripsBeforeDelete = await getSettingsTrips();
       if (privacyDeletePurge) {
+        speedKnowledgeCleanup = await purgeLocalSpeedKnowledgeForPrivacyZones([privacyDeleteZone]);
         purgeResult = await purgeGpsWithinPrivacyZone(
           tripsBeforeDelete,
           privacyDeleteZone,
@@ -2519,6 +2618,7 @@ export default function Settings() {
         purged_trip_count: purgeResult?.tripsAffected || 0,
         purged_point_count: purgeResult?.pointsPurged || 0,
         purged_event_count: purgeResult?.eventsPurged || 0,
+        purged_speed_knowledge_count: speedKnowledgeCleanup?.totalRecordsPurged || 0,
       }, {
         category: 'privacy',
         severity: privacyDeletePurge ? 'warn' : 'info',
@@ -2527,7 +2627,7 @@ export default function Settings() {
       toast({
         title: privacyDeletePurge ? 'Privacy zone deleted and private GPS erased' : 'Privacy zone deleted',
         description: privacyDeletePurge
-          ? `Erased ${purgeResult?.pointsPurged || 0} private route point(s) and ${purgeResult?.eventsPurged || 0} private event(s) from ${purgeResult?.tripsAffected || 0} trip(s).`
+          ? buildPrivacyCleanupPresentation({ purgeResult, speedKnowledgeCleanup }).description
           : 'Historical routes through this area may now be visible.',
         variant: privacyDeletePurge ? 'destructive' : undefined,
       });
@@ -2567,7 +2667,8 @@ export default function Settings() {
       ...(zone.type === 'corridor' ? { width_m: radius } : {}),
     };
     try {
-      const updated = await upsertPrivacyZone(updatedZone, cfg);
+      const operation = await upsertPrivacyZone(updatedZone, cfg, { includeOperationResult: true });
+      const updated = operation.settings;
       void invalidateRouteRiskIndex();
       setCfg(updated);
       setPrivacyRadiusDrafts((drafts) => ({ ...drafts, [zone.id]: String(radius) }));
@@ -2579,6 +2680,10 @@ export default function Settings() {
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
       void enqueuePrivacyZoneRescore('privacy_zone_updated', [zone, updatedZone]);
+      toast({
+        title: zone.type === 'corridor' ? 'Corridor protection updated' : 'Privacy circle updated',
+        description: buildPrivacyCleanupPresentation(operation).description,
+      });
     } catch (error) {
       showPrivacyNativeSyncFailure(error, zone.type === 'corridor' ? 'Corridor side buffer not saved' : 'Privacy zone radius not saved');
     }
@@ -2604,9 +2709,10 @@ export default function Settings() {
     }
 
     let updated;
+    let mergeOperation;
     try {
-      const withMerged = await upsertPrivacyZone(mergedZone, cfg);
-      const withoutA = await removePrivacyZone(pair.a.id, withMerged);
+      mergeOperation = await upsertPrivacyZone(mergedZone, cfg, { includeOperationResult: true });
+      const withoutA = await removePrivacyZone(pair.a.id, mergeOperation.settings);
       updated = await removePrivacyZone(pair.b.id, withoutA);
     } catch (error) {
       showPrivacyNativeSyncFailure(error, 'Privacy zones not merged');
@@ -2625,7 +2731,7 @@ export default function Settings() {
     void enqueuePrivacyZoneRescore('privacy_zone_updated', [pair.a, pair.b, mergedZone]);
     toast({
       title: 'Privacy zones merged',
-      description: `"${pair.a.label}" and "${pair.b.label}" are now one ${Math.round(mergedZone.radius_m)} m zone.`,
+      description: `"${pair.a.label}" and "${pair.b.label}" are now one ${Math.round(mergedZone.radius_m)} m zone. ${buildPrivacyCleanupPresentation(mergeOperation).description}`,
     });
   };
 
@@ -3300,6 +3406,9 @@ export default function Settings() {
   const motionSupport = getMotionSensorSupport();
   const locationFeatureStatus = permissionStatus?.foregroundLocation === 'granted' ? 'granted' : permissionStatus?.foregroundLocation;
   const notificationFeatureStatus = permissionStatus?.notifications === 'granted' ? 'granted' : permissionStatus?.notifications;
+  const speedSignCameraPermissionStatus = isAndroid()
+    ? speedSignCameraStatus?.cameraPermission || 'not_requested'
+    : 'unavailable';
   const deferredSettingsSearch = useDeferredValue(settingsSearch);
   const settingsSearchQuery = deferredSettingsSearch.trim().toLowerCase();
   const settingsSections = SETTINGS_SECTIONS;
@@ -3370,6 +3479,11 @@ export default function Settings() {
   const enabledVoiceGroupCount = VOICE_ALERT_CONTROL_GROUPS
     .filter((group) => cfg[group.settingKey] !== false)
     .length;
+  const speedSignCameraPermissionLabel = speedSignCameraStatus?.cameraPermission === 'granted'
+    ? 'Camera permission granted.'
+    : speedSignCameraStatus?.cameraPermission === 'denied'
+      ? 'Camera permission denied; enable it in Android app settings.'
+      : 'Turning this on asks Android for Camera permission.';
 
   return (
     <div className="space-y-4 pb-6">
@@ -3475,7 +3589,7 @@ export default function Settings() {
         <div>
           <div className="font-semibold text-foreground">{SCORE_ESTIMATE_NOTICE}</div>
           <p className="mt-1 text-muted-foreground">
-            Trip Safety, Eco, Smoothness, Overall, fatigue, and score-card outputs are coaching estimates until calibrated against labeled outcome data.
+            Trip Safety, Smoothness, Overall, fatigue, and score-card outputs are coaching estimates until calibrated against labeled outcome data.
           </p>
         </div>
       </div>
@@ -3718,6 +3832,29 @@ export default function Settings() {
               <ChevronRight className="w-4 h-4 text-muted-foreground" />
             </div>
           </SettingRow>
+          {isAndroid() && (
+            <SettingRow
+              icon={Camera}
+              label="Camera"
+              sublabel="Optional access for speed-sign scanning. Open the Mounted Ready screen while parked; it keeps Road Sage visible and the display awake until the confirmed trip starts."
+            >
+              <div className="flex items-center gap-2">
+                <PermissionBadge value={speedSignCameraPermissionStatus} />
+                {speedSignCameraPermissionStatus !== 'granted' && (
+                  <button
+                    className="text-xs font-semibold text-primary"
+                    disabled={speedSignCameraBusy}
+                    onClick={async event => {
+                      event.stopPropagation();
+                      await requestSpeedSignCameraAccess();
+                    }}
+                  >
+                    {speedSignCameraPermissionStatus === 'denied' ? 'Open settings' : 'Enable'}
+                  </button>
+                )}
+              </div>
+            </SettingRow>
+          )}
         </div>
 
         </>)}</SettingsSection>
@@ -3755,6 +3892,12 @@ export default function Settings() {
               sub: 'Uses GPS plus device motion and Android activity context. Motion usually has no Android prompt, but this row will request it on platforms that require one.',
               value: permissionStatus?.motionSensors,
               action: handleMotionPermission,
+            },
+            {
+              label: 'On-device speed-sign scanning',
+              sub: 'Optional and Android-only. For safety there is no moving-trip button. The parked-only Mounted Ready screen keeps Road Sage visible and starts the camera automatically after trip confirmation.',
+              value: speedSignCameraPermissionStatus,
+              action: isAndroid() ? requestSpeedSignCameraAccess : null,
             },
             {
               label: 'Posted speed data, weather, optional OSRM matching, and offline route previews',
@@ -4009,7 +4152,7 @@ export default function Settings() {
               <div className="mb-2 text-xs font-bold uppercase tracking-widest text-muted-foreground">While Driving</div>
               {[
                 { key: 'notif_safety_alerts_enabled', label: 'Safety alerts channel', sub: 'Urgent warnings while driving' },
-                { key: 'notif_phone_use_alert_enabled', label: 'Phone use warning', sub: 'Immediate warning for confirmed Android Usage Access detections' },
+                { key: 'notif_phone_use_alert_enabled', label: 'Phone activity warning', sub: 'Immediate warning for foreground-app activity detected while moving' },
                 { key: 'notif_heading_drift_alert_enabled', label: 'Attention pattern warning', sub: 'Beta GPS heading patterns and long-drive break alerts' },
                 { key: 'notif_speeding_alert_enabled', label: 'Speeding alert', sub: 'Sustained speeding warnings' },
                 { key: 'danger_zone_alerts_enabled', label: 'Repeated event area alerts', sub: 'Warn when approaching your own repeated driving-event locations' },
@@ -4029,7 +4172,7 @@ export default function Settings() {
                 { key: 'notif_post_trip_summary_enabled', label: 'Post-trip smart summary', sub: 'One contextual notification after a notable trip' },
                 { key: 'notif_post_trip_score_change', label: 'Score improvements and declines', sub: 'Notify when a score moves meaningfully' },
                 { key: 'notif_post_trip_phone_use', label: 'Phone use report', sub: 'Post-trip report for high phone-use risk' },
-                { key: 'notif_post_trip_fuel_saving', label: 'Eco fuel savings', sub: 'Call out efficient trips with fuel savings' },
+                { key: 'notif_post_trip_fuel_saving', label: 'Efficient-trip fuel savings', sub: 'Call out trips with estimated fuel savings' },
               ].map(({ key, label, sub }) => (
                 <SettingRow key={key} label={label} sublabel={sub}>
                   <Toggle value={cfg[key] !== false} onChange={v => updateNotificationSetting({ [key]: v })} disabled={cfg.notifications_enabled === false || (key.startsWith('notif_post_trip_') && cfg.notif_post_trip_summary_enabled === false && key !== 'notif_post_trip_summary_enabled')} />
@@ -4147,9 +4290,10 @@ export default function Settings() {
           Used for night-trip labels, goals, and safety scoring.
         </p>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid gap-2 sm:grid-cols-3">
             {[
               { id: 'sunset', label: 'Sunset', sub: 'GPS-based' },
+              { id: 'civil_twilight', label: 'Civil Twilight', sub: 'GPS-based darkness' },
               { id: 'custom', label: 'Custom', sub: `${cfg.night_start_time || NIGHT_START_TIME} to ${cfg.night_end_time || NIGHT_END_TIME}` },
             ].map(opt => (
               <button
@@ -4197,16 +4341,29 @@ export default function Settings() {
             </div>
           </div>
 
-          {cfg.night_detection_mode === 'sunset' && (
+          {['sunset', 'civil_twilight'].includes(cfg.night_detection_mode) && (
             <div className="space-y-3">
               <div className="flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
                 <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                Sunset mode uses each trip point's date and GPS position; if GPS coordinates are missing, Road Sage falls back to the custom window.
+                {cfg.night_detection_mode === 'civil_twilight'
+                  ? 'Civil Twilight starts night when the sun is 6° below the horizon, which more closely matches real darkness.'
+                  : 'Sunset mode starts night shortly after the sun crosses the horizon.'}
+                {' '}Both modes use each point's date, GPS position, and recorded timezone. If solar events cannot be calculated, Road Sage uses the custom window and records that fallback.
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 {[
-                  { key: 'night_sunset_offset_minutes', label: 'Sunset offset', min: -120, max: 120 },
-                  { key: 'night_sunrise_offset_minutes', label: 'Sunrise offset', min: -120, max: 120 },
+                  {
+                    key: 'night_sunset_offset_minutes',
+                    label: cfg.night_detection_mode === 'civil_twilight' ? 'Evening twilight offset' : 'Sunset offset',
+                    min: -120,
+                    max: 120,
+                  },
+                  {
+                    key: 'night_sunrise_offset_minutes',
+                    label: cfg.night_detection_mode === 'civil_twilight' ? 'Morning twilight offset' : 'Sunrise offset',
+                    min: -120,
+                    max: 120,
+                  },
                 ].map(({ key, label, min, max }) => (
                   <div key={key} className="rounded-xl border border-border bg-secondary/30 p-3">
                     <div className="mb-1.5 flex justify-between text-xs">
@@ -4224,6 +4381,24 @@ export default function Settings() {
                     />
                   </div>
                 ))}
+              </div>
+              <div className="rounded-xl border border-border bg-secondary/30 p-3">
+                <div className="mb-1.5 flex justify-between text-xs">
+                  <span className="font-medium">Boundary buffer</span>
+                  <span className="font-semibold text-primary">{cfg.night_boundary_tolerance_minutes ?? 5} min</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={30}
+                  step={1}
+                  value={cfg.night_boundary_tolerance_minutes ?? 5}
+                  onChange={e => updateCfg({ night_boundary_tolerance_minutes: Number(e.target.value) })}
+                  className="w-full accent-primary"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Night begins this many minutes after the evening boundary and ends this many minutes before the morning boundary.
+                </p>
               </div>
             </div>
           )}
@@ -4528,12 +4703,6 @@ export default function Settings() {
             { key: 'threshold_sharp_turn_g_high', label: 'Sharp Turn High', unit: 'g', min: 0.35, max: 1.0, step: 0.05 },
             { key: 'threshold_speeding_kmh', label: 'Speeding (fallback)', unit: 'km/h', min: 80, max: 160, step: 5 },
             { key: 'threshold_idle_seconds', label: 'Idle Event', unit: 's', min: 90, max: 300, step: 30 },
-            { key: 'threshold_eco_cruise_min_kmh', label: 'Eco Cruise Min', unit: 'km/h', min: 20, max: 90, step: 5 },
-            { key: 'threshold_eco_cruise_max_kmh', label: 'Eco Cruise Max', unit: 'km/h', min: 80, max: 140, step: 5 },
-            { key: 'eco_min_moving_kmh', label: 'Eco Moving Floor', unit: 'km/h', min: 0, max: 30, step: 1 },
-            { key: 'eco_cruise_score_multiplier', label: 'Eco Cruise Multiplier', unit: 'x', min: 50, max: 200, step: 5 },
-            { key: 'eco_idle_penalty_multiplier', label: 'Eco Idle Multiplier', unit: 'x', min: 0, max: 300, step: 5 },
-            { key: 'eco_idle_max_penalty', label: 'Eco Idle Cap', unit: 'pts', min: 0, max: 50, step: 1 },
             { key: 'min_speed_harsh_brake_kmh', label: 'Harsh Brake Min Speed', unit: 'km/h', min: 5, max: 60, step: 5 },
             { key: 'min_speed_rapid_accel_kmh', label: 'Rapid Accel Min Speed', unit: 'km/h', min: 0, max: 40, step: 5 },
           ].map(({ key, label, unit, min, max, step }) => (
@@ -4544,9 +4713,9 @@ export default function Settings() {
                   {calibrationEntryForSetting(key)?.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && (
                     <CalibrationStatusTag />
                   )}
-                  {(ecoScoreWarning(key) || (thresholdEditingEnabled && sliderWarning(cfg[key], min, max))) && (
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] ${ecoScoreWarning(key) ? 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-200' : 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200'}`}>
-                      {ecoScoreWarning(key) || sliderWarning(cfg[key], min, max)}
+                  {thresholdEditingEnabled && sliderWarning(cfg[key], min, max) && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                      {sliderWarning(cfg[key], min, max)}
                     </span>
                   )}
                   {cfg[key]} {unit}
@@ -4787,7 +4956,7 @@ export default function Settings() {
             label="Usage Access status"
             sublabel={
               permissionStatus?.phoneUsageAccess === 'granted'
-                ? 'Phone-use scoring can use confirmed Android Usage Access evidence'
+                ? 'Scoring can use foreground-app evidence while the vehicle is moving'
                 : 'Phone-use scoring is unavailable until Android Usage Access is enabled'
             }
           >
@@ -4829,7 +4998,7 @@ export default function Settings() {
               />
             </SettingRow>
             <div className="px-1 py-3 border-b border-border/50">
-              <div className="mb-2 text-sm font-medium">Detection sensitivity</div>
+              <div className="mb-2 text-sm font-medium">GPS diagnostic sensitivity</div>
               <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
                 {[
                   { id: 'low', label: 'Low', sub: 'Fewer false positives' },
@@ -4853,21 +5022,21 @@ export default function Settings() {
                 ))}
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                Threshold: {(cfg.phone_use_sensitivity || 'medium') === 'low'
+                Diagnostic proxy threshold: {(cfg.phone_use_sensitivity || 'medium') === 'low'
                   ? scoringValue('PHONE_LOW_SENSITIVITY_CONFIDENCE_THRESHOLD').toFixed(2)
                   : (cfg.phone_use_sensitivity || 'medium') === 'high'
                     ? scoringValue('PHONE_HIGH_SENSITIVITY_CONFIDENCE_THRESHOLD').toFixed(2)
-                    : scoringValue('PHONE_CONFIDENCE_THRESHOLD').toFixed(2)} confidence.
+                    : scoringValue('PHONE_CONFIDENCE_THRESHOLD').toFixed(2)} confidence. This does not change Android Usage Access scoring.
               </p>
             </div>
-            <SettingRow label="Show on trip map" sublabel="Mark suspected phone-use windows on route maps">
+            <SettingRow label="Show on trip map" sublabel="Mark scored foreground-activity windows on route maps">
               <Toggle
                 value={cfg.phone_use_show_on_map !== false}
                 onChange={v => updateCfg({ phone_use_show_on_map: v })}
                 disabled={cfg.phone_use_detection_enabled === false}
               />
             </SettingRow>
-            <SettingRow label="Include in trip score" sublabel="Apply confirmed Android Usage Access phone-use penalties to Safety">
+            <SettingRow label="Include in trip score" sublabel="Apply moving foreground-app activity penalties to Safety">
               <Toggle
                 value={cfg.phone_use_affects_score !== false}
                 onChange={v => updateCfg({ phone_use_affects_score: v })}
@@ -4876,7 +5045,7 @@ export default function Settings() {
             </SettingRow>
             <div className="mt-3 flex items-start gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
               <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              Usage Access is needed for accurate phone detection. Without it, no phone-use score is shown; GPS proxy counts appear in diagnostics only.
+              Usage Access reports foreground apps and privacy-preserving screen state, not touches, attention, or who held the phone. Without it, no phone-use score is shown; GPS proxy counts remain diagnostic only.
             </div>
             <div className="mt-3 rounded-2xl border border-border bg-card p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
@@ -5009,6 +5178,50 @@ export default function Settings() {
           );
         })()}
         <SettingsSubheading>Estimated speed guidance</SettingsSubheading>
+        {isAndroid() && (
+          <SettingRow
+            icon={Camera}
+            label="Experimental on-device speed-sign scan"
+            sublabel={`Optional and off by default; switching it off does not disable Road Memory or saved-road intelligence. ${speedSignCameraPermissionLabel} There is no scanner button in a moving-trip notification or live-drive screen. Full frames and recognized text are discarded, while one tightly cropped sign image is encrypted in no-backup storage for parked confirmation and deleted after your decision or expiry.`}
+          >
+            <Toggle
+              value={cfg.speed_sign_scanner_enabled === true}
+              disabled={speedSignCameraBusy}
+              onChange={value => void updateSpeedSignScannerEnabled(value)}
+            />
+          </SettingRow>
+        )}
+        {isAndroid() && cfg.speed_sign_scanner_enabled === true && (
+          <SettingRow
+            icon={Smartphone}
+            label="Mounted Ready screen"
+            sublabel="For automatic trips, open this one-drive Ready screen while parked. It keeps the display awake for up to 15 minutes with the camera off, then starts the rear scanner after trip confirmation. For manual tracking, use Start Trip + Camera on the pre-trip screen. Locking, minimizing, or closing either camera screen cancels scanning."
+          >
+            <Button
+              type="button"
+              size="sm"
+              disabled={speedSignCameraBusy || speedSignCameraStatus?.armedForNextTrip === true}
+              onClick={() => void armMountedCameraForNextDrive()}
+            >
+              {speedSignCameraStatus?.armedForNextTrip === true
+                ? 'Ready screen open'
+                : speedSignCameraBusy
+                  ? 'Opening…'
+                  : 'Arm for next drive'}
+            </Button>
+          </SettingRow>
+        )}
+        {isAndroid() && cfg.speed_sign_scanner_enabled === true && (
+          <SettingRow
+            icon={Gauge}
+            label="Adaptive scan intelligence"
+            sublabel="Locks focus on the forward sign box instead of repeatedly returning to the dashboard, isolates and enlarges sign-like targets before offline OCR, tolerates common digit-reading errors, and requires matching regulatory text across two separated frames. It still pauses below 12 km/h and reduces work for low battery or heat. Live detector counts show whether frames reached target isolation, readable text, regulatory matching, and parked review."
+          >
+            <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+              Automatic
+            </span>
+          </SettingRow>
+        )}
         <SettingRow
           icon={Gauge}
           label="Use estimated speed guidance"
@@ -5048,7 +5261,7 @@ export default function Settings() {
         <SettingRow
           icon={Droplets}
           label="Weather from Open-Meteo"
-          sublabel="On: Get Road Data can add trip weather using one privacy-safe point and date. Off: no weather score adjustment."
+          sublabel="On: the separate Get Weather action can add trip weather using one rounded privacy-safe point and date. Get Road Data never requests weather."
         >
           <Toggle
             value={cfg.weather_context_enabled !== false}
@@ -5058,7 +5271,7 @@ export default function Settings() {
         <SettingRow
           icon={Info}
           label="Auto-fetch enabled road data"
-          sublabel="Off: saved trips stay local until you tap Get Road Data. On: future trips fetch only enabled speed-limit and weather lookups after a private delay. OSRM is never automatic."
+          sublabel="Off: saved trips use local or cached context until you separately choose Get Road Data or Get Weather. On: future trips fetch enabled speed-limit and weather lookups independently after a private delay. OSRM is never automatic."
         >
           <Toggle
             value={isExternalContextAutoFetchEnabled(cfg)}
@@ -5183,7 +5396,7 @@ export default function Settings() {
               <span className="font-semibold text-foreground">Weather {cfg.weather_context_enabled === false ? 'OFF' : 'ON'}:</span>{' '}
               {cfg.weather_context_enabled === false
                 ? 'Open-Meteo is not contacted; rain, snow, fog, or ice do not change the score.'
-                : 'after you confirm Get Road Data, one non-private route point plus the trip date is sent to Open-Meteo for rain, snow, fog, or freezing risk.'}
+                : 'after you separately confirm Get Weather, one rounded route point outside privacy-zone guards plus the trip date is sent to Open-Meteo. Get Road Data never requests weather.'}
             </div>
             <div>
               <span className="font-semibold text-foreground">Snap route to roads {cfg.map_matching_enabled === false ? 'OFF' : cfg.osrm_map_matching_url && cfg.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}:</span>{' '}
@@ -5201,7 +5414,7 @@ export default function Settings() {
               <span className="font-semibold text-foreground">Auto-fetch {isExternalContextAutoFetchEnabled(cfg) ? 'ON' : 'OFF'}:</span>{' '}
               {isExternalContextAutoFetchEnabled(cfg)
                 ? 'future saved trips fetch only enabled speed-limit and weather lookups after a randomized privacy delay. OSRM still waits for manual Get Road Data.'
-                : 'nothing is sent automatically after saving a trip; the user must tap Get Road Data for that trip.'}
+                : 'nothing is sent automatically after saving a trip; Get Road Data and Get Weather remain separate user-confirmed actions.'}
             </div>
           </div>
         </div>
@@ -5611,7 +5824,7 @@ export default function Settings() {
               {' '}Values outside {PRIVACY_RADIUS_MIN_M}-{PRIVACY_RADIUS_MAX_M} m are rejected. Zone creation does not send typed labels or addresses to a geocoder.
             </div>
             <div className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-100">
-              Existing raw GPS inside this zone is erased when the zone is saved. High sensitivity also blocks OSRM route sharing whenever a route touches the zone.
+              Existing raw GPS and derived saved road-speed knowledge inside this zone are erased when the zone is saved. High sensitivity also blocks OSRM route sharing whenever a route touches the zone.
             </div>
             {privacyDraft.type === 'corridor' && (
               <div className="mt-2 rounded-xl border border-border bg-background/60 p-3 text-xs">
@@ -6159,7 +6372,7 @@ export default function Settings() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 rounded-xl border border-border bg-secondary/40 p-3 text-sm">
-            <div>Stored Safety, Smoothness, Eco and Overall scores may increase, decrease or stay the same.</div>
+            <div>Stored Safety, Smoothness, and Overall scores may increase, decrease or stay the same.</div>
             <div>Reviewed events marked wrong will be removed from scoring.</div>
             {rescoreIneligibleCount > 0 && (
               <div className="text-amber-700 dark:text-amber-300">
@@ -6291,12 +6504,12 @@ export default function Settings() {
                 onCheckedChange={(checked) => setPrivacyDeletePurge(checked === true)}
                 disabled={privacyDeleteBusy}
                 className="mt-0.5"
-                aria-label="Permanently delete raw GPS within this zone"
+                aria-label="Permanently delete raw GPS and saved road-speed knowledge within this zone"
               />
               <span>
-                <span className="font-semibold">Option 2: Erase Private GPS First</span>
+                <span className="font-semibold">Option 2: Erase Private Location Data First</span>
                 <span className="mt-1 block text-xs text-muted-foreground">
-                  Before deleting the zone, permanently remove stored route points and driving-event coordinates inside this radius. Trips keep privacy gap placeholders instead of the hidden location.
+                  Before deleting the zone, permanently remove stored route points, driving-event coordinates, saved road-speed cells and rules, Road Memory corridors, and coordinate-bearing speed history inside this area. Trips keep privacy gap placeholders instead of the hidden location.
                 </span>
               </span>
             </label>
@@ -6326,7 +6539,7 @@ export default function Settings() {
                   : 'bg-amber-700 hover:bg-amber-800'
               }`}
             >
-              {privacyDeletePurge ? 'Erase GPS & Delete Zone' : 'Delete Zone Only'}
+              {privacyDeletePurge ? 'Erase Private Data & Delete Zone' : 'Delete Zone Only'}
             </Button>
           </DialogFooter>
         </DialogContent>

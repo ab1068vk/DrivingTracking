@@ -152,12 +152,11 @@ export function countObdPowertrainSamples(trip = {}) {
 }
 
 export function buildMetricEvidenceRows(trip = {}) {
-  const componentKeys = Object.keys(trip.component_scores || {});
+  const componentKeys = Object.keys(trip.component_scores || {}).filter((key) => key !== 'eco');
   const baseKeys = [
     'score_overall',
     'score_safety',
     'score_smoothness',
-    'score_eco',
     'distance_km',
     'duration_seconds',
     'avg_speed_kmh',
@@ -283,7 +282,9 @@ export function buildSourceEvidenceRows(trip = {}, settings = {}) {
       value: formatValue(weatherContext.status || weatherContext.source || weatherContext.provider),
       confidence: weatherContext.status || weatherContext.provider ? 'recorded' : UNAVAILABLE,
       sampleCount: weatherContext.status || weatherContext.provider ? '1' : UNAVAILABLE,
-      dataSourceLabel: formatDataSourceLabel('open_meteo_weather'),
+      dataSourceLabel: formatDataSourceLabel(
+        weatherContext.source === 'user_confirmed' ? 'user_confirmed_weather' : 'open_meteo_weather'
+      ),
       detail: weatherContext.condition || weatherContext.error || weatherContext.status || 'Weather context unavailable.',
     },
     {

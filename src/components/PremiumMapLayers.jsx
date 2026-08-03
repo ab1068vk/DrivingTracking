@@ -5,7 +5,6 @@ import {
   Gauge,
   Layers3,
   LockKeyhole,
-  MapPinned,
   Radar,
   Route,
   ShieldCheck,
@@ -99,7 +98,6 @@ export default function PremiumMapLayers({
         ? 'Settings off'
         : 'Unavailable';
   const speedLimitsEnabled = settings.speed_limit_lookup_enabled !== false;
-  const weatherEnabled = settings.weather_context_enabled !== false;
   const matchingEnabled = settings.map_matching_enabled !== false;
   const matchingReady = matchingEnabled && settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true;
   const eventAreaStatus = dangerZonesLoading
@@ -195,7 +193,7 @@ export default function PremiumMapLayers({
             <span aria-hidden="true"><ShieldCheck /></span>
             <div>
               <h3>Get Road Data, in plain words</h3>
-              <p>Runs only the enabled online lookups for this selected trip. Privacy-zone coordinates are excluded before anything leaves the app.</p>
+              <p>Runs only enabled OpenStreetMap and approved OSRM lookups for this selected trip. Weather never runs here. Privacy-zone coordinates are excluded before anything leaves the app.</p>
             </div>
           </div>
 
@@ -204,11 +202,6 @@ export default function PremiumMapLayers({
               <Gauge aria-hidden="true" />
               <strong>Speed limits <span>{speedLimitsEnabled ? 'ON' : 'OFF'}</span></strong>
               <p>{speedLimitsEnabled ? 'Sends privacy-filtered public road boxes to OpenStreetMap for posted maxspeed; missing tags may use labeled estimates.' : 'OpenStreetMap speed-limit lookup is skipped; route colors use GPS bands or any speed-limit data already saved on the trip.'}</p>
-            </div>
-            <div className="premium-map-road-source" data-source="weather">
-              <MapPinned aria-hidden="true" />
-              <strong>Weather <span>{weatherEnabled ? 'ON' : 'OFF'}</span></strong>
-              <p>{weatherEnabled ? 'Sends one privacy-safe route point and trip date to Open-Meteo.' : 'Open-Meteo is skipped; scores get no weather adjustment.'}</p>
             </div>
             <div className="premium-map-road-source" data-source="matching">
               <Route aria-hidden="true" />

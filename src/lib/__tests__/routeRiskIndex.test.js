@@ -3,11 +3,14 @@ import {
   buildRouteRiskIndex,
   getSegmentsForTrip,
   loadRouteRiskIndex,
+  ROUTE_RISK_INDEX_KEY,
   ROUTE_RISK_CONSTANTS,
   saveRouteRiskIndex,
   segmentKey,
   speedRiskBonus,
 } from '@/lib/routeRiskIndex';
+import { getJson } from '@/lib/mobileStorage';
+import { isEncryptedPayload } from '@/lib/securePayloadCrypto';
 
 const points = [
   { lat: 43.6532, lng: -79.3832, speed_kmh: 40, accuracy: 5, timestamp: '2026-01-01T12:00:00.000Z' },
@@ -122,6 +125,7 @@ describe('routeRiskIndex', () => {
     await saveRouteRiskIndex(index);
     const loaded = await loadRouteRiskIndex();
     expect(loaded.size).toBe(index.size);
+    expect(isEncryptedPayload(await getJson(ROUTE_RISK_INDEX_KEY, null))).toBe(true);
   });
 
   it('merges stored risk cells whose midpoints are within GPS-noise distance', async () => {

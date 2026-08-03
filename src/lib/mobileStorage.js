@@ -65,6 +65,9 @@ export async function removeJson(key) {
     if (isNativePlatform()) {
       const { Preferences } = await import('@capacitor/preferences');
       await Preferences.remove({ key });
+      // Clear legacy PWA/WebView copies as well as the current native store.
+      if (hasLocalStorage()) localStorage.removeItem(key);
+      memoryFallback.delete(key);
       return;
     }
 

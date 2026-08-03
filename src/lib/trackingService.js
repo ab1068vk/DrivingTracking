@@ -25,6 +25,12 @@ const watchOptions = {
 
 const GEOLOCATION_PERMISSION_DENIED = 1;
 const ROUTE_GAP_SECONDS = 120;
+export const PARKING_REFINEMENT_DURATION_MS = 30_000;
+export const PARKING_REFINEMENT_INTERVAL_MS = 5_000;
+export const PARKING_REFINEMENT_MAX_FIXES = 6;
+const PARKING_REFINEMENT_MAX_ACCURACY_M = 75;
+const PARKING_REFINEMENT_MAX_DRIFT_M = 35;
+const PARKING_REFINEMENT_MOVING_SPEED_KMH = 8;
 
 function isPermissionDeniedError(error) {
   const browserPermissionDenied = typeof GeolocationPositionError !== 'undefined'
@@ -49,6 +55,105 @@ export async function getCurrentLocation() {
       watchOptions
     );
   });
+}
+
+const waitFor = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const parkingCoordinateIsUsable = (point) => {
+  const lat = Number(point?.lat);
+  const lng = Number(point?.lng);
+  const accuracy = Number(point?.accuracy);
+  return Number.isFinite(lat) && Number.isFinite(lng) &&
+    Math.abs(lat) <= 90 && Math.abs(lng) <= 180 &&
+    !(lat === 0 && lng === 0) &&
+    (!Number.isFinite(accuracy) || accuracy <= PARKING_REFINEMENT_MAX_ACCURACY_M);
+};
+
+const distanceBetweenParkingPointsM = (first, second) => {
+  if (!parkingCoordinateIsUsable(first) || !parkingCoordinateIsUsable(second)) return Number.POSITIVE_INFINITY;
+  const lat1 = Number(first.lat) * Math.PI / 180;
+  const lat2 = Number(second.lat) * Math.PI / 180;
+  const dLat = lat2 - lat1;
+  const dLng = (Number(second.lng) - Number(first.lng)) * Math.PI / 180;
+  const value = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(Math.max(0, 1 - value)));
+};
+
+/**
+ * Collects a bounded set of high-accuracy fixes after a trip ends. The fixes
+ * are kept separate from the trip route so walking away from the car cannot
+ * extend or alter the saved drive.
+ */
+export async function collectParkingRefinementFixes({
+  anchorPoint = null,
+  durationMs = PARKING_REFINEMENT_DURATION_MS,
+  intervalMs = PARKING_REFINEMENT_INTERVAL_MS,
+  maxFixes = PARKING_REFINEMENT_MAX_FIXES,
+  getPosition = null,
+  wait = waitFor,
+  now = () => Date.now(),
+} = {}) {
+  const startedAtMs = now();
+  const deadlineMs = startedAtMs + Math.max(0, Number(durationMs) || 0);
+  const fixes = [];
+  let anchor = parkingCoordinateIsUsable(anchorPoint) ? anchorPoint : null;
+  const readPosition = getPosition || (async () => {
+    const position = isNativePlatform()
+      ? await Geolocation.getCurrentPosition(watchOptions)
+      : await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, watchOptions);
+        });
+    return normalizeLocationPoint(position);
+  });
+
+  if (!getPosition) {
+    const granted = await requestForegroundLocationPermission();
+    if (!granted) return { status: 'permission_denied', fixes, durationMs: 0 };
+  }
+
+  while (fixes.length < Math.max(1, Number(maxFixes) || 1) && now() <= deadlineMs) {
+    try {
+      const rawPoint = await readPosition();
+      const point = rawPoint?.coords ? normalizeLocationPoint(rawPoint) : rawPoint;
+      if (parkingCoordinateIsUsable(point)) {
+        const speedKmh = Math.max(0, Number(point.speed_kmh) || 0);
+        if (speedKmh > PARKING_REFINEMENT_MOVING_SPEED_KMH) {
+          return {
+            status: 'cancelled_movement',
+            fixes: [],
+            durationMs: Math.max(0, now() - startedAtMs),
+          };
+        }
+        anchor ||= point;
+        if (distanceBetweenParkingPointsM(anchor, point) > PARKING_REFINEMENT_MAX_DRIFT_M) {
+          return {
+            status: 'cancelled_drift',
+            fixes: [],
+            durationMs: Math.max(0, now() - startedAtMs),
+          };
+        }
+        fixes.push({
+          ...point,
+          speed_kmh: speedKmh,
+          parking_refinement: true,
+        });
+      }
+    } catch (error) {
+      logSystemFailure('parking_refinement_fix', error, {
+        accepted_fix_count: fixes.length,
+      });
+    }
+
+    if (fixes.length >= Math.max(1, Number(maxFixes) || 1) || now() >= deadlineMs) break;
+    await wait(Math.min(Math.max(0, Number(intervalMs) || 0), Math.max(0, deadlineMs - now())));
+  }
+
+  return {
+    status: fixes.length >= 3 ? 'completed' : fixes.length ? 'partial' : 'unavailable',
+    fixes,
+    durationMs: Math.max(0, now() - startedAtMs),
+  };
 }
 
 export function createDrivingTrackingService({ background = false, privateMode = false } = {}) {

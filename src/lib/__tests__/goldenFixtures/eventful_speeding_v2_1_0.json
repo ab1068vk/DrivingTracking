@@ -1,7 +1,7 @@
 {
   "id": "eventful_speeding_v2_2_0",
   "description": "Human-verified eventful daytime route with inferred speed-limit speeding events; validates penalties, limited evidence, and provenance component labels independently of the test-runner timezone.",
-  "scoring_version": "94a8d95e",
+  "scoring_version": "67acfb08",
   "human_verified": true,
   "thresholds": { "NIGHT_DETECTION_MODE": "fixed" },
   "startTime": "2026-05-24T10:00:00.000",
@@ -35,7 +35,6 @@
       "score_overall": 40,
       "score_safety": 10,
       "score_smoothness": 95,
-      "score_eco": 20,
       "score_confidence_label": "developing",
       "harsh_brakes_count": 0,
       "rapid_accel_count": 0,
@@ -49,7 +48,6 @@
       "overall": { "value": 40, "evidence": "developing", "dataSource": ["gps", "regional_default_estimate", "gps_inferred_limit"], "sampleCount": 12 },
       "safety": { "value": 10, "evidence": "developing", "dataSource": ["gps", "regional_default_estimate", "gps_inferred_limit"], "sampleCount": 12 },
       "smoothness": { "value": 95, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
-      "eco": { "value": 20, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "intersection": { "value": null, "evidence": "unavailable", "dataSource": ["gps"], "sampleCount": 0 },
       "speed_creep": { "value": 0, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "aggressive_driving": { "value": 3, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
@@ -57,12 +55,11 @@
       "fatigue_risk": { "value": 1, "evidence": "high", "dataSource": ["gps"], "sampleCount": 1 }
     },
     "score_provenance": {
-      "scoring_version": "94a8d95e",
+      "scoring_version": "67acfb08",
       "components": {
         "overall": "developing",
         "safety": "developing",
         "smoothness": "developing",
-        "eco": "developing",
         "intersection": "unavailable",
         "speed_creep": "developing",
         "aggressive_driving": "developing",

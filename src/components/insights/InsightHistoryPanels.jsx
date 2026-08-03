@@ -129,7 +129,7 @@ function SafetyAndGoals({ phone, goals, roads, units, onOpenTrip }) {
 
 function PhoneUsePanel({ phone, onOpenTrip }) {
   return <section className='rounded-3xl border border-border bg-card p-5 shadow-sm'>
-    <PanelHeader eyebrow='Safety' title='Phone use focus' description='Confirmed Usage Access evidence, separate from GPS proxy diagnostics.' icon={Smartphone} />
+    <PanelHeader eyebrow='Safety' title='Phone use focus' description='Moving foreground-app evidence from Usage Access, separate from GPS proxy diagnostics.' icon={Smartphone} />
     <div className='mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4'>
       <MiniMetric label='Worst risk' value={phone.worstRisk || 'none'} />
       <MiniMetric label='Measured trips' value={`${phone.measuredTrips || 0}/${phone.driverTrips || 0}`} />

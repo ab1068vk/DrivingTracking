@@ -54,10 +54,9 @@ const dayOfYear = (date) => {
 
 const toRad = (degrees) => degrees * Math.PI / 180;
 
-function sunEventMinutes(date, lat, lng, isSunrise) {
+function sunEventMinutes(date, lat, lng, isSunrise, zenith = 90.833) {
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 89.8) return null;
 
-  const zenith = 90.833;
   const n = dayOfYear(date);
   const lngHour = lng / 15;
   const t = n + (((isSunrise ? 6 : 18) - lngHour) / 24);
@@ -128,14 +127,17 @@ function getConfiguredTimePeriod(date, coordinate, settings = {}) {
   const fallbackStart = parseClockMinutes(settings.night_start_time, DEFAULT_NIGHT_START_MINUTES);
   const fallbackEnd = parseClockMinutes(settings.night_end_time, DEFAULT_NIGHT_END_MINUTES);
   const customMode = settings.night_detection_mode === 'custom';
-  const sunrise = coordinate ? sunEventMinutes(date, coordinate.lat, coordinate.lng, true) : null;
-  const sunset = coordinate ? sunEventMinutes(date, coordinate.lat, coordinate.lng, false) : null;
+  const civilTwilightMode = settings.night_detection_mode === 'civil_twilight';
+  const zenith = civilTwilightMode ? 96 : 90.833;
+  const tolerance = Math.max(0, Math.min(30, Number(settings.night_boundary_tolerance_minutes) || 0));
+  const sunrise = coordinate ? sunEventMinutes(date, coordinate.lat, coordinate.lng, true, zenith) : null;
+  const sunset = coordinate ? sunEventMinutes(date, coordinate.lat, coordinate.lng, false, zenith) : null;
   const solarAvailable = sunrise != null && sunset != null;
   const sunriseBoundary = solarAvailable
-    ? sunrise + finiteOffset(settings.night_sunrise_offset_minutes)
+    ? sunrise + finiteOffset(settings.night_sunrise_offset_minutes) - tolerance
     : null;
   const sunsetBoundary = solarAvailable
-    ? sunset + finiteOffset(settings.night_sunset_offset_minutes)
+    ? sunset + finiteOffset(settings.night_sunset_offset_minutes) + tolerance
     : null;
   const night = customMode || !solarAvailable
     ? isWithinClockWindow(minutes, fallbackStart, fallbackEnd)
@@ -191,6 +193,89 @@ export function getPremiumTripTimePresentation(tripOrStartTime, nightSettings = 
   }
 
   return { ...TIME_PRESENTATIONS[period], hour, period };
+}
+
+function formatStoredClockTime(value) {
+  const match = /^(\d{2}):(\d{2})$/.exec(String(value || ''));
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = match[2];
+  const suffix = hour >= 12 ? 'PM' : 'AM';
+  const displayHour = hour % 12 || 12;
+  return `${displayHour}:${minute} ${suffix}`;
+}
+
+function formatStoredUtcOffset(value) {
+  const minutes = Number(value);
+  if (!Number.isFinite(minutes)) return null;
+  const sign = minutes >= 0 ? '+' : '-';
+  const absolute = Math.abs(Math.round(minutes));
+  return `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, '0')}:${String(absolute % 60).padStart(2, '0')}`;
+}
+
+export function getNightClassificationExplanation(trip = {}) {
+  const classification = trip?.night_classification;
+  if (!classification || typeof classification !== 'object') {
+    return trip?.night_driving
+      ? {
+        headline: 'Night driving recorded',
+        detail: 'This older trip does not include the saved night-decision details.',
+        timezone: null,
+      }
+      : null;
+  }
+
+  const isNight = classification.is_night === true || trip.night_driving === true;
+  const startTime = formatStoredClockTime(classification.trip_start_local_time);
+  const decisionTime = formatStoredClockTime(classification.decision_local_time);
+  const eveningTime = formatStoredClockTime(classification.evening_event_local_time);
+  const morningTime = formatStoredClockTime(classification.morning_event_local_time);
+  const customStart = formatStoredClockTime(classification.custom_start_time);
+  const customEnd = formatStoredClockTime(classification.custom_end_time);
+  const tolerance = Math.max(0, Number(classification.boundary_tolerance_minutes) || 0);
+  const timezoneId = classification.timezone_id || trip.trip_timezone_id || null;
+  const utcOffset = formatStoredUtcOffset(
+    classification.utc_offset_minutes ?? trip.trip_utc_offset_minutes
+  );
+  const timezone = [timezoneId, utcOffset ? `${utcOffset} at trip time` : null].filter(Boolean).join(' · ') || null;
+
+  if (classification.method === 'custom_fallback') {
+    const unavailableReason = String(classification.fallback_reason || '').includes('solar_event_unavailable')
+      ? 'solar events could not be calculated for that location and date'
+      : 'usable GPS coordinates were unavailable';
+    return {
+      headline: isNight ? 'Night determined with the custom fallback' : 'Day determined with the custom fallback',
+      detail: `Road Sage used ${customStart || 'the configured start'}–${customEnd || 'the configured end'} because ${unavailableReason}.`,
+      timezone,
+    };
+  }
+
+  if (classification.mode === 'custom') {
+    return {
+      headline: isNight ? 'Night: inside the custom window' : 'Day: outside the custom window',
+      detail: `Configured window: ${customStart || 'start'}–${customEnd || 'end'}${startTime ? `; trip started at ${startTime}` : ''}.`,
+      timezone,
+    };
+  }
+
+  const civilTwilight = classification.mode === 'civil_twilight';
+  const eveningLabel = civilTwilight ? 'civil twilight ended' : 'sunset';
+  const morningLabel = civilTwilight ? 'civil twilight began' : 'sunrise';
+  const sampleLabel = classification.trip_started_in_night ? 'trip started' : 'first night sample';
+  const boundaryDetail = [
+    eveningTime ? `${eveningLabel} was ${eveningTime}` : null,
+    morningTime ? `${morningLabel} was ${morningTime}` : null,
+    isNight && decisionTime ? `${sampleLabel} at ${decisionTime}` : startTime ? `trip started at ${startTime}` : null,
+  ].filter(Boolean).join('; ');
+  const solarDetail = boundaryDetail || 'Solar boundaries were calculated from the recorded GPS and date.';
+  const punctuatedSolarDetail = solarDetail.endsWith('.') ? solarDetail : `${solarDetail}.`;
+  return {
+    headline: isNight
+      ? `Night: ${civilTwilight ? 'civil-twilight' : 'sunset'} boundary reached`
+      : `Day: outside the ${civilTwilight ? 'civil-twilight' : 'sunset'} night window`,
+    detail: `${punctuatedSolarDetail}${tolerance ? ` A ${tolerance}-minute boundary buffer was applied.` : ''}`,
+    timezone,
+  };
 }
 
 const SCORE_TONES = Object.freeze([

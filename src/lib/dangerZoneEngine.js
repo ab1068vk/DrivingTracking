@@ -1,4 +1,8 @@
-import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import {
+  getEncryptedJson,
+  removeEncryptedJson,
+  setEncryptedJson,
+} from '@/lib/securePayloadCrypto';
 import { haversineDistance } from '@/lib/tripEngine';
 
 export const DANGER_ZONES_KEY = 'drivesense_danger_zones';
@@ -107,14 +111,14 @@ export function checkDangerZoneProximity(currentLat, currentLng, zones = [], ale
 }
 
 export async function saveDangerZones(zones = []) {
-  await setJson(DANGER_ZONES_KEY, Array.isArray(zones) ? zones : []);
+  await setEncryptedJson(DANGER_ZONES_KEY, Array.isArray(zones) ? zones : []);
 }
 
 export async function loadDangerZones() {
-  const zones = await getJson(DANGER_ZONES_KEY, []);
+  const zones = await getEncryptedJson(DANGER_ZONES_KEY, []);
   return Array.isArray(zones) ? zones : [];
 }
 
 export async function invalidateDangerZoneCache() {
-  await removeJson(DANGER_ZONES_KEY);
+  await removeEncryptedJson(DANGER_ZONES_KEY);
 }

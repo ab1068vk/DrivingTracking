@@ -11,6 +11,8 @@ export const savedRoadSpeedSearchText = (row = {}, conflict = null) => [
 ].filter((value) => value != null && value !== '').join(' ').toLowerCase();
 
 export const matchesSavedRoadSpeedFilter = (row = {}, conflict = null, filter = 'all') => {
+  if (filter === 'historical') return row.historicalVersion === true;
+  if (row.historicalVersion === true && filter !== 'all') return false;
   if (filter === 'conflicts') return Boolean(conflict);
   if (filter === 'posted') return row.source === 'user_confirmed_posted_sign';
   if (filter === 'estimates') return row.source !== 'user_confirmed_posted_sign';

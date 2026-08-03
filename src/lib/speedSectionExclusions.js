@@ -12,6 +12,9 @@ const unique = (values = []) => [...new Set(values.filter(Boolean).map(String))]
 
 export function speedSectionExclusionKeys(section = {}) {
   const points = cleanGeometry(section.sectionPoints || []);
+  const carriedKeys = Array.isArray(section.exclusionKeys)
+    ? section.exclusionKeys
+    : [];
   const stableIds = [
     section.exclusionKey,
     section.correctionId,
@@ -26,25 +29,31 @@ export function speedSectionExclusionKeys(section = {}) {
     const last = points[points.length - 1];
     const geometryKey = `geom:${[first, middle, last].map((point) => roundedPointKey(point)).join('|')}`;
     const endpointsKey = `ends:${[first, last].map((point) => roundedPointKey(point, 4)).join('|')}`;
-    return unique([...stableIds, geometryKey, endpointsKey]);
+    return unique([...carriedKeys, ...stableIds, geometryKey, endpointsKey]);
   }
 
-  return unique(stableIds);
+  return unique([...carriedKeys, ...stableIds]);
 }
 
 export function readExcludedSpeedSectionKeys() {
   if (typeof window === 'undefined') return [];
   try {
     const parsed = JSON.parse(window.localStorage.getItem(EXCLUDED_SPEED_SECTIONS_STORAGE_KEY) || '[]');
+    // This legacy UI cache can contain rounded route coordinates. Consume it
+    // once for migration into the atomic speed-knowledge store, then erase it.
+    window.localStorage.removeItem(EXCLUDED_SPEED_SECTIONS_STORAGE_KEY);
     return Array.isArray(parsed) ? unique(parsed) : [];
   } catch {
+    window.localStorage.removeItem(EXCLUDED_SPEED_SECTIONS_STORAGE_KEY);
     return [];
   }
 }
 
-export function writeExcludedSpeedSectionKeys(keys = []) {
+export function writeExcludedSpeedSectionKeys(_keys = []) {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(EXCLUDED_SPEED_SECTIONS_STORAGE_KEY, JSON.stringify(unique(keys).slice(-1000)));
+  // The versioned speed-knowledge repository is the source of truth. Never
+  // duplicate precise geometry keys into plaintext localStorage.
+  window.localStorage.removeItem(EXCLUDED_SPEED_SECTIONS_STORAGE_KEY);
 }
 
 export function isSpeedSectionExcluded(section = {}, excludedKeys = new Set()) {

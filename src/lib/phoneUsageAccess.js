@@ -11,6 +11,9 @@ const riskRank = { none: 0, low: 1, medium: 2, high: 3 };
 const MOVING_USAGE_SPEED_KMH = 15;
 const MAX_ROUTE_EVENT_DELTA_MS = 20_000;
 const MIN_USAGE_SESSION_SECONDS = 5;
+const MOVING_WINDOW_GAP_MERGE_MS = 3_000;
+const MAX_USAGE_ROUTE_ACCURACY_M = 50;
+const SCREEN_CONTEXT_WINDOW_MS = 10_000;
 export const PHONE_USE_SEVERITY_THRESHOLDS = Object.freeze({
   /**
    * Provisional heuristic: Android foreground-session duration that marks a
@@ -88,7 +91,7 @@ function nearestRoutePoint(routePoints = [], targetMs = null) {
   let bestPoint = null;
   let bestDelta = Number.POSITIVE_INFINITY;
   for (const point of routePoints) {
-    const pointMs = timestampMs(point?.timestamp);
+    const pointMs = timestampMs(point?.timestamp ?? point?.time);
     if (pointMs == null) continue;
     const delta = Math.abs(pointMs - targetMs);
     if (delta < bestDelta) {
@@ -97,6 +100,59 @@ function nearestRoutePoint(routePoints = [], targetMs = null) {
     }
   }
   return { point: bestPoint, deltaMs: bestDelta };
+}
+
+function movingUsageWindows(routePoints = [], sessionStartMs, sessionEndMs) {
+  const points = routePoints
+    .map((point) => ({
+      point,
+      timestamp: timestampMs(point?.timestamp ?? point?.time),
+      speedKmh: Math.max(0, Number(point?.speed_kmh ?? point?.speedKmh) || 0),
+      accuracyM: Number(point?.accuracy ?? point?.accuracy_m),
+    }))
+    .filter((entry) => entry.timestamp != null)
+    .sort((left, right) => left.timestamp - right.timestamp);
+
+  const windows = [];
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const current = points[index];
+    const next = points[index + 1];
+    const sampleDurationMs = next.timestamp - current.timestamp;
+    const inaccurate = Number.isFinite(current.accuracyM) && current.accuracyM > MAX_USAGE_ROUTE_ACCURACY_M;
+    if (
+      sampleDurationMs <= 0 ||
+      sampleDurationMs > MAX_ROUTE_EVENT_DELTA_MS ||
+      inaccurate ||
+      current.speedKmh < MOVING_USAGE_SPEED_KMH
+    ) {
+      continue;
+    }
+
+    const startMs = Math.max(sessionStartMs, current.timestamp);
+    const endMs = Math.min(sessionEndMs, next.timestamp);
+    if (endMs <= startMs) continue;
+
+    const durationMs = endMs - startMs;
+    const previous = windows[windows.length - 1];
+    if (previous && startMs - previous.endMs <= MOVING_WINDOW_GAP_MERGE_MS) {
+      previous.endMs = endMs;
+      previous.movingDurationMs += durationMs;
+      previous.weightedSpeedMs += current.speedKmh * durationMs;
+      previous.maxSpeedKmh = Math.max(previous.maxSpeedKmh, current.speedKmh);
+      previous.points.push(current.point);
+    } else {
+      windows.push({
+        startMs,
+        endMs,
+        movingDurationMs: durationMs,
+        weightedSpeedMs: current.speedKmh * durationMs,
+        maxSpeedKmh: current.speedKmh,
+        points: [current.point],
+      });
+    }
+  }
+
+  return windows.filter((window) => window.movingDurationMs >= MIN_USAGE_SESSION_SECONDS * 1000);
 }
 
 function eventKey(event = {}) {
@@ -149,42 +205,57 @@ const phoneUsePenalty = (event = {}) => PHONE_USE_PENALTY_POINTS[event.severity]
 export function buildPhoneUseFromAndroidUsage(summary = {}, routePoints = [], tripDurationSeconds = 0) {
   const sessions = Array.isArray(summary?.events) ? summary.events : [];
   const events = sessions
-    .map((session, index) => {
+    .flatMap((session) => {
       if (isPassiveUsagePackage(session.package_name || '')) return null;
       const startMs = Number(session.start_ms) || timestampMs(session.start_time);
       const endMs = Number(session.end_ms) || timestampMs(session.end_time);
       if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
 
-      const durationS = Math.max(1, Math.round(Number(session.duration_seconds) || ((endMs - startMs) / 1000)));
-      if (durationS < MIN_USAGE_SESSION_SECONDS) return null;
+      return movingUsageWindows(routePoints, startMs, endMs).map((window) => {
+        const durationS = Math.max(1, Math.round(window.movingDurationMs / 1000));
+        const speedKmh = window.weightedSpeedMs / Math.max(1, window.movingDurationMs);
+        const midpointMs = window.startMs + (window.endMs - window.startMs) / 2;
+        const routePoint = nearestRoutePoint(window.points, midpointMs).point || window.points[0] || {};
+        const retainsStartContext = window.startMs - startMs <= SCREEN_CONTEXT_WINDOW_MS;
+        const startedAfterUnlock = retainsStartContext && session.started_after_unlock === true;
+        const startedAfterScreenOn = retainsStartContext && session.started_after_screen_on === true;
+        const interactionContext = startedAfterUnlock
+          ? 'after_unlock'
+          : startedAfterScreenOn
+            ? 'after_screen_on'
+            : 'foreground_only';
+        const confidence = durationS >= PHONE_USE_SEVERITY_THRESHOLDS.MEDIUM_DURATION_SECONDS ? 0.92 : 0.82;
+        const severity = phoneUseSeverity(durationS, speedKmh);
 
-      const midpointMs = startMs + (endMs - startMs) / 2;
-      const nearest = nearestRoutePoint(routePoints, midpointMs);
-      const routePoint = nearest.point || routePoints[Math.min(routePoints.length - 1, Math.max(0, index))] || {};
-      if (!nearest.point || nearest.deltaMs > MAX_ROUTE_EVENT_DELTA_MS) return null;
-      const speedKmh = Number(routePoint.speed_kmh) || 0;
-      if (speedKmh < MOVING_USAGE_SPEED_KMH) return null;
-      const confidence = durationS >= PHONE_USE_SEVERITY_THRESHOLDS.MEDIUM_DURATION_SECONDS ? 0.92 : 0.82;
-      const severity = phoneUseSeverity(durationS, speedKmh);
-
-      return {
-        type: 'phone_use',
-        source: 'android_usage_access',
-        package_name: session.package_name,
-        startTime: new Date(startMs).toISOString(),
-        endTime: new Date(endMs).toISOString(),
-        timestamp: new Date(startMs).toISOString(),
-        durationS,
-        duration_seconds: durationS,
-        lat: routePoint.lat,
-        lng: routePoint.lng,
-        speed_kmh: Math.round(speedKmh),
-        confidence,
-        confidence_level: 'high',
-        signals_triggered: ['android_usage_access', 'moving_trip_overlap'],
-        severity,
-        value: confidence,
-      };
+        return {
+          type: 'phone_use',
+          source: 'android_usage_access',
+          startTime: new Date(window.startMs).toISOString(),
+          endTime: new Date(window.endMs).toISOString(),
+          timestamp: new Date(window.startMs).toISOString(),
+          durationS,
+          duration_seconds: durationS,
+          lat: routePoint.lat,
+          lng: routePoint.lng,
+          speed_kmh: Math.round(speedKmh),
+          max_speed_kmh: Math.round(window.maxSpeedKmh),
+          gps_sample_count: window.points.length,
+          started_after_unlock: startedAfterUnlock,
+          started_after_screen_on: startedAfterScreenOn,
+          interaction_context: interactionContext,
+          confidence,
+          confidence_level: 'high',
+          signals_triggered: [
+            'android_usage_access',
+            'moving_trip_overlap',
+            'moving_duration_clipped',
+            ...(startedAfterUnlock ? ['recent_unlock'] : []),
+            ...(startedAfterScreenOn ? ['recent_screen_on'] : []),
+          ],
+          severity,
+          value: confidence,
+        };
+      });
     })
     .filter(Boolean);
 

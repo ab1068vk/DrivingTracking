@@ -53,7 +53,6 @@ const normalizeProgressionTrip = (trip) => {
   const scoreOverall = componentValue(trip, 'overall', ['score_overall', 'overall_score', 'score']);
   const scoreSafety = componentValue(trip, 'safety', ['score_safety', 'safety_score']);
   const scoreSmoothness = componentValue(trip, 'smoothness', ['score_smoothness', 'smoothness_score']);
-  const scoreEco = componentValue(trip, 'eco', ['score_eco', 'eco_driving_score']);
   const brakingEfficiency = componentValue(trip, 'braking_efficiency', ['braking_efficiency_score']);
   const corneringConsistency = componentValue(trip, 'cornering_consistency', ['cornering_consistency_score']);
   const speedCompliance = componentValue(trip, 'speed_limit_compliance', ['overall_compliance_score', 'speed_compliance_score']);
@@ -66,7 +65,6 @@ const normalizeProgressionTrip = (trip) => {
     ...(scoreOverall != null ? { score_overall: scoreOverall } : {}),
     ...(scoreSafety != null ? { score_safety: scoreSafety } : {}),
     ...(scoreSmoothness != null ? { score_smoothness: scoreSmoothness } : {}),
-    ...(scoreEco != null ? { score_eco: scoreEco } : {}),
     ...(brakingEfficiency != null ? { braking_efficiency_score: brakingEfficiency } : {}),
     ...(corneringConsistency != null ? { cornering_consistency_score: corneringConsistency } : {}),
     ...(speedCompliance != null ? { overall_compliance_score: speedCompliance } : {}),
@@ -183,7 +181,6 @@ export function progressionStats(trips = []) {
     avgScore: weightedMean(trips),
     safetyScore: weightedMean(trips, (trip) => trip.score_safety ?? trip.safety_score),
     smoothnessScore: weightedMean(trips, (trip) => trip.score_smoothness ?? trip.smoothness_score),
-    ecoScore: weightedMean(trips, (trip) => trip.score_eco ?? trip.eco_driving_score),
     brakingEfficiency: averageField(trips, ['braking_efficiency_score']),
     corneringConsistency: averageField(trips, ['cornering_consistency_score']),
     speedCompliance: averageField(trips, ['overall_compliance_score', 'speed_compliance_score']),
@@ -209,7 +206,6 @@ export function progressionStats(trips = []) {
       speed: trips.filter((trip) => (trip.overall_compliance_score ?? trip.speed_compliance_score) != null).length,
       consistency: trips.filter((trip) => trip.score_overall != null).length,
       focus: phoneMeasured.length,
-      eco: trips.filter((trip) => (trip.score_eco ?? trip.eco_driving_score) != null).length,
     },
   };
 }
@@ -293,13 +289,6 @@ const TRACK_DEFINITIONS = [
         requirement('severe', 'High-confidence phone events', stats.trips.reduce((sum, trip) => sum + number(trip.phone_use_high_confidence_count), 0), tierIndex < 2 ? 1 : 0, 'max', 'events'),
       ];
     },
-  },
-  {
-    id: 'eco', label: 'Eco Efficiency', icon: 'eco', accent: 'lime',
-    description: 'Efficient, smooth driving demonstrated across sustained distance.',
-    metric: (stats) => stats.ecoScore,
-    rate: (stats) => stats.eventRates.acceleration,
-    metricLabel: 'eco score',
   },
 ];
 
@@ -927,10 +916,13 @@ export function processDriverProgressionAfterTrip(trips = [], settings = {}, opt
     progression,
     ledger: secondSync.ledger,
     newUnlocks,
-    notificationBadges: newUnlocks.map((unlock) => ({
-      id: `progression_${unlock.id}`,
-      label: unlock.title,
-      description: `${unlock.detail}. +${unlock.xp} XP`,
+    // Include every persisted unlock so notification delivery can recover after
+    // a denied permission or scheduling failure. The notification service owns
+    // the durable delivered-ID dedupe, so already-sent milestones remain quiet.
+    notificationBadges: secondSync.ledger.xpTransactions.map((transaction) => ({
+      id: `progression_${transaction.sourceId}`,
+      label: transaction.title,
+      description: `${transaction.detail}. +${transaction.amount} XP`,
       earned: true,
     })),
   };

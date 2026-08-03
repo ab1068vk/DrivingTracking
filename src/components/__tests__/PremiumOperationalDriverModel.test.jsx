@@ -66,14 +66,13 @@ describe('PremiumOperationalDriverModel', () => {
     expect(model.signals.map(({ label, percent }) => [label, percent])).toEqual([
       ['Aggression', 10],
       ['Smoothness', 78],
-      ['Eco', 64],
       ['Speed tolerance', 42],
       ['Consistency', 91],
     ]);
-    expect(model.radarPoints.split(' ')).toHaveLength(5);
+    expect(model.radarPoints.split(' ')).toHaveLength(4);
   });
 
-  it('renders the cinematic hero, five accessible signals, and three distinct illustrated cards', () => {
+  it('renders the cinematic hero, four accessible signals, and three distinct illustrated cards', () => {
     const html = renderToStaticMarkup(
       <PremiumOperationalDriverModel
         bestTime={{ id: 'evening', label: 'Evening', trips: 21, avgScore: 65 }}
@@ -94,12 +93,11 @@ describe('PremiumOperationalDriverModel', () => {
     expect(html).toContain('premium-operational-icon-brain-v1.png');
     expect(html).toContain('premium-operational-icon-aggression-v1.png');
     expect(html).toContain('premium-operational-icon-smoothness-v1.png');
-    expect(html).toContain('premium-operational-icon-eco-v1.png');
     expect(html).toContain('premium-operational-icon-speed-v1.png');
     expect(html).toContain('premium-operational-icon-consistency-v1.png');
     expect(html).toContain('premium-operational-icon-braking-v1.png');
     expect(html).toContain('premium-operational-icon-fatigue-v1.png');
-    expect(html.match(/class="premium-operational-signal /g)).toHaveLength(5);
+    expect(html.match(/class="premium-operational-signal /g)).toHaveLength(4);
     expect(html.match(/class="premium-operational-insight"/g)).toHaveLength(3);
     expect(html).toContain('Driver signal radar. Aggression: 10 percent');
     expect(html).toContain('<title>Aggression: 10%</title>');
@@ -198,7 +196,7 @@ describe('PremiumOperationalDriverModel', () => {
     });
 
     expect(model.tripCount).toBe(999999);
-    expect(model.signals.map((signal) => signal.percent)).toEqual([0, 100, null, 56, null]);
+    expect(model.signals.map((signal) => signal.percent)).toEqual([0, 100, 56, null]);
     expect(model.fatigue.title).toBe('Performance change estimated near 0 minutes');
     expect(model.radarPoints).not.toContain('NaN');
   });

@@ -42,6 +42,19 @@ describe('data rights exports and erasure manifest', () => {
       ZONE_STATS_KEY,
       TRANSMISSION_LOG_KEY,
       SPEED_KNOWLEDGE_STORAGE_KEY,
+      'drivesense_system_logs_v1',
+      'drivesense_tracking_diagnostics',
+      'drivesense_danger_zones',
+      'drivesense_route_risk_index',
+      'drivesense_map_matching_cache_v2',
+      'drivesense_osm_speed_limit_cache_v2',
+      'drivesense_open_meteo_weather_cache_v1',
+      'road_sage_calibration_labels',
+      'road_sage_calibration_survey_markers',
+      'drivesense_coach_programs_v1',
+      'drivesense_driver_progression_ledger_v1',
+      'drivesense_parking_learning_v1',
+      'roadsage_pending_post_drive_review_v1',
     ].forEach((key) => {
       expect(keys).toContain(key);
     });

@@ -109,7 +109,7 @@ export function ScoreMovementPanel({ analysis }) {
         eyebrow={analysis.comparisonAvailable ? 'What changed' : 'Stored score evidence'}
         title={analysis.comparisonAvailable ? 'Headline score movement' : 'Headline score components'}
         description={analysis.comparisonAvailable
-          ? 'Estimated component effects use the active scoring blend and comparable distance. Eco remains separately reported.'
+          ? 'Estimated component effects use the active scoring blend and comparable distance.'
           : 'Current stored component values remain useful even when a protected historical comparison is unavailable.'}
         icon={BarChart3}
       />

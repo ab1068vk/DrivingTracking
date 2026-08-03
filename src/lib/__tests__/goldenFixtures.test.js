@@ -16,7 +16,6 @@ const SCORE_KEYS = [
   'score_overall',
   'score_safety',
   'score_smoothness',
-  'score_eco',
   'score_confidence_label',
   'harsh_brakes_count',
   'rapid_accel_count',

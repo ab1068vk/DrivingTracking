@@ -15,6 +15,9 @@ const inNodeModule = (id, packageName) => (
 )
 
 export default defineConfig({
+  worker: {
+    format: 'es',
+  },
   plugins: [
     react(),
     buildIntegrityVitePlugin(),

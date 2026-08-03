@@ -2,7 +2,7 @@ import { isAndroid } from '@/lib/nativePlatform';
 import { requestActivityRecognitionPermission } from '@/lib/permissions';
 import { haversineDistance } from '@/lib/tripEngine';
 import ActivityRecognition from '@/lib/driveSenseNativePlugin';
-import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
+import { logSystemFailure, recordSystemEvent, recordSystemLog } from '@/lib/systemLog';
 
 const UNKNOWN_GPS_STABLE_M = 8;
 const PARKED_GPS_DRIFT_M = 20;
@@ -15,6 +15,67 @@ export const AUTO_START_IN_VEHICLE_SECONDS = 2;
 export const AUTO_START_GPS_FALLBACK_SECONDS = 2;
 export const WALKING_SPEED_CUTOFF_KMH = 10;
 const SETTINGS_KEY = 'drivesense_settings';
+const NATIVE_WATCHDOG_SYNC_KEY = 'roadsage_native_watchdog_synced_v1';
+
+const nativeWatchdogCategory = (event = {}) => {
+  const type = String(event.type || '');
+  if (type === 'android_process_exit') {
+    return /^(anr|crash|native_crash|low_memory|excessive_resource_usage|initialization_failure)$/i
+      .test(String(event.reason_label || '')) ? 'failure' : 'diagnostics';
+  }
+  return /(stall|anr|crash|memory|pressure)/i.test(type) ? 'failure' : 'diagnostics';
+};
+
+const syncNativeWatchdogEvents = (events = []) => {
+  if (typeof localStorage === 'undefined') return;
+  let seen = [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(NATIVE_WATCHDOG_SYNC_KEY) || '[]');
+    seen = Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {}
+  const seenSet = new Set(seen);
+  const watchdogEvents = (Array.isArray(events) ? events : [])
+    .filter((event) => String(event?.type || '').startsWith('android_'))
+    .sort((a, b) => new Date(a?.timestamp || 0).getTime() - new Date(b?.timestamp || 0).getTime());
+  watchdogEvents.forEach((event) => {
+    const id = String(event.id || `${event.type}:${event.timestamp || ''}`);
+    if (seenSet.has(id)) return;
+    seenSet.add(id);
+    recordSystemLog({
+      timestamp: event.timestamp,
+      operation: event.type,
+      category: nativeWatchdogCategory(event),
+      source: 'android_watchdog',
+      title: event.title || 'Android app experience event',
+      details: {
+        duration_ms: event.duration_ms,
+        reason_code: event.reason_code,
+        reason_label: event.reason_label,
+        trim_level: event.trim_level,
+        critical: event.critical,
+        memory_available_bytes: event.memory_available_bytes,
+        memory_total_bytes: event.memory_total_bytes,
+        memory_low: event.memory_low,
+        heap_used_bytes: event.heap_used_bytes,
+        heap_max_bytes: event.heap_max_bytes,
+        pss_kb: event.pss_kb,
+        rss_kb: event.rss_kb,
+        storage_usable_bytes: event.storage_usable_bytes,
+        storage_total_bytes: event.storage_total_bytes,
+        storage_low: event.storage_low,
+        thermal_status: event.thermal_status,
+        thermal_label: event.thermal_label,
+        thermal_high: event.thermal_high,
+        battery_temperature_c: event.battery_temperature_c,
+        last_heartbeat_age_ms: event.last_heartbeat_age_ms,
+        last_operation: event.last_operation,
+      },
+    });
+  });
+  try {
+    localStorage.setItem(NATIVE_WATCHDOG_SYNC_KEY, JSON.stringify([...seenSet].slice(-250)));
+  } catch {}
+};
 
 export const ACTIVITY_TYPES = {
   IN_VEHICLE: 'in_vehicle',
@@ -322,12 +383,14 @@ export async function getNativeAutoTrackingStatus() {
 }
 
 export async function getNativeDiagnostics() {
-  if (!isAndroid()) return { enabled: false, events: [] };
+  if (!isAndroid()) return { enabled: false, events: [], watchdog: null };
   try {
     const result = await ActivityRecognition.getNativeDiagnostics();
+    syncNativeWatchdogEvents(result?.events);
     return {
       enabled: result?.enabled === true,
       events: Array.isArray(result?.events) ? result.events : [],
+      watchdog: result?.watchdog && typeof result.watchdog === 'object' ? result.watchdog : null,
     };
   } catch (error) {
     logSystemFailure('android_native_diagnostics_load', error);
@@ -432,12 +495,53 @@ export async function getNativeCompletedTrips() {
   try {
     const result = await ActivityRecognition.getNativeCompletedTrips();
     const trips = Array.isArray(result?.trips) ? result.trips : [];
+    const queueReadable = result?.queueStatus?.queueReadable;
     recordSystemEvent('android_native_completed_trips_loaded', {
       trip_count: trips.length,
-    }, { category: 'background', source: 'android', title: 'Native completed trips loaded' });
+      queue_readable: queueReadable !== false,
+      unreadable_count: Math.max(0, Number(result?.queueStatus?.unreadableCount) || 0),
+      encrypted_bytes: Math.max(0, Number(result?.queueStatus?.encryptedBytes) || 0),
+    }, {
+      category: 'background',
+      source: 'android',
+      severity: queueReadable === false ? 'warn' : 'info',
+      title: queueReadable === false
+        ? 'Native trip recovery queue needs attention'
+        : 'Native completed trips loaded',
+    });
     return trips;
   } catch (error) {
     logSystemFailure('android_native_completed_trips_load', error);
+    throw error;
+  }
+}
+
+export async function acknowledgeNativeCompletedTrips(tripIds = []) {
+  if (!isAndroid()) return { success: true, requested: 0, removed: 0, missingTripIds: [] };
+  const normalizedIds = [...new Set(
+    (Array.isArray(tripIds) ? tripIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+  )];
+  if (!normalizedIds.length) return { success: true, requested: 0, removed: 0, missingTripIds: [] };
+  try {
+    const result = await ActivityRecognition.acknowledgeNativeCompletedTrips({ tripIds: normalizedIds });
+    recordSystemEvent('android_native_completed_trips_acknowledged', {
+      requested_count: normalizedIds.length,
+      removed_count: Number(result?.removed) || 0,
+      missing_count: Array.isArray(result?.missingTripIds) ? result.missingTripIds.length : 0,
+      success: result?.success === true,
+    }, {
+      category: 'background',
+      source: 'android',
+      severity: result?.success === true ? 'info' : 'warn',
+      title: 'Native completed trips acknowledged',
+    });
+    return result;
+  } catch (error) {
+    logSystemFailure('android_native_completed_trips_acknowledge', error, {
+      requested_count: normalizedIds.length,
+    });
     throw error;
   }
 }
@@ -468,6 +572,16 @@ export async function clearNativeActiveTripCheckpoint() {
     });
   } catch (error) {
     logSystemFailure('android_native_active_trip_checkpoint_clear', error);
+    throw error;
+  }
+}
+
+export async function eraseNativeLocalDataForDataRights() {
+  if (!isAndroid()) return { erased: false };
+  try {
+    return await ActivityRecognition.eraseNativeLocalData();
+  } catch (error) {
+    logSystemFailure('android_native_local_data_erasure', error);
     throw error;
   }
 }

@@ -5,11 +5,10 @@ import { useQuery } from '@tanstack/react-query';
 import confetti from 'canvas-confetti';
 import {
   Activity, Award, BadgeCheck, Brain, CalendarClock, CarFront, Check, ChevronRight,
-  CircleGauge, Gauge, History, Leaf, LockKeyhole, Medal, Route, ShieldCheck,
+  CircleGauge, Gauge, History, LockKeyhole, Medal, Route, ShieldCheck,
   SlidersHorizontal, Sparkles, Target, TrendingDown, TrendingUp, Trophy, Zap,
 } from 'lucide-react';
 import { limitedTripSummaryQueryOptions, tripSummaryQueryOptions } from '@/api/trips';
-import { vehicleService } from '@/api/vehicles';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDistance } from '@/lib/tripEngine';
 import {
@@ -17,7 +16,6 @@ import {
   convertPerDistanceRate,
   distanceUnitLabel,
 } from '@/lib/unitFormatting';
-import { calculateAchievementBadges } from '@/lib/tripInsights';
 import {
   buildDriverProgression,
   acknowledgeDriverProgressionCelebration,
@@ -25,7 +23,6 @@ import {
   syncDriverProgressionLedger,
   updateDriverProgressionMissionSelection,
 } from '@/lib/driverProgression';
-import { syncAchievementNotifications } from '@/lib/notificationService';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import InlineLoadError from '@/components/InlineLoadError';
 import { PageEmptyState, PageHeader } from '@/components/PageChrome';
@@ -41,7 +38,6 @@ const TRACK_ICONS = {
   speed: Gauge,
   consistency: Activity,
   focus: Brain,
-  eco: Leaf,
 };
 
 const TIER_COLORS = {
@@ -317,35 +313,15 @@ export default function Achievements() {
   });
   const completed = fullHistoryCompleted.length > 0 ? fullHistoryCompleted : recentCompleted;
   const isFetching = recentFetching || fullHistoryFetching;
-  const { data: vehicles = [] } = useQuery({
-    queryKey: ['achievement-vehicles'], queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
-  });
-
   const progression = useMemo(
     () => buildDriverProgression(completed, settings, { ledger }),
     [completed, settings, ledger]
-  );
-  const notificationBadges = useMemo(
-    () => calculateAchievementBadges(completed, settings, vehicles),
-    [completed, settings, vehicles]
   );
 
   useEffect(() => {
     const result = syncDriverProgressionLedger(progression, ledger);
     if (result.changed) setLedger(result.ledger);
-    if (result.newUnlocks.length > 0) {
-      syncAchievementNotifications(result.newUnlocks.map((unlock) => ({
-        id: `progression_${unlock.id}`,
-        label: unlock.title,
-        description: `${unlock.detail}. +${unlock.xp} XP`,
-        earned: true,
-      })), { requestPermission: false }).catch(() => {});
-    }
   }, [progression, ledger]);
-
-  useEffect(() => {
-    syncAchievementNotifications(notificationBadges, { requestPermission: false }).catch(() => {});
-  }, [notificationBadges]);
 
   useEffect(() => {
     if (!progression.pendingCelebration || reduceMotion) return;

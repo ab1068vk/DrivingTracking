@@ -221,7 +221,6 @@ export function buildScoreOutputSummary(trip = {}) {
     overall: numberOrNull(trip.score_overall),
     safety: numberOrNull(trip.score_safety),
     smoothness: numberOrNull(trip.score_smoothness),
-    eco: numberOrNull(trip.score_eco),
     confidence: trip.score_confidence_label || trip.component_scores?.overall?.evidence || null,
     calibrationStatus: trip.score_provenance?.calibration_status || null,
   };

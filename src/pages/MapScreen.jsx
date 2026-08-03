@@ -3,12 +3,24 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { tripDetailQueryOptions, tripQueryKeys, tripSummaryQueryOptions } from '@/api/trips';
-import { MapPin, Crosshair, Car, AlertCircle, Play, Filter, Gauge, Layers, ChevronLeft, ChevronRight, Shield } from 'lucide-react';
+import {
+  AlertCircle,
+  Car,
+  ChevronLeft,
+  ChevronRight,
+  Crosshair,
+  Filter,
+  Gauge,
+  Layers,
+  MapPin,
+  Play,
+  Shield,
+} from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
 import { formatDistance, formatDate, getScoreColor, getTripComponentScore, prefetchLocalKnowledge } from '@/lib/tripEngine';
 import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
-import { getLastParkedLocation, localSettings, saveLastParkedLocation } from '@/lib/trackingStore';
+import { localSettings } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
 import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
@@ -24,10 +36,11 @@ import {
   isRoadDataLookupConfigured,
 } from '@/lib/openSourceTripContext';
 import { runRoadContextRefresh } from '@/lib/roadContextQueue';
-import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
+import {
+  getPrivacyZones,
+  isPointInPrivacyZone,
+} from '@/lib/privacyZones';
 import { MAX_VISIBLE_DANGER_ZONES } from '@/lib/appConstants';
-import { pinnedFetch } from '@/lib/pinnedFetch';
-import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { TRIAGE_DISABLE_MAPS } from '@/lib/performanceTriage';
 import InlineLoadError from '@/components/InlineLoadError';
@@ -114,8 +127,6 @@ export default function MapScreen() {
   const [locError, setLocError] = useState(null);
   const [mapFilter, setMapFilter] = useState('all');
   const [playbackMode, setPlaybackMode] = useState(false);
-  const [parkedLocation, setParkedLocation] = useState(null);
-  const [parkingError, setParkingError] = useState(null);
   const [secondaryTripId, setSecondaryTripId] = useState('');
   const [dangerZones, setDangerZones] = useState([]);
   const [dangerZonesReady, setDangerZonesReady] = useState(false);
@@ -305,7 +316,6 @@ export default function MapScreen() {
     ? visibleDangerZones
     : visibleDangerZones.slice(0, MAX_VISIBLE_DANGER_ZONES);
   const hiddenDangerZoneCount = visibleDangerZones.length - displayedDangerZones.length;
-  const parkedLocationIsPrivate = parkedLocation && isPointInPrivacyZone(parkedLocation, privacyZones);
   const commuteRouteCounts = useMemo(() => {
     const counts = new Map();
     allCompleted.forEach((trip) => {
@@ -449,33 +459,6 @@ export default function MapScreen() {
     };
   }, [overlaySourceTrips, privacyZones, privacyZonesKey]);
 
-  const handleWhereParked = async () => {
-    const stored = await getLastParkedLocation();
-    if (!stored) {
-      setParkingError('No parked location saved yet.');
-      return;
-    }
-
-    let next = stored;
-    if (!stored.address && !isHeightenedPrivacyMode(settings)) {
-      try {
-        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(stored.lat)}&lon=${encodeURIComponent(stored.lng)}`;
-        const response = await pinnedFetch(url, { headers: { Accept: 'application/json' } });
-        if (response.ok) {
-          const data = await response.json();
-          next = { ...stored, address: data.display_name || `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
-          await saveLastParkedLocation(next);
-        }
-      } catch {
-        next = { ...stored, address: `${stored.lat.toFixed(5)}, ${stored.lng.toFixed(5)}` };
-      }
-    }
-
-    setParkedLocation(next);
-    setParkingError(null);
-    setPlaybackMode(false);
-  };
-
   return (
     <div className="space-y-5 pb-4">
       <div className="app-page-header">
@@ -575,7 +558,6 @@ export default function MapScreen() {
               events={selectedEvents}
               showCurrentLocation={showCurrentLoc}
               currentLocation={currentLocation}
-              parkedLocation={parkedLocation}
               showDangerZones={showDangerZones}
               dangerZones={visibleDangerZones}
               showRouteRisk={showRouteRisk && Boolean(selectedTrip)}
@@ -605,23 +587,8 @@ export default function MapScreen() {
                 title="Show my location">
                 <Crosshair className="w-4 h-4 text-primary" />
               </button>
-              <button onClick={handleWhereParked}
-                className="w-10 h-10 bg-card rounded-xl border border-border shadow flex items-center justify-center hover:bg-secondary transition-colors"
-                title="Where did I park?">
-                <Car className="w-4 h-4 text-orange-500" />
-              </button>
             </div>
-            {parkedLocation && (
-              <div className="absolute bottom-3 left-3 right-3 z-10 rounded-2xl border border-border bg-card p-3 text-xs shadow">
-                <div className="font-semibold text-foreground">📍 Parked here · {relativeTime(parkedLocation.timestamp)}</div>
-                <div className="mt-1 line-clamp-2 text-muted-foreground">
-                  {parkedLocationIsPrivate
-                    ? 'Inside privacy zone'
-                    : parkedLocation.address || `${parkedLocation.lat.toFixed(5)}, ${parkedLocation.lng.toFixed(5)}`}
-                </div>
-              </div>
-            )}
-            {privacyZones.length > 0 && !parkedLocation && (
+            {privacyZones.length > 0 && (
               <button
                 type="button"
                 onClick={() => navigate('/privacy-intelligence')}
@@ -660,10 +627,10 @@ export default function MapScreen() {
           </div>
         )}
 
-        {(locError || parkingError) && (
+        {locError && (
           <div className="flex items-center gap-2 mt-2 text-xs text-red-500">
             <AlertCircle className="w-3.5 h-3.5" />
-            {locError || parkingError}
+            {locError}
           </div>
         )}
       </div>
@@ -798,10 +765,9 @@ export default function MapScreen() {
           {selectedTrip && (
             <div className="mt-3 rounded-2xl bg-secondary/40 p-3 text-xs text-muted-foreground">
               <div className="font-semibold text-foreground">Get Road Data, in plain words</div>
-              <div className="mt-1">Runs only the enabled online lookups for this selected trip. Privacy-zone coordinates are excluded before anything leaves the app.</div>
+              <div className="mt-1">Runs only enabled OpenStreetMap and approved OSRM lookups for this selected trip. Weather never runs here. Privacy-zone coordinates are excluded before anything leaves the app.</div>
               <div className="mt-2 grid gap-1">
                 <div>Speed limits {settings.speed_limit_lookup_enabled === false ? 'OFF' : 'ON'}: {settings.speed_limit_lookup_enabled === false ? 'OpenStreetMap speed-limit lookup is skipped; route colors use GPS bands or any speed-limit data already saved on the trip.' : 'sends privacy-filtered public road boxes to OpenStreetMap for posted maxspeed; missing tags may use labeled estimates.'}</div>
-                <div>Weather {settings.weather_context_enabled === false ? 'OFF' : 'ON'}: {settings.weather_context_enabled === false ? 'Open-Meteo is skipped; scores get no weather adjustment.' : 'sends one privacy-safe route point and trip date to Open-Meteo.'}</div>
                 <div>Snap to roads {settings.map_matching_enabled === false ? 'OFF' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'ON' : 'NEEDS CONSENT'}: {settings.map_matching_enabled === false ? 'OSRM is skipped; map/playback keep GPS shape.' : settings.osrm_map_matching_url && settings.osrm_data_sharing_consented === true ? 'sends sampled public GPS segments to your OSRM endpoint.' : 'OSRM is skipped until a trusted endpoint and consent are saved in Settings.'}</div>
               </div>
               <div className="mt-2 rounded-xl bg-background/60 px-3 py-2 font-medium text-foreground">

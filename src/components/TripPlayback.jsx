@@ -21,11 +21,11 @@ import useLocalSettings from '@/hooks/useLocalSettings';
 import usePrivacyZonesRevision from '@/hooks/usePrivacyZonesRevision';
 import { convertSpeedKmh, speedUnitLabel } from '@/lib/unitFormatting';
 import usePlaybackScreenAwake from '@/hooks/usePlaybackScreenAwake';
+import { configuredMapCenter, DEFAULT_MAP_CENTER } from '@/lib/mapDefaults';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 const DEFAULT_MAP_ZOOM = 13;
-const DEFAULT_MAP_CENTER = { lat: 43.6532, lng: -79.3832 };
 const DEVICE_LOCATION_TIMEOUT_MS = 1800;
 
 const EVENT_COLORS = {
@@ -150,7 +150,7 @@ const settingMapCenter = (value) => (
 );
 
 const envDefaultMapCenter = () => (
-  validLatLng(import.meta.env.VITE_DEFAULT_MAP_LAT, import.meta.env.VITE_DEFAULT_MAP_LNG)
+  configuredMapCenter()
 );
 
 const getDeviceMapCenter = async () => {

@@ -61,12 +61,15 @@ describe('keyRotationManager', () => {
       lastRotated: 1000,
     });
     const now = 1000 + (31 * 24 * 60 * 60 * 1000);
-    const { checkAndRotateEncryptionKey } = await import('@/lib/keyRotationManager');
+    const {
+      checkAndRotateEncryptionKey,
+      ROTATING_ENCRYPTED_JSON_KEYS,
+    } = await import('@/lib/keyRotationManager');
     const result = await checkAndRotateEncryptionKey({ now });
 
     expect(ensureEncryptionKeyVersion).toHaveBeenCalledWith(2);
     expect(rotateTripEncryptionKey).toHaveBeenCalledWith(2);
-    expect(rotateEncryptedJsonKey).toHaveBeenCalledTimes(5);
+    expect(rotateEncryptedJsonKey).toHaveBeenCalledTimes(ROTATING_ENCRYPTED_JSON_KEYS.length);
     expect(deleteEncryptionKeyVersion).toHaveBeenCalledWith(1);
     expect(storage.get('drivesense_encryption_key_meta')).toEqual({
       version: 2,
@@ -76,7 +79,7 @@ describe('keyRotationManager', () => {
       rotated: true,
       previousVersion: 1,
       version: 2,
-      encryptedJsonValuesRotated: 5,
+      encryptedJsonValuesRotated: ROTATING_ENCRYPTED_JSON_KEYS.length,
     });
     expect(recordSystemEvent).toHaveBeenCalledWith(
       'encryption_key_rotated',

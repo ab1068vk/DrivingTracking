@@ -3,10 +3,10 @@
     android:description="@string/where_i_parked_widget_description"
     android:initialLayout="@layout/widget_where_i_parked"
     android:minWidth="250dp"
-    android:minHeight="120dp"
+    android:minHeight="180dp"
     android:previewLayout="@layout/widget_where_i_parked"
     android:resizeMode="horizontal|vertical"
     android:targetCellWidth="4"
-    android:targetCellHeight="2"
+    android:targetCellHeight="3"
     android:updatePeriodMillis="1800000"
     android:widgetCategory="home_screen" />

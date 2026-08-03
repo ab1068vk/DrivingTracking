@@ -9,7 +9,6 @@ const COMPONENTS = [
   { id: 'safety', label: 'Safety', field: 'score_safety', weight: 'safety' },
   { id: 'smoothness', label: 'Smoothness', field: 'score_smoothness', weight: 'smoothness' },
   { id: 'intersection', label: 'Intersection approach', field: 'intersection_score', weight: 'intersection' },
-  { id: 'eco', label: 'Eco estimate', field: 'score_eco', weight: 'eco' },
 ];
 const EVENT_FIELDS = ['harsh_brakes_count', 'rapid_accel_count', 'sharp_turns_count', 'speeding_events_count'];
 const num = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
@@ -400,7 +399,7 @@ export function answerDriveQuestion(question, analysis, intelligence) {
   } else if (query.includes('phone')) {
     const phone = analysis.phoneUseSummary;
     title = 'Phone-use evidence';
-    answer = `${phone.totalWindows || 0} confirmed phone-use windows were recorded across ${phone.measuredTrips || 0} measured trips. Coverage is ${phone.coveragePct || 0}%, and the recent trend is ${phone.trendDirection || 'unavailable'}.`;
+    answer = `${phone.totalWindows || 0} moving foreground-app windows were recorded across ${phone.measuredTrips || 0} measured trips. Coverage is ${phone.coveragePct || 0}%, and the recent trend is ${phone.trendDirection || 'unavailable'}.`;
     if (phone.latestPhoneUseTrip?.tripId) citations.push({ tripId: phone.latestPhoneUseTrip.tripId, label: 'Latest confirmed use' });
   } else if (query.includes('improv') || query.includes('better') || query.includes('worse')) {
     const matched = intelligence.matched;

@@ -1,4 +1,8 @@
-import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import {
+  getEncryptedJson,
+  removeEncryptedJson,
+  setEncryptedJson,
+} from '@/lib/securePayloadCrypto';
 import { withRetry } from '@/lib/retry';
 import { boundsOverlapPrivacyZone, getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
 import { privacyGatedFetch } from '@/lib/privacyGatedFetch';
@@ -6,7 +10,7 @@ import { enqueueLocationRequest } from '@/lib/requestObfuscator';
 import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 import { normalizeHttpsEndpoint } from '@/lib/urlSecurity';
 
-const SPEED_LIMIT_CACHE_KEY = 'drivesense_osm_speed_limit_cache_v2';
+export const SPEED_LIMIT_CACHE_KEY = 'drivesense_osm_speed_limit_cache_v2';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const FALLBACK_OVERPASS_URLS = [
   'https://overpass.kumi.systems/api/interpreter',
@@ -184,6 +188,7 @@ export function tierForSource(source) {
       return 'POSTED';
     case 'user_entered_estimate':
     case 'learned_local':
+    case 'local_road_memory':
       return 'LEARNED_LOCAL';
     case 'osm_highway_default':
       return 'MAP_ESTIMATED';
@@ -197,14 +202,19 @@ export function tierForSource(source) {
 }
 
 export function confidenceForSource(source, learnedLocalConfidence = null) {
+  const explicitConfidence = learnedLocalConfidence == null
+    ? null
+    : Number(learnedLocalConfidence);
+  const hasExplicitConfidence = Number.isFinite(explicitConfidence);
   switch (canonicalSpeedSource(source)) {
     case 'openstreetmap':
       return 1.0;
     case 'user_confirmed_posted_sign':
-      return 0.92;
+      return hasExplicitConfidence ? explicitConfidence : 0.92;
     case 'user_entered_estimate':
-      return 0.75;
+      return hasExplicitConfidence ? explicitConfidence : 0.75;
     case 'learned_local':
+    case 'local_road_memory':
       return learnedLocalConfidence ?? 0.65;
     case 'osm_highway_default':
       return 0.70;
@@ -313,7 +323,17 @@ export function resolveSpeedLimitWithTier(point, context = {}) {
   const storedSource = point?.speed_limit_source;
 
   if (localKnowledge?.source === 'user_confirmed_posted_sign' && Number(localKnowledge.limitKmh) > 0) {
-    return tier('POSTED', Number(localKnowledge.limitKmh), 0.92, 'user_confirmed_posted_sign', baseMargin);
+    const confidence = Number.isFinite(Number(localKnowledge.confidence))
+      ? Number(localKnowledge.confidence)
+      : 0.92;
+    return tier('POSTED', Number(localKnowledge.limitKmh), confidence, 'user_confirmed_posted_sign', baseMargin);
+  }
+
+  // A fresh mapped maxspeed is higher authority than a local estimate. A
+  // user-confirmed sign is handled above; lower-authority local knowledge is
+  // considered before map/region/GPS defaults below.
+  if (storedSource === 'openstreetmap' && storedLimit > 0) {
+    return tier('POSTED', storedLimit, 1.0, 'openstreetmap', baseMargin);
   }
 
   if (
@@ -326,10 +346,6 @@ export function resolveSpeedLimitWithTier(point, context = {}) {
       ? 'user_entered_estimate'
       : 'learned_local';
     return tier('LEARNED_LOCAL', Number(localKnowledge.limitKmh), confidence, source, baseMargin);
-  }
-
-  if (storedSource === 'openstreetmap' && storedLimit > 0) {
-    return tier('POSTED', storedLimit, 1.0, 'openstreetmap', baseMargin);
   }
 
   if (storedSource === 'osm_highway_default' && storedLimit > 0) {
@@ -496,7 +512,7 @@ export function parseMaxspeedKmh(value) {
 }
 
 export async function clearOsmSpeedLimitCache() {
-  await removeJson(SPEED_LIMIT_CACHE_KEY);
+  await removeEncryptedJson(SPEED_LIMIT_CACHE_KEY);
 }
 
 function isInsidePrivacyGuard(point, zones = []) {
@@ -898,7 +914,7 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
     return { ways: [], status: 'bbox_too_large', source: 'openstreetmap_overpass' };
   }
 
-  const cache = await getJson(SPEED_LIMIT_CACHE_KEY, {});
+  const cache = await getEncryptedJson(SPEED_LIMIT_CACHE_KEY, {});
   const nextCache = { ...cache };
   const span = bboxSpan(bounds);
   const queryPlan = privacyZones.length
@@ -931,7 +947,7 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
   }
 
   const results = await Promise.all(queryBounds.map((item) => loadCachedWaysForBounds(item, settings, cache, nextCache)));
-  await setJson(SPEED_LIMIT_CACHE_KEY, nextCache);
+  await setEncryptedJson(SPEED_LIMIT_CACHE_KEY, nextCache);
 
   const ways = uniqueBy(results.flatMap((result) => result.ways), (way) => `${way.id}:${way.limitKmh}`);
   const failures = results.filter((result) => result.status === 'unavailable');

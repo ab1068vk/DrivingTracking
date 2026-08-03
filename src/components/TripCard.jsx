@@ -5,6 +5,7 @@ import {
   buildScoreExplanation,
   getTripDisplayName,
   getTripTagOption,
+  getTripWeatherBadge,
   normalizeTripTags,
 } from '@/lib/tripMetadata';
 import { useNavigate } from 'react-router-dom';
@@ -62,6 +63,10 @@ export default function TripCard({
   const lowScoreConfidence = ['low', 'unavailable'].includes(overallScore.evidence);
   const tags = normalizeTripTags(trip);
   const displayTags = trip.night_driving && !tags.includes('night') ? [...tags, 'night'] : tags;
+  const weatherBadge = getTripWeatherBadge(trip);
+  const cardTags = weatherBadge?.replacesTag
+    ? displayTags.filter((tag) => tag !== weatherBadge.replacesTag)
+    : displayTags;
   const title = getTripDisplayName(trip);
   const openTrip = () => navigate(`/trips/${trip.id}`);
   const confirmedPhoneUseEvents = [
@@ -114,17 +119,25 @@ export default function TripCard({
               {trip.notes && <span className="inline-flex items-center gap-1" title={trip.notes}><StickyNote className="h-3.5 w-3.5" />Note</span>}
             </div>
 
-            {(privateTrip || routeDataExpired || speedLimitReviewRequired || replay3dAvailable || displayTags.length > 0 || unavailableScore || phoneUsePermissionRequired || trip._dpApplied) && (
+            {(privateTrip || routeDataExpired || speedLimitReviewRequired || replay3dAvailable || cardTags.length > 0 || weatherBadge || unavailableScore || phoneUsePermissionRequired || trip._dpApplied) && (
               <div className="mt-2 flex min-h-6 flex-wrap items-center gap-1.5">
                 {privateTrip && <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-900 dark:text-slate-200"><ShieldAlert className="h-3 w-3" />Private</span>}
                 {routeDataExpired && !privateTrip && <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-950/30 dark:text-blue-300"><ShieldAlert className="h-3 w-3" />Summary only</span>}
                 {unavailableScore && <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Score unavailable</span>}
                 {phoneUsePermissionRequired && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">Phone signal off</span>}
                 {trip._dpApplied && <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">~ Privacy estimated</span>}
-                {displayTags.slice(0, 2).map((tagId) => {
+                {cardTags.slice(0, 2).map((tagId) => {
                   const option = getTripTagOption(tagId);
                   return <span key={tagId} className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${option?.className || 'border-border bg-secondary text-muted-foreground'}`}>{option?.label || tagId}</span>;
                 })}
+                {weatherBadge && (
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${weatherBadge.className}`}
+                    title={weatherBadge.title}
+                  >
+                    {weatherBadge.label}
+                  </span>
+                )}
                 {speedLimitReviewRequired && (
                   <button
                     type="button"
@@ -316,9 +329,9 @@ export default function TripCard({
             </button>
           )}
 
-          {displayTags.length > 0 && (
+          {(cardTags.length > 0 || weatherBadge) && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {displayTags.map((tagId) => {
+              {cardTags.map((tagId) => {
                 const option = getTripTagOption(tagId);
                 return (
                   <span key={tagId} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${option?.className || 'bg-secondary text-muted-foreground border-border'}`}>
@@ -327,6 +340,14 @@ export default function TripCard({
                   </span>
                 );
               })}
+              {weatherBadge && (
+                <span
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${weatherBadge.className}`}
+                  title={weatherBadge.title}
+                >
+                  {weatherBadge.label}
+                </span>
+              )}
             </div>
           )}
 
@@ -353,7 +374,7 @@ export default function TripCard({
                 </span>
               )}
               {confirmedPhoneUseCount > 0 && (
-                <span title={`${confirmedPhoneUseCount} confirmed phone-use window${confirmedPhoneUseCount > 1 ? 's' : ''}`} className="inline-flex items-center gap-1 text-xs bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/40 px-1.5 py-0.5 rounded-md">
+                <span title={`${confirmedPhoneUseCount} moving foreground-app window${confirmedPhoneUseCount > 1 ? 's' : ''}`} className="inline-flex items-center gap-1 text-xs bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/40 px-1.5 py-0.5 rounded-md">
                   <Smartphone className="w-3 h-3" /> {confirmedPhoneUseCount} phone
                 </span>
               )}

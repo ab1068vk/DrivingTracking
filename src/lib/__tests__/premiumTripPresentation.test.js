@@ -7,6 +7,7 @@ import {
   getPremiumTripScorePresentation,
   getPremiumTripSceneVariant,
   getPremiumTripTimePresentation,
+  getNightClassificationExplanation,
 } from '@/lib/premiumTripPresentation';
 
 describe('premium trip presentation', () => {
@@ -75,6 +76,46 @@ describe('premium trip presentation', () => {
       night_sunset_offset_minutes: 0,
       night_sunrise_offset_minutes: 0,
     })).toMatchObject({ period: 'night', label: 'Night Drive' });
+  });
+
+  it('explains saved solar and GPS-fallback decisions using trip-time context', () => {
+    expect(getNightClassificationExplanation({
+      night_driving: true,
+      night_classification: {
+        version: 1,
+        is_night: true,
+        mode: 'sunset',
+        method: 'sunset',
+        trip_started_in_night: true,
+        trip_start_local_time: '17:30',
+        decision_local_time: '17:30',
+        evening_event_local_time: '16:51',
+        morning_event_local_time: '07:51',
+        boundary_tolerance_minutes: 5,
+        timezone_id: 'America/Toronto',
+        utc_offset_minutes: -300,
+      },
+    })).toEqual({
+      headline: 'Night: sunset boundary reached',
+      detail: 'sunset was 4:51 PM; sunrise was 7:51 AM; trip started at 5:30 PM. A 5-minute boundary buffer was applied.',
+      timezone: 'America/Toronto · UTC-05:00 at trip time',
+    });
+
+    expect(getNightClassificationExplanation({
+      night_driving: false,
+      night_classification: {
+        version: 1,
+        is_night: false,
+        mode: 'civil_twilight',
+        method: 'custom_fallback',
+        custom_start_time: '22:00',
+        custom_end_time: '05:00',
+        fallback_reason: 'gps_coordinates_unavailable',
+      },
+    })).toMatchObject({
+      headline: 'Day determined with the custom fallback',
+      detail: 'Road Sage used 10:00 PM–5:00 AM because usable GPS coordinates were unavailable.',
+    });
   });
 
   it.each([

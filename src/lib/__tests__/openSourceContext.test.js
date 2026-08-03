@@ -5,6 +5,7 @@ import {
   buildOpenSourceTripContextPatch,
   buildRoadDataDisabledMessage,
   buildRoadContextPrivacyMessage,
+  buildWeatherContextPrivacyMessage,
   describeMapMatchingStatus,
   describeOsmSpeedLimitStatus,
   isExternalContextAutoFetchEnabled,
@@ -13,7 +14,12 @@ import {
   PUBLIC_OSRM_DEMO_URL,
 } from '@/lib/openSourceTripContext';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
-import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
+import {
+  applyWeatherRiskToScores,
+  buildUserConfirmedWeatherContext,
+  classifyWeatherSamples,
+  fetchWeatherContextForTrip,
+} from '@/lib/weatherContext';
 import { createPrivacyCellHashes, maskTripForPrivacy } from '@/lib/privacyZones';
 
 describe('open-source trip context', () => {
@@ -69,7 +75,8 @@ describe('open-source trip context', () => {
       osrm_data_sharing_consented: true,
     });
     expect(message).toContain('OpenStreetMap');
-    expect(message).toContain('Open-Meteo');
+    expect(message).not.toContain('send one privacy-safe route point');
+    expect(message).toContain('Open-Meteo weather is separate and will not run');
     expect(message).toContain('Snap route to roads');
     expect(message).not.toContain('allowed for OSRM');
   });
@@ -84,6 +91,10 @@ describe('open-source trip context', () => {
     };
 
     expect(isRoadDataLookupConfigured(settings)).toBe(false);
+    expect(isRoadDataLookupConfigured({
+      ...settings,
+      weather_context_enabled: true,
+    })).toBe(false);
     expect(buildRoadDataDisabledMessage(settings)).toContain('Nothing to get right now');
     expect(buildRoadDataDisabledMessage(settings)).toContain('Settings > Speed & Road Data');
     expect(isRoadDataLookupConfigured({
@@ -134,6 +145,91 @@ describe('open-source trip context', () => {
     expect(adjusted.component_scores.overall.value).toBe(adjusted.score_overall);
     expect(adjusted.component_scores.overall.dataSource).toContain('open_meteo_weather');
     expect(adjusted.weather_context.source).toBe('open_meteo');
+  });
+
+  it('treats thunderstorms as high risk instead of clear low-risk weather', () => {
+    const context = classifyWeatherSamples([{
+      temperature_2m: 18,
+      precipitation: 0,
+      rain: 0,
+      snowfall: 0,
+      weather_code: 95,
+      visibility: 10000,
+      wind_speed_10m: 25,
+      wind_gusts_10m: 45,
+    }]);
+
+    expect(context).toMatchObject({
+      condition: 'storm',
+      riskLevel: 'high',
+      riskScore: 70,
+      riskMultiplier: 1.45,
+    });
+  });
+
+  it('uses per-sample freezing precipitation and strong wind in weather risk', () => {
+    const context = classifyWeatherSamples([
+      {
+        temperature_2m: -1,
+        precipitation: 0.4,
+        rain: 0.4,
+        snowfall: 0,
+        weather_code: 61,
+        visibility: 8000,
+        wind_speed_10m: 30,
+        wind_gusts_10m: 72,
+      },
+      {
+        temperature_2m: 5,
+        precipitation: 0,
+        rain: 0,
+        snowfall: 0,
+        weather_code: 2,
+        visibility: 10000,
+        wind_speed_10m: 20,
+        wind_gusts_10m: 35,
+      },
+    ]);
+
+    expect(context.condition).toBe('freezing_precipitation');
+    expect(context.riskScore).toBeGreaterThanOrEqual(78);
+    expect(context.max_wind_gust_kmh).toBe(72);
+    expect(context.risk_reasons).toContain('freezing precipitation');
+  });
+
+  it('explains that weather-only lookup never contacts OSM or OSRM', () => {
+    const message = buildWeatherContextPrivacyMessage({
+      heightened_privacy_mode: false,
+      weather_context_enabled: true,
+    });
+
+    expect(message).toContain('one route point rounded to 4 decimals');
+    expect(message).toContain('OpenStreetMap and OSRM will not be contacted');
+  });
+
+  it('uses a local user-confirmed condition without attributing it to Open-Meteo', () => {
+    const confirmed = buildUserConfirmedWeatherContext('rain', '2026-01-01T12:00:00.000Z');
+    const adjusted = applyWeatherRiskToScores({
+      score_safety: 90,
+      score_smoothness: 90,
+      score_eco: 90,
+      intersection_score: 90,
+      score_overall: 90,
+      sharp_turns_count: 1,
+      component_scores: {
+        safety: { value: 90, dataSource: ['gps'] },
+        overall: { value: 90, dataSource: ['gps'] },
+      },
+    }, confirmed);
+
+    expect(confirmed).toMatchObject({
+      source: 'user_confirmed',
+      network_used: false,
+      condition: 'rain',
+    });
+    expect(adjusted.weather_context.source).toBe('user_confirmed');
+    expect(adjusted.component_scores.overall.dataSource).toContain('user_confirmed_weather');
+    expect(adjusted.component_scores.overall.dataSource).not.toContain('open_meteo_weather');
   });
 
   it('passes GPS weather inference through when Open-Meteo is unavailable', () => {
@@ -314,6 +410,36 @@ describe('open-source trip context', () => {
     expect(patch.score_input_masking_applied).toBe(true);
     expect(patch.privacy_zone_touched).toBe(true);
     expect(fetch).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('never fetches weather from the road-data builder even when weather is enabled', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const route = [
+      { lat: 43.65, lng: -79.38, speed_kmh: 20, timestamp: '2026-01-01T12:00:00.000Z' },
+      { lat: 43.6501, lng: -79.38, speed_kmh: 20, timestamp: '2026-01-01T12:00:10.000Z' },
+    ];
+
+    const patch = await buildOpenSourceTripContextPatch({
+      id: 'road-only-trip',
+      start_time: route[0].timestamp,
+      end_time: route[1].timestamp,
+      route_points: route,
+      driving_events: [],
+    }, {
+      heightened_privacy_mode: false,
+      speed_limit_lookup_enabled: false,
+      weather_context_enabled: true,
+      map_matching_enabled: false,
+    }, {
+      immediateRequests: true,
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(patch.weather_context).toMatchObject({
+      source: 'unavailable',
+      status: 'manual_required',
+    });
     vi.unstubAllGlobals();
   });
 });

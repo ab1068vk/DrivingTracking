@@ -14,6 +14,12 @@ describe('tracking trip presentation', () => {
     expect(trackingTripEvidenceStatus(trip)).toMatchObject({ key: 'recorded', label: 'Evidence recorded' });
   });
 
+  it('uses the retained map-point count from trip summaries', () => {
+    const summary = { route_points_map_count: 38, route_points_raw_count: 42 };
+    expect(trackingTripRoutePointCount(summary)).toBe(38);
+    expect(trackingTripRouteStatus(summary)).toMatchObject({ key: 'retained', label: 'Route retained' });
+  });
+
   it('identifies privacy and expired-route limitations', () => {
     expect(trackingTripRouteStatus({ privacy_mode: 'summary_only' }).key).toBe('privacy');
     expect(trackingTripEvidenceStatus({ privacy_mode: 'summary_only' }).key).toBe('limited');

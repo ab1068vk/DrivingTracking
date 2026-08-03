@@ -368,6 +368,38 @@ describe('SpeedLimitEditorMap helpers', () => {
     }).map((section) => section.roadName)).toEqual(['King Street']);
   });
 
+  it('separates operational Road Memory from dashed trip observations', () => {
+    const sections = buildSpeedMapSections([], [], [{
+      id: 'learned-king',
+      geohash: geohashEncode(43.65, -79.38),
+      lat: 43.65,
+      lng: -79.38,
+      limitKmh: 40,
+      active: true,
+      stage: 'operational',
+      canAffectScoreAndAlerts: true,
+      tripCount: 4,
+      confidence: 0.82,
+      sectionPoints: [
+        { lat: 43.65, lng: -79.38 },
+        { lat: 43.651, lng: -79.381 },
+      ],
+    }]);
+
+    expect(sections[0]).toMatchObject({
+      roadMemoryCandidate: true,
+      operational: true,
+      saved: false,
+    });
+    expect(summarizeSpeedMapSections(sections)).toMatchObject({
+      learned: 1,
+      observed: 0,
+    });
+    expect(filterSpeedMapSections(sections, {
+      layers: SPEED_MAP_LAYER_FOCUSED_DEFAULTS,
+    })).toHaveLength(1);
+  });
+
   it('splits traced saved sections into two child corrections', () => {
     const section = {
       geohash: 'original',
@@ -462,5 +494,43 @@ describe('SpeedLimitEditorMap helpers', () => {
     const merged = mergeSpeedSections(first, second);
     expect(merged.mergedGeohashes).toEqual(['first', 'second']);
     expect(merged.sectionPoints.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('never merges nearby rules that have different authority, direction, schedule, qualifier, or validity', () => {
+    const first = {
+      geohash: 'first-scope',
+      saved: true,
+      roadName: 'King Street',
+      limitKmh: 40,
+      source: 'user_confirmed_posted_sign',
+      directionMode: 'forward',
+      qualifierStatus: 'conditional_school',
+      validFrom: '2026-01-01T00:00:00.000Z',
+      timeRule: { enabled: true, days: [1, 2, 3, 4, 5], startMinutes: 420, endMinutes: 540 },
+      sectionPoints: [
+        { lat: 43.6500, lng: -79.3810 },
+        { lat: 43.6500, lng: -79.3805 },
+      ],
+    };
+    const compatibleGeometry = {
+      ...first,
+      geohash: 'second-scope',
+      sectionPoints: [
+        { lat: 43.6500, lng: -79.38045 },
+        { lat: 43.6500, lng: -79.3800 },
+      ],
+    };
+    const incompatibleRules = [
+      { ...compatibleGeometry, source: 'user_entered_estimate' },
+      { ...compatibleGeometry, directionMode: 'reverse' },
+      { ...compatibleGeometry, qualifierStatus: 'conditional_daytime' },
+      { ...compatibleGeometry, timeRule: { ...compatibleGeometry.timeRule, endMinutes: 600 } },
+      { ...compatibleGeometry, validFrom: '2026-02-01T00:00:00.000Z' },
+    ];
+
+    for (const candidate of incompatibleRules) {
+      expect(findMergeableSpeedSection(first, [first, candidate])).toBeNull();
+      expect(mergeSpeedSections(first, candidate)).toBeNull();
+    }
   });
 });

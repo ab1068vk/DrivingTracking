@@ -13,8 +13,10 @@ describe('tracking speed console data', () => {
     expect(trackingSpeedSourceLabel('user_confirmed_posted_sign')).toBe('Your confirmed posted sign');
     expect(trackingSpeedSourceLabel('region_default_estimate')).toBe('Regional default estimate');
     expect(trackingSpeedSourceLabel('trip_consensus')).toBe('Local learned estimate');
+    expect(trackingSpeedSourceLabel('local_road_memory')).toBe('Local Road Memory estimate');
     expect(fallbackReasonForSpeedSource('inferred')).toContain('fallback context');
     expect(fallbackReasonForSpeedSource('user_entered_estimate')).toContain('Confirm a posted sign');
+    expect(fallbackReasonForSpeedSource('local_road_memory')).toContain('repeated local drives');
   });
 
   it('uses neutral threshold wording', () => {
@@ -30,6 +32,17 @@ describe('tracking speed console data', () => {
       speedKnowledgeData: {
         cells: {
           abc123: { limitKmh: 50, source: 'trip_consensus', confidence: 0.55 },
+        },
+        roadMemory: {
+          candidates: [{
+            id: 'road-memory-1',
+            active: true,
+            limitKmh: 60,
+            confidence: 0.64,
+            tripCount: 3,
+            agreement: 1,
+            lastObservedAt: '2026-07-08T12:00:00.000Z',
+          }],
         },
         corrections: [{
           id: 'posted-rule',
@@ -59,9 +72,11 @@ describe('tracking speed console data', () => {
     expect(data.safeWording).toBe(POSTED_SIGN_OVERRIDE_NOTE);
     expect(data.counts.savedRuleCount).toBe(2);
     expect(data.counts.learnedCellCount).toBe(1);
+    expect(data.counts.roadMemoryCandidateCount).toBe(1);
     expect(data.counts.expiringRuleCount).toBe(1);
     expect(data.counts.postedSourceCount).toBeGreaterThan(0);
     expect(data.sourceSummary.some((row) => row.source === 'user_confirmed_posted_sign')).toBe(true);
+    expect(data.sourceSummary.some((row) => row.source === 'local_road_memory')).toBe(true);
     expect(data.tripCoverageRows[0]).toMatchObject({
       tripId: 'trip-1',
       coveragePercent: 100,

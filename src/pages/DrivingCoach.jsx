@@ -1,7 +1,7 @@
 // @ts-check
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Activity,
   AlertTriangle,
@@ -373,14 +373,19 @@ function CoachFeedback({ value = null, busy = false, onSelect }) {
 
 export default function DrivingCoach() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
+  const requestedFocus = searchParams.get('focus');
+  const initialFocus = requestedFocus && COACH_FOCUS_CATALOG[requestedFocus]
+    ? requestedFocus
+    : 'consistency';
   const [activeTab, setActiveTab] = useState('today');
   const [programStore, setProgramStore] = useState(emptyCoachProgramStore());
   const [programsLoaded, setProgramsLoaded] = useState(false);
   const [programBusy, setProgramBusy] = useState(false);
   const [feedbackBusy, setFeedbackBusy] = useState(false);
-  const [selectedFocus, setSelectedFocus] = useState('consistency');
+  const [selectedFocus, setSelectedFocus] = useState(initialFocus);
   const [selectedDifficulty, setSelectedDifficulty] = useState('adaptive');
   const [selectedTripCount, setSelectedTripCount] = useState('5');
   const [selectedContext, setSelectedContext] = useState('comparable');
@@ -389,6 +394,7 @@ export default function DrivingCoach() {
   const [selectedRouteKey, setSelectedRouteKey] = useState('');
   const [showAllDangerZones, setShowAllDangerZones] = useState(false);
   const selectedFocusInitializedRef = useRef(false);
+  const requestedFocusAppliedRef = useRef(false);
 
   const {
     data: recentCompleted = [],
@@ -500,12 +506,22 @@ export default function DrivingCoach() {
 
   useEffect(() => {
     if (activeProgram || !recommendations[0]?.focusId) return;
+    if (
+      !requestedFocusAppliedRef.current &&
+      requestedFocus &&
+      recommendations.some((item) => item.focusId === requestedFocus)
+    ) {
+      requestedFocusAppliedRef.current = true;
+      selectedFocusInitializedRef.current = true;
+      setSelectedFocus(requestedFocus);
+      return;
+    }
     const selectedFocusStillAvailable = recommendations.some((item) => item.focusId === selectedFocus);
     if (!selectedFocusInitializedRef.current || !selectedFocusStillAvailable) {
       selectedFocusInitializedRef.current = true;
       setSelectedFocus(recommendations[0].focusId);
     }
-  }, [activeProgram, recommendations, selectedFocus]);
+  }, [activeProgram, recommendations, requestedFocus, selectedFocus]);
 
   useEffect(() => {
     if (!driverSignature) return;
@@ -1352,7 +1368,6 @@ export default function DrivingCoach() {
                           const data = [
                             ['Aggression', driverSignature.dimensions.aggression],
                             ['Smoothness', driverSignature.dimensions.smoothness],
-                            ['Eco', driverSignature.dimensions.ecoMindedness],
                             ['Speed tolerance', driverSignature.dimensions.speedTolerance],
                             ['Consistency', driverSignature.dimensions.consistencyIdx],
                           ].map(([dimension, value]) => ({ dimension, value: Math.round(Number(value) * 100) }));

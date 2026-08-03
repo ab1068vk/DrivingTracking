@@ -26,8 +26,14 @@ import AppInteractionFeedback from '@/components/AppInteractionFeedback';
 import { AppDialogHost } from '@/lib/appDialog';
 import { LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
 import { useLocalSettingSelector } from '@/hooks/useLocalSettings';
+import {
+  createInitialAppUrlConsumer,
+  pathForNotificationExtra,
+  pathFromAppUrl,
+} from '@/lib/appNavigation';
 
 const TRIP_SUMMARIES_QUERY_KEY = ['trip-summaries'];
+const consumeInitialAppUrl = createInitialAppUrlConsumer();
 
 const startNativeAutoTrackingFromApp = () => import('@/lib/activityRecognition')
   .then(({ startNativeAutoTracking }) => startNativeAutoTracking());
@@ -47,13 +53,15 @@ const authenticateDeviceFromApp = (reason) => import('@/lib/biometricGate')
 const openExportLocationFromApp = (options) => import('@/lib/nativeDownloads')
   .then(({ openExportLocation }) => openExportLocation(options));
 
-async function syncNativeCompletedTripsToLocalStore() {
+async function syncNativeCompletedTripsToLocalStore({ reconcileExisting = false } = {}) {
   if (!isAndroid()) return;
   const result = await measureAsync('app.nativeTripSync', async () => {
-    const { syncNativeCompletedTrips } = await import('@/lib/localTripRepository');
-    return syncNativeCompletedTrips();
+    const { syncNativeCompletedTripsAndMilestones } = await import('@/lib/milestoneNotificationCoordinator');
+    return syncNativeCompletedTripsAndMilestones({ reconcileExisting });
   });
   if (result.importedTrips.length) {
+    const { markLatestTripForPostDriveReview } = await import('@/lib/postDriveReview');
+    await markLatestTripForPostDriveReview(result.importedTrips, 'native_background_import');
     queryClientInstance.invalidateQueries({ queryKey: TRIP_SUMMARIES_QUERY_KEY }).catch(() => {});
   }
   recordSystemEvent('native_completed_trips_synced', {
@@ -155,6 +163,7 @@ const TrackingTripDetail = lazy(() => import('@/pages/TrackingTripDetail'));
 const TripDrive3DPage = lazy(() => import('@/pages/TripDrive3DPage'));
 const SpeedAnalysis = lazy(() => import('@/pages/SpeedAnalysis'));
 const MapScreen = lazy(() => import('@/pages/MapScreen'));
+const Parking = lazy(() => import('@/pages/Parking'));
 const Reports = lazy(() => import('@/pages/Report'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const SpeedLimits = lazy(() => import('@/pages/SpeedLimits'));
@@ -457,10 +466,25 @@ const AuthenticatedApp = () => {
     let listener;
     LocalNotifications.addListener('localNotificationActionPerformed', (action) => {
       const extra = action.notification?.extra ?? {};
-      if (extra.tripId) navigate(`/trips/${extra.tripId}`);
-      else if (extra.type === 'phone_use_pattern') navigate('/coach');
-      else if (extra.type === 'maintenance') navigate('/vehicles');
-      else if (extra.type === 'export_saved') {
+      if (extra.type === 'parking_reminder' && action.actionId === 'snooze_15') {
+        import('@/lib/notificationService')
+          .then(({ snoozeParkingReminder }) => snoozeParkingReminder(15))
+          .catch((error) => logSystemFailure('parking_reminder_snooze_15', error));
+        return;
+      }
+      if (extra.type === 'parking_reminder' && action.actionId === 'snooze_60') {
+        import('@/lib/notificationService')
+          .then(({ snoozeParkingReminder }) => snoozeParkingReminder(60))
+          .catch((error) => logSystemFailure('parking_reminder_snooze_60', error));
+        return;
+      }
+      if (extra.type === 'parking_reminder' && action.actionId === 'parking_done') {
+        import('@/lib/notificationService')
+          .then(({ cancelParkingReminder }) => cancelParkingReminder())
+          .catch((error) => logSystemFailure('parking_reminder_done', error));
+        return;
+      }
+      if (extra.type === 'export_saved') {
         openExportLocationFromApp({ uri: extra.uri, mimeType: extra.mimeType }).catch((error) => {
           logSystemFailure('notification_export_location_open', error, {
             notification_type: extra.type,
@@ -468,11 +492,44 @@ const AuthenticatedApp = () => {
           });
           navigate('/reports');
         });
+        return;
       }
+      const path = pathForNotificationExtra(extra);
+      if (path) navigate(path);
     }).then((handle) => {
       listener = handle;
     }).catch((error) => logSystemFailure('notification_action_listener_register', error));
     return () => {
+      listener?.remove?.();
+    };
+  }, [navigate]);
+
+  useEffect(() => {
+    let listener;
+    let cancelled = false;
+    /** @param {{url?: string}} [payload] */
+    const openUrl = (payload = {}) => {
+      const { url } = payload;
+      const path = pathFromAppUrl(url);
+      if (path) navigate(path);
+    };
+    /** @param {{url?: string}} [payload] */
+    const openInitialUrl = (payload = {}) => {
+      if (cancelled) return;
+      const path = consumeInitialAppUrl(payload.url);
+      if (path) navigate(path, { replace: true });
+    };
+    CapacitorApp.getLaunchUrl()
+      .then((result) => openInitialUrl(result || {}))
+      .catch((error) => logSystemFailure('app_launch_url_read', error));
+    CapacitorApp.addListener('appUrlOpen', openUrl)
+      .then((handle) => {
+        if (cancelled) handle?.remove?.();
+        else listener = handle;
+      })
+      .catch((error) => logSystemFailure('app_url_listener_register', error));
+    return () => {
+      cancelled = true;
       listener?.remove?.();
     };
   }, [navigate]);
@@ -607,6 +664,11 @@ const AuthenticatedApp = () => {
               <MapScreen />
             </AppRouteBoundary>
           )} />
+          <Route path="/parking" element={(
+            <AppRouteBoundary context="parking_page" title="Parking unavailable">
+              <Parking />
+            </AppRouteBoundary>
+          )} />
           <Route path="/coach" element={(
             <AppRouteBoundary context="driving_coach_page" title="Coach unavailable">
               <DrivingCoach />
@@ -687,6 +749,16 @@ function RouteLogger() {
   const location = useLocation();
 
   useEffect(() => {
+    const endFirstPaint = beginMeasure('page.firstPaint', { pathname: location.pathname });
+    let firstFrame = 0;
+    let secondFrame = 0;
+    if (typeof window.requestAnimationFrame === 'function') {
+      firstFrame = window.requestAnimationFrame(() => {
+        secondFrame = window.requestAnimationFrame(() => endFirstPaint({ outcome: 'painted' }));
+      });
+    } else {
+      secondFrame = window.setTimeout(() => endFirstPaint({ outcome: 'painted' }), 32);
+    }
     const params = new URLSearchParams(location.search || '');
     const payload = {
       pathname: location.pathname,
@@ -704,6 +776,12 @@ function RouteLogger() {
     } else {
       window.setTimeout(run, 250);
     }
+    return () => {
+      if (firstFrame && typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(firstFrame);
+      if (secondFrame && typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(secondFrame);
+      else if (secondFrame) window.clearTimeout(secondFrame);
+      endFirstPaint({ outcome: 'cancelled' });
+    };
   }, [location.pathname, location.search]);
 
   return null;

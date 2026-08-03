@@ -3,6 +3,7 @@ import {
   assessSpeedLimitEvidence,
   speedLimitConfidenceLabel,
 } from '@/lib/speedLimitConfidence';
+import { buildSpeedEvidenceDecision } from '@/lib/speedEvidenceReasoning';
 
 const pointLimit = (point = {}) => {
   const value = Number(point.speed_limit_kmh ?? point.limitKmh ?? point.speedLimitKmh);
@@ -37,6 +38,7 @@ const publicPoint = (point = {}) => (
 
 export function speedLimitReviewPriority(item = {}, context = {}) {
   const evidence = assessSpeedLimitEvidence(item);
+  const decision = buildSpeedEvidenceDecision(item, context);
   const deltaKmh = Math.abs(Number(
     item.conflictDetails?.newLimitKmh -
     item.conflictDetails?.existingLimitKmh
@@ -49,6 +51,7 @@ export function speedLimitReviewPriority(item = {}, context = {}) {
   const sampleCount = Math.max(0, Number(item.sampleCount) || 0);
 
   let score = 0;
+  score += decision.reviewUrgency;
   if (item.conflict === true || item.conflictDetails) score += 100;
   if (item.source === 'missing_posted_review') score += 75;
   if (evidence.level === 'low') score += 35;
@@ -62,6 +65,7 @@ export function speedLimitReviewPriority(item = {}, context = {}) {
   return {
     score: Math.round(score),
     evidence,
+    decision,
     deltaKmh,
     affectedTripCount,
     scoreImpact,
@@ -80,6 +84,7 @@ export function sortSpeedLimitReviewItems(items = [], contextForItem = (_item) =
 
 export function buildSpeedLimitRecommendation(record = {}, context = {}) {
   const evidence = assessSpeedLimitEvidence(record);
+  const decision = buildSpeedEvidenceDecision(record, context);
   const currentLimit = Number(record.limitKmh ?? record.speed_limit_kmh);
   const observedLimit = Number(
     context.observedLimitKmh ??
@@ -93,6 +98,9 @@ export function buildSpeedLimitRecommendation(record = {}, context = {}) {
   if (evidence.expired) {
     return { kind: 'expired', action: 'Review rule', text: 'This temporary rule has expired and should no longer affect new trips.' };
   }
+  if (decision.conditional && !decision.validCondition) {
+    return { kind: 'conditional', action: 'Define active condition', text: decision.why };
+  }
   if (evidence.conflict || deltaKmh > 10) {
     return {
       kind: 'conflict',
@@ -102,6 +110,13 @@ export function buildSpeedLimitRecommendation(record = {}, context = {}) {
   }
   if (record.source === 'missing_posted_review' || evidence.level === 'unavailable') {
     return { kind: 'missing', action: 'Set road speed', text: 'No verified speed limit covers this road section.' };
+  }
+  if (record.source === 'local_road_memory') {
+    return {
+      kind: 'local_candidate',
+      action: 'Confirm suggested speed',
+      text: `Road Memory found a repeated GPS behavior pattern across ${Number(record.tripCount) || Number(record.evidenceCount) || 2} drives. It is not proof of the legal limit and remains blocked or lower-authority until parked validation and a posted-sign confirmation.`,
+    };
   }
   if (evidence.stale) {
     return {
@@ -151,6 +166,8 @@ export function buildCorrectionImpactPreview(trips = [], correction = {}, nextLi
       if (!correctionMatchesPoint(correction, Number(point.lat), Number(point.lng), undefined, {
         timestampMs: pointTimestamp(point),
         headingDeg: pointHeading(point),
+        utcOffsetMinutes: point?.utcOffsetMinutes ?? point?.utc_offset_minutes ??
+          trip?.trip_utc_offset_minutes ?? null,
       })) continue;
       tripMatchedPoints += 1;
       const speed = pointSpeed(point);

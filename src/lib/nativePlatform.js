@@ -12,8 +12,8 @@ export const isAndroid = () => PLATFORM === 'android';
 export const isIos = () => PLATFORM === 'ios';
 
 export const openNativeSettings = async () => {
-  if (!isNativePlatform()) return false;
-  const { App } = await import('@capacitor/app');
-  await App.openSettings();
+  if (!isAndroid()) return false;
+  const { default: ActivityRecognition } = await import('@/lib/driveSenseNativePlugin');
+  await ActivityRecognition.openAppLocationSettings();
   return true;
 };

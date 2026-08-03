@@ -39,6 +39,7 @@ export default function TrackingTripDetail() {
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
   const query = useQuery(tripDetailQueryOptions(id));
+
   const summariesQuery = useQuery(tripSummaryQueryOptions());
   const comparisonQuery = useQuery(tripDetailQueryOptions(comparisonId));
   const trip = query.data;

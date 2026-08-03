@@ -24,7 +24,7 @@ describe('privacy zone editor network privacy', () => {
     expect(settingsSource).toContain(
       'High sensitivity also blocks OSRM route sharing whenever a route touches the zone.'
     );
-    expect(settingsSource).toContain('Existing raw GPS inside this zone is erased when the zone is saved.');
+    expect(settingsSource).toContain('Existing raw GPS and derived saved road-speed knowledge inside this zone are erased when the zone is saved.');
   });
 
   it('checks privacy protection locally without map tiles or a remote geocoder', () => {
@@ -37,6 +37,7 @@ describe('privacy zone editor network privacy', () => {
     expect(protectionCheckSource).toContain('Protected privacy circle diagram');
     expect(protectionCheckSource).toContain('protected on each side');
     expect(protectionCheckSource).toContain('It does not load street-map tiles, run a geocoder, or send coordinates away from the app.');
+    expect(protectionCheckSource).toContain('derived saved road-speed cells, rules, Road Memory corridors, replay markers, and coordinate-bearing speed history');
     expect(protectionCheckSource).not.toMatch(/tile\.openstreetmap|leaflet|REMOTE_TILES|nominatim|mapbox|google/i);
     expect(protectionCheckSource).not.toMatch(/geocod(?:e|ing)\s*\(/i);
   });
@@ -50,5 +51,16 @@ describe('privacy zone editor network privacy', () => {
     expect(settingsSource).toContain('setScreenCaptureAllowed(false)');
     expect(settingsSource).toContain('even if screenshots are allowed elsewhere');
     expect(settingsSource).toContain('Exact corridor geometry was discarded');
+  });
+
+  it('pairs every privacy-zone mutation with visible raw GPS and saved-speed cleanup results', () => {
+    expect(settingsSource.match(/includeOperationResult: true/g)).toHaveLength(3);
+    expect(settingsSource).toContain('const updated = operation.settings;');
+    expect(settingsSource).toContain('const withoutA = await removePrivacyZone(pair.a.id, mergeOperation.settings);');
+    expect(settingsSource).toContain('buildPrivacyCleanupPresentation(operation).description');
+    expect(settingsSource).toContain('buildHeightenedPrivacyCleanupPresentation(result)');
+    expect(settingsSource).toContain('purgeLocalSpeedKnowledgeForPrivacyZones([privacyDeleteZone])');
+    expect(settingsSource).toContain('purged_speed_knowledge_count');
+    expect(settingsSource).toContain('Erase Private Data & Delete Zone');
   });
 });

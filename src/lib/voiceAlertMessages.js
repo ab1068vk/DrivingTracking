@@ -68,10 +68,10 @@ const VOICE_ALERT_MESSAGE_CATALOG = Object.freeze({
     ]),
   }),
   phone_use: Object.freeze({
-    title: 'Phone use',
+    title: 'Phone activity',
     messages: Object.freeze([
-      () => 'Phone use detected. Keep your eyes up. Handle the phone only when parked.',
-      () => 'Phone distraction warning. Eyes on the road; deal with it when parked.',
+      () => 'Phone activity detected. Eyes on the road. Review it when parked.',
+      () => 'Phone activity detected. Eyes forward. Review it when parked.',
     ]),
   }),
   close_proximity: Object.freeze({
@@ -176,7 +176,7 @@ const TECHNICAL_VOICE_ALERT_MESSAGE_CATALOG = Object.freeze({
     ]),
   }),
   phone_use: Object.freeze({
-    title: 'Phone-use window',
+    title: 'Phone activity window',
     messages: Object.freeze([
       (context) => buildPhoneUseTechnicalMessage(context),
       () => 'Phone-use window detected.',
@@ -450,12 +450,12 @@ function buildTrackingBlockedTechnicalMessage(context) {
 function buildPhoneUseTechnicalMessage(context) {
   const source = context.source || context.evidenceSource || context.phoneUseSource;
   if (source === 'android_usage_access' || source === 'usage_access') {
-    return 'Phone-use window detected from Android Usage Access.';
+    return 'Foreground phone activity detected from Android Usage Access.';
   }
   if (source === 'gps_proxy') {
-    return 'Phone-use window detected from GPS diagnostic proxy.';
+    return 'Phone activity pattern detected from GPS diagnostic proxy.';
   }
-  return 'Phone-use window detected.';
+  return 'Phone activity window detected.';
 }
 
 function clampMessageIndex(index, messageCount) {

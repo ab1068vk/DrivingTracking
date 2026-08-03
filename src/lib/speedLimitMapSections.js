@@ -9,7 +9,9 @@ const DAY_MS = 86400000;
 const EXPIRING_SOON_MS = DAY_MS * 30;
 const ROUTE_SECTION_MAX_DISTANCE_M = 900;
 const ROUTE_SECTION_MIN_DISTANCE_M = 70;
-const ROUTE_SECTION_GAP_DISTANCE_M = 250;
+// Background location delivery can legitimately be sparse at road speed.
+// Only a substantial jump is treated as missing geometry.
+const ROUTE_SECTION_GAP_DISTANCE_M = 600;
 const CONFIRMED_LIMIT_SOURCES = new Set([
   'openstreetmap',
   'user_confirmed_posted_sign',
@@ -150,18 +152,31 @@ const chunkSignature = (points = []) => {
   };
 };
 
-const routePointBreaksChunk = (chunk = [], next = {}) => {
+const routePointBreaksChunk = (chunk = [], next = {}, following = null) => {
   const previousSignature = chunkSignature(chunk);
   const nextSignature = routePointSignature(next);
+  const followingSignature = routePointSignature(following || {});
+  const stableNextRoad = Boolean(
+    nextSignature.roadName &&
+    followingSignature.roadName === nextSignature.roadName
+  );
   if (
     previousSignature.roadName &&
     nextSignature.roadName &&
-    previousSignature.roadName !== nextSignature.roadName
+    previousSignature.roadName !== nextSignature.roadName &&
+    stableNextRoad
   ) return true;
+  const stableConfirmedLimit = Boolean(
+    nextSignature.limit != null &&
+    followingSignature.limit === nextSignature.limit &&
+    CONFIRMED_LIMIT_SOURCES.has(pointSource(next)) &&
+    CONFIRMED_LIMIT_SOURCES.has(pointSource(following || {}))
+  );
   if (
     previousSignature.limit != null &&
     nextSignature.limit != null &&
-    previousSignature.limit !== nextSignature.limit
+    previousSignature.limit !== nextSignature.limit &&
+    stableConfirmedLimit
   ) return true;
   return false;
 };
@@ -421,9 +436,70 @@ const ruleTimeOverlaps = (first = {}, second = {}) => {
   ));
 };
 
+const ruleValidityInterval = (rule = {}) => {
+  const rawStart = rule.validFrom ?? rule.valid_from;
+  const rawEnd = rule.expiresAt;
+  const parsedStart = rawStart == null || rawStart === '' ? -Infinity : new Date(rawStart).getTime();
+  const parsedEnd = rawEnd == null || rawEnd === '' ? Infinity : new Date(rawEnd).getTime();
+  if (
+    (!Number.isFinite(parsedStart) && parsedStart !== -Infinity) ||
+    (!Number.isFinite(parsedEnd) && parsedEnd !== Infinity) ||
+    parsedStart >= parsedEnd
+  ) return null;
+  return [parsedStart, parsedEnd];
+};
+
+const ruleValidityOverlaps = (first = {}, second = {}) => {
+  const firstInterval = ruleValidityInterval(first);
+  const secondInterval = ruleValidityInterval(second);
+  // Invalid validity is conservatively treated as overlapping so the editor
+  // never permits two contradictory active rules because of malformed dates.
+  if (!firstInterval || !secondInterval) return true;
+  return firstInterval[0] < secondInterval[1] && secondInterval[0] < firstInterval[1];
+};
+
 const ruleScopesOverlap = (first = {}, second = {}) => (
-  ruleDirectionOverlaps(first, second) && ruleTimeOverlaps(first, second)
+  ruleDirectionOverlaps(first, second) &&
+  ruleTimeOverlaps(first, second) &&
+  ruleValidityOverlaps(first, second)
 );
+
+const normalizedRuleMinute = (value, clockValue) => {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return Math.max(0, Math.min(1439, Math.round(numeric)));
+  const match = String(clockValue || '').match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59
+    ? hours * 60 + minutes
+    : null;
+};
+
+const mergeInstantKey = (value) => {
+  if (value == null || value === '') return null;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : `invalid:${String(value)}`;
+};
+
+const mergeRuleScopeKey = (section = {}) => {
+  const timeRule = section.timeRule?.enabled === true
+    ? {
+      enabled: true,
+      days: [...new Set((section.timeRule.days || []).map(Number))].sort((a, b) => a - b),
+      startMinutes: normalizedRuleMinute(section.timeRule.startMinutes, section.timeRule.startTime),
+      endMinutes: normalizedRuleMinute(section.timeRule.endMinutes, section.timeRule.endTime),
+    }
+    : { enabled: false };
+  return JSON.stringify({
+    source: String(section.source || 'legacy_unknown'),
+    directionMode: section.directionMode || 'both',
+    qualifierStatus: section.qualifierStatus || 'regulatory_text_no_qualifiers',
+    timeRule,
+    validFrom: mergeInstantKey(section.validFrom ?? section.valid_from),
+    expiresAt: mergeInstantKey(section.expiresAt),
+  });
+};
 
 export function findOverlappingSpeedSections(section = {}, sections = [], {
   excludeKey = '',
@@ -487,15 +563,18 @@ export function findOverlappingSpeedSections(section = {}, sections = [], {
 
 export function findMergeableSpeedSection(section = {}, sections = [], maxDistanceM = 150) {
   const sectionPoints = cleanGeometry(section.sectionPoints || []);
-  if (!section.saved || sectionPoints.length < 2) return null;
+  if (!section.saved || section.historicalVersion === true || sectionPoints.length < 2) return null;
   const roadName = normalizedRoadName(section.roadName);
+  const ruleScopeKey = mergeRuleScopeKey(section);
   const endpoints = [sectionPoints[0], sectionPoints.at(-1)];
   return (sections || [])
     .filter((candidate) => (
       candidate.saved &&
+      candidate.historicalVersion !== true &&
       (candidate.sectionKey || candidate.geohash) !== (section.sectionKey || section.geohash)
     ))
     .filter((candidate) => Number(candidate.limitKmh) === Number(section.limitKmh))
+    .filter((candidate) => mergeRuleScopeKey(candidate) === ruleScopeKey)
     .filter((candidate) => {
       const candidateRoad = normalizedRoadName(candidate.roadName);
       return !roadName || !candidateRoad || candidateRoad === roadName;
@@ -516,7 +595,12 @@ export function findMergeableSpeedSection(section = {}, sections = [], maxDistan
 export function mergeSpeedSections(first = {}, second = {}) {
   const firstPoints = cleanGeometry(first.sectionPoints || []);
   const secondPoints = cleanGeometry(second.sectionPoints || []);
-  if (firstPoints.length < 2 || secondPoints.length < 2) return null;
+  if (
+    firstPoints.length < 2 ||
+    secondPoints.length < 2 ||
+    Number(first.limitKmh) !== Number(second.limitKmh) ||
+    mergeRuleScopeKey(first) !== mergeRuleScopeKey(second)
+  ) return null;
   const options = [
     [firstPoints, secondPoints],
     [[...firstPoints].reverse(), secondPoints],
@@ -588,7 +672,8 @@ const buildTripRouteSectionCandidates = (trip = {}, tripIndex = 0) => {
     currentDistanceM = 0;
   };
 
-  for (const point of rawPoints) {
+  for (let pointIndex = 0; pointIndex < rawPoints.length; pointIndex += 1) {
+    const point = rawPoints[pointIndex];
     if (!isPublicPoint(point)) {
       pushCurrent();
       continue;
@@ -598,14 +683,29 @@ const buildTripRouteSectionCandidates = (trip = {}, tripIndex = 0) => {
     const nextDistanceM = previous ? distanceMeters(previous, point) : 0;
     const shouldSplit = previous && (
       nextDistanceM > ROUTE_SECTION_GAP_DISTANCE_M ||
-      routePointBreaksChunk(currentPoints, point) ||
+      routePointBreaksChunk(currentPoints, point, rawPoints[pointIndex + 1]) ||
       (
         currentDistanceM >= ROUTE_SECTION_MIN_DISTANCE_M &&
         currentDistanceM + nextDistanceM > ROUTE_SECTION_MAX_DISTANCE_M
       )
     );
 
-    if (shouldSplit) pushCurrent();
+    if (shouldSplit) {
+      const continuousBoundary = nextDistanceM <= ROUTE_SECTION_GAP_DISTANCE_M
+        ? {
+            ...point,
+            lat: Number(previous.lat),
+            lng: Number(previous.lng),
+          }
+        : null;
+      pushCurrent();
+      // Adjacent editable/speed-zone chunks share one coordinate so Leaflet
+      // draws a continuous route. Real GPS and privacy gaps remain separated.
+      if (continuousBoundary) {
+        currentPoints.push(continuousBoundary);
+        currentDistanceM = 0;
+      }
+    }
     if (currentPoints.length) currentDistanceM += nextDistanceM;
     currentPoints.push(point);
   }
@@ -632,6 +732,7 @@ const buildTripRouteSectionCandidates = (trip = {}, tripIndex = 0) => {
       const center = cleanGeometry(chunk)[Math.floor(chunk.length / 2)] || chunk[0];
       return sectionCandidate(segmentCandidateKey(trip, tripIndex, index, center), chunk, trip?.id, {
         tripSegmentIndex: index,
+        tripEndedAt: trip?.end_time || trip?.start_time || null,
       });
     })
     .filter(Boolean);
@@ -779,6 +880,7 @@ export function speedLimitColor(limitKmh) {
 export const SPEED_MAP_LAYER_DEFAULTS = {
   conflicts: true,
   saved: true,
+  learned: true,
   observed: true,
   unset: true,
   posted: true,
@@ -795,7 +897,43 @@ export const SPEED_MAP_LAYER_FOCUSED_DEFAULTS = {
   unset: false,
 };
 
-const ROAD_STATE_LAYER_KEYS = ['conflicts', 'saved', 'observed', 'unset'];
+// The Saved Road Speeds page opens in this lightweight mode. Historical trip
+// evidence remains available from Filters, but is not indexed or drawn until
+// the user asks for one of those road-state layers.
+export const SPEED_MAP_LAYER_FAST_DEFAULTS = {
+  ...SPEED_MAP_LAYER_DEFAULTS,
+  conflicts: false,
+  learned: false,
+  observed: false,
+  unset: false,
+  estimates: false,
+};
+
+export const UNCONFIRMED_MAP_EVIDENCE_DAYS = 14;
+const UNCONFIRMED_MAP_EVIDENCE_MS = UNCONFIRMED_MAP_EVIDENCE_DAYS * 86400000;
+
+export function unconfirmedMapEvidenceLifecycle(section = {}, nowMs = Date.now()) {
+  if (section.saved) return { temporary: false, expired: false, stale: false, ageDays: null, daysRemaining: null, expiresAt: null };
+  const rawTimestamp = section.lastObservedAt || section.observedAt || section.tripEndedAt || null;
+  const observedAt = rawTimestamp ? new Date(rawTimestamp).getTime() : NaN;
+  if (!Number.isFinite(observedAt)) {
+    return { temporary: true, expired: false, stale: false, ageDays: null, daysRemaining: null, expiresAt: null };
+  }
+  const staleAtMs = observedAt + UNCONFIRMED_MAP_EVIDENCE_MS;
+  return {
+    temporary: true,
+    // Age may lower confidence and raise review priority, but local driven-road
+    // geometry remains visible until the user explicitly removes trip data.
+    expired: false,
+    stale: nowMs >= staleAtMs,
+    ageDays: Math.max(0, Math.floor((nowMs - observedAt) / 86400000)),
+    daysRemaining: null,
+    expiresAt: null,
+    staleAt: new Date(staleAtMs).toISOString(),
+  };
+}
+
+const ROAD_STATE_LAYER_KEYS = ['conflicts', 'saved', 'learned', 'observed', 'unset'];
 const INTELLIGENCE_LAYER_KEYS = ['posted', 'estimates', 'lowConfidence', 'stale', 'expiring', 'missingGeometry'];
 
 function hasSpeedLimit(section = {}) {
@@ -806,6 +944,10 @@ function hasSpeedLimit(section = {}) {
 function sectionLayer(section = {}) {
   if (section.conflict) return 'conflicts';
   if (section.saved) return 'saved';
+  // Every staged Road Memory corridor is useful local map geometry. Only
+  // operational corridors can affect scores and alerts, but learning and
+  // suggested corridors must remain visible in the Road Memory map layer.
+  if (section.roadMemoryCandidate) return 'learned';
   if (hasSpeedLimit(section)) return 'observed';
   return 'unset';
 }
@@ -833,6 +975,7 @@ export function speedMapSectionFlags(section = {}, nowMs = Date.now()) {
     expiresAt > nowMs &&
     expiresAt - nowMs <= EXPIRING_SOON_MS;
   const sectionPointCount = cleanGeometry(section.sectionPoints || []).length;
+  const lifecycle = unconfirmedMapEvidenceLifecycle(section, nowMs);
 
   return {
     layer: sectionLayer(section),
@@ -841,10 +984,14 @@ export function speedMapSectionFlags(section = {}, nowMs = Date.now()) {
     confirmed: hasLimit && confirmedSource,
     estimate: hasLimit && !confirmedSource,
     lowConfidence: hasLimit && ['low', 'unavailable'].includes(evidence.level),
-    stale: hasLimit && evidence.stale === true,
+    stale: (hasLimit && evidence.stale === true) || lifecycle.stale === true,
     expired,
     expiring,
     missingGeometry: section.saved && sectionPointCount < 2,
+    temporary: lifecycle.temporary,
+    reviewWindowExpired: lifecycle.expired,
+    reviewDaysRemaining: lifecycle.daysRemaining,
+    reviewExpiresAt: lifecycle.expiresAt,
   };
 }
 
@@ -880,6 +1027,7 @@ export function summarizeSpeedMapSections(sections = []) {
     total: 0,
     conflicts: 0,
     saved: 0,
+    learned: 0,
     observed: 0,
     unset: 0,
     savedRules: 0,
@@ -945,6 +1093,14 @@ export function filterSpeedMapSections(sections = [], {
 } = {}) {
   const normalizedQuery = String(query || '').trim().toLowerCase();
   const layerState = { ...SPEED_MAP_LAYER_DEFAULTS, ...(layers || {}) };
+  if (
+    !Object.prototype.hasOwnProperty.call(layers || {}, 'learned') &&
+    ['conflicts', 'saved', 'observed', 'unset'].every((key) => (
+      Object.prototype.hasOwnProperty.call(layers || {}, key)
+    ))
+  ) {
+    layerState.learned = false;
+  }
   const activeRoadLayers = ROAD_STATE_LAYER_KEYS.filter((key) => layerState[key] !== false);
   const activeIntelligenceLayers = INTELLIGENCE_LAYER_KEYS.filter((key) => layerState[key] !== false);
   const disabledIntelligenceLayers = INTELLIGENCE_LAYER_KEYS.filter((key) => layerState[key] === false);
@@ -975,16 +1131,68 @@ export function filterSpeedMapSections(sections = [], {
     .filter((section) => !normalizedQuery || normalizedSearchText(section).includes(normalizedQuery));
 }
 
-export function buildSpeedMapSections(trips = [], corrections = []) {
-  return measureSync('buildSpeedMapSections', () => buildSpeedMapSectionsInternal(trips, corrections), {
+export function buildSpeedMapSections(trips = [], corrections = [], roadMemoryCandidates = []) {
+  return measureSync('buildSpeedMapSections', () => buildSpeedMapSectionsInternal(
+    trips,
+    corrections,
+    roadMemoryCandidates
+  ), {
     tripCount: trips?.length || 0,
     correctionCount: corrections?.length || 0,
+    roadMemoryCandidateCount: roadMemoryCandidates?.length || 0,
     routePointCount: (trips || []).reduce((sum, trip) => sum + (trip?.route_points?.length || 0), 0),
   });
 }
 
-function buildSpeedMapSectionsInternal(trips = [], corrections = []) {
+const trustedSectionKey = (section = {}) => String(
+  section.id ||
+  section.ruleId ||
+  section.sectionKey ||
+  section.geohash ||
+  `${section.lat},${section.lng}`
+);
+
+export function mergeTrustedSpeedMapSections(builtSections = [], trustedSections = []) {
+  // The trip-backed model may outlive the latest correction read (fast
+  // saved-only mode deliberately does not rebuild trips). Never let a deleted,
+  // expired, undone, or restored-away saved rule survive just because it is in
+  // that cache. Genuine observed/learned sections remain available.
+  if (!trustedSections.length) {
+    return (builtSections || []).filter((section) => section.saved !== true);
+  }
+  const trustedByKey = new Map(
+    trustedSections.map((section) => [trustedSectionKey(section), section])
+  );
+  const merged = (builtSections || []).map((section) => {
+    const key = trustedSectionKey(section);
+    const trusted = trustedByKey.get(key);
+    if (!trusted) return section.saved === true ? null : section;
+    trustedByKey.delete(key);
+    const trustedGeometry = cleanGeometry(trusted.sectionPoints || []);
+    const builtGeometry = cleanGeometry(section.sectionPoints || []);
+    return {
+      ...section,
+      ...trusted,
+      // A trip-backed build can recover a full line for an older point-only
+      // rule. Preserve that richer geometry until the saved trace is edited.
+      sectionPoints: trustedGeometry.length >= 2 ? trustedGeometry : builtGeometry,
+      // Trip evidence can stay cached while the trusted saved rule changes.
+      // Re-evaluate against the latest limit/resolution so an old conflict is
+      // neither kept in the list nor reintroduced into an open map editor.
+      conflict: conflictFor(trusted, section),
+      affectedTripCount: section.affectedTripCount,
+    };
+  }).filter(Boolean);
+  return [...merged, ...trustedByKey.values()];
+}
+
+function buildSpeedMapSectionsInternal(trips = [], corrections = [], roadMemoryCandidates = []) {
   const candidateList = [];
+  const visibleRoadMemoryCandidates = (roadMemoryCandidates || []).filter((candidate) => {
+    if (['confirmed', 'adjusted', 'rejected'].includes(candidate?.reviewState)) return false;
+    if (candidate?.active === true || candidate?.canAffectScoreAndAlerts === true) return true;
+    return ['learning', 'suggested', 'operational', 'change_review', 'stale'].includes(candidate?.stage);
+  });
 
   for (const [tripIndex, trip] of (trips || []).entries()) {
     if (trip?.status && trip.status !== 'completed') continue;
@@ -997,8 +1205,28 @@ function buildSpeedMapSectionsInternal(trips = [], corrections = []) {
       correction,
       candidate: findCandidateForCorrection(correction, candidateList),
     })),
-    ...candidateList
+    ...visibleRoadMemoryCandidates
       .filter((candidate) => !correctionCoversCandidate(candidate, corrections))
+      .map((candidate) => ({
+        geohash: candidate.geohash,
+        correction: null,
+        roadMemoryCandidate: candidate,
+        candidate: {
+          ...candidate,
+          source: 'local_road_memory',
+          observedLimitKmh: Number(candidate.limitKmh) || null,
+          confirmedObservedLimitKmh: null,
+          observedLimits: [Number(candidate.limitKmh)].filter(Number.isFinite),
+          confirmedObservedLimits: [],
+          observedSources: ['local_road_memory'],
+          sampleCount: Number(candidate.sampleCount) || Number(candidate.evidenceCount) || 0,
+        },
+      })),
+    ...candidateList
+      .filter((candidate) => !correctionCoversCandidate(
+        candidate,
+        [...(corrections || []), ...visibleRoadMemoryCandidates]
+      ))
       .filter((candidate) => cleanGeometry(candidate.sectionPoints || []).length >= 2)
       .map((candidate) => ({
         geohash: candidate.geohash,
@@ -1007,7 +1235,7 @@ function buildSpeedMapSectionsInternal(trips = [], corrections = []) {
       })),
   ];
 
-  return entries.map(({ geohash, correction, candidate }) => {
+  return entries.map(({ geohash, correction, candidate, roadMemoryCandidate }) => {
     const savedGeometry = cleanGeometry(correction?.sectionPoints);
     const center = geohashCenter(geohash);
     const sectionPoints = savedGeometry.length >= 2
@@ -1023,6 +1251,7 @@ function buildSpeedMapSectionsInternal(trips = [], corrections = []) {
     const observedEvidence = assessSpeedLimitEvidence({
       source: candidate?.observedSources?.[0] || 'unknown',
       sampleCount: candidate?.sampleCount,
+      confidence: roadMemoryCandidate ? candidate?.confidence : undefined,
     });
     const savedEvidence = correction
       ? assessSpeedLimitEvidence(correction)
@@ -1037,15 +1266,24 @@ function buildSpeedMapSectionsInternal(trips = [], corrections = []) {
       sectionPoints,
       roadName: correction?.roadName || candidate?.roadName || '',
       saved: Boolean(correction),
+      roadMemoryCandidate: Boolean(roadMemoryCandidate),
       limitKmh: correction?.limitKmh ?? null,
       effectiveLimitKmh,
-      source: correction?.source ?? null,
+      source: correction?.source ?? candidate?.source ?? null,
       conflict: conflictFor(correction, candidate),
       observedEvidence,
       savedEvidence,
-      confidence: savedEvidence?.confidence ?? observedEvidence.confidence,
+      confidence: savedEvidence?.confidence ?? (
+        roadMemoryCandidate
+          ? Math.min(observedEvidence.confidence, Number(candidate?.confidence) || observedEvidence.confidence)
+          : observedEvidence.confidence
+      ),
       confidenceLevel: savedEvidence?.level ?? observedEvidence.level,
       affectedTripCount: candidate?.tripIds?.length || 0,
+      operational: Boolean(
+        roadMemoryCandidate &&
+        roadMemoryCandidate.canAffectScoreAndAlerts === true
+      ),
     };
   }).sort((a, b) => {
     if (a.saved !== b.saved) return a.saved ? -1 : 1;

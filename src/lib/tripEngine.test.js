@@ -12,6 +12,7 @@ import {
   calculateRouteSummary,
   calculateTripScores,
   calculateTripStats,
+  buildNightClassificationDetails,
   calculateHillDrivingScore,
   calculateEcoDrivingScore,
   calculateLaneChangingScore,
@@ -66,6 +67,7 @@ import { FATIGUE_SAFETY_MAX_PENALTY, FATIGUE_SAFETY_PENALTY_SCALE, PENALTY_SCALE
 import { LANE_CHANGING_SAFETY_WEIGHT } from '@/lib/scoringConstants';
 import {
   getLastParkedLocation,
+  getLastParkingState,
   localSettings,
   DEFAULT_SETTINGS,
   PARKED_LOCATION_PRIVACY_GUARD_M,
@@ -451,7 +453,7 @@ describe('tripEngine', () => {
       idle_penalty_points: null,
     });
     expect(scores.eco_driving_score).toBeNull();
-    expect(Number.isFinite(scores.score_eco)).toBe(true);
+    expect(scores).not.toHaveProperty('score_eco');
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('multipliers cannot both be zero'));
     errorSpy.mockRestore();
   });
@@ -843,7 +845,6 @@ describe('tripEngine', () => {
       score_confidence_label: CONFIDENCE_LEVELS.UNAVAILABLE,
       score_safety_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
       score_smoothness_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
-      score_eco_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
       distraction_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
       close_proximity_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
       fuel_band_score_confidence: CONFIDENCE_LEVELS.UNAVAILABLE,
@@ -1433,6 +1434,159 @@ describe('tripEngine', () => {
 
     expect(isNightDrivingTime(torontoWinterEvening, sunsetThresholds)).toBe(true);
     expect(isNightDrivingTime(torontoWinterNoon, sunsetThresholds)).toBe(false);
+  });
+
+  it('stores an explainable sunset decision and detects trips crossing the buffered boundary', () => {
+    const thresholds = {
+      ...DEFAULT_THRESHOLDS,
+      NIGHT_DETECTION_MODE: 'sunset',
+      NIGHT_BOUNDARY_TOLERANCE_MINUTES: 5,
+      NIGHT_SUNSET_OFFSET_MINUTES: 0,
+      NIGHT_SUNRISE_OFFSET_MINUTES: 0,
+    };
+    const reference = {
+      lat: 43.6532,
+      lng: -79.3832,
+      timestamp: '2026-01-01T17:00:00.000Z',
+      timezone_id: 'America/Toronto',
+      utc_offset_minutes: -300,
+    };
+    const initial = buildNightClassificationDetails([reference], thresholds);
+    const [sunsetHour, sunsetMinute] = initial.evening_event_local_time.split(':').map(Number);
+    const localToIso = (minuteDelta) => new Date(
+      Date.UTC(2026, 0, 1, sunsetHour, sunsetMinute + minuteDelta) + 300 * 60_000
+    ).toISOString();
+    const points = [
+      { ...reference, timestamp: localToIso(3) },
+      { ...reference, timestamp: localToIso(7) },
+    ];
+
+    const details = buildNightClassificationDetails(points, thresholds);
+
+    expect(details).toMatchObject({
+      version: 1,
+      is_night: true,
+      mode: 'sunset',
+      method: 'sunset',
+      boundary_tolerance_minutes: 5,
+      trip_started_in_night: false,
+      timezone_id: 'America/Toronto',
+      utc_offset_minutes: -300,
+      custom_fallback_used: false,
+      evaluated_point_count: 2,
+    });
+    expect(details.decision_point_at).toBe(points[1].timestamp);
+    expect(details.evening_event_local_time).toMatch(/^\d{2}:\d{2}$/);
+    expect(details.morning_event_local_time).toMatch(/^\d{2}:\d{2}$/);
+  });
+
+  it('offers civil twilight as a later darkness boundary than sunset', () => {
+    const point = {
+      lat: 43.6532,
+      lng: -79.3832,
+      timestamp: '2026-01-01T22:05:00.000Z',
+      timezone_id: 'America/Toronto',
+      utc_offset_minutes: -300,
+    };
+    const base = {
+      ...DEFAULT_THRESHOLDS,
+      NIGHT_BOUNDARY_TOLERANCE_MINUTES: 0,
+      NIGHT_SUNSET_OFFSET_MINUTES: 0,
+      NIGHT_SUNRISE_OFFSET_MINUTES: 0,
+    };
+    const sunset = buildNightClassificationDetails([point], {
+      ...base,
+      NIGHT_DETECTION_MODE: 'sunset',
+    });
+    const civil = buildNightClassificationDetails([point], {
+      ...base,
+      NIGHT_DETECTION_MODE: 'civil_twilight',
+    });
+
+    expect(sunset.is_night).toBe(true);
+    expect(civil.is_night).toBe(false);
+    expect(civil).toMatchObject({
+      mode: 'civil_twilight',
+      solar_event_type: 'civil_twilight',
+      custom_fallback_used: false,
+    });
+    expect(civil.evening_event_local_time > sunset.evening_event_local_time).toBe(true);
+  });
+
+  it('preserves historical offsets across daylight-saving and timezone changes', () => {
+    const custom = {
+      ...DEFAULT_THRESHOLDS,
+      NIGHT_DETECTION_MODE: 'custom',
+      NIGHT_START_TIME: '22:00',
+      NIGHT_END_TIME: '05:00',
+    };
+    const winter = buildNightClassificationDetails([{
+      timestamp: '2026-03-08T04:30:00.000Z',
+      timezone_id: 'America/Toronto',
+      utc_offset_minutes: -300,
+    }], custom);
+    const summer = buildNightClassificationDetails([{
+      timestamp: '2026-03-09T03:30:00.000Z',
+      timezone_id: 'America/Toronto',
+      utc_offset_minutes: -240,
+    }], custom);
+    const crossing = buildNightClassificationDetails([
+      {
+        timestamp: '2026-07-01T19:00:00.000Z',
+        timezone_id: 'Europe/London',
+        utc_offset_minutes: 60,
+      },
+      {
+        timestamp: '2026-07-02T03:30:00.000Z',
+        timezone_id: 'America/Toronto',
+        utc_offset_minutes: -240,
+      },
+    ], custom);
+
+    expect(winter).toMatchObject({ is_night: true, trip_start_local_time: '23:30', utc_offset_minutes: -300 });
+    expect(summer).toMatchObject({ is_night: true, trip_start_local_time: '23:30', utc_offset_minutes: -240 });
+    expect(crossing).toMatchObject({
+      is_night: true,
+      trip_started_in_night: false,
+      timezone_id: 'Europe/London',
+      utc_offset_minutes: 60,
+      evaluated_point_count: 2,
+    });
+    expect(crossing.decision_point_at).toBe('2026-07-02T03:30:00.000Z');
+  });
+
+  it('records GPS and polar solar fallbacks in the saved diagnostics metadata', () => {
+    const thresholds = {
+      ...DEFAULT_THRESHOLDS,
+      NIGHT_DETECTION_MODE: 'civil_twilight',
+      NIGHT_START_TIME: '22:00',
+      NIGHT_END_TIME: '05:00',
+    };
+    const missingGps = buildNightClassificationDetails([{
+      timestamp: '2026-01-01T23:30:00.000Z',
+      timezone_id: 'UTC',
+      utc_offset_minutes: 0,
+    }], thresholds);
+    const polarSummer = buildNightClassificationDetails([{
+      lat: 69.6492,
+      lng: 18.9553,
+      timestamp: '2026-06-21T10:00:00.000Z',
+      timezone_id: 'Europe/Oslo',
+      utc_offset_minutes: 120,
+    }], thresholds);
+
+    expect(missingGps).toMatchObject({
+      custom_fallback_used: true,
+      fallback_reason: 'gps_coordinates_unavailable',
+      method: 'custom_fallback',
+      fallback_point_count: 1,
+    });
+    expect(polarSummer).toMatchObject({
+      custom_fallback_used: true,
+      fallback_reason: 'solar_event_unavailable',
+      method: 'custom_fallback',
+      fallback_point_count: 1,
+    });
   });
 
   it('uses the shared fixed-hour fallback boundary when coordinates are unavailable', () => {
@@ -2204,6 +2358,32 @@ describe('tripEngine', () => {
     });
 
     await expect(getLastParkedLocation()).resolves.toBeNull();
+    await expect(getLastParkingState()).resolves.toMatchObject({
+      status: 'private',
+      source: 'privacy_zone',
+    });
+  });
+
+  it('describes a shop-to-privacy-zone return as private instead of no parking event', async () => {
+    await saveLastParkedLocation({
+      lat: 43.7001,
+      lng: -79.4101,
+      timestamp: '2026-07-20T17:00:00.000Z',
+      tripId: 'shop-trip',
+      confidence: 'high',
+    });
+    await suppressLastParkedLocation({
+      timestamp: '2026-07-20T18:00:00.000Z',
+      source: 'privacy_zone',
+      tripId: 'home-trip',
+    });
+
+    await expect(getLastParkedLocation()).resolves.toBeNull();
+    await expect(getLastParkingState()).resolves.toMatchObject({
+      status: 'private',
+      tripId: 'home-trip',
+      source: 'privacy_zone',
+    });
   });
 
   it('does not store the last parked location inside a privacy zone guard', async () => {
@@ -2243,6 +2423,10 @@ describe('tripEngine', () => {
       expect(smartPrivateEndpoint).toBeNull();
       expect(savedPrivate).toBeNull();
       expect(await getLastParkedLocation()).toBeNull();
+      expect(await getLastParkingState()).toMatchObject({
+        status: 'private',
+        source: 'privacy_zone',
+      });
     } finally {
       await savePrivacyZonesToStorage([]);
       localSettings.update({ privacy_zones: previousZones || [] });
@@ -2497,7 +2681,7 @@ describe('trip insights', () => {
     expect(buildScoreTips(trips)[0]).toContain('excellent');
     expect(buildScoreTips([{ ...trips[0], score_confidence: undefined }])[0]).toContain('Not enough data yet');
     const badges = calculateAchievementBadges(trips);
-    expect(badges).toHaveLength(40);
+    expect(badges).toHaveLength(39);
     expect(badges.find((badge) => badge.id === 'first_drive').earned).toBe(true);
     expect(badges.find((badge) => badge.id === 'perfect_trip').earned).toBe(true);
     expect(badges.find((badge) => badge.id === 'hundred_km').earned).toBe(true);

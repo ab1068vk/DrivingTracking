@@ -86,7 +86,6 @@ export function DriverSignaturePanel({ signature }) {
   const labels = {
     aggression: 'Aggression',
     smoothness: 'Smoothness',
-    ecoMindedness: 'Eco-mindedness',
     powertrainStress: 'Powertrain stress',
     speedTolerance: 'Speed tolerance',
     brakingStyle: 'Braking control',

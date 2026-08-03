@@ -130,12 +130,22 @@ describe('Android auto-tracking stats parity', () => {
   it('stores native completed trips as unscored until JavaScript rescoring runs', () => {
     const source = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
 
-    for (const key of ['score_overall', 'score_safety', 'score_smoothness', 'score_eco']) {
+    for (const key of ['score_overall', 'score_safety', 'score_smoothness']) {
       expect(source).toContain(`trip.put("${key}", JSONObject.NULL);`);
     }
     expect(source).toContain('trip.put("needs_rescore", true);');
     expect(source).toContain('trip.put("score_status", "pending_javascript_scoring");');
     expect(source).not.toContain('trip.put("score_overall", 100');
+  });
+
+  it('keeps the native GPS accuracy gate aligned with JavaScript scoring', () => {
+    const source = readFileSync(
+      new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url),
+      'utf8'
+    );
+    const nativeAccuracy = source.match(/MAX_ACCURACY_M\s*=\s*(\d+(?:\.\d+)?)f/)?.[1];
+
+    expect(Number(nativeAccuracy)).toBe(DEFAULT_THRESHOLDS.MAX_GPS_ACCURACY_M);
   });
 
   it('keeps active-trip crash recovery encrypted, throttled, and bounded', () => {
@@ -145,12 +155,57 @@ describe('Android auto-tracking stats parity', () => {
     expect(serviceSource).toContain('ACTIVE_CHECKPOINT_INTERVAL_MS = 60_000L');
     expect(serviceSource).toContain('ACTIVE_CHECKPOINT_RESUME_WINDOW_MS = 10 * 60_000L');
     expect(serviceSource).toContain('finishTrip("checkpoint_recovery_finalize", true)');
+    expect(serviceSource).toContain('checkpoint.put("candidate", candidateTrip)');
+    expect(serviceSource).toContain('checkpoint.optBoolean("candidate", false)');
+    expect(serviceSource).toContain('pendingCompletedTrip = trip');
+    expect(serviceSource).toContain('if (!retryPendingCompletedTripSave(false)) return');
+    expect(serviceSource).toContain('COMPLETED_TRIP_SAVE_RETRY_MS = 60_000L');
     expect(serviceSource).toContain('checkpoint.put("motion_samples_omitted", true)');
     expect(serviceSource).toContain('DriveSenseActiveTripCheckpointStore.clear(this);');
     expect(checkpointSource).toContain('MAX_ROUTE_POINTS = 1500');
     expect(checkpointSource).toContain('MAX_ENCRYPTED_BYTES = 512 * 1024');
+    expect(checkpointSource).toContain('MAX_AGE_MS = 7L * 24L * 60L * 60_000L');
+    expect(checkpointSource).toContain('MAX_CANDIDATE_AGE_MS = 24L * 60L * 60_000L');
     expect(checkpointSource).toContain('new AtomicFile(');
     expect(checkpointSource).toContain('DriveSensePayloadCrypto');
+  });
+
+  it('uses a bounded per-trip journal and verified per-ID handoff acknowledgements', () => {
+    const journalSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseCompletedTripJournal.java', import.meta.url), 'utf8');
+    const repositorySource = readFileSync(new URL('../localTripRepository.js', import.meta.url), 'utf8');
+
+    expect(journalSource).toContain('MAX_ENCRYPTED_CHUNK_BYTES = 512 * 1024');
+    expect(journalSource).toContain('MAX_TOTAL_JOURNAL_BYTES = 32L * 1024L * 1024L');
+    expect(journalSource).toContain('new AtomicFile(file)');
+    expect(journalSource).toContain('chunks failed pre-commit verification');
+    expect(journalSource).toContain('restoreManifest(manifestFile, previousManifest)');
+    expect(repositorySource).toContain('verifyTripsPersistedForNativeAcknowledge(importedTrips)');
+    expect(repositorySource).toContain('acknowledgeNativeCompletedTrips(acknowledgedTripIds)');
+    expect(repositorySource).not.toContain('clearNativeCompletedTrips().catch');
+  });
+
+  it('re-arms opted-in background tracking after reboot or an app update', () => {
+    const receiverSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseBootReceiver.java', import.meta.url), 'utf8');
+    const manifestSource = readFileSync(new URL('../../../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
+
+    expect(receiverSource).toContain('DriveSenseNativeTripStore.isServiceEnabled(context)');
+    expect(receiverSource).toContain('DriveSenseAutoTrackingService.start(context)');
+    expect(receiverSource).toContain('service_restart_skipped');
+    expect(manifestSource).toContain('android.intent.action.BOOT_COMPLETED');
+    expect(manifestSource).toContain('android.intent.action.MY_PACKAGE_REPLACED');
+  });
+
+  it('keeps the user opt-in armed across an unexpected service teardown', () => {
+    const serviceSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
+    const onDestroy = serviceSource.slice(
+      serviceSource.indexOf('public void onDestroy()'),
+      serviceSource.indexOf('@Nullable', serviceSource.indexOf('public void onDestroy()'))
+    );
+
+    expect(onDestroy).toContain('finishTrip("service_destroyed", false)');
+    expect(onDestroy).not.toContain('setServiceEnabled(this, false)');
+    expect(serviceSource).toContain('return START_STICKY;');
+    expect(serviceSource).toContain('finishTrip("service_stopped_by_user", false)');
   });
 
   it('supports confirmed native manual trips for background alerts', () => {

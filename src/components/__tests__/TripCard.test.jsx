@@ -77,6 +77,37 @@ describe('TripCard score provenance display', () => {
     expect(html).toContain('Privacy-estimated near protected zones');
   });
 
+  it('shows a locally confirmed clear condition on compact trip cards', () => {
+    const html = renderToStaticMarkup(<TripCard compact trip={{
+      ...trip('calibrated'),
+      tags: ['city'],
+      weather_context: {
+        source: 'user_confirmed',
+        condition: 'clear',
+      },
+    }} />);
+
+    expect(html).toContain('title="Weather: Clear (confirmed by you)"');
+    expect(html).toContain('>Clear</span>');
+  });
+
+  it('uses the saved weather badge instead of duplicating a derived rain tag', () => {
+    const html = renderToStaticMarkup(<TripCard compact trip={{
+      ...trip('calibrated'),
+      tags: ['city', 'rain'],
+      tag_sources: {
+        rain: { source: 'weather_evidence' },
+      },
+      weather_context: {
+        source: 'open_meteo',
+        condition: 'rain',
+      },
+    }} />);
+
+    expect(html.match(/>Rain<\/span>/g)).toHaveLength(1);
+    expect(html).toContain('title="Weather: Rain (Open-Meteo)"');
+  });
+
   it('labels trips whose route data expired while keeping the summary', () => {
     const html = renderToStaticMarkup(<TripCard trip={{
       ...trip('calibrated'),
@@ -97,7 +128,7 @@ describe('TripCard score provenance display', () => {
     }} />);
 
     expect(html).toContain('1 phone');
-    expect(html).toContain('1 confirmed phone-use window');
+    expect(html).toContain('1 moving foreground-app window');
   });
 
   it('does not show diagnostic GPS phone proxy windows as confirmed phone use', () => {
@@ -114,7 +145,7 @@ describe('TripCard score provenance display', () => {
     }} />);
 
     expect(html).not.toContain('1 phone');
-    expect(html).not.toContain('confirmed phone-use window');
+    expect(html).not.toContain('moving foreground-app window');
   });
 
   it('renders the time-aware premium card only when explicitly enabled', () => {

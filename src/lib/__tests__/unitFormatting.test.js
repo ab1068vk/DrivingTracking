@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   convertDistanceKm,
+  convertDisplaySpeedToKmh,
   convertPerDistanceRate,
   convertSpeedKmh,
   distanceUnitLabel,
@@ -8,6 +9,7 @@ import {
   formatDistanceScope,
   formatPerDistanceRate,
   speedUnitLabel,
+  speedInputValueFromKmh,
 } from '@/lib/unitFormatting';
 
 describe('unitFormatting', () => {
@@ -25,6 +27,13 @@ describe('unitFormatting', () => {
     expect(distanceUnitLabel('imperial')).toBe('mi');
     expect(speedUnitLabel('imperial')).toBe('mph');
     expect(formatDistanceScope(295.2, 'imperial')).toBe('183.4 mi');
+  });
+
+  it('round-trips saved road-speed inputs without changing canonical km/h storage', () => {
+    expect(speedInputValueFromKmh(50, 'metric')).toBe('50');
+    expect(speedInputValueFromKmh(50, 'imperial')).toBe('31');
+    expect(Math.round(convertDisplaySpeedToKmh(31, 'imperial'))).toBe(50);
+    expect(convertDisplaySpeedToKmh(50, 'metric')).toBe(50);
   });
 
   it('formats short meter-based map distances in the selected units', () => {

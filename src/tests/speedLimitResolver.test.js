@@ -30,14 +30,14 @@ describe('resolveSpeedLimitWithTier', () => {
     expect(r.limitKmh).toBe(60);
   });
 
-  it('uses user-entered local labels before OSM data', () => {
+  it('keeps fresh OSM posted data above a user-entered estimate', () => {
     const r = resolveSpeedLimitWithTier(
       { speed_limit_kmh: 60, speed_limit_source: 'openstreetmap' },
       { localKnowledge: { limitKmh: 40, source: 'user_entered_estimate', confidence: 0.75 } }
     );
-    expect(r.tier).toBe('LEARNED_LOCAL');
-    expect(r.limitKmh).toBe(40);
-    expect(r.source).toBe('user_entered_estimate');
+    expect(r.tier).toBe('POSTED');
+    expect(r.limitKmh).toBe(60);
+    expect(r.source).toBe('openstreetmap');
   });
 
   it('returns MAP_ESTIMATED for osm_highway_default', () => {
@@ -149,7 +149,7 @@ describe('resolveSpeedLimitWithTier', () => {
 });
 
 describe('resolveEffectiveSpeedLimitForIndex priority', () => {
-  it('uses local user labels before OSM and inferred fallbacks for live/manual checks', () => {
+  it('keeps fresh OSM posted data above local estimates for live/manual checks', () => {
     const points = [
       { lat: 43.65, lng: -79.38, speed_kmh: 52, speed_limit_kmh: 60, speed_limit_source: 'openstreetmap', timestamp: '2026-01-01T12:00:00.000Z' },
       { lat: 43.6501, lng: -79.38, speed_kmh: 54, speed_limit_kmh: 60, speed_limit_source: 'openstreetmap', timestamp: '2026-01-01T12:00:05.000Z' },
@@ -157,14 +157,30 @@ describe('resolveEffectiveSpeedLimitForIndex priority', () => {
     const resolved = resolveEffectiveSpeedLimitForIndex(points, 1, DEFAULT_THRESHOLDS, {
       localKnowledge: { limitKmh: 40, source: 'user_entered_estimate', confidence: 0.75 },
     });
-    expect(resolved.limitKmh).toBe(40);
-    expect(resolved.tier).toBe('LEARNED_LOCAL');
-    expect(resolved.limitSource).toBe('user_entered_estimate');
-    expect(resolved.resolutionReason).toBe('user_entered_estimate');
+    expect(resolved.limitKmh).toBe(60);
+    expect(resolved.tier).toBe('POSTED');
+    expect(resolved.limitSource).toBe('openstreetmap');
+    expect(resolved.resolutionReason).toBe('openstreetmap_posted_limit');
     expect(resolved.localSpeedRule).toMatchObject({
       source: 'user_entered_estimate',
     });
     expect(resolved.fallbackReason).toBeNull();
+  });
+
+  it('lets validated local knowledge replace lower-authority stored defaults', () => {
+    const points = [
+      { lat: 43.65, lng: -79.38, speed_limit_kmh: 60, speed_limit_source: 'osm_highway_default' },
+    ];
+    const resolved = resolveEffectiveSpeedLimitForIndex(points, 0, DEFAULT_THRESHOLDS, {
+      localKnowledge: { limitKmh: 50, source: 'local_road_memory', confidence: 0.66 },
+    });
+
+    expect(resolved).toMatchObject({
+      limitKmh: 50,
+      tier: 'LEARNED_LOCAL',
+      limitSource: 'learned_local',
+      resolutionReason: 'learned_local_speed',
+    });
   });
 
   it('reports when it falls back because no saved or posted road speed matched', () => {

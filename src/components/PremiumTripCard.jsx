@@ -39,6 +39,7 @@ import {
   buildScoreExplanation,
   getTripDisplayName,
   getTripTagOption,
+  getTripWeatherBadge,
   normalizeTripTags,
 } from '@/lib/tripMetadata';
 import {
@@ -97,6 +98,10 @@ export default function PremiumTripCard({
   const premiumTitle = title === 'Untitled trip' ? timePresentation.label : title;
   const tags = normalizeTripTags(trip);
   const displayTags = trip.night_driving && !tags.includes('night') ? [...tags, 'night'] : tags;
+  const weatherBadge = getTripWeatherBadge(trip);
+  const cardTags = weatherBadge?.replacesTag
+    ? displayTags.filter((tag) => tag !== weatherBadge.replacesTag)
+    : displayTags;
   const privateTrip = trip.privacy_mode === 'summary_only';
   const routeDataExpired = Boolean(trip.route_data_expired_at);
   const replay3dAvailable = trip.route_replay_available === true && !privateTrip && !routeDataExpired;
@@ -243,7 +248,7 @@ export default function PremiumTripCard({
             {trip.aggressive_grade === 'aggressive' && <span className="premium-trip-badge" data-tone="danger"><Flame /> Aggressive</span>}
             {unavailableScore && <span className="premium-trip-badge">{scoreUnavailableMessage}</span>}
             {trip._dpApplied && <span className="premium-trip-badge">~ Privacy-estimated near protected zones</span>}
-            {displayTags.map((tagId) => {
+            {cardTags.map((tagId) => {
               const option = getTripTagOption(tagId);
               return (
                 <span key={tagId} className="premium-trip-badge" data-tone={tagId === 'night' ? 'night' : 'tag'}>
@@ -251,6 +256,11 @@ export default function PremiumTripCard({
                 </span>
               );
             })}
+            {weatherBadge && (
+              <span className="premium-trip-badge" data-tone="tag" title={weatherBadge.title}>
+                {weatherBadge.label}
+              </span>
+            )}
           </div>
 
           <div className="premium-trip-buttons">

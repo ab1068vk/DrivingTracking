@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   PHONE_USE_PENALTY_POINTS,
   PHONE_USE_SEVERITY_THRESHOLDS,
@@ -19,6 +20,31 @@ const routePoint = (index, speed = 55) => ({
 });
 
 describe('Android phone usage access merge', () => {
+  it('removes package identity before native usage evidence enters trip storage', () => {
+    const source = readFileSync(
+      new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSensePhoneUsageTracker.java', import.meta.url),
+      'utf8'
+    );
+
+    expect(source).toContain('session.remove("package_name");');
+    expect(source).toContain('result.put("package_filter_applied", true);');
+  });
+
+  it('ends native foreground sessions when the screen locks and ignores duplicate resumes', () => {
+    const source = readFileSync(
+      new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSensePhoneUsageTracker.java', import.meta.url),
+      'utf8'
+    );
+
+    expect(source).toContain('type == UsageEvents.Event.SCREEN_NON_INTERACTIVE');
+    expect(source).toContain('type == UsageEvents.Event.KEYGUARD_SHOWN');
+    expect(source).toContain('type == UsageEvents.Event.SCREEN_INTERACTIVE');
+    expect(source).toContain('type == UsageEvents.Event.KEYGUARD_HIDDEN');
+    expect(source).toContain('session.put("started_after_unlock", startedAfterUnlock);');
+    expect(source).toContain('if (!packageName.equals(activePackage))');
+    expect(source).toContain('long effectiveEndMs = startMs + durationMs;');
+  });
+
   it('exposes phone-use scoring heuristics for calibration review', () => {
     expect(PHONE_USE_SEVERITY_THRESHOLDS).toMatchObject({
       HIGH_DURATION_SECONDS: 90,
@@ -50,6 +76,8 @@ describe('Android phone usage access merge', () => {
     expect(usage.phone_use_score).toBe(100 - PHONE_USE_PENALTY_POINTS.medium);
     expect(usage.phone_use_events[0].signals_triggered).toContain('android_usage_access');
     expect(usage.phone_use_events[0].lat).toBeDefined();
+    expect(usage.phone_use_events[0].lng).toBeDefined();
+    expect(usage.phone_use_events[0]).not.toHaveProperty('package_name');
   });
 
   it('ignores passive navigation and stale usage sessions', () => {
@@ -76,6 +104,115 @@ describe('Android phone usage access merge', () => {
         duration_seconds: 20,
       }],
     }, Array.from({ length: 40 }, (_, index) => routePoint(index, 0)), 120);
+
+    expect(usage.phone_use_window_count).toBe(0);
+    expect(usage.phone_use_score).toBe(100);
+  });
+
+  it('scores only the moving portion of a foreground-app session', () => {
+    const routePoints = Array.from({ length: 61 }, (_, index) => (
+      routePoint(index, index < 20 ? 55 : 0)
+    ));
+    const usage = buildPhoneUseFromAndroidUsage({
+      usage_access_granted: true,
+      events: [{
+        start_ms: baseTime,
+        end_ms: baseTime + 60_000,
+        duration_seconds: 60,
+      }],
+    }, routePoints, 60);
+
+    expect(usage.phone_use_window_count).toBe(1);
+    expect(usage.phone_use_total_seconds).toBe(20);
+    expect(usage.phone_use_pct_of_trip).toBeCloseTo(33.33, 2);
+    expect(usage.phone_use_events[0]).toMatchObject({
+      startTime: new Date(baseTime).toISOString(),
+      endTime: new Date(baseTime + 20_000).toISOString(),
+      speed_kmh: 55,
+      max_speed_kmh: 55,
+      gps_sample_count: 20,
+    });
+    expect(usage.phone_use_events[0].signals_triggered).toContain('moving_duration_clipped');
+  });
+
+  it('retains coarse screen and unlock context without retaining package identity', () => {
+    const usage = buildPhoneUseFromAndroidUsage({
+      usage_access_granted: true,
+      events: [{
+        package_name: 'com.chat.app',
+        start_ms: baseTime + 5_000,
+        end_ms: baseTime + 25_000,
+        duration_seconds: 20,
+        started_after_screen_on: true,
+        started_after_unlock: true,
+      }],
+    }, Array.from({ length: 40 }, (_, index) => routePoint(index)), 40);
+
+    expect(usage.phone_use_events[0]).toMatchObject({
+      interaction_context: 'after_unlock',
+      started_after_screen_on: true,
+      started_after_unlock: true,
+    });
+    expect(usage.phone_use_events[0].signals_triggered).toEqual(expect.arrayContaining([
+      'recent_screen_on',
+      'recent_unlock',
+    ]));
+    expect(usage.phone_use_events[0]).not.toHaveProperty('package_name');
+  });
+
+  it('does not attach stale unlock context to a much later moving window', () => {
+    const routePoints = Array.from({ length: 41 }, (_, index) => (
+      routePoint(index, index >= 20 ? 45 : 0)
+    ));
+    const usage = buildPhoneUseFromAndroidUsage({
+      usage_access_granted: true,
+      events: [{
+        start_ms: baseTime,
+        end_ms: baseTime + 40_000,
+        duration_seconds: 40,
+        started_after_screen_on: true,
+        started_after_unlock: true,
+      }],
+    }, routePoints, 40);
+
+    expect(usage.phone_use_events[0]).toMatchObject({
+      interaction_context: 'foreground_only',
+      started_after_screen_on: false,
+      started_after_unlock: false,
+    });
+  });
+
+  it('splits one app session across materially separate moving windows', () => {
+    const routePoints = Array.from({ length: 31 }, (_, index) => (
+      routePoint(index, index < 10 || index >= 20 ? 55 : 0)
+    ));
+    const usage = buildPhoneUseFromAndroidUsage({
+      usage_access_granted: true,
+      events: [{
+        start_ms: baseTime,
+        end_ms: baseTime + 30_000,
+        duration_seconds: 30,
+      }],
+    }, routePoints, 30);
+
+    expect(usage.phone_use_window_count).toBe(2);
+    expect(usage.phone_use_total_seconds).toBe(20);
+    expect(usage.phone_use_events.map((event) => event.durationS)).toEqual([10, 10]);
+  });
+
+  it('rejects moving overlap supported only by poor-accuracy GPS samples', () => {
+    const routePoints = Array.from({ length: 21 }, (_, index) => ({
+      ...routePoint(index, 55),
+      accuracy: 80,
+    }));
+    const usage = buildPhoneUseFromAndroidUsage({
+      usage_access_granted: true,
+      events: [{
+        start_ms: baseTime,
+        end_ms: baseTime + 20_000,
+        duration_seconds: 20,
+      }],
+    }, routePoints, 20);
 
     expect(usage.phone_use_window_count).toBe(0);
     expect(usage.phone_use_score).toBe(100);

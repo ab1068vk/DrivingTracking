@@ -1,4 +1,5 @@
 import { LocalNotifications } from '@capacitor/local-notifications';
+import ActivityRecognition from '@/lib/driveSenseNativePlugin';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { requestNotificationPermission } from '@/lib/permissions';
 import { localSettings } from '@/lib/trackingStore';
@@ -53,6 +54,7 @@ export const NOTIFICATION_IDS = {
   BACKGROUND_TRACKING_ACTIVE: 4040,
   FOREGROUND_MANUAL_TRACKING_WARNING: 4041,
   EXPORT_SAVED: 4050,
+  PARKING_REMINDER: 4060,
 };
 // Backward-compatible notification identifiers for persisted scheduled items.
 NOTIFICATION_IDS.NEAR_MISS_ALERT = NOTIFICATION_IDS.MANOEUVRE_ALERT;
@@ -75,6 +77,9 @@ const PHONE_NOTIF_LAST_KEY = 'drivesense_phone_notif_last_ms';
 const HEADING_DRIFT_NOTIF_LAST_KEY = 'drivesense_heading_drift_notif_last_ms';
 const SPEEDING_NOTIF_LAST_KEY = 'drivesense_speeding_notif_last_ms';
 const FATIGUE_NOTIF_TRIP_KEY = 'drivesense_fatigue_notif_trip_id';
+const PARKING_REMINDER_STATE_KEY = 'drivesense_parking_reminder_state_v1';
+const PARKING_REMINDER_STATES_KEY = 'drivesense_parking_reminder_states_by_vehicle_v1';
+export const PARKING_REMINDER_CHANGED_EVENT = 'roadsage-parking-reminder-changed';
 const DEDUPE_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const TRIP_NOTIFICATION_DEDUPE_MS = 7 * 24 * 60 * 60 * 1000;
 const SAFE_DRIVING_TIPS = [
@@ -408,6 +413,248 @@ export async function cancelLongTripReminder() {
   await cancelNotificationIds([LONG_TRIP_REMINDER_ID]);
 }
 
+export async function scheduleParkingReminder({
+  minutes = 60,
+  reminderAt: requestedReminderAt = null,
+  stateRevision = 0,
+  vehicleName = '',
+  vehicleId = null,
+} = {}) {
+  const safeMinutes = Math.max(15, Math.min(7 * 24 * 60, Math.round(Number(minutes) || 60)));
+  const parsedReminderAt = Number(requestedReminderAt);
+  const reminderAt = Number.isFinite(parsedReminderAt) && parsedReminderAt > Date.now()
+    ? Math.min(parsedReminderAt, Date.now() + 30 * 24 * 60 * 60 * 1000)
+    : Date.now() + safeMinutes * 60 * 1000;
+  if (isNativePlatform()) {
+    await LocalNotifications.registerActionTypes({
+      types: [{
+        id: 'PARKING_REMINDER_ACTIONS',
+        actions: [
+          { id: 'snooze_15', title: 'Add 15 min' },
+          { id: 'snooze_60', title: 'Add 1 hour' },
+          { id: 'parking_done', title: 'Done', destructive: true },
+        ],
+      }],
+    }).catch((error) => logSystemFailure('parking_reminder_actions_register', error));
+  }
+  const normalizedVehicleId = vehicleId == null || String(vehicleId).trim() === ''
+    ? null
+    : String(vehicleId);
+  const notificationId = parkingReminderNotificationId(normalizedVehicleId);
+  const notification = await scheduleNotification({
+    id: notificationId,
+    title: 'Parking reminder',
+    body: vehicleName
+      ? `Check ${String(vehicleName).slice(0, 80)} or your parking time.`
+      : 'Check your parked car or parking time.',
+    channelId: SUMMARY_CHANNEL_ID,
+    actionTypeId: 'PARKING_REMINDER_ACTIONS',
+    schedule: { at: new Date(reminderAt), allowWhileIdle: true },
+    extra: {
+      type: 'parking_reminder',
+      stateRevision: Number(stateRevision) || 0,
+      vehicleId: normalizedVehicleId,
+    },
+  }, {
+    replaceIds: [notificationId],
+  });
+  if (notification && typeof localStorage !== 'undefined') {
+    const state = {
+      stateRevision: Number(stateRevision) || 0,
+      reminderAt,
+      vehicleName: String(vehicleName || '').slice(0, 80),
+      vehicleId: normalizedVehicleId,
+      notificationId,
+    };
+    localStorage.setItem(PARKING_REMINDER_STATE_KEY, JSON.stringify(state));
+    const states = readParkingReminderStates();
+    states[parkingReminderVehicleKey(normalizedVehicleId)] = state;
+    localStorage.setItem(PARKING_REMINDER_STATES_KEY, JSON.stringify(states));
+    if (isNativePlatform()) {
+      await ActivityRecognition.setNativeParkingReminderState({
+        reminderAt,
+        stateRevision: state.stateRevision,
+        vehicleName: state.vehicleName,
+      }).catch((error) => {
+        logSystemFailure('parking_reminder_native_sync', error, {
+          state_revision: state.stateRevision,
+        });
+      });
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(PARKING_REMINDER_CHANGED_EVENT));
+    }
+  }
+  return notification;
+}
+
+export async function snoozeParkingReminder(minutes = 15) {
+  const current = await getParkingReminderState();
+  if (!current) return false;
+  return scheduleParkingReminder({
+    minutes,
+    stateRevision: current.stateRevision,
+    vehicleName: current.vehicleName,
+    vehicleId: current.vehicleId,
+  });
+}
+
+export async function cancelParkingReminder() {
+  const current = readLocalParkingReminderState();
+  await cancelNotificationIds([
+    current?.notificationId || parkingReminderNotificationId(current?.vehicleId),
+  ]);
+  if (typeof localStorage !== 'undefined') localStorage.removeItem(PARKING_REMINDER_STATE_KEY);
+  if (typeof localStorage !== 'undefined' && current) {
+    const states = readParkingReminderStates();
+    delete states[parkingReminderVehicleKey(current.vehicleId)];
+    localStorage.setItem(PARKING_REMINDER_STATES_KEY, JSON.stringify(states));
+  }
+  if (isNativePlatform()) {
+    await ActivityRecognition.clearNativeParkingReminderState().catch((error) => {
+      logSystemFailure('parking_reminder_native_clear', error);
+    });
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(PARKING_REMINDER_CHANGED_EVENT));
+  }
+}
+
+const readLocalParkingReminderState = () => {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const state = JSON.parse(localStorage.getItem(PARKING_REMINDER_STATE_KEY) || 'null');
+    const reminderAt = Number(state?.reminderAt);
+    if (!Number.isFinite(reminderAt) || reminderAt <= Date.now()) {
+      localStorage.removeItem(PARKING_REMINDER_STATE_KEY);
+      return null;
+    }
+    return {
+      stateRevision: Number(state.stateRevision) || 0,
+      reminderAt,
+      vehicleName: String(state.vehicleName || '').slice(0, 80),
+      vehicleId: state.vehicleId == null ? null : String(state.vehicleId),
+      notificationId: Number(state.notificationId) || parkingReminderNotificationId(state.vehicleId),
+    };
+  } catch {
+    localStorage.removeItem(PARKING_REMINDER_STATE_KEY);
+    return null;
+  }
+};
+
+const parkingReminderVehicleKey = (vehicleId) => (
+  vehicleId == null || String(vehicleId).trim() === '' ? '__current__' : String(vehicleId)
+);
+
+const parkingReminderNotificationId = (vehicleId) => {
+  const key = parkingReminderVehicleKey(vehicleId);
+  if (key === '__current__') return NOTIFICATION_IDS.PARKING_REMINDER;
+  let hash = 2166136261;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return 4600 + (Math.abs(hash) % 800);
+};
+
+const readParkingReminderStates = () => {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PARKING_REMINDER_STATES_KEY) || '{}');
+    const now = Date.now();
+    return Object.entries(parsed && typeof parsed === 'object' ? parsed : {}).reduce(
+      (states, [key, state]) => {
+        if (Number(state?.reminderAt) > now) states[key] = state;
+        return states;
+      },
+      {},
+    );
+  } catch {
+    return {};
+  }
+};
+
+export async function getParkingReminderStates() {
+  return readParkingReminderStates();
+}
+
+export async function activateParkingReminderForVehicle(vehicleId) {
+  if (typeof localStorage === 'undefined') return null;
+  const states = readParkingReminderStates();
+  const state = states[parkingReminderVehicleKey(vehicleId)] || null;
+  if (!state) {
+    localStorage.removeItem(PARKING_REMINDER_STATE_KEY);
+    if (isNativePlatform()) {
+      await ActivityRecognition.clearNativeParkingReminderState().catch(() => {});
+    }
+    return null;
+  }
+  localStorage.setItem(PARKING_REMINDER_STATE_KEY, JSON.stringify(state));
+  if (isNativePlatform()) {
+    await ActivityRecognition.setNativeParkingReminderState({
+      reminderAt: state.reminderAt,
+      stateRevision: state.stateRevision,
+      vehicleName: state.vehicleName,
+    }).catch((error) => logSystemFailure('parking_reminder_vehicle_activate', error));
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(PARKING_REMINDER_CHANGED_EVENT));
+  }
+  return state;
+}
+
+export async function getParkingReminderState({ vehicleId = undefined } = {}) {
+  if (vehicleId !== undefined) {
+    return readParkingReminderStates()[parkingReminderVehicleKey(vehicleId)] || null;
+  }
+  const localState = readLocalParkingReminderState();
+  if (!isNativePlatform()) return localState;
+  let nativeState = null;
+  try {
+    const result = await ActivityRecognition.getNativeParkingReminderState();
+    const state = result?.state;
+    const reminderAt = Number(state?.reminder_at_ms);
+    if (Number.isFinite(reminderAt) && reminderAt > Date.now()) {
+      nativeState = {
+        stateRevision: Number(state.state_revision) || 0,
+        reminderAt,
+        vehicleName: String(state.vehicle_name || '').slice(0, 80),
+      };
+    }
+  } catch (error) {
+    logSystemFailure('parking_reminder_native_read', error);
+  }
+  const newest = !localState || Number(nativeState?.reminderAt) > Number(localState.reminderAt)
+    ? nativeState
+    : localState;
+  if (newest && typeof localStorage !== 'undefined') {
+    localStorage.setItem(PARKING_REMINDER_STATE_KEY, JSON.stringify(newest));
+  }
+  if (
+    newest &&
+    (!nativeState ||
+      Number(nativeState.reminderAt) !== Number(newest.reminderAt) ||
+      Number(nativeState.stateRevision) !== Number(newest.stateRevision))
+  ) {
+    await ActivityRecognition.setNativeParkingReminderState({
+      reminderAt: newest.reminderAt,
+      stateRevision: newest.stateRevision,
+      vehicleName: newest.vehicleName,
+    }).catch((error) => {
+      logSystemFailure('parking_reminder_native_reconcile', error);
+    });
+  }
+  return newest;
+}
+
+export async function cancelStaleParkingReminder(stateRevision) {
+  const scheduled = await getParkingReminderState();
+  if (!scheduled) return false;
+  if (Number(scheduled.stateRevision) === Number(stateRevision)) return false;
+  await cancelParkingReminder();
+  return true;
+}
+
 export async function notifyTripStarted(trip = {}) {
   if (!isNativePlatform()) return;
   if (!notificationsEnabled('trip_start_notification')) return;
@@ -710,12 +957,12 @@ export async function dispatchPostTripNotification(trip, recentTrips = [], setti
         schedule: later(),
         extra: { tripId: trip.id },
       };
-    } else if (settings.notif_post_trip_fuel_saving !== false && (trip.score_eco ?? trip.eco_score ?? 0) >= 85 && (trip.fuel_saved_liters ?? 0) >= 0.3) {
+    } else if (settings.notif_post_trip_fuel_saving !== false && (trip.fuel_saved_liters ?? 0) >= 0.3) {
       const saved = (trip.fuel_saved_liters ?? 0) * resolveFuelPricePerLiter(trip, settings);
       notification = {
         id: NOTIFICATION_IDS.TRIP_FUEL_SAVING,
-        title: 'Eco Drive',
-        body: `Smooth driving saved ~${formatCurrencyAmount(saved, settings)} in fuel on this trip. Eco score: ${formatEstimatedScore(trip.score_eco ?? trip.eco_score)}.`,
+        title: 'Efficient Trip',
+        body: `Estimated fuel savings on this trip: ~${formatCurrencyAmount(saved, settings)}.`,
         channelId: SUMMARY_CHANNEL_ID,
         schedule: later(),
         extra: { tripId: trip.id },

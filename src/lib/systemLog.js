@@ -1,3 +1,5 @@
+import { recordHistoricalAppExperienceEvent } from '@/lib/appExperienceDiagnostics';
+
 const SYSTEM_LOG_KEY = 'drivesense_system_logs_v1';
 const SETTINGS_KEY = 'drivesense_settings';
 export const SYSTEM_LOG_EVENT = 'drivesense:system-log-updated';
@@ -293,6 +295,8 @@ export function recordSystemLog(event = {}) {
       ? stripPrivacyLogMetadata(sanitizedDetails)
       : sanitizedDetails,
   };
+
+  recordHistoricalAppExperienceEvent(next);
 
   pendingLogs.unshift(next);
   if (pendingLogs.length > MAX_PENDING_LOGS) pendingLogs = pendingLogs.slice(0, MAX_PENDING_LOGS);

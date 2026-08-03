@@ -1,5 +1,5 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
-import { clearNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
+import { acknowledgeNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
 import {
@@ -12,8 +12,7 @@ import {
 } from '@/lib/tripEngine';
 import { estimateTripEconomics } from '@/lib/tripInsights';
 import { localVehicleRepository } from '@/lib/localVehicleRepository';
-import { resolveParkedLocation } from '@/lib/parkedLocationResolver';
-import { activeTripStore, localSettings, saveLastParkedLocation, suppressLastParkedLocation } from '@/lib/trackingStore';
+import { activeTripStore, localSettings } from '@/lib/trackingStore';
 import {
   sanitizeTripForPrivacyStorageAsync,
 } from '@/lib/privacyZones';
@@ -39,6 +38,7 @@ import {
 import { isSecureDeleteTombstone, secureDelete } from '@/lib/encryptedStore';
 import { appendPrivacyEvent } from '@/lib/hashChainLog';
 import { buildTripSummary } from '@/lib/tripSummary';
+import { applyWeatherRiskToScores } from '@/lib/weatherContext';
 import {
   dispatchNativeManualTripFinalized,
   findNativeManualCompletion,
@@ -54,7 +54,7 @@ export const DB_NAME_META_KEY = 'drivesense_indexeddb_name';
 export const DB_NAME = String(import.meta.env.VITE_DB_NAME || DEFAULT_DB_NAME).trim() || DEFAULT_DB_NAME;
 const TRIP_STORE = 'trips';
 const TRIP_SUMMARY_STORE = 'trip_summaries';
-export const TRIP_SCHEMA_VERSION = 26;
+export const TRIP_SCHEMA_VERSION = 27;
 export const TRIP_EVENT_MIGRATION_VERSION = 1;
 export const TRIP_EVENT_MIGRATION_KEY = 'drivesense_trip_event_migration_version';
 export const TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY = 'drivesense_heading_event_migration_note_dismissed';
@@ -785,10 +785,12 @@ const putTrips = async (incomingTrips) => {
 };
 
 const invalidateTripDerivedCaches = async () => {
+  const { clearSpeedGeometryIndex } = await import('@/lib/speedGeometryIndex');
   await Promise.all([
     removeJson(DRIVER_SIGNATURE_KEY),
     invalidateDangerZoneCache(),
     invalidateRouteRiskIndex(),
+    clearSpeedGeometryIndex('trip_repository_changed'),
   ]);
 };
 
@@ -1006,6 +1008,51 @@ export const preserveNativePrivacyAggregateStats = (trip = {}, calculatedStats =
   return next;
 };
 
+const getStoredTripsByIds = async (ids = []) => {
+  const requestedIds = (Array.isArray(ids) ? ids : []).filter((id) => id != null);
+  if (!requestedIds.length) return [];
+  if (!canUseIndexedDb()) {
+    const requested = new Set(requestedIds.map(String));
+    return (await getAllTrips()).filter((trip) => requested.has(String(trip?.id)));
+  }
+
+  try {
+    const db = await openDb();
+    let records;
+    try {
+      const tx = db.transaction(TRIP_STORE, 'readonly');
+      const store = tx.objectStore(TRIP_STORE);
+      records = await Promise.all(requestedIds.map((id) => idbRequest(store.get(id))));
+    } finally {
+      db.close();
+    }
+    const liveRecords = records.filter((record) => record && !isSecureDeleteTombstone(record));
+    const trips = await decodeTripRecords(liveRecords, { yieldEvery: 6 });
+    return sanitizeTripsForPrivacyStorage(trips);
+  } catch (error) {
+    const trips = await readFallbackTrips();
+    if (!trips) throw error;
+    const requested = new Set(requestedIds.map(String));
+    return trips.filter((trip) => requested.has(String(trip?.id)));
+  }
+};
+
+export const preserveRecordedNightClassification = (trip = {}, calculatedStats = {}) => {
+  const recorded = trip?.night_classification;
+  if (!recorded || typeof recorded !== 'object' || Number(recorded.version) < 1) {
+    return calculatedStats;
+  }
+  return {
+    ...calculatedStats,
+    night_driving: trip.night_driving === true,
+    night_classification: recorded,
+    trip_timezone_id: trip.trip_timezone_id || recorded.timezone_id || calculatedStats.trip_timezone_id || null,
+    trip_utc_offset_minutes: Number.isFinite(Number(trip.trip_utc_offset_minutes))
+      ? Number(trip.trip_utc_offset_minutes)
+      : recorded.utc_offset_minutes ?? calculatedStats.trip_utc_offset_minutes ?? null,
+  };
+};
+
 export const applyEventFeedbackToEvents = (events = [], feedback = {}) => {
   const reviewed = feedback && typeof feedback === 'object' ? feedback : {};
   let removed = 0;
@@ -1061,12 +1108,15 @@ const rescoreTrip = (trip, vehicles = []) => {
     : null;
   const phoneUsageAccessProvenance = buildPhoneUsageAccessProvenance(trip, currentPhoneUsageAccessGranted);
   const provenanceStatus = getScoreProvenanceStatus(trip, thresholds);
-  const stats = preserveNativePrivacyAggregateStats(
+  const stats = preserveRecordedNightClassification(
     trip,
-    calculateTripStats(scoringRoutePoints, trip.start_time, trip.end_time, thresholds, {
-      ...trip,
-      raw_route_points: scoringRoutePoints,
-    })
+    preserveNativePrivacyAggregateStats(
+      trip,
+      calculateTripStats(scoringRoutePoints, trip.start_time, trip.end_time, thresholds, {
+        ...trip,
+        raw_route_points: scoringRoutePoints,
+      })
+    )
   );
   const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(scoringRoutePoints, thresholds, trip.end_time, privacyZones);
   const feedbackAdjusted = applyEventFeedbackToEvents(events, trip.event_feedback);
@@ -1081,12 +1131,16 @@ const rescoreTrip = (trip, vehicles = []) => {
   const sensorFusionSummary = motionSamples.length
     ? buildSensorFusionSummary(motionSamples, scoringRoutePoints, null, feedbackAdjusted.events)
     : trip.sensor_fusion_summary;
-  const scores = calculateTripScores(feedbackAdjusted.events, stats, scoringRoutePoints, thresholds, stats.duration_seconds, phoneUse, {
+  const baseScores = calculateTripScores(feedbackAdjusted.events, stats, scoringRoutePoints, thresholds, stats.duration_seconds, phoneUse, {
     endTime: trip.end_time,
     privacyZones,
     motionSamples,
     orientationCalibration: sensorFusionSummary?.phone_orientation,
   });
+  // Weather is a post-processing context adjustment, not part of the core GPS
+  // event formulas. Reapply the saved context after every repository re-score
+  // so a detail refetch, app restart, or scoring migration cannot erase it.
+  const scores = applyWeatherRiskToScores(baseScores, trip.weather_context || null);
   const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, vehicleForTrip(trip, vehicles), settings);
   const drivingEvents = prepareScoreInputsForPrivacy({
     routePoints: [],
@@ -1130,6 +1184,27 @@ const rescoreTrip = (trip, vehicles = []) => {
   };
 };
 
+const weatherAdjustmentNeedsRescore = (trip = {}) => {
+  const weather = trip.weather_context;
+  const expectedDataSource = weather?.source === 'user_confirmed'
+    ? 'user_confirmed_weather'
+    : weather?.source === 'open_meteo'
+      ? 'open_meteo_weather'
+      : null;
+  if (!expectedDataSource || Number(weather?.riskScore) <= 0 || Number(weather?.riskMultiplier) <= 1) {
+    return false;
+  }
+
+  const weatherScoredEventCount =
+    (Number(trip.harsh_brakes_count) || 0) +
+    (Number(trip.sharp_turns_count) || 0) +
+    (Number(trip.speeding_events_count) || 0);
+  if (weatherScoredEventCount <= 0) return false;
+
+  const overallSources = trip.component_scores?.overall?.dataSource;
+  return !Array.isArray(overallSources) || !overallSources.includes(expectedDataSource);
+};
+
 const needsRescore = (trip, thresholds = buildDrivingThresholds(localSettings.get()), options = {}) => (
   trip?.status === 'completed' &&
   trip?.privacy_mode !== 'summary_only' &&
@@ -1149,6 +1224,7 @@ const needsRescore = (trip, thresholds = buildDrivingThresholds(localSettings.ge
     trip.phone_use_score == null ||
     trip.phone_use_risk == null ||
     (Number(trip.phone_use_window_count) > 0 && !(trip.driving_events || []).some((event) => event?.type === 'phone_use')) ||
+    weatherAdjustmentNeedsRescore(trip) ||
     trip.schema_version !== TRIP_SCHEMA_VERSION
   )
 );
@@ -1223,13 +1299,9 @@ const getCurrentTripSummaries = async () => {
 
   currentTripSummariesPromise = (async () => {
     const summaries = await getAllTripSummaries();
-    const hasOutdatedSchema = summaries.some((trip) => (
-      trip?.status === 'completed' &&
-      trip?.privacy_mode !== 'summary_only' &&
-      !trip?.route_data_expired_at &&
-      trip?.schema_version !== TRIP_SCHEMA_VERSION
-    ));
-    if (!hasOutdatedSchema) return summaries;
+    const thresholds = buildDrivingThresholds(localSettings.get());
+    const hasSummaryNeedingRefresh = summaries.some((trip) => needsRescore(trip, thresholds));
+    if (!hasSummaryNeedingRefresh) return summaries;
 
     const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
     const refreshedTrips = await rescoreTripsIfNeeded(taggedTrips);
@@ -1267,7 +1339,14 @@ export async function verifyTripsPersistedForNativeAcknowledge(trips = []) {
       continue;
     }
     const stored = await getStoredTripById(trip.id);
-    if (!stored || String(stored.id) !== String(trip.id)) {
+    const storedRouteCount = Array.isArray(stored?.route_points) ? stored.route_points.length : 0;
+    const expectedRouteCount = Array.isArray(trip?.route_points) ? trip.route_points.length : 0;
+    const sameIdentity = stored &&
+      String(stored.id) === String(trip.id) &&
+      String(stored.start_time || '') === String(trip.start_time || '') &&
+      String(stored.end_time || '') === String(trip.end_time || '') &&
+      storedRouteCount === expectedRouteCount;
+    if (!sameIdentity) {
       missingTripIds.push(String(trip.id));
     }
   }
@@ -1351,12 +1430,15 @@ const importNativeCompletedTrips = async () => {
         });
         const scoringRoutePoints = scoreInputPrivacy.routePoints;
         const privacyZones = scoreInputPrivacy.zones;
-        const stats = preserveNativePrivacyAggregateStats(
+        const stats = preserveRecordedNightClassification(
           trip,
-          calculateTripStats(scoringRoutePoints, trip.start_time, trip.end_time, thresholds, {
-            ...trip,
-            raw_route_points: scoringRoutePoints,
-          })
+          preserveNativePrivacyAggregateStats(
+            trip,
+            calculateTripStats(scoringRoutePoints, trip.start_time, trip.end_time, thresholds, {
+              ...trip,
+              raw_route_points: scoringRoutePoints,
+            })
+          )
         );
         const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(scoringRoutePoints, thresholds, trip.end_time, privacyZones);
         const mergedPhoneUse = mergedPhoneUseForTrip(trip, scoringRoutePoints, stats, detectedPhoneUse);
@@ -1412,32 +1494,25 @@ const importNativeCompletedTrips = async () => {
         });
       }
 
-      // The widget represents the newest completed drive, not the newest trip that
-      // happened to satisfy the older parking-stop heuristic. Never walk backward
-      // past a privacy-redacted endpoint: that would expose the zone boundary as a
-      // misleading parking location.
-      const finalPoint = routePoints[routePoints.length - 1];
-      const parkedResolution = resolveParkedLocation(routePoints, { endTime: importedTrip.end_time });
-      if (parkedResolution.location) {
-        await saveLastParkedLocation({
-          ...parkedResolution.location,
-          tripId: importedTrip.id,
-          source: importedTrip.parking_stop_detected ? 'native_parking_stop' : 'native_trip_end',
-        });
-      } else {
-        await suppressLastParkedLocation({
-          timestamp: importedTrip.end_time || finalPoint?.timestamp || new Date().toISOString(),
-          source: parkedResolution.suppressionReason || 'trip_end_unavailable',
-        });
-      }
+      // Android resolves and persists parking before it exposes a completed trip
+      // for import. Do not run the lower-context JavaScript resolver here: it lacks
+      // the native stop/activity/connection evidence and could replace a confirmed
+      // 100% native result with a weaker endpoint-only result when the app opens.
+      // The versioned native parking snapshot is reconciled by the Parking page and
+      // remains the single authority shared with the home-screen widget.
     }
 
     await verifyTripsPersistedForNativeAcknowledge(importedTrips);
-    await clearNativeCompletedTrips().catch((error) => {
-      logSystemFailure('native_completed_trips_clear_after_verified_import', error, {
+    const acknowledgedTripIds = importedTrips.map((trip) => trip?.id).filter((id) => id != null);
+    const acknowledgement = await acknowledgeNativeCompletedTrips(acknowledgedTripIds).catch((error) => {
+      logSystemFailure('native_completed_trips_acknowledge_after_verified_import', error, {
         imported_trip_count: importedTrips.length,
       });
+      return null;
     });
+    if (!acknowledgement || acknowledgement.success !== true) {
+      throw new Error('Native completed trips remain queued because acknowledgement was not verified.');
+    }
     const matchedActiveTrip = findNativeManualCompletion(importedTrips, activeTripAtImport);
     if (matchedActiveTrip && activeTripAtImport) {
       const currentActiveTrip = activeTripStore.get();
@@ -1449,6 +1524,17 @@ const importNativeCompletedTrips = async () => {
         await activeTripStore.flush();
       }
       dispatchNativeManualTripFinalized(activeTripAtImport, matchedActiveTrip);
+    }
+    if (importedTrips.length) {
+      void import('@/lib/roadMemoryCoordinator')
+        .then(({ synchronizeLocalRoadMemory }) => (
+          synchronizeLocalRoadMemory(importedTrips, { rescore: true })
+        ))
+        .catch((error) => {
+          logSystemFailure('native_completed_trip_road_memory', error, {
+            imported_trip_count: importedTrips.length,
+          });
+        });
     }
     await invalidateTripDerivedCaches();
     return {
@@ -1729,10 +1815,11 @@ export async function runTripRepositoryMaintenance() {
     await enforceTripDataRetention();
     await enforceRawGpsRetention();
     await migrateRetiredTripEventTypesOnce();
-    const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
-    const trips = await rescoreTripsIfNeeded(taggedTrips);
-    await writeTripSummariesToDb(DB_NAME, trips).catch(() => {});
-    return { tripCount: trips.length };
+    // Summaries are cheap to read and already tell us whether any stored trip
+    // needs a schema/scoring refresh. Avoid decrypting every full GPS trace on
+    // every app launch when the repository is already current.
+    const summaries = await getCurrentTripSummaries();
+    return { tripCount: summaries.length };
   })();
 
   try {
@@ -1779,6 +1866,29 @@ export const localTripRepository = {
     const taggedTrips = await tagExistingTripsWithCurrentScoringVersion(await getAllTrips());
     const trips = await rescoreTripsIfNeeded(taggedTrips);
     return sortTrips(trips, sort).slice(0, limit);
+  },
+
+  async listForSpeedMap({ sort = '-start_time', offset = 0, limit = 80 } = {}) {
+    await importNativeCompletedTrips();
+    const safeOffset = Math.max(0, Math.floor(Number(offset) || 0));
+    const safeLimit = Math.max(1, Math.min(200, Math.floor(Number(limit) || 80)));
+    const eligibleSummaries = sortTrips(await getCurrentTripSummaries(), sort).filter((trip) => (
+      trip?.status === 'completed' &&
+      trip?.privacy_mode !== 'summary_only' &&
+      !trip?.route_data_expired_at
+    ));
+    const selectedSummaries = eligibleSummaries.slice(safeOffset, safeOffset + safeLimit);
+    const selectedIds = selectedSummaries.map((trip) => trip.id);
+    const loadedTrips = await getStoredTripsByIds(selectedIds);
+    const loadedById = new Map(loadedTrips.map((trip) => [String(trip?.id), trip]));
+    const trips = selectedIds
+      .map((id) => loadedById.get(String(id)))
+      .filter((trip) => Array.isArray(trip?.route_points) && trip.route_points.length > 1);
+    return {
+      trips,
+      totalAvailable: eligibleSummaries.length,
+      nextOffset: Math.min(eligibleSummaries.length, safeOffset + selectedSummaries.length),
+    };
   },
 
   async listAllForExport({ sort = '-start_time', signal, onProgress } = {}) {

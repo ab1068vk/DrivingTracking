@@ -1261,6 +1261,25 @@ function redactCoordinateFieldsForPrivacy(value = {}, zone, extra = {}) {
   };
 }
 
+const APP_IDENTITY_FIELDS = Object.freeze([
+  'package_name',
+  'packageName',
+  'app_package',
+  'appPackage',
+]);
+
+const stripPhoneUsageAppIdentity = (event) => {
+  if (!event || typeof event !== 'object') return event;
+  if (!APP_IDENTITY_FIELDS.some((field) => field in event)) return event;
+  const safe = { ...event };
+  APP_IDENTITY_FIELDS.forEach((field) => delete safe[field]);
+  return safe;
+};
+
+const stripPhoneUsageListIdentity = (events) => (
+  Array.isArray(events) ? events.map(stripPhoneUsageAppIdentity) : events
+);
+
 /**
  * @param {Record<string, any>} trip
  * @param {Record<string, any>} settings
@@ -1278,7 +1297,27 @@ export function sanitizeTripForPrivacyStorage(trip = {}, settings = localSetting
     retiredVoiceSpeedMarkerCount !== undefined ||
     retiredVoiceSpeedMarkerReviewedAt !== undefined
   );
-  const storageTrip = retiredMarkerDataRemoved ? retainedTrip : trip;
+  const baseStorageTrip = retiredMarkerDataRemoved ? retainedTrip : trip;
+  const nativePhoneUsageEvents = stripPhoneUsageListIdentity(baseStorageTrip.native_phone_usage_events);
+  const phoneUseEvents = stripPhoneUsageListIdentity(baseStorageTrip.phone_use_events);
+  const phoneProxyEvents = stripPhoneUsageListIdentity(baseStorageTrip.phone_proxy_events);
+  const phoneIdentityRemoved = (
+    (Array.isArray(nativePhoneUsageEvents) && nativePhoneUsageEvents.some(
+      (event, index) => event !== baseStorageTrip.native_phone_usage_events[index]
+    )) ||
+    (Array.isArray(phoneUseEvents) && phoneUseEvents.some(
+      (event, index) => event !== baseStorageTrip.phone_use_events[index]
+    )) ||
+    (Array.isArray(phoneProxyEvents) && phoneProxyEvents.some(
+      (event, index) => event !== baseStorageTrip.phone_proxy_events[index]
+    ))
+  );
+  const storageTrip = phoneIdentityRemoved ? {
+    ...baseStorageTrip,
+    ...(Array.isArray(nativePhoneUsageEvents) ? { native_phone_usage_events: nativePhoneUsageEvents } : {}),
+    ...(Array.isArray(phoneUseEvents) ? { phone_use_events: phoneUseEvents } : {}),
+    ...(Array.isArray(phoneProxyEvents) ? { phone_proxy_events: phoneProxyEvents } : {}),
+  } : baseStorageTrip;
   const zones = getPrivacyZones(settings);
   if (!zones.length) return storageTrip;
 
@@ -1970,14 +2009,24 @@ export function routeTouchesPrivacyZone(routePoints = [], zone, guardM = 0) {
 }
 
 async function purgeZoneFromTripRepository(zone) {
-  const [{ tripService }, { enqueueRescoreJob }, { rescoreTripForQueue }] = await Promise.all([
+  const [
+    { tripService },
+    { enqueueRescoreJob },
+    { rescoreTripForQueue },
+    { purgeLocalSpeedKnowledgeForPrivacyZones },
+  ] = await Promise.all([
     import('@/api/trips'),
     import('@/lib/rescoringQueue'),
     import('@/lib/rescoringWorker'),
+    import('@/lib/speedKnowledgePrivacy'),
   ]);
   const trips = await tripService.listAll({ sort: '-start_time' });
   const purgeZone = { ...zone };
   delete purgeZone.expiresAt;
+  // Derived road knowledge contains precise cells and traced geometry just as
+  // raw trip GPS does. Erase it before route points are masked so the cleanup
+  // can still identify and rescore every affected public trip correctly.
+  const speedKnowledgeCleanup = await purgeLocalSpeedKnowledgeForPrivacyZones([purgeZone]);
   const result = await purgeGpsWithinPrivacyZone(
     trips,
     purgeZone,
@@ -1990,7 +2039,7 @@ async function purgeZoneFromTripRepository(zone) {
       tripIds: result.tripIdsAffected,
     }, { rescoreTrip: rescoreTripForQueue });
   }
-  return result;
+  return { ...result, speedKnowledgeCleanup };
 }
 
 export async function purgeExistingGpsForHeightenedPrivacy(settings = localSettings.get()) {
@@ -2000,6 +2049,7 @@ export async function purgeExistingGpsForHeightenedPrivacy(settings = localSetti
     tripsAffected: 0,
     pointsPurged: 0,
     eventsPurged: 0,
+    speedKnowledgeRecordsPurged: 0,
   };
 
   for (const zone of zones) {
@@ -2007,12 +2057,13 @@ export async function purgeExistingGpsForHeightenedPrivacy(settings = localSetti
     totals.tripsAffected += result.tripsAffected;
     totals.pointsPurged += result.pointsPurged;
     totals.eventsPurged += result.eventsPurged;
+    totals.speedKnowledgeRecordsPurged += result.speedKnowledgeCleanup?.totalRecordsPurged || 0;
   }
 
   return totals;
 }
 
-export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
+export async function upsertPrivacyZone(zone, settings = localSettings.get(), options = {}) {
   const zones = getPrivacyZones(settings);
   const type = zone?.type === 'corridor' ? 'corridor' : 'circle';
   const widthM = Math.max(PRIVACY_RADIUS_MIN_M, Math.min(PRIVACY_RADIUS_MAX_M, Number(
@@ -2077,6 +2128,11 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
   const purgeResult = shouldPurgeExistingGps
     ? await purgeZoneFromTripRepository(normalized)
     : null;
+  const speedKnowledgeCleanup = purgeResult?.speedKnowledgeCleanup ||
+    await import('@/lib/speedKnowledgePrivacy')
+      .then(({ purgeLocalSpeedKnowledgeForPrivacyZones }) => (
+        purgeLocalSpeedKnowledgeForPrivacyZones([normalized])
+      ));
   recordSystemEvent('privacy_zone_saved', {
     zone_id: normalized.id,
     label: normalized.label,
@@ -2088,6 +2144,8 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
     purged_trip_count: purgeResult?.tripsAffected || 0,
     purged_point_count: purgeResult?.pointsPurged || 0,
     purged_event_count: purgeResult?.eventsPurged || 0,
+    purged_speed_knowledge_count: speedKnowledgeCleanup?.totalRecordsPurged || 0,
+    speed_knowledge_revision: speedKnowledgeCleanup?.knowledgeRevision || 0,
   }, { category: 'privacy', title: 'Privacy zone saved' });
   appendPrivacyAuditEvent({
     op: previous ? 'ZONE_UPDATED' : 'ZONE_SAVED',
@@ -2098,6 +2156,7 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
       purged_existing_gps: purgeResult != null,
       purged_point_count: purgeResult?.pointsPurged || 0,
       purged_event_count: purgeResult?.eventsPurged || 0,
+      purged_speed_knowledge_count: speedKnowledgeCleanup?.totalRecordsPurged || 0,
     },
   });
   if (consentInvalidated) {
@@ -2120,7 +2179,9 @@ export async function upsertPrivacyZone(zone, settings = localSettings.get()) {
       }));
     }
   }
-  return updated;
+  return options?.includeOperationResult === true
+    ? { settings: updated, purgeResult, speedKnowledgeCleanup }
+    : updated;
 }
 
 export async function removePrivacyZone(id, settings = localSettings.get()) {

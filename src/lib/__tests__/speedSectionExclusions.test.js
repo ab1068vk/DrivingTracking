@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  EXCLUDED_SPEED_SECTIONS_STORAGE_KEY,
   isSpeedSectionExcluded,
+  readExcludedSpeedSectionKeys,
   speedSectionExclusionKeys,
+  writeExcludedSpeedSectionKeys,
 } from '@/lib/speedSectionExclusions';
 
 describe('speed section exclusions', () => {
@@ -49,5 +52,29 @@ describe('speed section exclusions', () => {
     const excluded = new Set(speedSectionExclusionKeys(parkingLot));
 
     expect(isSpeedSectionExcluded(mainRoad, excluded)).toBe(false);
+  });
+
+  it('consumes legacy plaintext geometry keys once and never writes them back', () => {
+    const values = new Map([[EXCLUDED_SPEED_SECTIONS_STORAGE_KEY, JSON.stringify([
+      'geom:43.41000,-80.32000|43.41100,-80.32040',
+    ])]]);
+    const localStorage = {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      removeItem: vi.fn((key) => values.delete(key)),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+    };
+    vi.stubGlobal('window', { localStorage });
+    try {
+      expect(readExcludedSpeedSectionKeys()).toEqual([
+        'geom:43.41000,-80.32000|43.41100,-80.32040',
+      ]);
+      expect(values.has(EXCLUDED_SPEED_SECTIONS_STORAGE_KEY)).toBe(false);
+
+      writeExcludedSpeedSectionKeys(['geom:this-must-not-be-plaintext']);
+      expect(localStorage.setItem).not.toHaveBeenCalled();
+      expect(values.has(EXCLUDED_SPEED_SECTIONS_STORAGE_KEY)).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

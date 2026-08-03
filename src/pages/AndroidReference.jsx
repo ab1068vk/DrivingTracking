@@ -226,7 +226,6 @@ data class TripEntity(
     val scoreOverall: Int = 0,
     val scoreSafety: Int = 0,
     val scoreSmoothness: Int = 0,
-    val scoreEco: Int = 0,
     val harshBrakesCount: Int = 0,
     val rapidAccelCount: Int = 0,
     val sharpTurnsCount: Int = 0,
@@ -517,7 +516,6 @@ data class TripAnalysisResult(
     val scoreOverall: Int,
     val scoreSafety: Int,
     val scoreSmoothness: Int,
-    val scoreEco: Int,
 )
 
 class ScoringEngine(private val thresholds: DrivingThresholds = DEFAULT_THRESHOLDS) {
@@ -688,7 +686,6 @@ class ScoringEngine(private val thresholds: DrivingThresholds = DEFAULT_THRESHOL
      * - Safety (55%): harsh_brake, speeding, sharp_turn, night driving
      * - Smoothness (30%): harsh_brake, rapid_acceleration, sharp_turn
      * - Intersection behavior (15% in the JavaScript trip scorer when evidence is available)
-     * - Eco is calculated separately and does not affect the headline trip score
      * - Penalties are per-event, severity-weighted, normalized per km
      * - Overall = 0.55*safety + 0.30*smoothness + 0.15*intersection, renormalized when intersection evidence is unavailable
      */
@@ -699,16 +696,14 @@ class ScoringEngine(private val thresholds: DrivingThresholds = DEFAULT_THRESHOL
             "rapid_acceleration" to Penalty(2, 5, 10),
             "sharp_turn" to Penalty(2, 5, 10),
             "speeding" to Penalty(5, 10, 20),
-            "idle" to Penalty(1, 3, 5),
         )
 
-        var safetyP = 0; var smoothP = 0; var ecoP = 0
+        var safetyP = 0; var smoothP = 0
         for (evt in events) {
             val p = penalties[evt.type] ?: continue
             val pts = when (evt.severity) { "high" -> p.high; "medium" -> p.med; else -> p.low }
             if (evt.type in listOf("harsh_brake","speeding","sharp_turn")) safetyP += pts
             if (evt.type in listOf("harsh_brake","rapid_acceleration","sharp_turn")) smoothP += pts
-            if (evt.type in listOf("speeding","rapid_acceleration","idle")) ecoP += pts
         }
         if (nightDriving) safetyP += 5
 
@@ -717,14 +712,13 @@ class ScoringEngine(private val thresholds: DrivingThresholds = DEFAULT_THRESHOL
 
         val safety = normalize(safetyP)
         val smooth = normalize(smoothP)
-        val eco = normalize(ecoP)
         val overall = ((safety * 0.55f + smooth * 0.30f) / 0.85f).toInt()
 
-        return TripScores(overall, safety, smooth, eco)
+        return TripScores(overall, safety, smooth)
     }
 }
 
-data class TripScores(val overall: Int, val safety: Int, val smoothness: Int, val eco: Int)
+data class TripScores(val overall: Int, val safety: Int, val smoothness: Int)
 `,
   },
   {

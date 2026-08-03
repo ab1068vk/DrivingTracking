@@ -24,7 +24,9 @@ describe('slippery condition proxy', () => {
 
   it('detects likely wet conditions from long stopping distances', () => {
     const points = [...stop(0, 0.00055), ...stop(10, 0.00055), ...stop(20, 0.00055)];
-    expect(detectSlipperyConditionProxy(points, []).slippery_proxy).toBe('likely_wet');
+    const result = detectSlipperyConditionProxy(points, []);
+    expect(result.slippery_proxy).toBe('likely_wet');
+    expect(result.safety_condition_bonus).toBe(0);
   });
 
   it('grades dry stops below wet stops', () => {

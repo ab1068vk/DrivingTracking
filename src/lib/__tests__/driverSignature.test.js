@@ -31,9 +31,9 @@ describe('driver signature', () => {
     expect(buildDriverSignature([trip(0), trip(1), trip(2), trip(3)])).toBeNull();
   });
 
-  it('builds a deterministic eco-conscious signature', () => {
+  it('builds a deterministic precision-driver signature', () => {
     const result = buildDriverSignature(Array.from({ length: 6 }, (_, index) => trip(index)));
-    expect(result.archetype).toBe('eco_conscious');
+    expect(result.archetype).toBe('precision_driver');
     expect(result.trip_count_used).toBe(6);
   });
 
@@ -108,7 +108,6 @@ describe('driver signature', () => {
 
     expect(result.dimensions.aggression).toBeNull();
     expect(result.dimensions.smoothness).toBeNull();
-    expect(result.dimensions.ecoMindedness).toBeNull();
     expect(result.dimensions.consistencyIdx).toBeNull();
     expect(result.archetype).toBe('balanced');
   });

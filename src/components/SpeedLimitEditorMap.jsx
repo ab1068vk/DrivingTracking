@@ -15,10 +15,11 @@ import { Maximize2, SlidersHorizontal } from 'lucide-react';
 import MapErrorBoundary from '@/components/MapErrorBoundary';
 import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { DEFAULT_MAP_CENTER_ARRAY } from '@/lib/mapDefaults';
+import { formatSpeedKmh } from '@/lib/unitFormatting';
 
 const TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-const DEFAULT_CENTER = [43.6532, -79.3832];
 const MAX_PERMANENT_LABELS = 80;
 const MOBILE_MAX_PERMANENT_LABELS = 30;
 const SECTION_DRAW_BATCH_SIZE = 60;
@@ -31,19 +32,20 @@ const sectionKey = (section = {}) => String(
   `${section.lat},${section.lng}`
 );
 
-const formatLimitLabel = (limitKmh) => {
+const formatLimitLabel = (limitKmh, units = 'metric') => {
   const limit = Number(limitKmh);
-  return Number.isFinite(limit) && limit > 0 ? `${Math.round(limit)} km/h` : 'Set speed';
+  return Number.isFinite(limit) && limit > 0 ? formatSpeedKmh(limit, units) : 'Set speed';
 };
 
-const labelClassForSection = ({ selected, conflict, saved, hasDisplayLimit, source }) => [
+const labelClassForSection = ({ selected, conflict, saved, operational, hasDisplayLimit, source }) => [
   'speed-limit-map-label',
   selected ? 'speed-limit-map-label-selected' : '',
   conflict ? 'speed-limit-map-label-conflict' : '',
   saved ? 'speed-limit-map-label-saved' : '',
   saved && source === 'user_confirmed_posted_sign' ? 'speed-limit-map-label-posted' : '',
   saved && source !== 'user_confirmed_posted_sign' ? 'speed-limit-map-label-estimate' : '',
-  !saved && hasDisplayLimit ? 'speed-limit-map-label-observed' : '',
+  operational ? 'speed-limit-map-label-learned' : '',
+  !saved && !operational && hasDisplayLimit ? 'speed-limit-map-label-observed' : '',
   !hasDisplayLimit ? 'speed-limit-map-label-unset' : '',
 ].filter(Boolean).join(' ');
 
@@ -137,7 +139,7 @@ const firstSectionCenter = (sectionLists = []) => {
       if (center) return center;
     }
   }
-  return DEFAULT_CENTER;
+  return null;
 };
 
 const safeLeafletCall = (callback) => {
@@ -171,37 +173,58 @@ const safeMapFitBounds = (map, bounds, options = {}) => measureSync('SpeedLimitE
   return safeLeafletCall(() => map?.fitBounds?.(bounds, { animate: false, ...options }));
 });
 
-const sectionDisplay = (section = {}, selected = false, showPermanentLabel = false) => {
+const sectionDisplay = (section = {}, selected = false, showPermanentLabel = false, units = 'metric') => {
   const displayLimitKmh = section.effectiveLimitKmh ?? section.limitKmh;
   const color = speedLimitColor(displayLimitKmh);
   const conflict = Boolean(section.conflict);
+  const operational = Boolean(
+    section.operational ||
+    (section.roadMemoryCandidate && section.canAffectScoreAndAlerts === true)
+  );
+  const roadMemory = Boolean(section.roadMemoryCandidate);
+  const confirmedPosted = section.saved && section.source === 'user_confirmed_posted_sign';
   const hasDisplayLimit = Number(displayLimitKmh) > 0;
   const positions = sectionPositions(section);
   const pathOptions = {
     color: conflict ? '#dc2626' : color,
-    weight: selected ? 11 : section.saved ? 8 : hasDisplayLimit ? 7 : 6,
-    opacity: selected ? 1 : section.saved ? 0.92 : hasDisplayLimit ? 0.84 : 0.72,
-    dashArray: conflict ? '2 8' : section.saved ? undefined : hasDisplayLimit ? '4 7' : '8 9',
+    weight: selected ? 11 : confirmedPosted ? 8 : section.saved ? 7 : operational ? 6 : roadMemory ? 5 : hasDisplayLimit ? 5 : 4,
+    opacity: selected ? 1 : confirmedPosted ? 0.96 : section.saved ? 0.82 : operational ? 0.74 : roadMemory ? 0.58 : hasDisplayLimit ? 0.5 : 0.42,
+    // A solid line is a visual promise reserved for a posted sign the user confirmed.
+    dashArray: conflict ? '2 8' : confirmedPosted ? undefined : section.saved ? '10 7' : operational ? '7 8' : roadMemory ? '3 8' : hasDisplayLimit ? '2 9' : '1 10',
     lineCap: 'round',
   };
   const tooltip = section.saved
-    ? `${Math.round(Number(section.limitKmh))} km/h - ${section.roadName || 'Saved road section'}`
+    ? `${formatSpeedKmh(section.limitKmh, units)} - ${section.roadName || 'Saved road section'}`
+    : operational
+      ? `${formatSpeedKmh(displayLimitKmh, units)} - ${section.roadName || 'Active Road Memory corridor'} (local estimate)`
+      : roadMemory
+        ? `${formatSpeedKmh(displayLimitKmh, units)} - ${section.roadName || 'Learning Road Memory corridor'} (${Number(section.tripCount) || 0} drives; shadow estimate; not used for scores yet)`
     : `Speed not set - ${section.roadName || 'Recorded road section'}`;
-  const displayTooltip = hasDisplayLimit
-    ? `${Math.round(Number(displayLimitKmh))} km/h - ${section.roadName || (section.saved ? 'Saved road section' : 'Labeled road section')}`
-    : tooltip;
+  const baseDisplayTooltip = section.saved || operational
+    ? tooltip
+    : hasDisplayLimit
+      ? `${formatSpeedKmh(displayLimitKmh, units)} - ${section.roadName || 'Trip evidence section'}`
+      : tooltip;
+  const corridorNotes = [
+    section.speedBoundary ? 'speed boundary detected' : '',
+    section.parallelProtected ? 'nearby parallel road kept separate' : '',
+  ].filter(Boolean);
+  const displayTooltip = corridorNotes.length
+    ? `${baseDisplayTooltip} · ${corridorNotes.join(' · ')}`
+    : baseDisplayTooltip;
   const labelClassName = labelClassForSection({
     selected,
     conflict,
     saved: section.saved,
+    operational,
     hasDisplayLimit,
     source: section.source,
   });
   const splitPart = Number(section.splitPart);
   const splitLabel = Number.isInteger(splitPart) && splitPart > 0 ? ` ${splitPart}/2` : '';
   const labelText = conflict
-    ? `! ${formatLimitLabel(displayLimitKmh)}${splitLabel}`
-    : `${formatLimitLabel(displayLimitKmh)}${splitLabel}`;
+    ? `! ${formatLimitLabel(displayLimitKmh, units)}${splitLabel}`
+    : `${formatLimitLabel(displayLimitKmh, units)}${splitLabel}`;
   const shouldShowPermanentLabel = showPermanentLabel || selected || conflict;
 
   return {
@@ -210,6 +233,7 @@ const sectionDisplay = (section = {}, selected = false, showPermanentLabel = fal
     displayTooltip,
     labelClassName,
     labelText,
+    operational,
     pathOptions,
     positions,
     showPermanentLabel: shouldShowPermanentLabel,
@@ -223,9 +247,10 @@ const addSectionToLayer = ({
   showPermanentLabel = false,
   addMode = false,
   onSelect,
+  units = 'metric',
 }) => {
   if (!isUsableLayerGroup(layerGroup)) return null;
-  const display = sectionDisplay(section, selected, showPermanentLabel);
+  const display = sectionDisplay(section, selected, showPermanentLabel, units);
   const fallbackPosition = sectionCenter(section);
   if (display.positions.length < 2 && !fallbackPosition) return null;
   const layer = display.positions.length >= 2
@@ -235,8 +260,8 @@ const addSectionToLayer = ({
       color: '#ffffff',
       weight: display.conflict ? 4 : 2,
       fillColor: display.color,
-      fillOpacity: selected ? 0.95 : section.saved ? 0.95 : Number(section.effectiveLimitKmh ?? section.limitKmh) > 0 ? 0.82 : 0.65,
-      dashArray: display.conflict ? '2 4' : section.saved ? undefined : Number(section.effectiveLimitKmh ?? section.limitKmh) > 0 ? '3 4' : '4 4',
+      fillOpacity: selected ? 0.95 : section.saved ? 0.9 : section.operational ? 0.76 : Number(section.effectiveLimitKmh ?? section.limitKmh) > 0 ? 0.7 : 0.55,
+      dashArray: display.conflict ? '2 4' : section.saved && section.source === 'user_confirmed_posted_sign' ? undefined : '3 5',
     });
 
   layer
@@ -311,8 +336,10 @@ function SpeedLimitEditorMapContent({
   onAddPoint = null,
   onMoveAddPoint = null,
   onMoveSectionPoint = null,
+  emptyMessage = 'Record a trip or save a road speed to populate this map.',
 }) {
   const settings = useLocalSettings();
+  const units = settings.units === 'imperial' ? 'imperial' : 'metric';
   const remoteTilesAllowed = !isHeightenedPrivacyMode(settings);
   const online = useOnlineStatus();
   const containerRef = useRef(null);
@@ -322,6 +349,7 @@ function SpeedLimitEditorMapContent({
   const editLayerRef = useRef(null);
   const tileLayerRef = useRef(null);
   const initialFitDoneRef = useRef(false);
+  const initialFitPointCountRef = useRef(0);
   const lastSelectedFitKeyRef = useRef('');
   const visibleBoundsRef = useRef(null);
   const addModeRef = useRef(addMode);
@@ -346,16 +374,36 @@ function SpeedLimitEditorMapContent({
   }), [layers, mapQuery, rawSections]);
   const stats = useMemo(() => summarizeSpeedMapSections(rawSections), [rawSections]);
   const visibleStats = useMemo(() => summarizeSpeedMapSections(sections), [sections]);
-  const center = sections.length
-    ? firstSectionCenter([sections, rawSections])
-    : firstSectionCenter([rawSections]);
+  const storedCenter = isLatLng([
+    Number(settings?.last_map_center?.lat),
+    Number(settings?.last_map_center?.lng),
+  ]) ? [
+      Number(settings.last_map_center.lat),
+      Number(settings.last_map_center.lng),
+    ] : null;
+  const tripPoints = useMemo(
+    () => trips.flatMap((trip) => Array.isArray(trip?.route_points) ? trip.route_points : []),
+    [trips]
+  );
+  const center = firstSectionCenter([
+    sections,
+    rawSections,
+    corrections,
+    tripPoints,
+  ]) || storedCenter || DEFAULT_MAP_CENTER_ARRAY;
   const layerState = { ...SPEED_MAP_LAYER_DEFAULTS, ...(layers || {}) };
   const toggleLayer = (key) => {
-    onLayerChange?.({ ...layerState, [key]: !layerState[key] });
+    const next = { ...layerState, [key]: !layerState[key] };
+    // Road Memory sections are estimates. Keep the two controls coherent so a
+    // user never enables Road Memory and gets an unchanged map.
+    if (key === 'learned' && next.learned) next.estimates = true;
+    if (key === 'estimates' && !next.estimates) next.learned = false;
+    onLayerChange?.(next);
   };
   const layerItems = [
     ['conflicts', 'Conflicts', stats.conflicts],
     ['saved', 'Saved', stats.saved],
+    ['learned', 'Road Memory', stats.learned],
     ['observed', 'Observed', stats.observed],
     ['unset', 'Unset', stats.unset],
   ];
@@ -373,13 +421,14 @@ function SpeedLimitEditorMapContent({
       const score = (section) => (
         (section.conflict ? 4 : 0) +
         (section.saved ? 3 : 0) +
+        (section.operational ? 2 : 0) +
         (Number(section.effectiveLimitKmh ?? section.limitKmh ?? section.observedLimitKmh) > 0 ? 1 : 0)
       );
       return score(b) - score(a);
     });
     const keys = new Set();
     prioritized
-      .filter((section) => section.saved || section.conflict)
+      .filter((section) => section.saved || section.operational || section.conflict)
       .slice(0, permanentLabelLimit)
       .forEach((section) => keys.add(sectionKey(section)));
     return keys;
@@ -497,6 +546,7 @@ function SpeedLimitEditorMapContent({
           selected: false,
           showPermanentLabel: permanentLabelKeys.has(sectionKey(section)),
           addMode: false,
+          units,
           onSelect: (nextSection) => {
             if (!addModeRef.current) onSelectRef.current?.(nextSection);
           },
@@ -519,7 +569,7 @@ function SpeedLimitEditorMapContent({
       if (frameId != null) window.cancelAnimationFrame(frameId);
       finishMeasure('cancelled');
     };
-  }, [mapReady, permanentLabelKeys, sections, selectedGeohash]);
+  }, [mapReady, permanentLabelKeys, sections, selectedGeohash, units]);
 
   useEffect(() => {
     const layers = editLayerRef.current;
@@ -575,6 +625,7 @@ function SpeedLimitEditorMapContent({
       selected: true,
       showPermanentLabel: true,
       addMode: false,
+      units,
       onSelect: (section) => {
         if (!addModeRef.current) onSelectRef.current?.(section);
       },
@@ -610,7 +661,7 @@ function SpeedLimitEditorMapContent({
         });
       });
     }
-  }, [mapReady, sections, selectedGeohash, selectedSectionOverride]);
+  }, [mapReady, sections, selectedGeohash, selectedSectionOverride, units]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -621,8 +672,11 @@ function SpeedLimitEditorMapContent({
       if (!initialFitDoneRef.current) safeMapSetView(map, center, 13);
       return;
     }
-    if (initialFitDoneRef.current) return;
+    // A point-only saved rule can be shown before recent trip evidence restores
+    // its complete line. Allow that one enrichment to trigger a proper fit.
+    if (initialFitDoneRef.current && !(initialFitPointCountRef.current <= 1 && points.length > 1)) return;
     initialFitDoneRef.current = true;
+    initialFitPointCountRef.current = points.length;
     if (points.length === 1) {
       safeMapSetView(map, points[0], 15);
       return;
@@ -698,6 +752,9 @@ function SpeedLimitEditorMapContent({
                   Fit visible
                 </button>
               </div>
+              <p className="mt-1.5 px-1 text-[10px] leading-relaxed text-muted-foreground">
+                Fast start shows saved posted signs only. Turn on Road Memory, Observed, or Unset when needed; those additional roads remain dashed.
+              </p>
               <div className="mt-2 space-y-2">
               <div>
                 <div className="px-1 text-[10px] font-semibold uppercase text-muted-foreground">Road state</div>
@@ -727,12 +784,11 @@ function SpeedLimitEditorMapContent({
                       key={key}
                       type="button"
                       onClick={() => toggleLayer(key)}
-                      disabled={count === 0}
                       className={`rounded-lg border px-2 py-1.5 text-[11px] font-semibold ${
                         layerState[key]
                           ? 'border-primary/50 bg-primary/10 text-foreground'
                           : 'border-border bg-secondary/80 text-muted-foreground'
-                      } disabled:cursor-not-allowed disabled:opacity-45`}
+                      }`}
                       aria-pressed={layerState[key]}
                     >
                       {label} {count}
@@ -758,7 +814,7 @@ function SpeedLimitEditorMapContent({
         )}
         {rawSections.length === 0 && !addMode && (
           <div className="pointer-events-none absolute bottom-4 left-4 right-4 z-[500] rounded-xl border border-border bg-background/95 px-4 py-3 text-sm shadow-lg">
-            Record a trip or save a road speed to populate this map.
+            {emptyMessage}
           </div>
         )}
         {addMode && addPath.length === 0 && (

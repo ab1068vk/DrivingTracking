@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
@@ -52,6 +52,8 @@ import {
   speedUnitLabel,
 } from '@/lib/unitFormatting';
 import { Button } from '@/components/ui/button';
+import PostDriveReviewCard from '@/components/PostDriveReviewCard';
+import usePendingPostDriveReview from '@/hooks/usePendingPostDriveReview';
 
 const OVERVIEW_TRIP_LIMIT = 30;
 const RECENT_TRIP_TABLE_LIMIT = 8;
@@ -107,7 +109,12 @@ const routePointCount = (trip) => {
     const reported = Number(trip?.route_point_count);
     return Number.isFinite(reported) ? Math.max(0, Math.round(reported)) : trip.route_preview.length;
   }
-  const count = Number(trip?.route_point_count ?? trip?.route_points_count ?? trip?.route_points_retained);
+  const count = Number(
+    trip?.route_points_map_count
+      ?? trip?.route_point_count
+      ?? trip?.route_points_count
+      ?? trip?.route_points_retained
+  );
   return Number.isFinite(count) ? Math.max(0, Math.round(count)) : 0;
 };
 
@@ -205,6 +212,7 @@ function buildOverviewIntelligence(trips = []) {
 }
 
 export default function TrackingOverview() {
+  const navigate = useNavigate();
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
   const queryClient = useQueryClient();
@@ -224,6 +232,11 @@ export default function TrackingOverview() {
   const summariesQuery = useQuery(tripSummaryQueryOptions());
   const allTrips = Array.isArray(summariesQuery.data) ? summariesQuery.data : [];
   const recentTrips = useMemo(() => allTrips.slice(0, OVERVIEW_TRIP_LIMIT), [allTrips]);
+  const {
+    dismiss: dismissPostDriveReview,
+    showTrip: showPostDriveReview,
+    trip: postDriveReviewTrip,
+  } = usePendingPostDriveReview(recentTrips);
   const trendSeries = useMemo(
     () => convertTrendUnits(buildTrackingTrendSeries(recentTrips), units),
     [recentTrips, units]
@@ -348,7 +361,11 @@ export default function TrackingOverview() {
         if (finalizedStatus?.recordingActive !== true) break;
       }
       const { syncNativeCompletedTrips } = await import('@/lib/localTripRepository');
-      await syncNativeCompletedTrips();
+      const syncResult = await syncNativeCompletedTrips();
+      const completedNativeTrip = syncResult?.matchedActiveTrip || syncResult?.importedTrips?.[0] || null;
+      if (completedNativeTrip) {
+        await showPostDriveReview(completedNativeTrip, 'tracking_native_completion');
+      }
       await queryClient.invalidateQueries({ queryKey: ['trip-summaries'] });
       setNativeStatus(finalizedStatus || ((current) => ({ ...current, recordingActive: false, activeTrip: null })));
     } catch (error) {
@@ -476,6 +493,18 @@ export default function TrackingOverview() {
           </div>
         </div>
       </section>
+      )}
+
+      {!activeTrip && postDriveReviewTrip && (
+        <PostDriveReviewCard
+          trip={postDriveReviewTrip}
+          previousTrips={recentTrips}
+          units={units}
+          mode="tracking"
+          onDismiss={dismissPostDriveReview}
+          onOpenTrip={() => navigate(`/trips/${encodeURIComponent(postDriveReviewTrip.id)}`)}
+          onOpenNextAction={() => navigate(`/tracking/events?trip=${encodeURIComponent(postDriveReviewTrip.id)}`)}
+        />
       )}
 
       {summariesQuery.isError && (

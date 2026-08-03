@@ -6,8 +6,13 @@ import {
   achievementNotificationId,
   dispatchPostTripNotification,
   isQuietHours,
+  cancelStaleParkingReminder,
+  getParkingReminderState,
+  getParkingReminderStates,
+  scheduleParkingReminder,
 } from '@/lib/notificationService';
 import { calculateAchievementBadges } from '@/lib/tripInsights';
+import { pathForNotificationExtra } from '@/lib/appNavigation';
 
 const settings = {
   notifications_enabled: true,
@@ -101,6 +106,70 @@ describe('advanced notifications', () => {
     expect(source).not.toContain('achievements unlocked');
   });
 
+  it('opens the Milestones page when a milestone notification is tapped', () => {
+    expect(pathForNotificationExtra({ type: 'achievement' })).toBe('/achievements');
+    expect(pathForNotificationExtra({ type: 'achievement_batch' })).toBe('/achievements');
+  });
+
+  it('binds a parking reminder to the current parking revision', async () => {
+    stubLocalStorage();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-29T12:00:00.000Z'));
+
+    const notification = await scheduleParkingReminder({
+      minutes: 120,
+      stateRevision: 55,
+      vehicleName: 'Blue SUV',
+    });
+
+    expect(notification).toMatchObject({
+      id: NOTIFICATION_IDS.PARKING_REMINDER,
+      title: 'Parking reminder',
+      extra: { type: 'parking_reminder', stateRevision: 55 },
+    });
+    expect(notification.body).toContain('Blue SUV');
+    expect(await getParkingReminderState()).toMatchObject({
+      stateRevision: 55,
+      reminderAt: Date.parse('2026-07-29T14:00:00.000Z'),
+      vehicleName: 'Blue SUV',
+    });
+    expect(await cancelStaleParkingReminder(55)).toBe(false);
+    expect(await cancelStaleParkingReminder(56)).toBe(true);
+    expect(localStorage.removeItem).toHaveBeenCalledWith(
+      'drivesense_parking_reminder_state_v1',
+    );
+  });
+
+  it('keeps independent reminder timers for multiple vehicles', async () => {
+    stubLocalStorage();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-29T12:00:00.000Z'));
+
+    const first = await scheduleParkingReminder({
+      minutes: 60,
+      stateRevision: 101,
+      vehicleId: 'car-a',
+      vehicleName: 'Car A',
+    });
+    const second = await scheduleParkingReminder({
+      minutes: 180,
+      stateRevision: 202,
+      vehicleId: 'car-b',
+      vehicleName: 'Car B',
+    });
+
+    expect(first.id).not.toBe(second.id);
+    expect(await getParkingReminderState({ vehicleId: 'car-a' })).toMatchObject({
+      stateRevision: 101,
+      vehicleName: 'Car A',
+    });
+    expect(await getParkingReminderState({ vehicleId: 'car-b' })).toMatchObject({
+      stateRevision: 202,
+      vehicleName: 'Car B',
+    });
+    expect(Object.keys(await getParkingReminderStates()).sort()).toEqual(['car-a', 'car-b']);
+  });
+
   it('fires estimated brake-turn summary before lower-priority post-trip alerts', async () => {
     const notification = await dispatchPostTripNotification(trip({
       phone_use_risk: 'high',
@@ -168,7 +237,7 @@ describe('advanced notifications', () => {
 
   it('does not format fuel-savings notifications with a raw hardcoded fallback price', () => {
     const source = readFileSync(new URL('../notificationService.js', import.meta.url), 'utf8');
-    const titleIndex = source.indexOf("title: 'Eco Drive'");
+    const titleIndex = source.indexOf("title: 'Efficient Trip'");
     const branchStart = source.lastIndexOf('notif_post_trip_fuel_saving', titleIndex);
     const branchEnd = source.indexOf("title: 'Adjusted for Conditions'", titleIndex);
     const fuelSavingsBranch = source.slice(branchStart, branchEnd);

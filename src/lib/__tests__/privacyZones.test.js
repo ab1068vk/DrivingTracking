@@ -277,6 +277,31 @@ describe('privacyZones', () => {
     expect(stored.route_points).toHaveLength(1);
   });
 
+  it('removes app identity from stored phone-use evidence without removing map coordinates', () => {
+    const stored = sanitizeTripForPrivacyStorage({
+      id: 'phone-use-trip',
+      phone_use_events: [{
+        type: 'phone_use',
+        package_name: 'com.example.messaging',
+        lat: 43.6532,
+        lng: -79.3832,
+      }],
+      native_phone_usage_events: [{
+        packageName: 'com.example.messaging',
+        start_ms: 1000,
+        end_ms: 6000,
+      }],
+    }, { privacy_zones: [] });
+
+    expect(stored.phone_use_events[0]).toMatchObject({
+      type: 'phone_use',
+      lat: 43.6532,
+      lng: -79.3832,
+    });
+    expect(stored.phone_use_events[0]).not.toHaveProperty('package_name');
+    expect(stored.native_phone_usage_events[0]).not.toHaveProperty('packageName');
+  });
+
   it('keeps privacy storage stubs when route points are cleaned', () => {
     const redacted = redactRoutePointForPrivacyStorage(point(43.65, -79.38, 10, 8), [zone]);
     const cleaned = cleanRoutePoints([

@@ -1,7 +1,7 @@
 {
   "id": "urban_smooth_v2_2_0",
   "description": "Human-verified smooth urban daytime route with no detected events; validates low-confidence score exposure and null unavailable components independently of the test-runner timezone.",
-  "scoring_version": "94a8d95e",
+  "scoring_version": "67acfb08",
   "human_verified": true,
   "thresholds": { "NIGHT_DETECTION_MODE": "fixed" },
   "startTime": "2026-05-24T10:00:00.000",
@@ -31,7 +31,6 @@
       "score_overall": 100,
       "score_safety": 100,
       "score_smoothness": 100,
-      "score_eco": 66,
       "score_confidence_label": "low",
       "harsh_brakes_count": 0,
       "rapid_accel_count": 0,
@@ -45,7 +44,6 @@
       "overall": { "value": 100, "evidence": "low", "dataSource": ["gps", "regional_default_estimate"], "sampleCount": 8 },
       "safety": { "value": 100, "evidence": "low", "dataSource": ["gps", "regional_default_estimate"], "sampleCount": 8 },
       "smoothness": { "value": 100, "evidence": "low", "dataSource": ["gps"], "sampleCount": 8 },
-      "eco": { "value": 66, "evidence": "low", "dataSource": ["gps"], "sampleCount": 8 },
       "intersection": { "value": null, "evidence": "unavailable", "dataSource": ["gps"], "sampleCount": 0 },
       "speed_creep": { "value": 100, "evidence": "low", "dataSource": ["gps"], "sampleCount": 8 },
       "aggressive_driving": { "value": 100, "evidence": "low", "dataSource": ["gps"], "sampleCount": 8 },
@@ -53,12 +51,11 @@
       "fatigue_risk": { "value": 0, "evidence": "high", "dataSource": ["gps"], "sampleCount": 1 }
     },
     "score_provenance": {
-      "scoring_version": "94a8d95e",
+      "scoring_version": "67acfb08",
       "components": {
         "overall": "low",
         "safety": "low",
         "smoothness": "low",
-        "eco": "low",
         "intersection": "unavailable",
         "speed_creep": "low",
         "aggressive_driving": "low",

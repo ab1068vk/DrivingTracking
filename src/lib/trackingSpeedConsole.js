@@ -2,6 +2,10 @@ import { speedLimitSourceLabel } from '@/lib/speedLimitDisplay';
 import { assessSpeedLimitEvidence, speedLimitConfidenceLabel } from '@/lib/speedLimitConfidence';
 import { inspectSpeedKnowledgeHealth } from '@/lib/speedKnowledgeHealth';
 import { buildSpeedLimitRecommendation, summarizeTripSpeedLimitIntelligence } from '@/lib/speedLimitIntelligence';
+import {
+  roadMemoryCandidateOperationalState,
+  roadMemoryConfidenceExplanation,
+} from '@/lib/localRoadMemory';
 
 export const POSTED_SIGN_OVERRIDE_NOTE = 'Posted signs override app estimates.';
 
@@ -14,6 +18,7 @@ const SOURCE_GROUPS = Object.freeze({
   region_default_estimate: 'estimated',
   inferred: 'estimated',
   learned_local: 'learned',
+  local_road_memory: 'learned',
   trip_consensus: 'learned',
   time_of_day_bucket: 'learned',
   missing_posted_review: 'review',
@@ -74,6 +79,8 @@ export function fallbackReasonForSpeedSource(source) {
       return 'Regional default estimate used where road-specific posted data was unavailable.';
     case 'inferred':
       return 'GPS-inferred estimate used only as fallback context.';
+    case 'local_road_memory':
+      return 'Road Memory estimate learned from repeated local drives. Confirm a posted sign when parked to raise source confidence.';
     case 'learned_local':
     case 'trip_consensus':
     case 'time_of_day_bucket':
@@ -140,6 +147,43 @@ function buildCellRows(cells = {}, nowMs = Date.now()) {
   });
 }
 
+function buildRoadMemoryRows(candidates = [], nowMs = Date.now()) {
+  return candidates
+    .map((candidate) => ({
+      ...candidate,
+      ...roadMemoryCandidateOperationalState(candidate, nowMs),
+    }))
+    .filter((candidate) => (
+      candidate?.active === true ||
+      ['learning', 'suggested', 'change_review'].includes(candidate?.stage)
+    ))
+    .map((candidate, index) => {
+      const evidence = assessSpeedLimitEvidence({
+        ...candidate,
+        source: 'local_road_memory',
+        confidence: candidate.effectiveConfidence,
+      }, nowMs);
+      return {
+        id: candidate.id || candidate.candidateId || `road-memory-${index}`,
+        kind: 'roadMemory',
+        roadName: candidate.roadName || candidate.contextLabel || 'Road Memory section',
+        limitKmh: finiteNumber(candidate.limitKmh),
+        source: 'local_road_memory',
+        sourceLabel: trackingSpeedSourceLabel('local_road_memory'),
+        sourceGroup: sourceGroup('local_road_memory'),
+        confidenceLabel: speedLimitConfidenceLabel(evidence),
+        confidencePercent: Math.round(Math.min(
+          evidence.confidence,
+          Number(candidate.effectiveConfidence) || evidence.confidence
+        ) * 100),
+        authority: evidence.authority,
+        needsReview: true,
+        fallbackReason: `${fallbackReasonForSpeedSource('local_road_memory')} ${roadMemoryConfidenceExplanation(candidate, nowMs)}`,
+        editHref: '/speed-limits?view=review',
+      };
+    });
+}
+
 function buildSourceSummary(rows = []) {
   const bySource = new Map();
   rows.forEach((row) => {
@@ -203,9 +247,13 @@ export function buildTrackingSpeedConsoleData({
 } = {}) {
   const corrections = Array.isArray(speedKnowledgeData?.corrections) ? speedKnowledgeData.corrections : [];
   const cells = speedKnowledgeData?.cells || {};
+  const roadMemoryCandidates = Array.isArray(speedKnowledgeData?.roadMemory?.candidates)
+    ? speedKnowledgeData.roadMemory.candidates
+    : [];
   const ruleRows = buildRuleRows(corrections, nowMs);
   const cellRows = buildCellRows(cells, nowMs);
-  const rows = [...ruleRows, ...cellRows];
+  const roadMemoryRows = buildRoadMemoryRows(roadMemoryCandidates, nowMs);
+  const rows = [...ruleRows, ...cellRows, ...roadMemoryRows];
   const health = inspectSpeedKnowledgeHealth({ cells, corrections }, nowMs);
   const sourceSummary = buildSourceSummary(rows);
   const tripCoverageRows = buildTripCoverageRows(trips);
@@ -222,6 +270,7 @@ export function buildTrackingSpeedConsoleData({
     rows,
     ruleRows,
     cellRows,
+    roadMemoryRows,
     sourceSummary,
     tripCoverageRows,
     pendingReviewRows,
@@ -231,6 +280,7 @@ export function buildTrackingSpeedConsoleData({
     counts: {
       savedRuleCount: ruleRows.length,
       learnedCellCount: cellRows.length,
+      roadMemoryCandidateCount: roadMemoryRows.length,
       pendingReviewCount: pendingReviewRows.length,
       expiringRuleCount: expiringRules.length,
       expiredRuleCount: expiredRules.length,

@@ -4,7 +4,10 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Gauge, MapPin, RefreshCw, ShieldCheck } from 'lucide-react';
 import RoadSectionPreview from '@/components/RoadSectionPreview';
 import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT, geohashCenter, geohashEncode } from '@/lib/localSpeedKnowledge';
-import { buildTripSpeedLimitReviewCells } from '@/lib/speedLimitReview';
+import {
+  buildTripSpeedLimitCoverageCells,
+  buildTripSpeedLimitReviewCells,
+} from '@/lib/speedLimitReview';
 import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import { getPrivacyZones } from '@/lib/privacyZones';
 import { refreshTripsForLocalSpeedKnowledgeChanges } from '@/lib/localSpeedScoreRefresh';
@@ -15,6 +18,8 @@ import {
   sortSpeedLimitReviewItems,
   speedLimitReviewPriority,
 } from '@/lib/speedLimitIntelligence';
+import { dedupeSpeedEvidenceReviewItems } from '@/lib/speedEvidenceReasoning';
+import WhyThisSpeed from '@/components/WhyThisSpeed';
 import {
   buildSpeedMapSections,
   findOverlappingSpeedSections,
@@ -26,32 +31,54 @@ import {
   writeExcludedSpeedSectionKeys,
 } from '@/lib/speedSectionExclusions';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { MAX_SAVED_SPEED_LIMIT_KMH } from '@/lib/speedKnowledgeCellPolicy';
+import {
+  convertDisplaySpeedToKmh,
+  convertSpeedKmh,
+  formatSpeedKmh,
+  speedInputValueFromKmh,
+  speedUnitLabel,
+} from '@/lib/unitFormatting';
 
 const SpeedLimitEditorMap = lazy(() => import('@/components/SpeedLimitEditorMap'));
 
 const sourceLabel = (source) => speedLimitSourceLabel(source);
 const COMMON_SPEED_LIMITS_KMH = [30, 40, 50, 60, 70, 80, 100];
-const REVIEW_FILTERS = [
-  ['all', 'All'],
+const COMMON_SPEED_LIMITS_MPH = [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70];
+const PRIMARY_REVIEW_FILTERS = [
+  ['needs', 'Needs decision'],
+  ['handled', 'Already handled'],
+  ['all', 'Everything'],
+];
+const ADVANCED_REVIEW_FILTERS = [
   ['conflicts', 'Conflicts'],
   ['missing', 'Missing posted data'],
   ['estimated', 'Estimated'],
   ['saved', 'Already saved'],
+  ['trusted', 'Trip source'],
 ];
 const IGNORED_TRIP_REVIEW_SECTIONS_STORAGE_KEY = 'roadsage_ignored_trip_speed_review_sections_v1';
 
-function SpeedLimitQuickPicks({ value, onPick }) {
+function SpeedLimitQuickPicks({ value, units = 'metric', onPick, disabled = false }) {
+  const displayedValue = Number(speedInputValueFromKmh(value, units));
+  const displayedLimits = units === 'imperial'
+    ? COMMON_SPEED_LIMITS_MPH
+    : COMMON_SPEED_LIMITS_KMH;
   return (
     <div className="flex flex-wrap gap-1.5">
-      {COMMON_SPEED_LIMITS_KMH.map((limit) => (
+      {displayedLimits.map((limit) => (
         <button
           key={limit}
           type="button"
-          onClick={() => onPick(String(limit))}
+          disabled={disabled}
+          onClick={() => {
+            const canonical = convertDisplaySpeedToKmh(limit, units);
+            onPick(canonical == null ? '' : String(canonical));
+          }}
           className={`rounded-lg border px-2 py-1 text-[11px] font-semibold ${
-            Number(value) === limit
+            displayedValue === limit
               ? 'border-primary bg-primary text-primary-foreground'
-              : 'border-border bg-secondary/80 text-foreground hover:bg-secondary'
+              : 'border-border bg-secondary/80 text-foreground hover:bg-secondary disabled:opacity-50'
           }`}
         >
           {limit}
@@ -61,9 +88,16 @@ function SpeedLimitQuickPicks({ value, onPick }) {
   );
 }
 
-const formatLimit = (value) => {
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? `${Math.round(number)} km/h` : 'Unknown';
+const formatLimit = (value, units = 'metric') => formatSpeedKmh(value, units);
+
+export const speedReviewDraftForDisplay = (value, units = 'metric') => (
+  value == null || value === '' ? '' : speedInputValueFromKmh(value, units)
+);
+
+export const speedReviewDraftFromDisplay = (value, units = 'metric') => {
+  if (value == null || value === '') return '';
+  const canonical = convertDisplaySpeedToKmh(value, units);
+  return canonical == null ? '' : String(canonical);
 };
 
 const formatDate = (value) => {
@@ -95,9 +129,13 @@ const mostCommonNumber = (values = []) => {
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0] ?? '';
 };
 
-const formatLimitList = (values = []) => {
+const formatLimitList = (values = [], units = 'metric') => {
   const limits = sortedNumbers(values);
-  return limits.length ? `${limits.join(', ')} km/h` : 'Unknown';
+  const displayed = [...new Set(limits
+    .map((limit) => convertSpeedKmh(limit, units))
+    .filter((limit) => Number.isFinite(limit) && limit > 0)
+    .map((limit) => Math.round(limit)))];
+  return displayed.length ? `${displayed.join(', ')} ${speedUnitLabel(units)}` : 'Unknown';
 };
 
 const formatSourceList = (values = []) => {
@@ -139,14 +177,21 @@ const ignoredTripReviewKey = (cell = {}, trip = null) => [
   reviewRuleKey(cell),
 ].filter(Boolean).join(':');
 
-const readIgnoredTripReviewKeys = () => {
+export const consumeLegacyIgnoredTripReviewKeys = () => {
   if (typeof window === 'undefined') return [];
+  let keys = [];
   try {
     const parsed = JSON.parse(window.localStorage.getItem(IGNORED_TRIP_REVIEW_SECTIONS_STORAGE_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed.filter(Boolean).map(String) : [];
+    keys = Array.isArray(parsed) ? parsed.filter(Boolean).map(String) : [];
   } catch {
-    return [];
+    keys = [];
   }
+  try {
+    window.localStorage.removeItem(IGNORED_TRIP_REVIEW_SECTIONS_STORAGE_KEY);
+  } catch {
+    // A blocked storage API must not prevent the in-memory review from loading.
+  }
+  return keys;
 };
 
 const reviewRuleIdentityKeys = (cell = {}) => new Set([
@@ -231,15 +276,122 @@ function reviewOverlapChecksForCell(cell = {}, limitKmh, source, savedSections =
 
 const firstBlockingOverlap = (checks = []) => checks.find((check) => check?.severity === 'block') || null;
 
-const overlapNoticeText = (overlap = null) => {
+const overlapNoticeText = (overlap = null, units = 'metric') => {
   if (!overlap) return '';
   const road = overlap.roadName || 'another saved road section';
-  const limit = overlap.limitKmh ? `${overlap.limitKmh} km/h` : 'a saved speed';
+  const limit = overlap.limitKmh ? formatLimit(overlap.limitKmh, units) : 'a saved speed';
   if (overlap.severity !== 'block') {
     return `Touches ${road} at ${limit}. Save only if the direction or time rule makes this distinct.`;
   }
   return `Overlaps ${road} at ${limit}. Edit, split, or delete that saved rule first if this is meant to replace it.`;
 };
+
+export const speedReviewRuleLifecycleAt = (row = {}, nowMs = Date.now()) => {
+  if (row.historicalVersion === true) return 'historical';
+  const validFrom = row.validFrom ? new Date(row.validFrom).getTime() : null;
+  const expiresAt = row.expiresAt ? new Date(row.expiresAt).getTime() : null;
+  if (row.validFrom && !Number.isFinite(validFrom)) return 'invalid';
+  if (row.expiresAt && !Number.isFinite(expiresAt)) return 'invalid';
+  if (Number.isFinite(validFrom) && nowMs < validFrom) return 'future';
+  if (Number.isFinite(expiresAt) && nowMs >= expiresAt) return 'expired';
+  return 'active';
+};
+
+export const speedReviewCorrectionIsReadOnly = (row = {}, nowMs = Date.now()) => (
+  row.readOnlyCorrectionContext === true || speedReviewRuleLifecycleAt(row, nowMs) !== 'active'
+);
+
+const correctionContextText = (row = {}) => {
+  const lifecycle = speedReviewRuleLifecycleAt(row);
+  if (lifecycle === 'historical') {
+    const end = row.expiresAt || row.supersededAt;
+    return `Historical saved version${end ? `, retained through ${formatDate(end)}` : ''}. It explains past trip scoring and cannot be changed from this review.`;
+  }
+  if (lifecycle === 'expired') {
+    return `Expired saved version${row.expiresAt ? ` as of ${formatDate(row.expiresAt)}` : ''}. It is shown only as past-trip context and cannot affect new trips.`;
+  }
+  if (lifecycle === 'future') {
+    return `Scheduled saved version${row.validFrom ? ` beginning ${formatDate(row.validFrom)}` : ''}. It is read-only until its effective period.`;
+  }
+  if (lifecycle === 'invalid') {
+    return 'This saved version has invalid effective dates. It is read-only and cannot affect active conflict decisions.';
+  }
+  return '';
+};
+
+const unitAwareRecommendation = (record = {}, units = 'metric') => {
+  const recommendation = buildSpeedLimitRecommendation(record);
+  if (recommendation.kind !== 'conflict') return recommendation;
+  const currentLimit = Number(record.limitKmh ?? record.speed_limit_kmh ?? record.conflictDetails?.existingLimitKmh);
+  const observedLimit = Number(record.observedLimitKmh ?? record.conflictDetails?.newLimitKmh);
+  if (!Number.isFinite(currentLimit) || !Number.isFinite(observedLimit)) return recommendation;
+  return {
+    ...recommendation,
+    text: `Saved and observed limits differ by ${formatLimit(Math.abs(currentLimit - observedLimit), units)}. Confirm the posted sign while parked.`,
+  };
+};
+
+export const activeSpeedCorrectionsForConflictReview = (corrections = [], nowMs = Date.now()) => (
+  (Array.isArray(corrections) ? corrections : []).filter((correction) => (
+    speedReviewRuleLifecycleAt(correction, nowMs) === 'active'
+  ))
+);
+
+/**
+ * @param {{
+ *   knowledge?: any,
+ *   cell?: Record<string, any>,
+ *   refreshKnowledgeChanges?: (beforeKnowledge: any, afterKnowledge: any) => Promise<any[]>
+ * }} options
+ */
+export async function persistIgnoredSpeedReviewSection({
+  knowledge = null,
+  cell = /** @type {Record<string, any>} */ ({}),
+  refreshKnowledgeChanges = refreshTripsForLocalSpeedKnowledgeChanges,
+} = {}) {
+  if (!knowledge || !cell?.geohash) return { ok: false, reason: 'invalid_section' };
+  const beforeKnowledge = await knowledge.exportData().catch(() => null);
+  const center = geohashCenter(cell.geohash);
+  const exclusionKeys = speedSectionExclusionKeys(cell);
+  const exclusionResult = await knowledge.excludeSpeedSection({
+    ...cell,
+    lat: Number.isFinite(Number(cell.lat)) ? Number(cell.lat) : center.lat,
+    lng: Number.isFinite(Number(cell.lng)) ? Number(cell.lng) : center.lng,
+    roadName: cell.roadName || cell.roads?.[0] || '',
+    exclusionKeys,
+  }, 'user_ignored_trip_review').catch(() => false);
+  if (!exclusionResult) return { ok: false, reason: 'persistence_failed' };
+
+  const exclusion = typeof exclusionResult === 'object' ? exclusionResult.exclusion : null;
+  const afterKnowledge = await knowledge.exportData().catch(() => null);
+  let refreshedTrips = null;
+  let refreshFailed = false;
+  if (beforeKnowledge && afterKnowledge) {
+    try {
+      refreshedTrips = await refreshKnowledgeChanges(beforeKnowledge, afterKnowledge);
+    } catch {
+      refreshFailed = true;
+    }
+  }
+  const updatedTripCount = Array.isArray(refreshedTrips) ? refreshedTrips.length : 0;
+  const queuedTripCount = Number(refreshedTrips ? Reflect.get(refreshedTrips, 'queuedTripCount') : 0) || 0;
+  const affectedTripCount = Number(refreshedTrips ? Reflect.get(refreshedTrips, 'totalAffectedTripCount') : 0) || updatedTripCount + queuedTripCount;
+  const rescoreStatus = refreshFailed || !beforeKnowledge || !afterKnowledge
+    ? 'The exclusion was saved, but matching-trip rescoring could not be verified.'
+    : queuedTripCount > 0
+      ? `${updatedTripCount} matching trip score${updatedTripCount === 1 ? '' : 's'} refreshed and ${queuedTripCount} queued.`
+      : affectedTripCount > 0
+        ? `${updatedTripCount} matching trip score${updatedTripCount === 1 ? '' : 's'} refreshed.`
+        : 'No completed trip scores required an update.';
+  return {
+    ok: true,
+    exclusion,
+    updatedTripCount,
+    queuedTripCount,
+    affectedTripCount,
+    rescoreStatus,
+  };
+}
 
 function isPublicReviewPoint(point = {}) {
   const lat = Number(point.lat);
@@ -254,7 +406,11 @@ function isPublicReviewPoint(point = {}) {
 
 const buildReviewGroups = (items = []) => {
   const groups = new Map();
-  for (const cell of items.filter((item) => item?.tripReview && !item?.existingLocalCorrection)) {
+  for (const cell of items.filter((item) => (
+    item?.tripReview &&
+    item?.requiresDecision !== false &&
+    !item?.existingLocalCorrection
+  ))) {
     const key = reviewGroupKey(cell);
     const existing = groups.get(key) || {
       key,
@@ -297,7 +453,11 @@ function buildTripRoadStatusRows(trip = null, reviewCells = []) {
   if (!points.length) return [];
 
   const reviewGeohashes = new Set(reviewCells
-    .filter((cell) => cell?.tripReview && !cell?.existingLocalCorrection)
+    .filter((cell) => (
+      cell?.tripReview &&
+      cell?.requiresDecision !== false &&
+      !cell?.existingLocalCorrection
+    ))
     .map((cell) => cell.geohash));
   const savedByGeohash = new Map(reviewCells
     .filter((cell) => cell?.existingLocalCorrection)
@@ -385,6 +545,13 @@ function routeEvidenceForCell(trip, geohash) {
     limits,
     sources,
     roads,
+    sectionPoints: matches
+      .map((point) => ({ lat: Number(point.lat), lng: Number(point.lng) }))
+      .filter((point, index, points) => (
+        Number.isFinite(point.lat) &&
+        Number.isFinite(point.lng) &&
+        (index === 0 || point.lat !== points[index - 1].lat || point.lng !== points[index - 1].lng)
+      )),
   };
 }
 
@@ -401,8 +568,13 @@ function buildRouteEvidenceByGeohash(trip = null) {
       limits: new Set(),
       sources: new Set(),
       roads: new Set(),
+      sectionPoints: [],
     };
     group.sampleCount += 1;
+    const previousPoint = group.sectionPoints.at(-1);
+    if (!previousPoint || previousPoint.lat !== lat || previousPoint.lng !== lng) {
+      group.sectionPoints.push({ lat, lng });
+    }
     const limit = Number(point.speed_limit_kmh);
     if (Number.isFinite(limit) && limit > 0) group.limits.add(limit);
     if (point.speed_limit_source) group.sources.add(point.speed_limit_source);
@@ -417,13 +589,36 @@ function buildRouteEvidenceByGeohash(trip = null) {
       limits: [...group.limits].sort((a, b) => a - b),
       sources: [...group.sources],
       roads: [...group.roads].slice(0, 3),
+      sectionPoints: group.sectionPoints,
     },
   ]));
+}
+
+export function buildTracedConflictResolutionMetadata(cell = {}, routeEvidence = null, historyGroup = null) {
+  const sectionPoints = (Array.isArray(routeEvidence?.sectionPoints) ? routeEvidence.sectionPoints : [])
+    .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng) }))
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng))
+    .slice(0, 24);
+  if (sectionPoints.length < 2) return null;
+  const anchor = sectionPoints[Math.floor(sectionPoints.length / 2)];
+  return {
+    lat: anchor.lat,
+    lng: anchor.lng,
+    roadName: cell.roadName || cell.roads?.[0] || routeEvidence?.roads?.[0] || '',
+    contextLabel: cell.contextLabel || 'traced from the opened trip',
+    directionLabel: cell.directionLabel || '',
+    timeLabel: cell.timeLabel || '',
+    distanceM: cell.distanceM || 0,
+    sectionPoints,
+    historyGroup,
+    provenance: 'trip_route_conflict_review',
+  };
 }
 
 function reviewCellCategory(cell = {}) {
   if (!cell.tripReview) return 'conflicts';
   if (cell.existingLocalCorrection) return 'saved';
+  if (cell.requiresDecision === false) return 'trusted';
   if (cell.source === 'missing_posted_review' || !cell.limits?.length) return 'missing';
   return 'estimated';
 }
@@ -433,7 +628,9 @@ function summarizeReviewCells(items = []) {
     const category = reviewCellCategory(cell);
     summary.total += 1;
     summary[category] += 1;
-    if (!cell.existingLocalCorrection) summary.blocking += 1;
+    if (!cell.tripReview || (cell.requiresDecision !== false && !cell.existingLocalCorrection)) {
+      summary.blocking += 1;
+    }
     return summary;
   }, {
     total: 0,
@@ -441,12 +638,19 @@ function summarizeReviewCells(items = []) {
     missing: 0,
     estimated: 0,
     saved: 0,
+    trusted: 0,
     blocking: 0,
   });
 }
 
 function filterReviewCells(items = [], filter = 'all') {
-  if (filter === 'all') return items.filter((cell) => reviewCellCategory(cell) !== 'saved');
+  if (filter === 'all') return items;
+  if (filter === 'needs') return items.filter((cell) => (
+    !cell.tripReview || (cell.requiresDecision !== false && !cell.existingLocalCorrection)
+  ));
+  if (filter === 'handled') return items.filter((cell) => (
+    cell.tripReview && (cell.requiresDecision === false || cell.existingLocalCorrection)
+  ));
   return items.filter((cell) => reviewCellCategory(cell) === filter);
 }
 
@@ -457,7 +661,10 @@ function sortReviewCells(items = []) {
 }
 
 function countBlockingReviewCells(items = []) {
-  return items.filter((cell) => !cell?.existingLocalCorrection).length;
+  return items.filter((cell) => (
+    !cell?.tripReview ||
+    (cell?.requiresDecision !== false && !cell?.existingLocalCorrection)
+  )).length;
 }
 
 function captureScrollRestorer() {
@@ -484,17 +691,19 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
   const onResolvedRef = useRef(onResolved);
   const reportedCompleteKeyRef = useRef(null);
   const [expandedPreviewKeys, setExpandedPreviewKeys] = useState(() => new Set());
-  const [reviewFilter, setReviewFilter] = useState('all');
+  const [reviewFilter, setReviewFilter] = useState('needs');
   const [selectedReviewGeohash, setSelectedReviewGeohash] = useState('');
-  const [ignoredTripReviewKeys, setIgnoredTripReviewKeys] = useState(readIgnoredTripReviewKeys);
+  const [ignoredTripReviewKeys, setIgnoredTripReviewKeys] = useState(consumeLegacyIgnoredTripReviewKeys);
   const [excludedSpeedSectionKeys, setExcludedSpeedSectionKeys] = useState(readExcludedSpeedSectionKeys);
   const settings = useLocalSettings();
+  const units = settings.units === 'imperial' ? 'imperial' : 'metric';
+  const speedUnit = speedUnitLabel(units);
+  const displayMaximumSpeed = Number(speedInputValueFromKmh(MAX_SAVED_SPEED_LIMIT_KMH, units));
 
   const knowledge = useMemo(() => new LocalSpeedKnowledge(speedKnowledgeStore), []);
   const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
   const routeEvidenceByGeohash = useMemo(() => buildRouteEvidenceByGeohash(trip), [trip]);
   const ignoredTripReviewKeySet = useMemo(() => new Set(ignoredTripReviewKeys), [ignoredTripReviewKeys]);
-  const excludedSpeedSectionKeySet = useMemo(() => new Set(excludedSpeedSectionKeys), [excludedSpeedSectionKeys]);
 
   useEffect(() => {
     onResolvedRef.current = onResolved;
@@ -503,12 +712,9 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      window.localStorage.setItem(
-        IGNORED_TRIP_REVIEW_SECTIONS_STORAGE_KEY,
-        JSON.stringify([...new Set(ignoredTripReviewKeys)].slice(-1000))
-      );
+      window.localStorage.removeItem(IGNORED_TRIP_REVIEW_SECTIONS_STORAGE_KEY);
     } catch {
-      // Ignored review sections are convenience UI state; storage failures should not block review.
+      // The atomic speed-knowledge exclusion is authoritative; this only scrubs a legacy key.
     }
   }, [ignoredTripReviewKeys]);
 
@@ -523,11 +729,18 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
   const loadConflicts = useCallback(async ({ notifyComplete = false, preserveContent = false } = {}) => {
     const showBlockingLoading = !preserveContent || cellsRef.current.length === 0;
     if (showBlockingLoading) setLoading(true);
-    const [allConflicted, allSavedCorrections] = await Promise.all([
+    const [allConflicted, allSavedCorrections, allExcludedSections] = await Promise.all([
       knowledge.getConflictedCells().catch(() => []),
       knowledge.listUserCorrections().catch(() => []),
+      knowledge.listExcludedSpeedSections().catch(() => []),
     ]);
     setSavedCorrections(Array.isArray(allSavedCorrections) ? allSavedCorrections : []);
+    const authoritativeExclusionKeys = [
+      ...new Set((Array.isArray(allExcludedSections) ? allExcludedSections : [])
+        .flatMap(speedSectionExclusionKeys)),
+    ];
+    const authoritativeExclusionKeySet = new Set(authoritativeExclusionKeys);
+    setExcludedSpeedSectionKeys(authoritativeExclusionKeys);
     const tripGeohashes = reviewMode && trip
       ? new Set((trip.route_points || [])
         .filter(isPublicReviewPoint)
@@ -539,15 +752,19 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
     const conflictedGeohashes = new Set(conflicted.map((cell) => cell.geohash));
     let tripReviewCells = [];
     if (reviewMode && trip) {
-      const reviewCells = buildTripSpeedLimitReviewCells(trip, { maxCells: Infinity })
+      const reviewCells = buildTripSpeedLimitCoverageCells(trip, { maxCells: Infinity })
         .filter((cell) => !conflictedGeohashes.has(cell.geohash))
-        .filter((cell) => !isSpeedSectionExcluded(cell, excludedSpeedSectionKeySet))
-        .filter((cell) => !ignoredTripReviewKeySet.has(ignoredTripReviewKey(cell, trip)));
+        .filter((cell) => (
+          cell.requiresDecision === false ||
+          !ignoredTripReviewKeySet.has(ignoredTripReviewKey(cell, trip))
+        ));
       const existingCorrections = await knowledge.getForPoints(reviewCells).catch(() => (
         Promise.all(reviewCells.map((cell) => knowledge.getForPoint(cell.lat, cell.lng).catch(() => null)))
       ));
       tripReviewCells = reviewCells.map((cell, index) => {
         const existing = existingCorrections[index];
+        const existingLifecycle = speedReviewRuleLifecycleAt(existing || {});
+        const readOnlyCorrectionContext = Boolean(existing?.source) && existingLifecycle !== 'active';
         const existingSectionPoints = (Array.isArray(existing?.sectionPoints) ? existing.sectionPoints : [])
           .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng) }))
           .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
@@ -580,15 +797,51 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
               ? Number(existing.directionBearing)
               : cell.directionBearing,
             timeRule: existing.timeRule || cell.timeRule || null,
-            existingLocalCorrection: true,
-            reviewReason: 'A saved local speed exists here. Update it only if the posted speed changed.',
+            validFrom: existing.validFrom || null,
+            validFromDate: existing.validFromDate || null,
+            expiresAt: existing.expiresAt || null,
+            expiresAtDate: existing.expiresAtDate || null,
+            historicalVersion: existing.historicalVersion === true,
+            supersededAt: existing.supersededAt || null,
+            supersededByCorrectionId: existing.supersededByCorrectionId || null,
+            supersedesCorrectionId: existing.supersedesCorrectionId || null,
+            versionRootId: existing.versionRootId || null,
+            readOnlyCorrectionContext,
+            existingLocalCorrection: Boolean(existing.correctionId),
+            roadMemoryCandidate: existing.roadMemoryCandidate === true,
+            candidateId: existing.candidateId || null,
+            confidence: existing.confidence,
+            tripCount: existing.tripCount,
+            agreement: existing.agreement,
+            stage: existing.stage,
+            requiresDecision: readOnlyCorrectionContext
+              ? false
+              : existing.roadMemoryCandidate === true
+              ? cell.requiresDecision !== false
+              : false,
+            reviewReason: readOnlyCorrectionContext
+              ? correctionContextText(existing)
+              : existing.roadMemoryCandidate === true
+              ? `Road Memory suggests ${formatLimit(existing.limitKmh, units)}. ${existing.contextLabel || `${Number(existing.tripCount) || 3} independent drives`}. Confirm the posted sign, adjust it, or leave it estimated.`
+              : 'A saved local speed exists here. Update it only if the posted speed changed.',
           }
           : cell;
-      });
+      }).filter((cell) => !isSpeedSectionExcluded(cell, authoritativeExclusionKeySet));
     }
     const nextCells = [
       ...conflicted.map((cell) => ({ ...cell, tripReview: false })),
-      ...tripReviewCells.filter(Boolean),
+      ...tripReviewCells
+        .filter(Boolean)
+        .filter((cell, index, items) => {
+          const key = cell.correctionId
+            ? `saved:${cell.correctionId}`
+            : `section:${cell.geohash}`;
+          return items.findIndex((candidate) => (
+            candidate.correctionId
+              ? `saved:${candidate.correctionId}`
+              : `section:${candidate.geohash}`
+          ) === key) === index;
+        }),
     ];
     cellsRef.current = nextCells;
     setCells(nextCells);
@@ -619,7 +872,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
       }
     }
     return nextCells;
-  }, [excludedSpeedSectionKeySet, ignoredTripReviewKeySet, knowledge, reviewMode, trip]);
+  }, [ignoredTripReviewKeySet, knowledge, reviewMode, trip, units]);
 
   useEffect(() => {
     loadConflicts({ notifyComplete: true, preserveContent: true });
@@ -648,17 +901,21 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
   const reviewGroups = useMemo(() => buildReviewGroups(cells), [cells]);
   const roadStatusRows = useMemo(() => buildTripRoadStatusRows(trip, cells), [trip, cells]);
   const reviewStats = useMemo(() => summarizeReviewCells(cells), [cells]);
-  const visibleCells = useMemo(() => sortReviewCells(filterReviewCells(cells, reviewFilter)), [cells, reviewFilter]);
+  const visibleCells = useMemo(
+    () => sortReviewCells(dedupeSpeedEvidenceReviewItems(filterReviewCells(cells, reviewFilter))),
+    [cells, reviewFilter]
+  );
   const ignoredTripReviewCount = useMemo(() => {
     if (!reviewMode || !trip) return 0;
     const ignored = ignoredTripReviewKeySet;
     return buildTripSpeedLimitReviewCells(trip, { maxCells: Infinity })
       .filter((cell) => ignored.has(ignoredTripReviewKey(cell, trip))).length;
   }, [ignoredTripReviewKeySet, reviewMode, trip]);
-  const savedMapSections = useMemo(() => (
-    buildSpeedMapSections([], savedCorrections)
-      .filter((section) => !isSpeedSectionExcluded(section, excludedSpeedSectionKeySet))
-  ), [excludedSpeedSectionKeySet, savedCorrections]);
+  const savedMapSections = useMemo(() => {
+    const now = Date.now();
+    const activeCorrections = activeSpeedCorrectionsForConflictReview(savedCorrections, now);
+    return buildSpeedMapSections([], activeCorrections);
+  }, [savedCorrections]);
   const reviewMapSections = useMemo(() => visibleCells.map((cell) => {
     const category = reviewCellCategory(cell);
     const limitKmh = Number(cell.limitKmh ?? cell.suggestedLimitKmh);
@@ -716,6 +973,15 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
     ? cellOverlapByGeohash.get(selectedMapCell.geohash)
     : null;
   const selectedMapBlockingOverlap = selectedMapOverlap?.blocking || null;
+  const selectedMapReadOnly = selectedMapCell ? speedReviewCorrectionIsReadOnly(selectedMapCell) : false;
+  const selectedMapRouteEvidence = selectedMapCell && !selectedMapCell.tripReview
+    ? routeEvidenceByGeohash.get(selectedMapCell.geohash) || routeEvidenceForCell(trip, selectedMapCell.geohash)
+    : null;
+  const selectedMapMissingTrace = Boolean(
+    selectedMapCell &&
+    !selectedMapCell.tripReview &&
+    (!Array.isArray(selectedMapRouteEvidence?.sectionPoints) || selectedMapRouteEvidence.sectionPoints.length < 2)
+  );
   const selectedReviewIndex = visibleCells.findIndex((cell) => cell.geohash === selectedReviewGeohash);
 
   useEffect(() => {
@@ -744,58 +1010,92 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
     setSelectedReviewGeohash(visibleCells[nextIndex].geohash);
   };
 
-  const ignoreTripReviewCell = (cell = selectedMapCell) => {
-    if (!cell?.tripReview || cell.existingLocalCorrection) {
+  const ignoreTripReviewCell = async (cell = selectedMapCell) => {
+    if (!cell?.tripReview || cell.existingLocalCorrection || speedReviewCorrectionIsReadOnly(cell)) {
       setStatus('Select an unresolved trip-review section before ignoring it.');
       return;
     }
+    setBusyGeohash(cell.geohash);
     const key = ignoredTripReviewKey(cell, trip);
+    const persistResult = await persistIgnoredSpeedReviewSection({ knowledge, cell });
+    if (!persistResult.ok) {
+      setBusyGeohash(null);
+      setStatus('Could not save this ignored-road decision. Nothing was removed from the review.');
+      return;
+    }
     setIgnoredTripReviewKeys((current) => (
       current.includes(key) ? current : [...current, key]
     ));
-    const exclusionKeys = speedSectionExclusionKeys(cell);
-    if (exclusionKeys.length) {
-      setExcludedSpeedSectionKeys((current) => [...new Set([...current, ...exclusionKeys])]);
+    const persistedExclusionKeys = speedSectionExclusionKeys(persistResult.exclusion || cell);
+    if (persistedExclusionKeys.length) {
+      setExcludedSpeedSectionKeys((current) => [...new Set([...current, ...persistedExclusionKeys])]);
     }
     const nextCells = cellsRef.current.filter((item) => ignoredTripReviewKey(item, trip) !== key);
     cellsRef.current = nextCells;
     setCells(nextCells);
     setSelectedReviewGeohash('');
     const remainingCount = countBlockingReviewCells(nextCells);
-    setStatus('Ignored this trip-review section. It will not ask for a speed again on this device.');
+    setStatus(`Ignored this road section persistently on this device. ${persistResult.rescoreStatus}`);
+    setBusyGeohash(null);
     onResolvedRef.current?.({
       geohash: cell.geohash,
       ignored: true,
+      exclusion: persistResult.exclusion,
+      updatedTripCount: persistResult.updatedTripCount,
+      queuedTripCount: persistResult.queuedTripCount,
       remainingCount,
       tripReviewComplete: Boolean(trip?.id) && remainingCount === 0,
     });
   };
 
-  const restoreIgnoredTripReviewSections = () => {
+  const restoreIgnoredTripReviewSections = async () => {
+    const ignoredCells = trip
+      ? buildTripSpeedLimitReviewCells(trip, { maxCells: Infinity })
+        .filter((cell) => ignoredTripReviewKeySet.has(ignoredTripReviewKey(cell, trip)))
+      : [];
+    setBusyGeohash('restore-ignored');
+    const restoreResults = await Promise.all(ignoredCells.map((cell) => {
+      const center = cell.geohash ? geohashCenter(cell.geohash) : {};
+      return knowledge.restoreExcludedSpeedSections({
+        ...cell,
+        lat: Number.isFinite(Number(cell.lat)) ? Number(cell.lat) : center.lat,
+        lng: Number.isFinite(Number(cell.lng)) ? Number(cell.lng) : center.lng,
+        exclusionKeys: speedSectionExclusionKeys(cell),
+      }).catch(() => null);
+    }));
+    if (ignoredCells.length && restoreResults.every((result) => result == null)) {
+      setBusyGeohash(null);
+      setStatus('Could not restore the ignored road sections. Their saved exclusions were left unchanged.');
+      return;
+    }
     const scope = `${tripReviewScopeKey(trip)}:`;
     setIgnoredTripReviewKeys((current) => current.filter((key) => !key.startsWith(scope)));
-    if (trip) {
-      const tripExclusionKeys = new Set(
-        buildTripSpeedLimitReviewCells(trip, { maxCells: Infinity })
-          .flatMap(speedSectionExclusionKeys)
-      );
-      setExcludedSpeedSectionKeys((current) => current.filter((key) => !tripExclusionKeys.has(key)));
-    }
-    setStatus('Restored ignored trip-review sections for this trip.');
+    await loadConflicts({ preserveContent: true });
+    setBusyGeohash(null);
+    const restoredCount = restoreResults.reduce((total, result) => total + (Number(result?.restoredCount) || 0), 0);
+    setStatus(`Restored ${restoredCount} persisted ignored road section${restoredCount === 1 ? '' : 's'} for this trip.`);
   };
 
   if (!reviewMode && !loading && cells.length === 0) return null;
+
+  const tracedRouteEvidenceForCell = (cell = {}) => {
+    const evidence = routeEvidenceByGeohash.get(cell.geohash) || routeEvidenceForCell(trip, cell.geohash);
+    return evidence;
+  };
 
   const saveCellLimit = async (cell, source, limitKmh, historyGroup) => {
     const note = source === 'user_confirmed_posted_sign'
       ? 'Resolved from parked posted-sign review'
       : 'Resolved from parked user estimate review';
     const center = geohashCenter(cell.geohash);
-    const lat = cell.lat ?? center.lat;
-    const lng = cell.lng ?? center.lng;
-    const metadata = {
-      lat,
-      lng,
+    const tracedEvidence = cell.tripReview ? null : tracedRouteEvidenceForCell(cell);
+    const conflictMetadata = cell.tripReview
+      ? null
+      : buildTracedConflictResolutionMetadata(cell, tracedEvidence, historyGroup);
+    if (!cell.tripReview && !conflictMetadata) return false;
+    const metadata = cell.tripReview ? {
+      lat: cell.lat ?? center.lat,
+      lng: cell.lng ?? center.lng,
       roadName: cell.roadName || cell.roads?.[0] || '',
       contextLabel: cell.contextLabel || '',
       directionLabel: cell.directionLabel || '',
@@ -803,7 +1103,9 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
       distanceM: cell.distanceM || 0,
       sectionPoints: cell.sectionPoints || [],
       historyGroup,
-    };
+    } : conflictMetadata;
+    const lat = metadata.lat;
+    const lng = metadata.lng;
     if (cell.tripReview && cell.existingLocalCorrection) {
       const selector = cell.correctionId || cell.id || cell.ruleId || cell.geohash;
       const updated = await knowledge.updateUserCorrection(
@@ -831,17 +1133,28 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
         Math.round(limitKmh),
         source,
         note,
-        { historyGroup }
+        metadata
       ).catch(() => false);
   };
 
   const resolveCells = async (targetCells, source, draftKey) => {
+    if (targetCells.some((cell) => speedReviewCorrectionIsReadOnly(cell))) {
+      setStatus('Historical, expired, and scheduled saved versions are read-only context. Create or edit the active road rule instead.');
+      return;
+    }
     const limitKmh = Number(drafts[draftKey]);
-    if (!Number.isFinite(limitKmh) || limitKmh <= 0) {
-      setStatus('Enter a valid speed limit before saving.');
+    if (!Number.isFinite(limitKmh) || limitKmh <= 0 || limitKmh > MAX_SAVED_SPEED_LIMIT_KMH) {
+      setStatus(`Enter a speed from 1 to ${displayMaximumSpeed} ${speedUnit} before saving.`);
       return;
     }
     const uniqueCells = [...new Map(targetCells.map((cell) => [cell.geohash, cell])).values()];
+    const missingTraceCell = uniqueCells.find((cell) => (
+      !cell.tripReview && !buildTracedConflictResolutionMetadata(cell, tracedRouteEvidenceForCell(cell))
+    ));
+    if (missingTraceCell) {
+      setStatus(`Cannot save ${primaryRoadLabel(missingTraceCell.roads, missingTraceCell.geohash)} from a coarse map cell. Drive or retrace this road first so the app can bind the speed to the actual road section.`);
+      return;
+    }
     const blockingOverlaps = uniqueCells.flatMap((cell) => (
       reviewOverlapChecksForCell(cell, limitKmh, source, savedMapSections)
         .filter((check) => check.severity === 'block')
@@ -849,7 +1162,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
     ));
     if (blockingOverlaps.length > 0) {
       const overlap = blockingOverlaps[0];
-      setStatus(`Cannot save ${primaryRoadLabel(overlap.cell?.roads, overlap.cell?.geohash)}. ${overlapNoticeText(overlap)}`);
+      setStatus(`Cannot save ${primaryRoadLabel(overlap.cell?.roads, overlap.cell?.geohash)}. ${overlapNoticeText(overlap, units)}`);
       return;
     }
     const restoreScroll = captureScrollRestorer();
@@ -912,7 +1225,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
           <div>
             <h2 className="text-sm font-semibold">Trip speed-limit review</h2>
             <p className="mt-1 text-xs opacity-85">
-              Review uncertain road areas from this trip. Save a posted sign only when you saw one while parked or after the trip. Saved values stay local and are used for future trips near the same road area.
+              Every public road-speed section from this trip is shown here, including saved local rules and trusted trip sources. Save a posted sign only when you saw one while parked or after the trip. Saved values stay local and are used for future trips near the same road area.
             </p>
           </div>
         </div>
@@ -974,9 +1287,13 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
               <div className="mt-1 text-xl font-bold">{reviewStats.estimated}</div>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {REVIEW_FILTERS.map(([value, label]) => {
-              const count = value === 'all' ? reviewStats.blocking : reviewStats[value];
+          <div className="flex flex-wrap gap-2" aria-label="Speed review filters">
+            {PRIMARY_REVIEW_FILTERS.map(([value, label]) => {
+              const count = value === 'all'
+                ? reviewStats.total
+                : value === 'needs'
+                  ? reviewStats.blocking
+                  : reviewStats.total - reviewStats.blocking;
               const active = reviewFilter === value;
               return (
                 <button
@@ -994,6 +1311,24 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
               );
             })}
           </div>
+          <details className="rounded-xl border border-amber-200 bg-background/60 p-2 dark:border-amber-900/60">
+            <summary className="cursor-pointer text-xs font-semibold text-amber-900 dark:text-amber-100">More specific filters</summary>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {ADVANCED_REVIEW_FILTERS.map(([value, label]) => {
+                const active = reviewFilter === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setReviewFilter(value)}
+                    className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${active ? 'border-amber-500 bg-amber-100 text-amber-950 dark:bg-amber-900/50 dark:text-amber-100' : 'border-border bg-background text-muted-foreground'}`}
+                  >
+                    {label} {reviewStats[value]}
+                  </button>
+                );
+              })}
+            </div>
+          </details>
         </div>
       )}
 
@@ -1002,7 +1337,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
       ) : cells.length === 0 ? (
         <div className="mt-3 flex items-center gap-2 rounded-xl bg-emerald-50 p-3 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
           <CheckCircle2 className="h-4 w-4" />
-          This trip has no uncertain speed-limit sections left to review.
+          This trip has no public speed-limit sections available to display.
         </div>
       ) : (
         <div className="mt-4 space-y-3">
@@ -1046,8 +1381,18 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                       {primaryRoadLabel(selectedMapCell.roads, selectedMapCell.geohash)}
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground">
-                      {selectedMapCell.reviewReason || buildSpeedLimitRecommendation(selectedMapCell).text}
+                      {selectedMapCell.reviewReason || unitAwareRecommendation(selectedMapCell, units).text}
                     </div>
+                    {selectedMapReadOnly && (
+                      <div className="mt-2 rounded-lg bg-slate-100 px-3 py-2 text-xs font-medium text-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                        {correctionContextText(selectedMapCell)}
+                      </div>
+                    )}
+                    {selectedMapMissingTrace && (
+                      <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                        Drive or retrace this road first. A coarse map cell is not precise enough to save an authoritative road speed.
+                      </div>
+                    )}
                     {selectedMapOverlap?.checks?.length > 0 && (
                       <div className={`mt-2 rounded-lg px-3 py-2 text-xs font-medium ${
                         selectedMapBlockingOverlap
@@ -1055,8 +1400,8 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                           : 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-100'
                       }`}>
                         {selectedMapBlockingOverlap
-                          ? overlapNoticeText(selectedMapBlockingOverlap)
-                          : `Nearby saved rule: ${overlapNoticeText(selectedMapOverlap.checks[0])}`}
+                          ? overlapNoticeText(selectedMapBlockingOverlap, units)
+                          : `Nearby saved rule: ${overlapNoticeText(selectedMapOverlap.checks[0], units)}`}
                       </div>
                     )}
                   </div>
@@ -1065,19 +1410,24 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                       <Gauge className="h-4 w-4 text-muted-foreground" />
                       <input
                         type="number"
-                        min="5"
-                        step="5"
-                        value={drafts[selectedMapCell.geohash] ?? ''}
+                        min={units === 'imperial' ? 3 : 5}
+                        max={displayMaximumSpeed}
+                        step={units === 'imperial' ? 1 : 5}
+                        disabled={selectedMapReadOnly}
+                        aria-label={`Speed limit in ${speedUnit}`}
+                        value={speedReviewDraftForDisplay(drafts[selectedMapCell.geohash], units)}
                         onChange={(event) => setDrafts((current) => ({
                           ...current,
-                          [selectedMapCell.geohash]: event.target.value,
+                          [selectedMapCell.geohash]: speedReviewDraftFromDisplay(event.target.value, units),
                         }))}
                         className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
                       />
-                      <span className="text-muted-foreground">km/h</span>
+                      <span className="text-muted-foreground">{speedUnit}</span>
                     </label>
                     <SpeedLimitQuickPicks
                       value={drafts[selectedMapCell.geohash]}
+                      units={units}
+                      disabled={selectedMapReadOnly}
                       onPick={(limit) => setDrafts((current) => ({
                         ...current,
                         [selectedMapCell.geohash]: limit,
@@ -1088,7 +1438,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                     <button
                       type="button"
                       onClick={() => resolveCells([selectedMapCell], 'user_confirmed_posted_sign', selectedMapCell.geohash)}
-                      disabled={busyGeohash === selectedMapCell.geohash || Boolean(selectedMapBlockingOverlap)}
+                      disabled={busyGeohash === selectedMapCell.geohash || Boolean(selectedMapBlockingOverlap) || selectedMapReadOnly || selectedMapMissingTrace}
                       className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                     >
                       <ShieldCheck className="h-3.5 w-3.5" />
@@ -1097,7 +1447,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                     <button
                       type="button"
                       onClick={() => resolveCells([selectedMapCell], 'user_entered_estimate', selectedMapCell.geohash)}
-                      disabled={busyGeohash === selectedMapCell.geohash || Boolean(selectedMapBlockingOverlap)}
+                      disabled={busyGeohash === selectedMapCell.geohash || Boolean(selectedMapBlockingOverlap) || selectedMapReadOnly || selectedMapMissingTrace}
                       className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary disabled:opacity-60"
                     >
                       <Gauge className="h-3.5 w-3.5" />
@@ -1121,10 +1471,11 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                       Not sure · Next
                       <ChevronRight className="h-3.5 w-3.5" />
                     </button>
-                    {selectedMapCell.tripReview && !selectedMapCell.existingLocalCorrection && (
+                    {selectedMapCell.tripReview && selectedMapCell.requiresDecision !== false && !selectedMapCell.existingLocalCorrection && !selectedMapReadOnly && (
                       <button
                         type="button"
                         onClick={() => ignoreTripReviewCell(selectedMapCell)}
+                        disabled={busyGeohash === selectedMapCell.geohash}
                         className="col-span-2 inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
                       >
                         <CheckCircle2 className="h-3.5 w-3.5" />
@@ -1169,7 +1520,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                       </span>
                     </div>
                     <div className="min-w-0 text-muted-foreground sm:text-right">
-                      <div>{formatLimitList(row.limits)}</div>
+                      <div>{formatLimitList(row.limits, units)}</div>
                       <div className="truncate">{formatSourceList(row.sources)}</div>
                     </div>
                   </div>
@@ -1204,8 +1555,8 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                             blockingOverlap ? 'text-red-700 dark:text-red-200' : 'text-amber-800 dark:text-amber-100'
                           }`}>
                             {blockingOverlap
-                              ? overlapNoticeText(blockingOverlap)
-                              : `Nearby saved rule: ${overlapNoticeText(overlapState.checks[0])}`}
+                              ? overlapNoticeText(blockingOverlap, units)
+                              : `Nearby saved rule: ${overlapNoticeText(overlapState.checks[0], units)}`}
                           </div>
                         )}
                       </div>
@@ -1214,16 +1565,22 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                           <Gauge className="h-4 w-4 text-muted-foreground" />
                           <input
                             type="number"
-                            min="5"
-                            step="5"
-                            value={drafts[group.key] ?? ''}
-                            onChange={(event) => setDrafts((current) => ({ ...current, [group.key]: event.target.value }))}
+                            min={units === 'imperial' ? 3 : 5}
+                            max={displayMaximumSpeed}
+                            step={units === 'imperial' ? 1 : 5}
+                            aria-label={`Speed limit in ${speedUnit}`}
+                            value={speedReviewDraftForDisplay(drafts[group.key], units)}
+                            onChange={(event) => setDrafts((current) => ({
+                              ...current,
+                              [group.key]: speedReviewDraftFromDisplay(event.target.value, units),
+                            }))}
                             className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
                           />
-                          <span className="text-xs text-muted-foreground">km/h</span>
+                          <span className="text-xs text-muted-foreground">{speedUnit}</span>
                         </label>
                         <SpeedLimitQuickPicks
                           value={drafts[group.key]}
+                          units={units}
                           onPick={(limit) => setDrafts((current) => ({ ...current, [group.key]: limit }))}
                         />
                       </div>
@@ -1271,25 +1628,37 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
               : `${center.lat.toFixed(5)}, ${center.lng.toFixed(5)}`;
             const overlapState = cellOverlapByGeohash.get(cell.geohash) || null;
             const blockingOverlap = overlapState?.blocking || null;
-            const disabled = busyGeohash === cell.geohash || Boolean(blockingOverlap);
+            const readOnlyCorrectionContext = speedReviewCorrectionIsReadOnly(cell);
+            const correctionLifecycle = speedReviewRuleLifecycleAt(cell);
+            const missingResolutionTrace = Boolean(
+              !cell.tripReview &&
+              (!Array.isArray(evidence?.sectionPoints) || evidence.sectionPoints.length < 2)
+            );
+            const disabled = busyGeohash === cell.geohash || Boolean(blockingOverlap) || readOnlyCorrectionContext || missingResolutionTrace;
             const previewExpanded = expandedPreviewKeys.has(cell.geohash);
             const category = reviewCellCategory(cell);
-            const categoryLabel = {
+            const categoryLabel = readOnlyCorrectionContext ? ({
+              historical: 'Historical version',
+              expired: 'Expired version',
+              future: 'Scheduled version',
+              invalid: 'Invalid saved version',
+            }[correctionLifecycle] || 'Read-only version') : ({
               conflicts: 'Saved conflict',
               missing: 'Missing posted data',
               estimated: 'Estimated source',
               saved: 'Saved local rule',
-            }[category];
+              trusted: 'Trusted trip source',
+            }[category]);
             const ruleEvidence = assessSpeedLimitEvidence(cell);
             const priority = speedLimitReviewPriority(cell, {
               affectedTripCount: cell.tripReview ? 1 : 0,
             });
-            const recommendation = buildSpeedLimitRecommendation(cell);
+            const recommendation = unitAwareRecommendation(cell, units);
             return (
               <article key={cell.geohash} className="rounded-xl border border-amber-200 bg-background/80 p-3 text-sm shadow-sm dark:border-amber-900/60 dark:bg-background/70">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0 space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
+                  <details className="min-w-0 space-y-2 rounded-xl border border-border/70 bg-secondary/20 p-2 lg:flex-1">
+                    <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 [&::-webkit-details-marker]:hidden">
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900 dark:bg-amber-900/50 dark:text-amber-100">
                         <MapPin className="h-3.5 w-3.5" />
                         {cell.geohash}
@@ -1318,15 +1687,19 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                       }`}>
                         {speedLimitConfidenceLabel(ruleEvidence)}
                       </span>
-                    </div>
+                      <span className="rounded-full bg-background px-2 py-0.5 text-xs font-semibold text-foreground">
+                        {formatLimit(cell.conflictDetails?.existingLimitKmh ?? cell.limitKmh ?? cell.suggestedLimitKmh, units)}
+                      </span>
+                      <span className="ml-auto rounded-lg bg-background px-2 py-1 text-[11px] font-semibold text-primary">Details</span>
+                    </summary>
                     <div className="grid gap-2 sm:grid-cols-3">
                       <div className="rounded-lg bg-secondary/60 px-3 py-2">
                         <div className="text-[11px] text-muted-foreground">Stored limit</div>
-                        <div className="font-semibold">{formatLimit(cell.conflictDetails?.existingLimitKmh ?? cell.limitKmh)}</div>
+                        <div className="font-semibold">{formatLimit(cell.conflictDetails?.existingLimitKmh ?? cell.limitKmh, units)}</div>
                       </div>
                       <div className="rounded-lg bg-secondary/60 px-3 py-2">
                         <div className="text-[11px] text-muted-foreground">New report</div>
-                        <div className="font-semibold">{formatLimit(cell.conflictDetails?.newLimitKmh)}</div>
+                        <div className="font-semibold">{formatLimit(cell.conflictDetails?.newLimitKmh, units)}</div>
                       </div>
                       <div className="rounded-lg bg-secondary/60 px-3 py-2">
                         <div className="text-[11px] text-muted-foreground">Detected</div>
@@ -1342,6 +1715,17 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                       <div className="font-semibold text-foreground">{recommendation.action}</div>
                       <div className="mt-1 text-muted-foreground">{recommendation.text}</div>
                     </div>
+                    {readOnlyCorrectionContext && (
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-200">
+                        {correctionContextText(cell)}
+                      </div>
+                    )}
+                    <WhyThisSpeed record={cell} />
+                    {Number(cell.duplicateReviewCount) > 1 && (
+                      <p className="text-[11px] font-semibold text-muted-foreground">
+                        Combined {cell.duplicateReviewCount} repeated prompts for this private road corridor.
+                      </p>
+                    )}
                     <div className="flex flex-wrap gap-1.5 text-[11px] font-semibold">
                       {(cell.sources?.length ? cell.sources : [cell.source]).filter(Boolean).map((source) => (
                         <span key={source} className={`rounded-full px-2 py-0.5 ${speedLimitSourceBadgeClass(source)}`}>
@@ -1384,7 +1768,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                         <div className="font-semibold text-foreground">{cell.tripReview ? 'Trip review evidence' : 'Opened trip evidence'}</div>
                         <div className="mt-1">
                           {evidence.sampleCount} route point{evidence.sampleCount === 1 ? '' : 's'} in this cell
-                          {evidenceLimits.length ? `; trip limits ${evidenceLimits.join(', ')} km/h` : ''}
+                          {evidenceLimits.length ? `; trip limits ${formatLimitList(evidenceLimits, units)}` : ''}
                           {evidenceSources.length ? `; sources ${evidenceSources.map(sourceLabel).join(', ')}` : ''}.
                         </div>
                         {evidenceRoads.length > 0 ? (
@@ -1402,26 +1786,39 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                         <div className="mt-1">{displayCoordinateText}</div>
                       </details>
                     )}
-                  </div>
+                  </details>
                   <div className="w-full shrink-0 space-y-2 lg:w-64">
+                    {missingResolutionTrace && (
+                      <div className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                        Drive or retrace this road first so its speed can be saved to a real road trace instead of this coarse map cell.
+                      </div>
+                    )}
                     <label className="block text-xs font-semibold" htmlFor={`limit-${cell.geohash}`}>
-                      Resolved limit
+                      {readOnlyCorrectionContext ? 'Historical limit (read only)' : 'Resolved limit'}
                     </label>
                     <div className="flex items-center gap-2">
                       <Gauge className="h-4 w-4 text-muted-foreground" />
                       <input
                         id={`limit-${cell.geohash}`}
                         type="number"
-                        min="5"
-                        step="5"
-                        value={drafts[cell.geohash] ?? ''}
-                        onChange={(event) => setDrafts((current) => ({ ...current, [cell.geohash]: event.target.value }))}
+                        min={units === 'imperial' ? 3 : 5}
+                        max={displayMaximumSpeed}
+                        step={units === 'imperial' ? 1 : 5}
+                        disabled={readOnlyCorrectionContext}
+                        aria-label={`Speed limit in ${speedUnit}`}
+                        value={speedReviewDraftForDisplay(drafts[cell.geohash], units)}
+                        onChange={(event) => setDrafts((current) => ({
+                          ...current,
+                          [cell.geohash]: speedReviewDraftFromDisplay(event.target.value, units),
+                        }))}
                         className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
                       />
-                      <span className="text-xs text-muted-foreground">km/h</span>
+                      <span className="text-xs text-muted-foreground">{speedUnit}</span>
                     </div>
                     <SpeedLimitQuickPicks
                       value={drafts[cell.geohash]}
+                      units={units}
+                      disabled={readOnlyCorrectionContext}
                       onPick={(limit) => setDrafts((current) => ({ ...current, [cell.geohash]: limit }))}
                     />
                     <div className="rounded-lg bg-secondary/50 px-3 py-2 text-[11px] text-muted-foreground">
@@ -1434,8 +1831,8 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                           : 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-100'
                       }`}>
                         {blockingOverlap
-                          ? overlapNoticeText(blockingOverlap)
-                          : `Nearby saved rule: ${overlapNoticeText(overlapState.checks[0])}`}
+                          ? overlapNoticeText(blockingOverlap, units)
+                          : `Nearby saved rule: ${overlapNoticeText(overlapState.checks[0], units)}`}
                       </div>
                     )}
                     <div className="grid grid-cols-1 gap-2">
@@ -1457,10 +1854,11 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                         <Gauge className="h-3.5 w-3.5" />
                         {cell.existingLocalCorrection ? 'Update estimate' : 'Save estimate'}
                       </button>
-                      {cell.tripReview && !cell.existingLocalCorrection && (
+                      {cell.tripReview && cell.requiresDecision !== false && !cell.existingLocalCorrection && !readOnlyCorrectionContext && (
                         <button
                           type="button"
                           onClick={() => ignoreTripReviewCell(cell)}
+                          disabled={busyGeohash === cell.geohash}
                           className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
                         >
                           <CheckCircle2 className="h-3.5 w-3.5" />

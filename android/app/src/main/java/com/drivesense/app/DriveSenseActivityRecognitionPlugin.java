@@ -1,6 +1,7 @@
 package com.drivesense.app;
 
 import android.Manifest;
+import android.app.Activity;
 import android.app.PendingIntent;
 import android.content.ContentResolver;
 import android.content.ContentValues;
@@ -8,6 +9,10 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
+import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -22,6 +27,7 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 import com.google.android.gms.location.ActivityRecognition;
@@ -29,12 +35,17 @@ import com.google.android.gms.location.ActivityRecognitionClient;
 import com.google.android.gms.location.DetectedActivity;
 
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
+import androidx.activity.result.ActivityResult;
 
 import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
+import java.nio.file.Files;
 import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -51,6 +62,10 @@ import java.util.concurrent.ConcurrentHashMap;
         @Permission(
             alias = "backgroundLocation",
             strings = { Manifest.permission.ACCESS_BACKGROUND_LOCATION }
+        ),
+        @Permission(
+            alias = "camera",
+            strings = { Manifest.permission.CAMERA }
         )
     }
 )
@@ -59,6 +74,7 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     private ActivityRecognitionClient activityClient;
     private PendingIntent activityIntent;
     private DriveSenseSpeechController speechController;
+    private File pendingParkingPhotoFile;
     private static final Map<String, PendingExport> pendingExports = new ConcurrentHashMap<>();
 
     @Override
@@ -158,10 +174,8 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             return;
         }
 
-        try {
-            DriveSenseAutoTrackingService.start(getContext());
-        } catch (Exception error) {
-            call.reject(error.getMessage());
+        if (!DriveSenseAutoTrackingService.start(getContext())) {
+            call.reject("Android did not allow background tracking to start.");
             return;
         }
         JSObject payload = new JSObject();
@@ -220,6 +234,288 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         JSObject payload = new JSObject();
         payload.put("enabled", false);
         call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void captureParkingPhoto(PluginCall call) {
+        if (getPermissionState("camera") != PermissionState.GRANTED) {
+            requestPermissionForAlias("camera", call, "cameraPermissionCallback");
+            return;
+        }
+        launchParkingCamera(call);
+    }
+
+    @PermissionCallback
+    private void cameraPermissionCallback(PluginCall call) {
+        if (getPermissionState("camera") != PermissionState.GRANTED) {
+            call.reject("Camera permission is required to take a parking photo.");
+            return;
+        }
+        launchParkingCamera(call);
+    }
+
+    private void launchParkingCamera(PluginCall call) {
+        Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        if (intent.resolveActivity(getContext().getPackageManager()) == null) {
+            call.reject("No camera app is available on this device.");
+            return;
+        }
+        try {
+            File captureDirectory = new File(getContext().getCacheDir(), "parking_camera");
+            if (!captureDirectory.exists() && !captureDirectory.mkdirs()) {
+                call.reject("The parking camera cache could not be prepared.");
+                return;
+            }
+            pendingParkingPhotoFile = new File(captureDirectory, UUID.randomUUID() + ".jpg");
+            Uri outputUri = FileProvider.getUriForFile(
+                getContext(),
+                getContext().getPackageName() + ".fileprovider",
+                pendingParkingPhotoFile
+            );
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, outputUri);
+            intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (Exception error) {
+            call.reject("The parking camera could not be prepared.", error);
+            return;
+        }
+        startActivityForResult(call, intent, "parkingPhotoCaptured");
+    }
+
+    @ActivityCallback
+    private void parkingPhotoCaptured(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        if (result.getResultCode() != Activity.RESULT_OK) {
+            deletePendingParkingCapture();
+            JSObject payload = new JSObject();
+            payload.put("cancelled", true);
+            call.resolve(payload);
+            return;
+        }
+
+        Bitmap captured = pendingParkingPhotoFile != null
+            ? decodeScaledBitmap(pendingParkingPhotoFile, 1280)
+            : null;
+        if (captured == null) {
+            Intent data = result.getData();
+            Object thumbnail = data != null && data.getExtras() != null
+                ? data.getExtras().get("data")
+                : null;
+            if (thumbnail instanceof Bitmap) captured = (Bitmap) thumbnail;
+        }
+        if (captured == null) {
+            deletePendingParkingCapture();
+            call.reject("The camera did not return a parking photo.");
+            return;
+        }
+
+        try {
+            call.resolve(storeParkingPhotoBitmap(captured));
+        } catch (Exception error) {
+            call.reject("The parking photo could not be prepared.", error);
+        } finally {
+            deletePendingParkingCapture();
+        }
+    }
+
+    @PluginMethod
+    public void storeParkingPhoto(PluginCall call) {
+        String dataUrl = call.getString("dataUrl", "");
+        int separator = dataUrl.indexOf(',');
+        if (!dataUrl.startsWith("data:image/") || separator < 0 || dataUrl.length() > 8_000_000) {
+            call.reject("A valid parking photo is required.");
+            return;
+        }
+        try {
+            byte[] bytes = Base64.decode(dataUrl.substring(separator + 1), Base64.DEFAULT);
+            Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            if (bitmap == null) throw new IllegalArgumentException("The parking photo could not be decoded.");
+            call.resolve(storeParkingPhotoBitmap(scaleBitmap(bitmap, 1280)));
+        } catch (Exception error) {
+            call.reject("The parking photo could not be stored.", error);
+        }
+    }
+
+    @PluginMethod
+    public void readParkingPhoto(PluginCall call) {
+        String photoId = safeParkingPhotoId(call.getString("photoId", ""));
+        if (photoId == null) {
+            call.reject("A valid parking photo id is required.");
+            return;
+        }
+        File file = parkingPhotoFile(photoId);
+        if (!file.isFile()) {
+            call.reject("The parking photo is no longer available.");
+            return;
+        }
+        try {
+            String stored = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+            JSObject payload = new JSObject();
+            payload.put("dataUrl", DriveSensePayloadCrypto.decryptStoredValue(stored, "native:parking_photo:" + photoId));
+            call.resolve(payload);
+        } catch (Exception error) {
+            call.reject("The parking photo could not be opened.", error);
+        }
+    }
+
+    @PluginMethod
+    public void deleteParkingPhoto(PluginCall call) {
+        String photoId = safeParkingPhotoId(call.getString("photoId", ""));
+        boolean deleted = false;
+        if (photoId != null) {
+            File file = parkingPhotoFile(photoId);
+            try {
+                SecureDeleteHelper.secureWipeFile(file);
+                deleted = true;
+            } catch (Exception ignored) {
+                deleted = !file.exists() || file.delete();
+            }
+            ParkingPhotoExpiryScheduler.cancel(getContext(), photoId);
+            DriveSenseNativeTripStore.clearParkingPhotoReference(getContext(), photoId);
+        }
+        JSObject payload = new JSObject();
+        payload.put("deleted", deleted);
+        call.resolve(payload);
+    }
+
+    private JSObject storeParkingPhotoBitmap(Bitmap bitmap) throws Exception {
+        String photoId = UUID.randomUUID().toString();
+        String fullDataUrl = bitmapDataUrl(scaleBitmap(bitmap, 1280), 84);
+        String encrypted = DriveSensePayloadCrypto.encryptForStorage(fullDataUrl, "native:parking_photo:" + photoId);
+        File file = parkingPhotoFile(photoId);
+        File parent = file.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            throw new IllegalStateException("Parking photo directory is unavailable.");
+        }
+        Files.write(file.toPath(), encrypted.getBytes(StandardCharsets.UTF_8));
+        JSObject payload = new JSObject();
+        payload.put("photoFileId", photoId);
+        payload.put("dataUrl", bitmapDataUrl(scaleBitmap(bitmap, 360), 76));
+        payload.put("cancelled", false);
+        return payload;
+    }
+
+    private File parkingPhotoFile(String photoId) {
+        return new File(new File(getContext().getFilesDir(), "parking_photos"), photoId + ".enc");
+    }
+
+    private void eraseAllParkingPhotos() {
+        File directory = new File(getContext().getFilesDir(), "parking_photos");
+        File[] files = directory.listFiles();
+        if (files != null) {
+            for (File file : files) {
+                if (file.isFile()) {
+                    try {
+                        SecureDeleteHelper.secureWipeFile(file);
+                    } catch (Exception ignored) {
+                        file.delete();
+                    }
+                }
+            }
+        }
+        directory.delete();
+        ParkingPhotoExpiryScheduler.clear(getContext());
+        deletePendingParkingCapture();
+    }
+
+    private static String safeParkingPhotoId(String value) {
+        if (value == null || !value.matches("[0-9a-fA-F-]{36}")) return null;
+        return value;
+    }
+
+    private static String bitmapDataUrl(Bitmap bitmap, int quality) throws Exception {
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, output)) {
+                throw new IllegalStateException("The parking photo could not be encoded.");
+            }
+            return "data:image/jpeg;base64," + Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP);
+        }
+    }
+
+    private static Bitmap scaleBitmap(Bitmap bitmap, int maxEdge) {
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        int largest = Math.max(width, height);
+        if (largest <= maxEdge) return bitmap;
+        double scale = maxEdge / (double) largest;
+        return Bitmap.createScaledBitmap(
+            bitmap,
+            Math.max(1, (int) Math.round(width * scale)),
+            Math.max(1, (int) Math.round(height * scale)),
+            true
+        );
+    }
+
+    private static Bitmap decodeScaledBitmap(File file, int maxEdge) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+        int sample = 1;
+        while (Math.max(bounds.outWidth / sample, bounds.outHeight / sample) > maxEdge * 2) sample *= 2;
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sample;
+        Bitmap decoded = BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+        if (decoded == null) return null;
+        Bitmap oriented = applyExifOrientation(file, decoded);
+        return scaleBitmap(oriented, maxEdge);
+    }
+
+    private static Bitmap applyExifOrientation(File file, Bitmap bitmap) {
+        try {
+            ExifInterface exif = new ExifInterface(file.getAbsolutePath());
+            int orientation = exif.getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL
+            );
+            Matrix matrix = new Matrix();
+            switch (orientation) {
+                case ExifInterface.ORIENTATION_FLIP_HORIZONTAL:
+                    matrix.setScale(-1f, 1f);
+                    break;
+                case ExifInterface.ORIENTATION_ROTATE_180:
+                    matrix.setRotate(180f);
+                    break;
+                case ExifInterface.ORIENTATION_FLIP_VERTICAL:
+                    matrix.setRotate(180f);
+                    matrix.postScale(-1f, 1f);
+                    break;
+                case ExifInterface.ORIENTATION_TRANSPOSE:
+                    matrix.setRotate(90f);
+                    matrix.postScale(-1f, 1f);
+                    break;
+                case ExifInterface.ORIENTATION_ROTATE_90:
+                    matrix.setRotate(90f);
+                    break;
+                case ExifInterface.ORIENTATION_TRANSVERSE:
+                    matrix.setRotate(-90f);
+                    matrix.postScale(-1f, 1f);
+                    break;
+                case ExifInterface.ORIENTATION_ROTATE_270:
+                    matrix.setRotate(-90f);
+                    break;
+                default:
+                    return bitmap;
+            }
+            Bitmap transformed = Bitmap.createBitmap(
+                bitmap,
+                0,
+                0,
+                bitmap.getWidth(),
+                bitmap.getHeight(),
+                matrix,
+                true
+            );
+            if (transformed != bitmap) bitmap.recycle();
+            return transformed;
+        } catch (Exception ignored) {
+            return bitmap;
+        }
+    }
+
+    private void deletePendingParkingCapture() {
+        if (pendingParkingPhotoFile != null && pendingParkingPhotoFile.exists()) {
+            pendingParkingPhotoFile.delete();
+        }
+        pendingParkingPhotoFile = null;
     }
 
     @PluginMethod
@@ -373,7 +669,9 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             "activeTripCheckpoint",
             DriveSenseActiveTripCheckpointStore.getStatus(getContext(), System.currentTimeMillis())
         );
-        payload.put("completedTripsCount", DriveSenseNativeTripStore.getCompletedTrips(getContext()).length());
+        org.json.JSONArray completedTrips = DriveSenseNativeTripStore.getCompletedTrips(getContext());
+        payload.put("completedTripsCount", completedTrips.length());
+        payload.put("completedTripJournal", DriveSenseNativeTripStore.getCompletedTripJournalStatus(getContext()));
         payload.put("diagnosticEventsCount", DriveSenseNativeTripStore.getDiagnosticEvents(getContext()).length());
         call.resolve(payload);
     }
@@ -383,7 +681,17 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         JSObject payload = new JSObject();
         payload.put("enabled", DriveSenseNativeTripStore.isServiceEnabled(getContext()));
         payload.put("events", DriveSenseNativeTripStore.getDiagnosticEvents(getContext()));
+        payload.put("watchdog", AppExperienceWatchdog.getSnapshot(getContext()));
         call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void recordAppExperienceCheckpoint(PluginCall call) {
+        String operation = call.getString("operation", "unknown");
+        String phase = call.getString("phase", "unknown");
+        String pathname = call.getString("pathname", "");
+        AppExperienceWatchdog.recordOperationCheckpoint(getContext(), operation, phase, pathname);
+        call.resolve();
     }
 
     @PluginMethod
@@ -393,10 +701,119 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void refreshWhereIParkedWidget(PluginCall call) {
+        WhereIParkedWidgetProvider.refreshAll(getContext());
+        ParkingReviewNotifier.reconcile(getContext());
+        JSObject payload = new JSObject();
+        payload.put("refreshed", true);
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void getNativeParkingSnapshot(PluginCall call) {
+        JSObject payload = new JSObject();
+        JSONObject state = DriveSenseNativeTripStore.getLastParkingState(getContext());
+        JSONObject location = DriveSenseNativeTripStore.getLastParkedLocation(getContext());
+        if (state != null) payload.put("state", state);
+        if (location != null && "saved".equals(state != null ? state.optString("status", "") : "")) {
+            payload.put("location", location);
+        }
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void commitNativeParkingSnapshot(PluginCall call) {
+        JSObject state = call.getObject("state");
+        JSObject location = call.getObject("location");
+        if (state == null) {
+            call.reject("Parking state is required.");
+            return;
+        }
+        try {
+            JSONObject committed = DriveSenseNativeTripStore.commitParkingSnapshot(
+                getContext(),
+                state,
+                location
+            );
+            JSObject payload = new JSObject();
+            payload.put("state", committed);
+            payload.put("location", DriveSenseNativeTripStore.getLastParkedLocation(getContext()));
+            call.resolve(payload);
+        } catch (SecurityException error) {
+            call.reject("Privacy protection rejected the parking coordinate.", error);
+        } catch (Exception error) {
+            call.reject("The Android widget could not commit the parking update.", error);
+        }
+    }
+
+    @PluginMethod
+    public void clearNativeParkingState(PluginCall call) {
+        try {
+            DriveSenseNativeTripStore.clearParkingSnapshotAtomic(getContext());
+            DriveSenseNativeTripStore.clearParkingReminderState(getContext());
+            ParkingReviewNotifier.cancel(getContext());
+            call.resolve();
+        } catch (Exception error) {
+            call.reject("The Android parking state could not be cleared.", error);
+        }
+    }
+
+    @PluginMethod
+    public void setNativeParkingReminderState(PluginCall call) {
+        Long reminderAt = call.getLong("reminderAt");
+        if (reminderAt == null || reminderAt <= System.currentTimeMillis()) {
+            call.reject("reminderAt must be a future timestamp.");
+            return;
+        }
+        Long stateRevision = call.getLong("stateRevision");
+        DriveSenseNativeTripStore.saveParkingReminderState(
+            getContext(),
+            reminderAt,
+            stateRevision == null ? 0L : stateRevision,
+            call.getString("vehicleName", "")
+        );
+        JSObject payload = new JSObject();
+        payload.put("reminderAt", reminderAt);
+        payload.put("stateRevision", stateRevision == null ? 0L : stateRevision);
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void getNativeParkingReminderState(PluginCall call) {
+        JSObject payload = new JSObject();
+        JSONObject state = DriveSenseNativeTripStore.getParkingReminderState(getContext());
+        if (state != null) payload.put("state", state);
+        call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void clearNativeParkingReminderState(PluginCall call) {
+        DriveSenseNativeTripStore.clearParkingReminderState(getContext());
+        call.resolve();
+    }
+
+    @PluginMethod
     public void getNativeCompletedTrips(PluginCall call) {
         JSObject payload = new JSObject();
         payload.put("trips", DriveSenseNativeTripStore.getCompletedTrips(getContext()));
+        payload.put("queueStatus", DriveSenseNativeTripStore.getCompletedTripJournalStatus(getContext()));
         call.resolve(payload);
+    }
+
+    @PluginMethod
+    public void acknowledgeNativeCompletedTrips(PluginCall call) {
+        org.json.JSONArray tripIds = call.getData().optJSONArray("tripIds");
+        if (tripIds == null) {
+            call.reject("tripIds must be an array.");
+            return;
+        }
+        try {
+            call.resolve(JSObject.fromJSONObject(
+                DriveSenseNativeTripStore.acknowledgeCompletedTrips(getContext(), tripIds)
+            ));
+        } catch (JSONException error) {
+            call.reject("Could not encode the completed-trip acknowledgement.", error);
+        }
     }
 
     @PluginMethod
@@ -409,6 +826,17 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
     public void clearNativeActiveTripCheckpoint(PluginCall call) {
         DriveSenseActiveTripCheckpointStore.clear(getContext());
         call.resolve();
+    }
+
+    @PluginMethod
+    public void eraseNativeLocalData(PluginCall call) {
+        DriveSenseAutoTrackingService.stopForDataErasure(getContext());
+        SpeedSignEvidenceStore.erase(getContext());
+        eraseAllParkingPhotos();
+        DriveSenseNativeTripStore.eraseAllForDataRights(getContext());
+        JSObject payload = new JSObject();
+        payload.put("erased", true);
+        call.resolve(payload);
     }
 
     @PluginMethod

@@ -1,6 +1,7 @@
 // @ts-check
 import {
   AlertTriangle,
+  Camera,
   LocateFixed,
   RefreshCw,
   Satellite,
@@ -54,6 +55,8 @@ export function buildTripLaunchStatus(status = {}) {
  *   onRefreshTrackingStatus: () => void,
  *   onStartPrivateTrip: () => void,
  *   onStartTrip: () => void,
+ *   onStartTripWithCamera?: () => void,
+ *   speedSignScannerEnabled?: boolean,
  *   startingTrip?: boolean,
  * }} props
  */
@@ -67,6 +70,8 @@ export default function PremiumReadyToDriveCard({
   onRefreshTrackingStatus,
   onStartPrivateTrip,
   onStartTrip,
+  onStartTripWithCamera,
+  speedSignScannerEnabled = false,
   startingTrip = false,
 }) {
   const launchStatus = buildTripLaunchStatus({
@@ -132,6 +137,27 @@ export default function PremiumReadyToDriveCard({
           </button>
         </div>
       </div>
+
+      {typeof onStartTripWithCamera === 'function' && (
+        <div className="premium-ready-actions">
+          <button
+            type="button"
+            onClick={onStartTripWithCamera}
+            disabled={startingTrip}
+            className="premium-ready-camera-start"
+            title={speedSignScannerEnabled
+              ? 'Start the manual trip and mounted rear-camera scanner while parked'
+              : 'Enable Optional on-device speed-sign scan in Settings first'}
+          >
+            <Camera aria-hidden="true" />
+            {startingTrip
+              ? 'Starting...'
+              : speedSignScannerEnabled
+                ? 'Start Trip + Camera'
+                : 'Enable Sign Scan in Settings'}
+          </button>
+        </div>
+      )}
 
       {isAndroidManualMode && (
         <div className="premium-ready-manual" data-status={manualReady ? 'ready' : 'attention'}>

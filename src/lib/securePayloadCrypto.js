@@ -251,3 +251,36 @@ export async function rotateEncryptedJsonKey(key, targetKeyVersion) {
   await setEncryptedJson(key, value, { keyVersion: normalizedTarget });
   return true;
 }
+
+const deleteWebKeyDatabase = () => new Promise((resolve, reject) => {
+  if (typeof indexedDB === 'undefined') {
+    resolve(false);
+    return;
+  }
+  const request = indexedDB.deleteDatabase(KEY_DB_NAME);
+  request.onsuccess = () => resolve(true);
+  request.onerror = () => reject(request.error);
+  request.onblocked = () => reject(new Error('Secure key database deletion was blocked.'));
+});
+
+export async function eraseEncryptionKeysForDataRights() {
+  const meta = await getJson(ENCRYPTION_KEY_META_KEY, null).catch(() => null);
+  const versions = Array.from(new Set([
+    LEGACY_ANDROID_KEY_VERSION,
+    DEFAULT_KEY_VERSION,
+    Number(meta?.version),
+    Number(meta?.pendingVersion),
+  ].filter((version) => Number.isInteger(version) && version >= 0)));
+
+  webKeyPromises.clear();
+  if (isAndroid()) {
+    for (const keyVersion of versions) {
+      await secureCall('SecureBridge', 'deleteSensitivePayloadKey', { keyVersion });
+    }
+    return { provider: 'android-keystore', versionsDeleted: versions };
+  }
+
+  assertSupportedNativeCrypto();
+  const databaseDeleted = await deleteWebKeyDatabase();
+  return { provider: 'webcrypto-indexeddb', databaseDeleted };
+}

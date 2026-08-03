@@ -45,6 +45,17 @@ const secureStoragePlugin = () => {
     : null;
 };
 
+const deleteWebSigningKeyDatabase = () => new Promise((resolve, reject) => {
+  if (typeof indexedDB === 'undefined') {
+    resolve(false);
+    return;
+  }
+  const request = indexedDB.deleteDatabase(WEB_KEY_DB_NAME);
+  request.onsuccess = () => resolve(true);
+  request.onerror = () => reject(request.error);
+  request.onblocked = () => reject(new Error('Export signing key database deletion was blocked.'));
+});
+
 const readSecureStorageKey = async () => {
   const plugin = secureStoragePlugin();
   if (!plugin) return null;
@@ -185,6 +196,19 @@ export const getSigningKey = () => {
   }
   return signingKeyPromise;
 };
+
+export async function eraseExportSigningKeyForDataRights() {
+  signingKeyPromise = null;
+  memoryWebSigningKeyPromise = null;
+  const plugin = secureStoragePlugin();
+  let secureStorageDeleted = false;
+  if (plugin && typeof plugin.remove === 'function') {
+    await plugin.remove({ key: SIGNING_KEY_ALIAS });
+    secureStorageDeleted = true;
+  }
+  const webDatabaseDeleted = await deleteWebSigningKeyDatabase();
+  return { secureStorageDeleted, webDatabaseDeleted };
+}
 
 const signatureBytesForPayload = (payload) => (
   new TextEncoder().encode(JSON.stringify(payload))

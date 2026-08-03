@@ -1,4 +1,5 @@
 import { assessSpeedLimitEvidence } from '@/lib/speedLimitConfidence';
+import { summarizeRoadMemoryIntelligence } from '@/lib/roadMemoryIntelligence';
 
 const validCoordinate = (value, min, max) => Number.isFinite(Number(value)) &&
   Number(value) >= min &&
@@ -10,10 +11,18 @@ const correctionExpired = (correction, now) => {
   return !Number.isFinite(expiresAt) || expiresAt <= now;
 };
 
+const historicalCorrection = (correction = {}) => correction.historicalVersion === true ||
+  correction.supersededByCorrectionId != null ||
+  (Array.isArray(correction.auditTrail) && correction.auditTrail.some((entry) => (
+    entry?.action === 'superseded_by_effective_version'
+  )));
+
 export function inspectSpeedKnowledgeHealth(data = {}, now = Date.now()) {
   const issues = [];
   const cells = Object.entries(data.cells || {});
   const corrections = Array.isArray(data.corrections) ? data.corrections : [];
+  const candidates = Array.isArray(data.roadMemory?.candidates) ? data.roadMemory.candidates : [];
+  const intelligence = summarizeRoadMemoryIntelligence(candidates);
   const roadRules = new Map();
 
   for (const [geohash, cell] of cells) {
@@ -28,7 +37,8 @@ export function inspectSpeedKnowledgeHealth(data = {}, now = Date.now()) {
 
   for (const correction of corrections) {
     const geohash = String(correction?.geohash || '');
-    if (correctionExpired(correction, now)) {
+    const historical = historicalCorrection(correction);
+    if (correctionExpired(correction, now) && !historical) {
       issues.push({ type: 'expired_rule', severity: 'medium', geohash, message: 'Saved rule has expired and can be cleaned up.' });
     }
     const points = Array.isArray(correction?.sectionPoints) ? correction.sectionPoints : [];
@@ -43,11 +53,31 @@ export function inspectSpeedKnowledgeHealth(data = {}, now = Date.now()) {
       issues.push({ type: 'invalid_limit', severity: 'high', geohash, message: 'Saved rule has an invalid speed limit.' });
     }
     const road = String(correction?.roadName || '').trim().toLowerCase();
-    if (road) {
+    if (road && !historical) {
       const key = `${road}|${correction?.directionMode || 'both'}`;
       const group = roadRules.get(key) || [];
       group.push(correction);
       roadRules.set(key, group);
+    }
+  }
+
+  for (const candidate of candidates) {
+    const points = Array.isArray(candidate?.sectionPoints) ? candidate.sectionPoints : [];
+    if (points.length < 2) {
+      issues.push({
+        type: 'road_memory_missing_geometry',
+        severity: candidate?.stage === 'operational' ? 'high' : 'medium',
+        geohash: candidate?.geohash || '',
+        message: 'Road Memory evidence is missing a usable corridor line.',
+      });
+    }
+    if (candidate?.stage === 'change_review') {
+      issues.push({
+        type: 'possible_speed_change',
+        severity: 'medium',
+        geohash: candidate?.geohash || '',
+        message: 'Recent drives may indicate a changed speed.',
+      });
     }
   }
 
@@ -73,6 +103,18 @@ export function inspectSpeedKnowledgeHealth(data = {}, now = Date.now()) {
     checkedAt: new Date(now).toISOString(),
     cellCount: cells.length,
     correctionCount: corrections.length,
+    roadMemoryCount: candidates.length,
+    operationalRoadMemoryCount: intelligence.validatedCount,
+    learningRoadMemoryCount: candidates.filter((candidate) => (
+      ['learning', 'shadow'].includes(candidate?.usageStage) ||
+      candidate?.stage === 'learning' || candidate?.stage === 'suggested'
+    )).length,
+    roadMemoryIntelligence: intelligence,
+    geometryCount: [
+      ...corrections,
+      ...candidates,
+    ].filter((item) => Array.isArray(item?.sectionPoints) && item.sectionPoints.length >= 2).length,
+    geometryTotal: corrections.length + candidates.length,
     issueCount: issues.length,
     healthy: issues.length === 0,
     counts,

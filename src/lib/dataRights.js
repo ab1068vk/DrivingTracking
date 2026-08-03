@@ -38,7 +38,10 @@ import {
 import { PRIVACY_ZONE_SUGGESTION_DISMISSALS_KEY } from '@/lib/privacyZoneSuggestions';
 import { RESCORING_QUEUE_KEY } from '@/lib/rescoringQueue';
 import { ROAD_CONTEXT_QUEUE_STORAGE_KEY } from '@/lib/roadContextQueue';
-import { ENCRYPTION_KEY_META_KEY } from '@/lib/securePayloadCrypto';
+import {
+  ENCRYPTION_KEY_META_KEY,
+  eraseEncryptionKeysForDataRights,
+} from '@/lib/securePayloadCrypto';
 import {
   eraseSpeedKnowledgeForDataRights,
   SPEED_KNOWLEDGE_STORAGE_KEY,
@@ -46,6 +49,7 @@ import {
 import {
   ACTIVE_TRIP_KEY,
   LAST_PARKED_KEY,
+  LAST_PARKING_STATE_KEY,
   SETTINGS_KEY,
   clearSettingsMemoryForErasure,
   localSettings,
@@ -53,6 +57,10 @@ import {
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { logSystemFailure } from '@/lib/systemLog';
 import { TRANSMISSION_LOG_KEY } from '@/lib/transmissionLog';
+import {
+  eraseExportSigningKeyForDataRights,
+  SIGNING_KEY_ALIAS,
+} from '@/lib/exportIntegrity';
 
 export const DATA_RIGHTS_ERASURE_RECEIPT_FORMAT = 'road-sage-erasure-receipt';
 export const DATA_RIGHTS_ERASURE_RECEIPT_VERSION = 1;
@@ -61,10 +69,7 @@ export const DATA_PORTABILITY_VERSION = 1;
 
 const AuditAnchor = registerPlugin('AuditAnchor');
 const clearNativeCompletedTripsForErasure = () => import('@/lib/activityRecognition')
-  .then(({ clearNativeActiveTripCheckpoint, clearNativeCompletedTrips }) => Promise.all([
-    clearNativeCompletedTrips(),
-    clearNativeActiveTripCheckpoint(),
-  ]));
+  .then(({ eraseNativeLocalDataForDataRights }) => eraseNativeLocalDataForDataRights());
 
 const extraErasureKeys = Object.freeze([
   TRIPS_KEY,
@@ -90,7 +95,55 @@ const extraErasureKeys = Object.freeze([
   RESCORING_QUEUE_KEY,
   ROAD_CONTEXT_QUEUE_STORAGE_KEY,
   SPEED_KNOWLEDGE_STORAGE_KEY,
+  SIGNING_KEY_ALIAS,
+  'drivesense_system_logs_v1',
+  'drivesense_tracking_diagnostics',
+  'drivesense_calibration_profile',
+  'drivesense_coach_programs_v1',
+  'drivesense_driver_progression_ledger_v1',
+  'drivesense_parking_learning_v1',
+  'drivesense_speed_sign_evidence_v1',
+  'drivesense_speed_geometry_index_v1',
+  'roadsage_pending_post_drive_review_v1',
+  'road_sage_calibration_labels',
+  'road_sage_calibration_survey_markers',
+  'road_sage_anonymous_install_id',
+  'road_sage_trip_filter_presets',
+  'drivesense_dismissed_tag_suggestions',
+  'drivesense_first_launch_permission_prompted',
+  'drivesense_dashboard_score_review_dismissal',
+  'drivesense_dashboard_speed_limit_review_dismissal',
+  'drivesense_notified_achievements',
+  'drivesense_achievement_notification_ids_v1',
+  'drivesense_notification_dedupe_v1',
+  'drivesense_phone_notif_last_ms',
+  'drivesense_heading_drift_notif_last_ms',
+  'drivesense_speeding_notif_last_ms',
+  'drivesense_fatigue_notif_trip_id',
+  'roadsage_active_insight_experiment_v1',
+  'roadsage_ignored_unset_speed_sections_v1',
+  'roadsage_ignored_trip_speed_review_sections_v1',
+  'roadsage_excluded_speed_sections_v1',
+  'privacy_intel_v2_banner_dismissed',
+  'sidebar_state',
 ]);
+
+const APP_STORAGE_PREFIXES = Object.freeze([
+  'drivesense_',
+  'road_sage_',
+  'roadsage_',
+  'trip_speed_summary_',
+]);
+const APP_STORAGE_EXACT_KEYS = new Set([
+  'privacy_zones_v1',
+  'privacy_intel_v2_banner_dismissed',
+  'speed_knowledge_v1',
+  'sidebar_state',
+]);
+const isAppStorageKey = (key) => (
+  APP_STORAGE_EXACT_KEYS.has(String(key)) ||
+  APP_STORAGE_PREFIXES.some((prefix) => String(key).startsWith(prefix))
+);
 
 const encryptedErasureKeys = new Set([
   ...ROTATING_ENCRYPTED_JSON_KEYS,
@@ -130,6 +183,7 @@ export function getErasureKeyList() {
     ...ROTATING_ENCRYPTED_JSON_KEYS,
     ACTIVE_TRIP_KEY,
     LAST_PARKED_KEY,
+    LAST_PARKING_STATE_KEY,
     ...extraErasureKeys,
   ]).map((key) => ({
     key,
@@ -148,6 +202,39 @@ async function overwriteThenRemoveKey(key) {
   }).catch(() => {});
   await removeJson(key);
   return { key, existed, wiped: true, method: 'overwrite_then_remove' };
+}
+
+const browserStorageKeys = (storage) => {
+  try {
+    if (!storage) return [];
+    return Array.from({ length: storage.length }, (_, index) => storage.key(index)).filter(Boolean);
+  } catch {
+    return [];
+  }
+};
+
+async function removeResidualAppStorage() {
+  const candidates = [
+    ...browserStorageKeys(globalThis.localStorage),
+  ];
+  if (isNativePlatform()) {
+    const { Preferences } = await import('@capacitor/preferences');
+    const nativeKeys = await Preferences.keys();
+    candidates.push(...(nativeKeys?.keys || []));
+  }
+  const keys = unique(candidates).filter(isAppStorageKey);
+  for (const key of keys) await removeJson(key);
+
+  const sessionKeys = browserStorageKeys(globalThis.sessionStorage)
+    .filter((key) => key === 'token' || key === 'access_token');
+  sessionKeys.forEach((key) => {
+    try {
+      globalThis.sessionStorage.removeItem(key);
+    } catch {
+      // Session storage may be unavailable in hardened browser contexts.
+    }
+  });
+  return { keysRemoved: keys, sessionKeysRemoved: sessionKeys };
 }
 
 async function signErasureReceiptPayload(payload) {
@@ -322,37 +409,43 @@ export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now(), onPro
   try {
     const startedAt = new Date(now).toISOString();
     const keyList = getErasureKeyList();
-    const totalSteps = keyList.length + 6;
+    const totalSteps = keyList.length + 9;
     reportErasureProgress(onProgress, { phase: 'trips', completed: 0, total: totalSteps });
     const tripRepository = await eraseTripRepositoryForDataRights();
     reportErasureProgress(onProgress, { phase: 'trips', completed: 1, total: totalSteps });
     const speedKnowledge = await eraseSpeedKnowledgeForDataRights();
     reportErasureProgress(onProgress, { phase: 'speed_knowledge', completed: 2, total: totalSteps });
-    const wipedKeys = [];
-    for (let index = 0; index < keyList.length; index += 1) {
-      const item = keyList[index];
-      wipedKeys.push(await overwriteThenRemoveKey(item.key));
-      reportErasureProgress(onProgress, {
-        phase: 'local_keys',
-        completed: 3 + index,
-        total: totalSteps,
-      });
-    }
     const nativeCompletedTripsCleared = isAndroid()
       ? await clearNativeCompletedTripsForErasure().then(() => true).catch((error) => {
         logSystemFailure('data_erasure_native_trip_clear_failed', error, {});
         return false;
       })
       : false;
+    reportErasureProgress(onProgress, { phase: 'native_data', completed: 3, total: totalSteps });
+    const exportSigningKeys = await eraseExportSigningKeyForDataRights();
+    reportErasureProgress(onProgress, { phase: 'signing_keys', completed: 4, total: totalSteps });
+    const encryptionKeys = await eraseEncryptionKeysForDataRights();
+    reportErasureProgress(onProgress, { phase: 'encryption_keys', completed: 5, total: totalSteps });
+    const wipedKeys = [];
+    for (let index = 0; index < keyList.length; index += 1) {
+      const item = keyList[index];
+      wipedKeys.push(await overwriteThenRemoveKey(item.key));
+      reportErasureProgress(onProgress, {
+        phase: 'local_keys',
+        completed: 6 + index,
+        total: totalSteps,
+      });
+    }
+    const residualStorage = await removeResidualAppStorage();
     reportErasureProgress(onProgress, {
-      phase: 'native_trips',
-      completed: keyList.length + 3,
+      phase: 'residual_storage',
+      completed: keyList.length + 6,
       total: totalSteps,
     });
     clearSettingsMemoryForErasure();
     reportErasureProgress(onProgress, {
       phase: 'memory',
-      completed: keyList.length + 4,
+      completed: keyList.length + 7,
       total: totalSteps,
     });
 
@@ -366,11 +459,15 @@ export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now(), onPro
       tripRepository,
       speedKnowledge,
       nativeCompletedTripsCleared,
+      nativeLocalDataCleared: nativeCompletedTripsCleared,
+      residualStorage,
+      exportSigningKeys,
+      encryptionKeys,
       limitation: 'This receipt records Road Sage app-level overwrite/remove operations. A rooted device, compromised app bundle, browser cache, OS backup, or storage wear-leveling can remain outside what the app can verify from inside itself.',
     };
     reportErasureProgress(onProgress, {
       phase: 'signing',
-      completed: keyList.length + 4,
+      completed: keyList.length + 8,
       total: totalSteps,
     });
     const signature = await signErasureReceiptPayload(payload);
@@ -393,7 +490,7 @@ export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now(), onPro
 
 export async function eraseAllLocalDataAndDownloadReceipt(options = {}) {
   const receipt = await eraseAllLocalDataAndBuildReceipt(options);
-  const totalSteps = getErasureKeyList().length + 6;
+  const totalSteps = getErasureKeyList().length + 10;
   const filename = `road-sage-erasure-receipt-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
   try {
     reportErasureProgress(options.onProgress, {

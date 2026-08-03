@@ -7,7 +7,6 @@ import premiumOperationalFatigue from '@/assets/premium-operational-model-fatigu
 import premiumIconBrain from '@/assets/premium-operational-icon-brain-v1.png';
 import premiumIconAggression from '@/assets/premium-operational-icon-aggression-v1.png';
 import premiumIconSmoothness from '@/assets/premium-operational-icon-smoothness-v1.png';
-import premiumIconEco from '@/assets/premium-operational-icon-eco-v1.png';
 import premiumIconSpeed from '@/assets/premium-operational-icon-speed-v1.png';
 import premiumIconConsistency from '@/assets/premium-operational-icon-consistency-v1.png';
 import premiumIconBraking from '@/assets/premium-operational-icon-braking-v1.png';
@@ -32,7 +31,6 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const SIGNALS = [
   { art: premiumIconAggression, id: 'aggression', key: 'aggression', label: 'Aggression', tone: 'orange' },
   { art: premiumIconSmoothness, id: 'smoothness', key: 'smoothness', label: 'Smoothness', tone: 'cyan' },
-  { art: premiumIconEco, id: 'eco', key: 'ecoMindedness', label: 'Eco', tone: 'green' },
   { art: premiumIconSpeed, id: 'speed', key: 'speedTolerance', label: 'Speed tolerance', tone: 'violet' },
   { art: premiumIconConsistency, id: 'consistency', key: 'consistencyIdx', label: 'Consistency', tone: 'blue' },
 ];
@@ -65,8 +63,8 @@ const titleCase = (value) => String(value || '')
   .replaceAll('_', ' ')
   .replace(/\b\w/g, (character) => character.toUpperCase());
 
-const pointAt = (radius, index, center = 150) => {
-  const angle = ((index * 72) - 90) * (Math.PI / 180);
+const pointAt = (radius, index, count = SIGNALS.length, center = 150) => {
+  const angle = ((index * (360 / Math.max(1, count))) - 90) * (Math.PI / 180);
   return {
     x: center + (Math.cos(angle) * radius),
     y: center + (Math.sin(angle) * radius),
@@ -75,7 +73,7 @@ const pointAt = (radius, index, center = 150) => {
 
 const pointsAttribute = (values, radius = 112) => values
   .map((value, index) => {
-    const point = pointAt(radius * value, index);
+    const point = pointAt(radius * value, index, values.length);
     return `${point.x.toFixed(2)},${point.y.toFixed(2)}`;
   })
   .join(' ');
@@ -159,7 +157,7 @@ export function buildPremiumOperationalDriverModel({
 
 function RadarPlot({ signals, points }) {
   const ringValues = [0.2, 0.4, 0.6, 0.8, 1];
-  const outerPoints = Array.from({ length: 5 }, (_, index) => pointAt(112, index));
+  const outerPoints = Array.from({ length: signals.length }, (_, index) => pointAt(112, index, signals.length));
 
   return (
     <div className="premium-operational-radar-plot">
@@ -186,7 +184,7 @@ function RadarPlot({ signals, points }) {
           {ringValues.map((ring) => (
             <polygon
               key={ring}
-              points={pointsAttribute([ring, ring, ring, ring, ring])}
+              points={pointsAttribute(signals.map(() => ring))}
             />
           ))}
           {outerPoints.map((point, index) => (
@@ -199,7 +197,7 @@ function RadarPlot({ signals, points }) {
           filter="url(#premium-operational-radar-glow)"
         />
         {signals.map((signal, index) => {
-          const point = pointAt(112 * signal.plotValue, index);
+          const point = pointAt(112 * signal.plotValue, index, signals.length);
           return (
             <circle
               key={signal.id}
@@ -209,7 +207,7 @@ function RadarPlot({ signals, points }) {
               r="4.4"
               tabIndex={0}
             >
-              <title>{signal.label}: {signal.percent == null ? 'Learning' : `${signal.percent}%`}</title>
+              <title>{`${signal.label}: ${signal.percent == null ? 'Learning' : `${signal.percent}%`}`}</title>
             </circle>
           );
         })}

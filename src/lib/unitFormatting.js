@@ -24,6 +24,25 @@ export function convertSpeedKmh(value, units = 'metric') {
   return convertDistanceKm(value, units);
 }
 
+export function convertDisplaySpeedToKmh(value, units = 'metric') {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return normalizeUnits(units) === 'imperial' ? number * KM_PER_MILE : number;
+}
+
+export function speedInputValueFromKmh(value, units = 'metric') {
+  const converted = convertSpeedKmh(value, units);
+  return converted == null ? '' : String(Math.round(converted));
+}
+
+export function formatSpeedKmh(value, units = 'metric', empty = 'Unknown') {
+  const converted = convertSpeedKmh(value, units);
+  return converted != null && converted > 0
+    ? `${Math.round(converted)} ${speedUnitLabel(units)}`
+    : empty;
+}
+
 export function convertPerDistanceRate(value, units = 'metric') {
   if (value == null || value === '') return null;
   const number = Number(value);

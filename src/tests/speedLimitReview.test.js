@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildDashboardSpeedLimitReviewFingerprint,
+  buildTripSpeedLimitCoverageCells,
   buildTripSpeedLimitReviewCells,
   isDashboardSpeedLimitReviewDismissed,
   normalizeDashboardSpeedLimitReviewFingerprint,
@@ -26,6 +27,27 @@ describe('speed-limit parked review', () => {
 
     expect(speedLimitReviewNeededForTrip(trip)).toBe(false);
     expect(buildTripSpeedLimitReviewCells(trip)).toHaveLength(0);
+    expect(buildTripSpeedLimitCoverageCells(trip)).toMatchObject([{
+      limitKmh: 50,
+      source: 'openstreetmap',
+      requiresDecision: false,
+      tripReview: true,
+    }]);
+  });
+
+  it('keeps traced geometry in complete trip coverage so saved roads render as lines', () => {
+    const trip = {
+      route_points: [
+        point({ lat: 43.65, lng: -79.38, speed_limit_kmh: 40, speed_limit_source: 'user_confirmed_posted_sign' }),
+        point({ lat: 43.6501, lng: -79.3801, speed_limit_kmh: 40, speed_limit_source: 'user_confirmed_posted_sign' }),
+        point({ lat: 43.6502, lng: -79.3802, speed_limit_kmh: 40, speed_limit_source: 'user_confirmed_posted_sign' }),
+      ],
+    };
+
+    const [section] = buildTripSpeedLimitCoverageCells(trip);
+
+    expect(section.sectionPoints.length).toBeGreaterThanOrEqual(2);
+    expect(section.requiresDecision).toBe(false);
   });
 
   it('queues estimated trip cells for parked review', () => {

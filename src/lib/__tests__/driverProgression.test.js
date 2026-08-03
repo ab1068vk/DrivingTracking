@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   acknowledgeDriverProgressionCelebration,
   buildDriverProgression,
   progressionStats,
   syncDriverProgressionLedger,
+  processDriverProgressionAfterTrip,
   updateDriverProgressionMissionSelection,
 } from '@/lib/driverProgression';
 import { calculateWeeklyDrivingGoals } from '@/lib/tripInsights';
@@ -42,6 +43,10 @@ const repeatedRoute = [
 ];
 
 describe('driver progression', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('requires meaningful trip evidence before missions can complete', () => {
     const progression = buildDriverProgression([trip(0)], {}, { now: NOW });
 
@@ -211,6 +216,30 @@ describe('driver progression', () => {
     expect(new Set(transactionIds).size).toBe(transactionIds.length);
     expect(afterFirst.xp.total).toBeGreaterThan(0);
     expect(acknowledged.celebrations.find((celebration) => celebration.id === pending.id).seen).toBe(true);
+  });
+
+  it('keeps earned progression badges available for notification delivery retries', () => {
+    const storedValues = new Map();
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => storedValues.get(key) ?? null),
+      setItem: vi.fn((key, value) => storedValues.set(key, value)),
+    });
+    const excellentTrips = Array.from({ length: 45 }, (_, index) => trip(index, {
+      distance_km: 25,
+      score_overall: 97,
+      score_safety: 97,
+      score_smoothness: 97,
+      score_eco: 97,
+      braking_efficiency_score: 98,
+      cornering_consistency_score: 98,
+      overall_compliance_score: 98,
+    }));
+    const first = processDriverProgressionAfterTrip(excellentTrips, {}, { now: NOW });
+    const second = processDriverProgressionAfterTrip(excellentTrips, {}, { now: NOW });
+
+    expect(first.notificationBadges.length).toBeGreaterThan(0);
+    expect(second.newUnlocks).toHaveLength(0);
+    expect(second.notificationBadges).toEqual(first.notificationBadges);
   });
 
   it('builds seasonal challenges and exposes skill evidence confidence', () => {

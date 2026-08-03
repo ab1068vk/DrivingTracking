@@ -45,6 +45,43 @@ describe('speed-limit compliance', () => {
     ]);
   });
 
+  it('does not reuse a traced-road match across nearby points in the same coarse map cell', async () => {
+    const getForPoint = async (_lat, lng) => (
+      lng < -79.3795
+        ? { limitKmh: 40, source: 'user_confirmed_posted_sign', confidence: 0.92 }
+        : null
+    );
+    const points = [
+      { lat: 43.65, lng: -79.38, heading: 90, timestamp: '2026-01-01T12:00:00Z' },
+      { lat: 43.65, lng: -79.379, heading: 90, timestamp: '2026-01-01T12:00:05Z' },
+    ];
+
+    await expect(prefetchLocalKnowledge(points, { getForPoint })).resolves.toEqual([
+      expect.objectContaining({ limitKmh: 40 }),
+      null,
+    ]);
+  });
+
+  it('uses the batch resolver once while preserving per-point derived headings', async () => {
+    const getForPoints = async (points) => points.map((point) => ({
+      limitKmh: point.headingDeg < 180 ? 50 : 60,
+      source: 'user_confirmed_posted_sign',
+      confidence: 0.92,
+    }));
+    const knowledge = {
+      getForPoint: async () => null,
+      getForPoints,
+    };
+
+    await expect(prefetchLocalKnowledge([
+      { lat: 43.65, lng: -79.38, heading: 90, timestamp: '2026-01-01T12:00:00Z' },
+      { lat: 43.65, lng: -79.38, heading: 270, timestamp: '2026-01-01T12:00:05Z' },
+    ], knowledge)).resolves.toMatchObject([
+      { limitKmh: 50 },
+      { limitKmh: 60 },
+    ]);
+  });
+
   it('uses the safer limit and flags review when saved and fresh posted data conflict', () => {
     const result = resolveEffectiveSpeedLimitForIndex([
       {
@@ -87,6 +124,31 @@ describe('speed-limit compliance', () => {
 
     expect(result.effectiveLimitKmh).toBe(40);
     expect(result.limitSource).toBe('openstreetmap');
+  });
+
+  it.each([
+    ['osm_highway_default', 60],
+    ['region_default_estimate', 60],
+    ['inferred', 60],
+  ])('lets validated Road Memory outrank stored %s fallback evidence', (storedSource, storedLimit) => {
+    const result = resolveEffectiveSpeedLimitForIndex([{
+      lat: 43.65,
+      lng: -79.38,
+      speed_limit_kmh: storedLimit,
+      speed_limit_source: storedSource,
+    }], 0, DEFAULT_THRESHOLDS, {
+      localKnowledge: {
+        limitKmh: 50,
+        source: 'local_road_memory',
+        confidence: 0.66,
+      },
+    });
+
+    expect(result).toMatchObject({
+      effectiveLimitKmh: 50,
+      limitSource: 'learned_local',
+      tier: 'LEARNED_LOCAL',
+    });
   });
   it('handles empty route points', () => {
     expect(calculateSpeedLimitCompliance([], {}, DEFAULT_THRESHOLDS).overall_compliance_score).toBeNull();

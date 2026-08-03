@@ -68,6 +68,7 @@ const pointSpeed = (point) => {
 const localLimitSourceLabel = (source) => {
   if (source === 'user_confirmed_posted_sign') return 'User-confirmed posted sign';
   if (source === 'user_entered_estimate') return 'Saved user estimate';
+  if (source === 'local_road_memory') return 'Road Memory estimate';
   if (source === 'learned_local' || source === 'trip_consensus' || source === 'time_of_day_bucket') return 'Learned local road speed';
   return source ? String(source).replace(/_/g, ' ') : 'Saved road speed';
 };
@@ -108,7 +109,7 @@ function applyLocalSpeedKnowledgeToTrip(trip = {}, localKnowledgeResults = []) {
         : knowledge.source || 'learned_local';
     savedLimitCount++;
     if (source === 'user_confirmed_posted_sign') confirmedCount++;
-    else if (source === 'user_entered_estimate') estimateCount++;
+    else if (source === 'user_entered_estimate' || source === 'local_road_memory') estimateCount++;
     else learnedCount++;
     sourceCounts.set(source, (sourceCounts.get(source) || 0) + 1);
     const ruleKey = knowledge.correctionId || `${source}:${knowledge.geohash || index}:${Math.round(limitKmh)}`;
@@ -376,7 +377,7 @@ export default function SpeedAnalysis() {
           </div>
           {localSpeedKnowledge.savedLimitCount > 0 && (
             <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">
-              {localSpeedKnowledge.savedCoveragePercent}% user-labeled coverage
+              {localSpeedKnowledge.savedCoveragePercent}% local road-speed coverage
             </div>
           )}
         </div>
@@ -448,9 +449,9 @@ export default function SpeedAnalysis() {
         </div>
         {localSpeedKnowledge.savedLimitCount > 0 && (
           <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
-            <div className="font-semibold">User-labeled speed coverage</div>
+            <div className="font-semibold">Local road-speed coverage</div>
             <div className="mt-1 text-emerald-800/80 dark:text-emerald-100/80">
-              Saved rules matched {localSpeedKnowledge.savedLimitCount} of {localSpeedKnowledge.routePointCount} route points ({localSpeedKnowledge.savedCoveragePercent}%). {localSpeedKnowledge.unmatchedPointCount} point{localSpeedKnowledge.unmatchedPointCount === 1 ? '' : 's'} used trip, map, regional, or inferred fallback speed context.
+              Saved rules or active Road Memory matched {localSpeedKnowledge.savedLimitCount} of {localSpeedKnowledge.routePointCount} route points ({localSpeedKnowledge.savedCoveragePercent}%). {localSpeedKnowledge.unmatchedPointCount} point{localSpeedKnowledge.unmatchedPointCount === 1 ? '' : 's'} used other trip, regional, or inferred fallback speed context.
             </div>
           </div>
         )}
@@ -469,9 +470,9 @@ export default function SpeedAnalysis() {
             </div>
           </div>
           <div className="rounded-xl border border-border bg-background p-3">
-            <div className="text-xs font-semibold">{localSpeedKnowledge.rules.length ? 'Matched user rules' : 'Recommended actions'}</div>
-            <div className="mt-2 space-y-2 text-xs text-muted-foreground">
-              {localSpeedKnowledge.rules.length ? localSpeedKnowledge.rules.slice(0, 5).map((rule) => (
+            <div className="text-xs font-semibold">{localSpeedKnowledge.rules.length ? 'Matched local road speeds' : 'Recommended actions'}</div>
+            <div className="mt-2 max-h-64 space-y-2 overflow-y-auto pr-1 text-xs text-muted-foreground thin-scrollbar">
+              {localSpeedKnowledge.rules.length ? localSpeedKnowledge.rules.map((rule) => (
                 <div key={rule.key} className="flex items-center justify-between gap-3">
                   <span>{formatSpeed(rule.limitKmh, units)} - {rule.label}</span>
                   <span className="font-semibold text-foreground">{rule.count} point{rule.count === 1 ? '' : 's'}</span>
@@ -536,8 +537,8 @@ export default function SpeedAnalysis() {
               Blue: actual vehicle speed
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <span className="w-5 border-t-2 border-dashed border-red-500" />
-              Red dashed: saved or estimated speed limit
+              <span className="h-0.5 w-5 rounded bg-red-500" />
+              Red: speed limit applied to this trip
             </span>
           </div>
           <div className="mt-4 h-64">
@@ -556,7 +557,7 @@ export default function SpeedAnalysis() {
                       }}
                     />
                     <Line type="monotone" dataKey="speed" stroke="#2563eb" strokeWidth={2.5} dot={false} name="Actual speed" />
-                    <Line type="stepAfter" dataKey="limit" stroke="#ef4444" strokeDasharray="5 5" strokeWidth={2} dot={false} name="Speed limit" connectNulls />
+                    <Line type="stepAfter" dataKey="limit" stroke="#ef4444" strokeWidth={2.25} dot={false} name="Speed limit" connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
               )}

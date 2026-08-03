@@ -1,0 +1,934 @@
+{
+  "contractVersion": 1,
+  "roadMemoryValidationSupport": {
+    "validated_50_60": [
+      {
+        "id": "validation-all-1",
+        "limitKmh": 60,
+        "limitAtReviewKmh": 60,
+        "reviewedLimitKmh": 60,
+        "reviewState": "confirmed",
+        "feedbackOutcome": "exact",
+        "tripIds": ["validation-a-1", "validation-a-2", "validation-a-3"],
+        "feedbackContext": { "contextKey": "50-60|mixed|gps-unknown|all-times" }
+      },
+      {
+        "id": "validation-all-2",
+        "limitKmh": 60,
+        "limitAtReviewKmh": 60,
+        "reviewedLimitKmh": 60,
+        "reviewState": "confirmed",
+        "feedbackOutcome": "exact",
+        "tripIds": ["validation-b-1", "validation-b-2", "validation-b-3"],
+        "feedbackContext": { "contextKey": "50-60|mixed|gps-unknown|all-times" }
+      },
+      {
+        "id": "validation-all-3",
+        "limitKmh": 60,
+        "limitAtReviewKmh": 60,
+        "reviewedLimitKmh": 60,
+        "reviewState": "confirmed",
+        "feedbackOutcome": "exact",
+        "tripIds": ["validation-c-1", "validation-c-2", "validation-c-3"],
+        "feedbackContext": { "contextKey": "50-60|mixed|gps-unknown|all-times" }
+      },
+      {
+        "id": "validation-all-4",
+        "limitKmh": 60,
+        "limitAtReviewKmh": 60,
+        "reviewedLimitKmh": 60,
+        "reviewState": "confirmed",
+        "feedbackOutcome": "exact",
+        "tripIds": ["validation-d-1", "validation-d-2", "validation-d-3"],
+        "feedbackContext": { "contextKey": "50-60|mixed|gps-unknown|all-times" }
+      },
+      {
+        "id": "validation-time-1",
+        "limitKmh": 60,
+        "limitAtReviewKmh": 60,
+        "reviewedLimitKmh": 60,
+        "reviewState": "confirmed",
+        "feedbackOutcome": "exact",
+        "tripIds": ["validation-e-1", "validation-e-2", "validation-e-3"],
+        "feedbackContext": { "contextKey": "50-60|mixed|gps-unknown|time-pattern" }
+      },
+      {
+        "id": "validation-time-2",
+        "limitKmh": 60,
+        "limitAtReviewKmh": 60,
+        "reviewedLimitKmh": 60,
+        "reviewState": "confirmed",
+        "feedbackOutcome": "exact",
+        "tripIds": ["validation-f-1", "validation-f-2", "validation-f-3"],
+        "feedbackContext": { "contextKey": "50-60|mixed|gps-unknown|time-pattern" }
+      },
+      {
+        "id": "validation-time-3",
+        "limitKmh": 60,
+        "limitAtReviewKmh": 60,
+        "reviewedLimitKmh": 60,
+        "reviewState": "confirmed",
+        "feedbackOutcome": "exact",
+        "tripIds": ["validation-g-1", "validation-g-2", "validation-g-3"],
+        "feedbackContext": { "contextKey": "50-60|mixed|gps-unknown|time-pattern" }
+      },
+      {
+        "id": "validation-time-4",
+        "limitKmh": 60,
+        "limitAtReviewKmh": 60,
+        "reviewedLimitKmh": 60,
+        "reviewState": "confirmed",
+        "feedbackOutcome": "exact",
+        "tripIds": ["validation-h-1", "validation-h-2", "validation-h-3"],
+        "feedbackContext": { "contextKey": "50-60|mixed|gps-unknown|time-pattern" }
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "confirmed_authority_beats_newer_estimate",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-06T12:00:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "corrections": [
+          {
+            "id": "posted-50",
+            "limitKmh": 50,
+            "source": "user_confirmed_posted_sign",
+            "appliedAt": "2026-07-01T12:00:00.000Z",
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          },
+          {
+            "id": "newer-estimate-30",
+            "limitKmh": 30,
+            "source": "user_entered_estimate",
+            "appliedAt": "2026-07-05T12:00:00.000Z",
+            "directionMode": "forward",
+            "directionBearing": 90,
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": { "limitKmh": 50, "source": "user_confirmed_posted_sign" }
+    },
+    {
+      "id": "specific_timed_rule_beats_generic_peer",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-01-05T13:00:00.000Z",
+        "utcOffsetMinutes": -300
+      },
+      "knowledge": {
+        "corrections": [
+          {
+            "id": "newer-generic-50",
+            "limitKmh": 50,
+            "source": "user_confirmed_posted_sign",
+            "appliedAt": "2026-01-04T12:00:00.000Z",
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          },
+          {
+            "id": "weekday-morning-30",
+            "limitKmh": 30,
+            "source": "user_confirmed_posted_sign",
+            "appliedAt": "2026-01-03T12:00:00.000Z",
+            "timeRule": {
+              "enabled": true,
+              "days": [1, 2, 3, 4, 5],
+              "startMinutes": 420,
+              "endMinutes": 540
+            },
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": { "limitKmh": 30, "source": "user_confirmed_posted_sign" }
+    },
+    {
+      "id": "valid_from_blocks_earlier_history",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-06-30T12:00:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "corrections": [
+          {
+            "id": "future-rule",
+            "limitKmh": 40,
+            "source": "user_confirmed_posted_sign",
+            "validFrom": "2026-07-01T00:00:00.000Z",
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "id": "expires_at_blocks_end_boundary",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-01T12:00:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "corrections": [
+          {
+            "id": "expired-rule",
+            "limitKmh": 40,
+            "source": "user_confirmed_posted_sign",
+            "expiresAt": "2026-07-01T12:00:00.000Z",
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "id": "legacy_geohash_only_correction_stays_review_only",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-06T12:30:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "corrections": [
+          {
+            "id": "legacy-no-geometry",
+            "geohash": "dpz83d",
+            "limitKmh": 80,
+            "source": "user_confirmed_posted_sign",
+            "appliedAt": "2026-07-01T12:00:00.000Z"
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "id": "invalid_direction_mode_fails_closed",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-06T12:30:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "corrections": [
+          {
+            "id": "invalid-direction",
+            "limitKmh": 40,
+            "source": "user_confirmed_posted_sign",
+            "directionMode": "sideways",
+            "directionBearing": 90,
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "id": "out_of_range_enabled_schedule_fails_closed",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-06T12:30:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "corrections": [
+          {
+            "id": "invalid-schedule-minutes",
+            "limitKmh": 40,
+            "source": "user_confirmed_posted_sign",
+            "timeRule": {
+              "enabled": true,
+              "days": [1],
+              "startMinutes": -30,
+              "endMinutes": 540
+            },
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "id": "partially_invalid_enabled_schedule_days_fail_closed",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-06T12:30:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "corrections": [
+          {
+            "id": "invalid-schedule-days",
+            "limitKmh": 40,
+            "source": "user_confirmed_posted_sign",
+            "timeRule": {
+              "enabled": true,
+              "days": [1, 9],
+              "startMinutes": 420,
+              "endMinutes": 540
+            },
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "id": "unknown_conditional_qualifier_fails_closed",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-06T12:30:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "corrections": [
+          {
+            "id": "unverified-condition",
+            "limitKmh": 40,
+            "source": "user_confirmed_posted_sign",
+            "qualifierStatus": "conditional_unverified",
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "id": "temporary_qualifier_without_expiry_fails_closed",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-06T12:30:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "corrections": [
+          {
+            "id": "temporary-without-expiry",
+            "limitKmh": 40,
+            "source": "user_confirmed_posted_sign",
+            "qualifierStatus": "conditional_temporary_work_zone",
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "id": "applied_at_is_audit_metadata_not_validity",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2020-01-06T13:00:00.000Z",
+        "utcOffsetMinutes": -300
+      },
+      "knowledge": {
+        "corrections": [
+          {
+            "id": "audit-only-date",
+            "limitKmh": 60,
+            "source": "user_confirmed_posted_sign",
+            "appliedAt": "2026-07-01T12:00:00.000Z",
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": { "limitKmh": 60, "source": "user_confirmed_posted_sign" }
+    },
+    {
+      "id": "overnight_schedule_uses_previous_configured_day",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-01-10T07:00:00.000Z",
+        "utcOffsetMinutes": -300
+      },
+      "knowledge": {
+        "corrections": [
+          {
+            "id": "friday-overnight-35",
+            "limitKmh": 35,
+            "source": "user_confirmed_posted_sign",
+            "timeRule": {
+              "enabled": true,
+              "days": [5],
+              "startMinutes": 1320,
+              "endMinutes": 360
+            },
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": { "limitKmh": 35, "source": "user_confirmed_posted_sign" }
+    },
+    {
+      "id": "invalid_validity_boundary_fails_closed",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-01-10T07:00:00.000Z",
+        "utcOffsetMinutes": -300
+      },
+      "knowledge": {
+        "corrections": [
+          {
+            "id": "malformed-window",
+            "limitKmh": 80,
+            "source": "user_confirmed_posted_sign",
+            "validFrom": "not-a-date",
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "id": "excluded_private_section_blocks_saved_rule",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-01T12:00:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "excludedSections": [
+          {
+            "id": "private-parking-section",
+            "reason": "parking_private",
+            "directionMode": "forward",
+            "directionBearing": 90,
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ],
+        "corrections": [
+          {
+            "id": "saved-50",
+            "limitKmh": 50,
+            "source": "user_confirmed_posted_sign",
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": null
+    },
+    {
+      "id": "trusted_learned_cell_resolves_without_geometry_candidate",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-01T12:00:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "cells": {
+          "dpz83d": {
+            "limitKmh": 45,
+            "source": "trip_consensus",
+            "confidence": 0.68,
+            "tripCount": 4,
+            "evidenceCount": 4,
+            "tripEvidenceIds": ["trip-a", "trip-b", "trip-c", "trip-d"],
+            "lastUpdatedAt": "2099-01-01T00:00:00.000Z"
+          }
+        },
+        "corrections": [],
+        "roadMemory": { "candidates": [] }
+      },
+      "expected": { "limitKmh": 45, "source": "trip_consensus" }
+    },
+    {
+      "id": "accepted_road_memory_time_profile_uses_recorded_utc_offset",
+      "roadMemorySupport": "validated_50_60",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-06T12:30:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "corrections": [],
+        "roadMemory": {
+          "candidates": [
+            {
+              "id": "accepted-morning-profile",
+              "limitKmh": 60,
+              "agreement": 1,
+              "tripCount": 4,
+              "tripIds": ["morning-1", "morning-2", "morning-3", "morning-4"],
+              "limitVotes": { "60": 4 },
+              "evidenceConfidence": 0.72,
+              "canAffectScoreAndAlerts": true,
+              "active": true,
+              "stage": "operational",
+              "lastObservedAt": "2099-01-01T00:00:00.000Z",
+              "reviewState": "time_profiles_accepted",
+              "timeProfilesAcceptedAt": "2026-07-05T12:00:00.000Z",
+              "timeProfiles": [
+                {
+                  "bucket": "weekday_morning",
+                  "limitKmh": 40,
+                  "tripCount": 3,
+                  "agreement": 1,
+                  "eligible": true
+                }
+              ],
+              "directionMode": "forward",
+              "directionBearing": 90,
+              "sectionPoints": [
+                { "lat": 43.6532, "lng": -79.3842 },
+                { "lat": 43.6532, "lng": -79.3822 }
+              ]
+            }
+          ]
+        }
+      },
+      "expected": { "limitKmh": 40, "source": "local_road_memory" }
+    },
+    {
+      "id": "unaccepted_road_memory_time_profile_keeps_base_limit",
+      "roadMemorySupport": "validated_50_60",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-06T12:30:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "corrections": [],
+        "roadMemory": {
+          "candidates": [
+            {
+              "id": "pending-morning-profile",
+              "limitKmh": 60,
+              "agreement": 1,
+              "tripCount": 4,
+              "tripIds": ["pending-1", "pending-2", "pending-3", "pending-4"],
+              "limitVotes": { "60": 4 },
+              "evidenceConfidence": 0.72,
+              "canAffectScoreAndAlerts": true,
+              "active": true,
+              "stage": "operational",
+              "lastObservedAt": "2099-01-01T00:00:00.000Z",
+              "timeProfiles": [
+                {
+                  "bucket": "weekday_morning",
+                  "limitKmh": 40,
+                  "tripCount": 3,
+                  "agreement": 1,
+                  "eligible": true
+                }
+              ],
+              "directionMode": "forward",
+              "directionBearing": 90,
+              "sectionPoints": [
+                { "lat": 43.6532, "lng": -79.3842 },
+                { "lat": 43.6532, "lng": -79.3822 }
+              ]
+            }
+          ]
+        }
+      },
+      "expected": { "limitKmh": 60, "source": "local_road_memory" }
+    },
+    {
+      "id": "stale_and_low_confidence_road_memory_falls_back_to_cell",
+      "roadMemorySupport": "validated_50_60",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-29T12:00:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "cells": {
+          "dpz83d": {
+            "limitKmh": 45,
+            "source": "trip_consensus",
+            "confidence": 0.68,
+            "tripCount": 4,
+            "evidenceCount": 4,
+            "tripEvidenceIds": ["fallback-a", "fallback-b", "fallback-c", "fallback-d"],
+            "lastUpdatedAt": "2099-01-01T00:00:00.000Z"
+          }
+        },
+        "corrections": [],
+        "roadMemory": {
+          "candidates": [
+            {
+              "id": "stale-candidate",
+              "limitKmh": 50,
+              "agreement": 1,
+              "tripCount": 6,
+              "limitVotes": { "50": 6 },
+              "evidenceConfidence": 0.72,
+              "canAffectScoreAndAlerts": true,
+              "active": true,
+              "stage": "operational",
+              "lastObservedAt": "2025-01-01T00:00:00.000Z",
+              "directionMode": "forward",
+              "directionBearing": 90,
+              "sectionPoints": [
+                { "lat": 43.6532, "lng": -79.3842 },
+                { "lat": 43.6532, "lng": -79.3822 }
+              ]
+            },
+            {
+              "id": "low-confidence-candidate",
+              "limitKmh": 60,
+              "agreement": 1,
+              "tripCount": 6,
+              "limitVotes": { "60": 6 },
+              "evidenceConfidence": 0.60,
+              "canAffectScoreAndAlerts": true,
+              "active": true,
+              "stage": "operational",
+              "lastObservedAt": "2099-01-01T00:00:00.000Z",
+              "directionMode": "forward",
+              "directionBearing": 90,
+              "sectionPoints": [
+                { "lat": 43.6532, "lng": -79.3842 },
+                { "lat": 43.6532, "lng": -79.3822 }
+              ]
+            }
+          ]
+        }
+      },
+      "expected": { "limitKmh": 45, "source": "trip_consensus" }
+    },
+    {
+      "id": "road_memory_ranking_uses_confidence_then_trips_then_distance",
+      "roadMemorySupport": "validated_50_60",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-29T12:00:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "corrections": [],
+        "roadMemory": {
+          "candidates": [
+            {
+              "id": "nearer-lower-confidence",
+              "limitKmh": 50,
+              "agreement": 1,
+              "tripCount": 12,
+              "limitVotes": { "50": 12 },
+              "evidenceConfidence": 0.68,
+              "canAffectScoreAndAlerts": true,
+              "active": true,
+              "stage": "operational",
+              "lastObservedAt": "2099-01-01T00:00:00.000Z",
+              "directionMode": "forward",
+              "directionBearing": 90,
+              "sectionPoints": [
+                { "lat": 43.6532, "lng": -79.3842 },
+                { "lat": 43.6532, "lng": -79.3822 }
+              ]
+            },
+            {
+              "id": "higher-confidence-fewer-trips",
+              "limitKmh": 60,
+              "agreement": 1,
+              "tripCount": 4,
+              "limitVotes": { "60": 4 },
+              "evidenceConfidence": 0.72,
+              "canAffectScoreAndAlerts": true,
+              "active": true,
+              "stage": "operational",
+              "lastObservedAt": "2099-01-01T00:00:00.000Z",
+              "directionMode": "forward",
+              "directionBearing": 90,
+              "sectionPoints": [
+                { "lat": 43.65335, "lng": -79.3842 },
+                { "lat": 43.65335, "lng": -79.3822 }
+              ]
+            },
+            {
+              "id": "higher-confidence-more-trips-farther",
+              "limitKmh": 55,
+              "agreement": 1,
+              "tripCount": 6,
+              "limitVotes": { "55": 6 },
+              "evidenceConfidence": 0.72,
+              "canAffectScoreAndAlerts": true,
+              "active": true,
+              "stage": "operational",
+              "lastObservedAt": "2099-01-01T00:00:00.000Z",
+              "directionMode": "forward",
+              "directionBearing": 90,
+              "sectionPoints": [
+                { "lat": 43.6535, "lng": -79.3842 },
+                { "lat": 43.6535, "lng": -79.3822 }
+              ]
+            },
+            {
+              "id": "higher-confidence-more-trips-closer",
+              "limitKmh": 58,
+              "agreement": 1,
+              "tripCount": 6,
+              "limitVotes": { "58": 6 },
+              "evidenceConfidence": 0.72,
+              "canAffectScoreAndAlerts": true,
+              "active": true,
+              "stage": "operational",
+              "lastObservedAt": "2099-01-01T00:00:00.000Z",
+              "directionMode": "forward",
+              "directionBearing": 90,
+              "sectionPoints": [
+                { "lat": 43.65325, "lng": -79.3842 },
+                { "lat": 43.65325, "lng": -79.3822 }
+              ]
+            }
+          ]
+        }
+      },
+      "expected": { "limitKmh": 58, "source": "local_road_memory" }
+    },
+    {
+      "id": "geometry_matched_road_memory_beats_parallel_road_cell",
+      "roadMemorySupport": "validated_50_60",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-29T12:00:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "cells": {
+          "dpz83d": {
+            "limitKmh": 80,
+            "source": "trip_consensus",
+            "confidence": 0.72,
+            "tripCount": 4,
+            "evidenceCount": 4,
+            "tripEvidenceIds": ["parallel-a", "parallel-b", "parallel-c", "parallel-d"],
+            "lastUpdatedAt": "2099-01-01T00:00:00.000Z"
+          }
+        },
+        "corrections": [],
+        "roadMemory": {
+          "candidates": [
+            {
+              "id": "matched-main-road",
+              "limitKmh": 50,
+              "agreement": 1,
+              "tripCount": 5,
+              "limitVotes": { "50": 5 },
+              "evidenceConfidence": 0.72,
+              "canAffectScoreAndAlerts": true,
+              "active": true,
+              "stage": "operational",
+              "lastObservedAt": "2099-01-01T00:00:00.000Z",
+              "directionMode": "forward",
+              "directionBearing": 90,
+              "sectionPoints": [
+                { "lat": 43.6532, "lng": -79.3842 },
+                { "lat": 43.6532, "lng": -79.3822 }
+              ]
+            }
+          ]
+        }
+      },
+      "expected": { "limitKmh": 50, "source": "local_road_memory" }
+    },
+    {
+      "id": "manual_correction_remains_above_road_memory_and_cell",
+      "roadMemorySupport": "validated_50_60",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-29T12:00:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "cells": {
+          "dpz83d": {
+            "limitKmh": 80,
+            "source": "trip_consensus",
+            "confidence": 0.72,
+            "tripCount": 4,
+            "evidenceCount": 4,
+            "tripEvidenceIds": ["manual-a", "manual-b", "manual-c", "manual-d"],
+            "lastUpdatedAt": "2099-01-01T00:00:00.000Z"
+          }
+        },
+        "corrections": [
+          {
+            "id": "manual-posted-30",
+            "limitKmh": 30,
+            "source": "user_confirmed_posted_sign",
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ],
+        "roadMemory": {
+          "candidates": [
+            {
+              "id": "matched-road-memory-50",
+              "limitKmh": 50,
+              "agreement": 1,
+              "tripCount": 5,
+              "limitVotes": { "50": 5 },
+              "evidenceConfidence": 0.72,
+              "canAffectScoreAndAlerts": true,
+              "active": true,
+              "stage": "operational",
+              "lastObservedAt": "2099-01-01T00:00:00.000Z",
+              "directionMode": "forward",
+              "directionBearing": 90,
+              "sectionPoints": [
+                { "lat": 43.6532, "lng": -79.3842 },
+                { "lat": 43.6532, "lng": -79.3822 }
+              ]
+            }
+          ]
+        }
+      },
+      "expected": { "limitKmh": 30, "source": "user_confirmed_posted_sign" }
+    },
+    {
+      "id": "single_trip_cached_cell_stays_in_shadow_mode",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-01T12:00:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "cells": {
+          "dpz83d": {
+            "limitKmh": 45,
+            "source": "trip_consensus",
+            "confidence": 0.68,
+            "tripCount": 1,
+            "evidenceCount": 1,
+            "tripEvidenceIds": ["trip-only"],
+            "lastUpdatedAt": "2099-01-01T00:00:00.000Z"
+          }
+        },
+        "corrections": [],
+        "roadMemory": { "candidates": [] }
+      },
+      "expected": null
+    },
+    {
+      "id": "implausible_saved_limit_fails_closed",
+      "query": {
+        "lat": 43.6532,
+        "lng": -79.3832,
+        "headingDeg": 90,
+        "timestamp": "2026-07-01T12:00:00.000Z",
+        "utcOffsetMinutes": -240
+      },
+      "knowledge": {
+        "cells": {
+          "dpz83d": {
+            "limitKmh": 250,
+            "source": "trip_consensus",
+            "confidence": 0.85,
+            "lastUpdatedAt": "2099-01-01T00:00:00.000Z"
+          }
+        },
+        "corrections": [
+          {
+            "id": "implausible-rule",
+            "limitKmh": 250,
+            "source": "user_confirmed_posted_sign",
+            "sectionPoints": [
+              { "lat": 43.6532, "lng": -79.3842 },
+              { "lat": 43.6532, "lng": -79.3822 }
+            ]
+          }
+        ]
+      },
+      "expected": null
+    }
+  ]
+}

@@ -16,14 +16,14 @@ export const SPEED_LIMIT_SOURCE_PROFILES = Object.freeze({
     scoringWeight: 1,
   },
   user_entered_estimate: {
-    confidence: 0.72,
+    confidence: 0.75,
     level: 'medium',
     authority: 'estimated',
     reviewAfterDays: 120,
     scoringWeight: 0.65,
   },
   user_correction: {
-    confidence: 0.72,
+    confidence: 0.75,
     level: 'medium',
     authority: 'estimated',
     reviewAfterDays: 120,
@@ -41,6 +41,13 @@ export const SPEED_LIMIT_SOURCE_PROFILES = Object.freeze({
     level: 'medium',
     authority: 'learned',
     reviewAfterDays: 90,
+    scoringWeight: 0.55,
+  },
+  local_road_memory: {
+    confidence: 0.62,
+    level: 'medium',
+    authority: 'learned',
+    reviewAfterDays: 120,
     scoringWeight: 0.55,
   },
   time_of_day_bucket: {

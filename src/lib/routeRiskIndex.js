@@ -1,4 +1,8 @@
-import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
+import {
+  getEncryptedJson,
+  removeEncryptedJson,
+  setEncryptedJson,
+} from '@/lib/securePayloadCrypto';
 import { calculateSegmentMetrics, cleanRoutePoints, haversineDistance } from '@/lib/tripEngine';
 import { scoringValue } from '@/lib/scoringConstants';
 
@@ -231,11 +235,11 @@ export async function saveRouteRiskIndex(index = new Map()) {
       .sort((a, b) => (b[1].tripCount || 0) - (a[1].tripCount || 0))
       .slice(0, MAX_STORED_SEGMENTS);
   }
-  await setJson(ROUTE_RISK_INDEX_KEY, entries);
+  await setEncryptedJson(ROUTE_RISK_INDEX_KEY, entries);
 }
 
 export async function loadRouteRiskIndex(privacyZones = []) {
-  const entries = await getJson(ROUTE_RISK_INDEX_KEY, []);
+  const entries = await getEncryptedJson(ROUTE_RISK_INDEX_KEY, []);
   const merged = new Map();
   const bucketIndex = new Map();
   for (const [key, item] of Array.isArray(entries) ? entries : []) {
@@ -284,5 +288,5 @@ export async function loadRouteRiskIndex(privacyZones = []) {
 }
 
 export async function invalidateRouteRiskIndex() {
-  await removeJson(ROUTE_RISK_INDEX_KEY);
+  await removeEncryptedJson(ROUTE_RISK_INDEX_KEY);
 }

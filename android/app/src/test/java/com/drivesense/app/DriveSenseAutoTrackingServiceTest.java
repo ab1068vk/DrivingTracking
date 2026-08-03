@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.TimeZone;
 
 import com.google.android.gms.location.DetectedActivity;
@@ -22,6 +23,39 @@ import org.json.JSONObject;
 import org.junit.Test;
 
 public class DriveSenseAutoTrackingServiceTest {
+
+    @Test
+    public void verifiedParkingCannotBeDowngradedBySameTripCandidate() throws Exception {
+        JSONObject existing = new JSONObject()
+            .put("tripId", "trip-42")
+            .put("confidence_score", 100)
+            .put("verified", true);
+        JSONObject walkingCandidate = new JSONObject()
+            .put("tripId", "trip-42")
+            .put("confidence_score", 50)
+            .put("verified", false);
+        JSONObject verifiedCorrection = new JSONObject()
+            .put("tripId", "trip-42")
+            .put("confidence_score", 50)
+            .put("verified", true);
+        JSONObject anotherTrip = new JSONObject()
+            .put("tripId", "trip-43")
+            .put("confidence_score", 25)
+            .put("verified", false);
+
+        assertTrue(DriveSenseNativeTripStore.shouldPreserveHigherConfidence(existing, walkingCandidate));
+        assertFalse(DriveSenseNativeTripStore.shouldPreserveHigherConfidence(existing, verifiedCorrection));
+        assertFalse(DriveSenseNativeTripStore.shouldPreserveHigherConfidence(existing, anotherTrip));
+    }
+
+    @Test
+    public void administrativeTrackingStopsAreNotParkingEvents() {
+        assertTrue(DriveSenseAutoTrackingService.isAdministrativeStopReason("service_stopped_by_user"));
+        assertTrue(DriveSenseAutoTrackingService.isAdministrativeStopReason("service_destroyed"));
+        assertTrue(DriveSenseAutoTrackingService.isAdministrativeStopReason("manual_trip_replaced_existing_native_trip"));
+        assertFalse(DriveSenseAutoTrackingService.isAdministrativeStopReason("notification_end_trip"));
+        assertFalse(DriveSenseAutoTrackingService.isAdministrativeStopReason("parked_gps_stable"));
+    }
 
     @Test
     public void activeTripCheckpointCompactsLongRoutesWithinHardLimit() throws Exception {
@@ -215,6 +249,135 @@ public class DriveSenseAutoTrackingServiceTest {
     }
 
     @Test
+    public void nightClassificationSupportsCivilTwilightAndBufferedBoundaryCrossings() throws Exception {
+        DriveSenseAutoTrackingService.NightSettings unbufferedSunset =
+            new DriveSenseAutoTrackingService.NightSettings("sunset", 22 * 60, 5 * 60, 0d, 0d, 0);
+        DriveSenseAutoTrackingService.NightSettings civil =
+            new DriveSenseAutoTrackingService.NightSettings("civil_twilight", 22 * 60, 5 * 60, 0d, 0d, 0);
+        JSONObject twilightPoint = routePoint(
+            43.6532d,
+            -79.3832d,
+            Instant.parse("2026-01-01T22:05:00Z").toEpochMilli(),
+            30d
+        ).put("timezone_id", "America/Toronto").put("utc_offset_minutes", -300);
+
+        DriveSenseAutoTrackingService.NightClassificationResult sunsetResult =
+            DriveSenseAutoTrackingService.classifyTripNightDriving(
+                new JSONArray().put(twilightPoint),
+                unbufferedSunset
+            );
+        DriveSenseAutoTrackingService.NightClassificationResult civilResult =
+            DriveSenseAutoTrackingService.classifyTripNightDriving(
+                new JSONArray().put(twilightPoint),
+                civil
+            );
+
+        assertTrue(sunsetResult.isNight);
+        assertFalse(civilResult.isNight);
+        assertEquals("civil_twilight", civilResult.metadata.getString("solar_event_type"));
+        assertTrue(
+            civilResult.metadata.getString("evening_event_local_time").compareTo(
+                sunsetResult.metadata.getString("evening_event_local_time")
+            ) > 0
+        );
+
+        String[] sunsetParts = sunsetResult.metadata.getString("evening_event_local_time").split(":");
+        int sunsetHour = Integer.parseInt(sunsetParts[0]);
+        int sunsetMinute = Integer.parseInt(sunsetParts[1]);
+        long beforeBufferedBoundary = LocalDateTime.of(2026, 1, 1, sunsetHour, sunsetMinute)
+            .plusMinutes(3)
+            .toInstant(ZoneOffset.ofHours(-5))
+            .toEpochMilli();
+        long afterBufferedBoundary = LocalDateTime.of(2026, 1, 1, sunsetHour, sunsetMinute)
+            .plusMinutes(7)
+            .toInstant(ZoneOffset.ofHours(-5))
+            .toEpochMilli();
+        JSONArray crossingPoints = new JSONArray()
+            .put(routePoint(43.6532d, -79.3832d, beforeBufferedBoundary, 30d)
+                .put("timezone_id", "America/Toronto").put("utc_offset_minutes", -300))
+            .put(routePoint(43.6532d, -79.3832d, afterBufferedBoundary, 30d)
+                .put("timezone_id", "America/Toronto").put("utc_offset_minutes", -300));
+        DriveSenseAutoTrackingService.NightClassificationResult crossing =
+            DriveSenseAutoTrackingService.classifyTripNightDriving(
+                crossingPoints,
+                new DriveSenseAutoTrackingService.NightSettings("sunset", 22 * 60, 5 * 60, 0d, 0d, 5)
+            );
+
+        assertTrue(crossing.isNight);
+        assertFalse(crossing.metadata.getBoolean("trip_started_in_night"));
+        assertEquals(5, crossing.metadata.getInt("boundary_tolerance_minutes"));
+        assertEquals(crossingPoints.getJSONObject(1).getString("timestamp"), crossing.metadata.getString("decision_point_at"));
+    }
+
+    @Test
+    public void nightClassificationPersistsDstAndTripTimezoneContext() throws Exception {
+        DriveSenseAutoTrackingService.NightSettings custom =
+            new DriveSenseAutoTrackingService.NightSettings("custom", 22 * 60, 5 * 60, 0d, 0d, 5);
+        JSONObject winterPoint = new JSONObject()
+            .put("timestamp", "2026-03-08T04:30:00Z")
+            .put("timezone_id", "America/Toronto")
+            .put("utc_offset_minutes", -300);
+        JSONObject summerPoint = new JSONObject()
+            .put("timestamp", "2026-03-09T03:30:00Z")
+            .put("timezone_id", "America/Toronto")
+            .put("utc_offset_minutes", -240);
+
+        DriveSenseAutoTrackingService.NightClassificationResult winter =
+            DriveSenseAutoTrackingService.classifyTripNightDriving(new JSONArray().put(winterPoint), custom);
+        DriveSenseAutoTrackingService.NightClassificationResult summer =
+            DriveSenseAutoTrackingService.classifyTripNightDriving(new JSONArray().put(summerPoint), custom);
+        JSONArray timezoneCrossing = new JSONArray()
+            .put(new JSONObject()
+                .put("timestamp", "2026-07-01T19:00:00Z")
+                .put("timezone_id", "Europe/London")
+                .put("utc_offset_minutes", 60))
+            .put(new JSONObject()
+                .put("timestamp", "2026-07-02T03:30:00Z")
+                .put("timezone_id", "America/Toronto")
+                .put("utc_offset_minutes", -240));
+        DriveSenseAutoTrackingService.NightClassificationResult crossing =
+            DriveSenseAutoTrackingService.classifyTripNightDriving(timezoneCrossing, custom);
+
+        assertEquals("23:30", winter.metadata.getString("trip_start_local_time"));
+        assertEquals(-300, winter.metadata.getInt("utc_offset_minutes"));
+        assertEquals("23:30", summer.metadata.getString("trip_start_local_time"));
+        assertEquals(-240, summer.metadata.getInt("utc_offset_minutes"));
+        assertEquals("Europe/London", crossing.metadata.getString("timezone_id"));
+        assertEquals(60, crossing.metadata.getInt("utc_offset_minutes"));
+        assertEquals(2, crossing.metadata.getInt("evaluated_point_count"));
+        assertFalse(crossing.metadata.getBoolean("trip_started_in_night"));
+        assertEquals("2026-07-02T03:30:00Z", crossing.metadata.getString("decision_point_at"));
+    }
+
+    @Test
+    public void nightClassificationRecordsGpsAndPolarFallbackDiagnostics() throws Exception {
+        DriveSenseAutoTrackingService.NightSettings civil =
+            new DriveSenseAutoTrackingService.NightSettings("civil_twilight", 22 * 60, 5 * 60, 0d, 0d, 5);
+        JSONObject missingGps = new JSONObject()
+            .put("timestamp", "2026-01-01T23:30:00Z")
+            .put("timezone_id", "UTC")
+            .put("utc_offset_minutes", 0);
+        JSONObject polarSummer = routePoint(
+            69.6492d,
+            18.9553d,
+            Instant.parse("2026-06-21T10:00:00Z").toEpochMilli(),
+            30d
+        ).put("timezone_id", "Europe/Oslo").put("utc_offset_minutes", 120);
+
+        DriveSenseAutoTrackingService.NightClassificationResult missing =
+            DriveSenseAutoTrackingService.classifyTripNightDriving(new JSONArray().put(missingGps), civil);
+        DriveSenseAutoTrackingService.NightClassificationResult polar =
+            DriveSenseAutoTrackingService.classifyTripNightDriving(new JSONArray().put(polarSummer), civil);
+
+        assertTrue(missing.metadata.getBoolean("custom_fallback_used"));
+        assertEquals("gps_coordinates_unavailable", missing.metadata.getString("fallback_reason"));
+        assertEquals("custom_fallback", missing.metadata.getString("method"));
+        assertTrue(polar.metadata.getBoolean("custom_fallback_used"));
+        assertEquals("solar_event_unavailable", polar.metadata.getString("fallback_reason"));
+        assertEquals(1, polar.metadata.getInt("fallback_point_count"));
+    }
+
+    @Test
     public void statsConstantsAndGoldenFixtureMatchJavaScriptTripEngine() throws Exception {
         JSONObject fixture = loadParityFixture();
         JSONObject thresholds = fixture.getJSONObject("thresholds");
@@ -395,18 +558,29 @@ public class DriveSenseAutoTrackingServiceTest {
         double lat = 43.6532d;
         double lng = -79.3832d;
         String geohash = DriveSenseAutoTrackingService.geohashEncode(lat, lng, 6);
+        JSONArray section = new JSONArray()
+            .put(new JSONObject().put("lat", lat).put("lng", lng - 0.001d))
+            .put(new JSONObject().put("lat", lat).put("lng", lng + 0.001d));
         JSONObject data = new JSONObject()
             .put("corrections", new JSONArray()
                 .put(new JSONObject()
                     .put("geohash", geohash)
                     .put("limitKmh", 50d)
                     .put("source", "user_entered_estimate")
+                    .put("sectionPoints", section)
                     .put("appliedAt", "2026-06-16T12:00:00Z"))
                 .put(new JSONObject()
                     .put("geohash", geohash)
                     .put("limitKmh", 70d)
                     .put("source", "user_confirmed_posted_sign")
-                    .put("appliedAt", "2026-06-17T12:00:00Z")));
+                    .put("sectionPoints", section)
+                    .put("appliedAt", "2026-06-17T12:00:00Z"))
+                .put(new JSONObject()
+                    .put("geohash", geohash)
+                    .put("limitKmh", 250d)
+                    .put("source", "user_confirmed_posted_sign")
+                    .put("sectionPoints", section)
+                    .put("appliedAt", "2026-06-17T12:30:00Z")));
 
         DriveSenseAutoTrackingService.NativeSpeedLimit resolved =
             DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, lng, Instant.parse("2026-06-17T13:00:00Z").toEpochMilli());
@@ -414,6 +588,150 @@ public class DriveSenseAutoTrackingServiceTest {
         assertNotNull(resolved);
         assertEquals(70d, resolved.limitKmh, 0.0d);
         assertEquals("user_confirmed_posted_sign", resolved.source);
+    }
+
+    @Test
+    public void nativeBackgroundSpeedLookupUsesActiveRoadMemoryCandidateAsEstimate() throws Exception {
+        double lat = 43.6532d;
+        double lng = -79.3832d;
+        String geohash = DriveSenseAutoTrackingService.geohashEncode(lat, lng, 6);
+        JSONObject data = new JSONObject()
+            .put("corrections", new JSONArray())
+            .put("roadMemory", new JSONObject()
+                .put("candidates", new JSONArray()
+                    .put(new JSONObject()
+                        .put("id", "road-memory-test")
+                        .put("geohash", geohash)
+                        .put("limitKmh", 50d)
+                        .put("source", "local_road_memory")
+                        .put("intelligenceValidated", true)
+                        .put("active", true)
+                        .put("confidence", 0.66d)
+                        .put("tripCount", 3)
+                        .put("lastObservedAt", "2026-07-28T12:00:00Z")
+                        .put("directionMode", "forward")
+                        .put("directionBearing", 90d)
+                        .put("sectionPoints", new JSONArray()
+                            .put(new JSONObject().put("lat", lat).put("lng", lng - 0.001d))
+                            .put(new JSONObject().put("lat", lat).put("lng", lng + 0.001d))))));
+
+        DriveSenseAutoTrackingService.NativeSpeedLimit resolved =
+            DriveSenseAutoTrackingService.findLocalSpeedLimit(
+                data,
+                lat,
+                lng,
+                90d,
+                Instant.parse("2026-07-29T12:00:00Z").toEpochMilli()
+            );
+
+        assertNotNull(resolved);
+        assertEquals(50d, resolved.limitKmh, 0.0d);
+        assertEquals("local_road_memory", resolved.source);
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(
+            data,
+            lat,
+            lng,
+            270d,
+            Instant.parse("2026-07-29T12:00:00Z").toEpochMilli()
+        ));
+    }
+
+    @Test
+    public void nativeBackgroundSpeedLookupRejectsUnvalidatedRoadMemoryCandidate() throws Exception {
+        double lat = 43.6532d;
+        double lng = -79.3832d;
+        JSONObject candidate = new JSONObject()
+            .put("id", "road-memory-shadow")
+            .put("geohash", DriveSenseAutoTrackingService.geohashEncode(lat, lng, 6))
+            .put("limitKmh", 50d)
+            .put("active", true)
+            .put("stage", "operational")
+            .put("confidence", 0.72d)
+            .put("tripCount", 8)
+            .put("lastObservedAt", "2026-07-28T12:00:00Z")
+            .put("sectionPoints", new JSONArray()
+                .put(new JSONObject().put("lat", lat).put("lng", lng - 0.001d))
+                .put(new JSONObject().put("lat", lat).put("lng", lng + 0.001d)));
+        JSONObject data = new JSONObject()
+            .put("corrections", new JSONArray())
+            .put("roadMemory", new JSONObject()
+                .put("candidates", new JSONArray().put(candidate)));
+
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(
+            data,
+            lat,
+            lng,
+            90d,
+            Instant.parse("2026-07-29T12:00:00Z").toEpochMilli()
+        ));
+    }
+
+    @Test
+    public void nativeBackgroundSpeedLookupAppliesEligibleRoadMemoryTimeProfile() throws Exception {
+        double lat = 43.6532d;
+        double lng = -79.3832d;
+        String geohash = DriveSenseAutoTrackingService.geohashEncode(lat, lng, 6);
+        long localMorningMs = LocalDateTime.of(2026, 7, 29, 8, 0)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli();
+        JSONObject candidate = new JSONObject()
+            .put("id", "road-memory-time-profile")
+            .put("geohash", geohash)
+            .put("limitKmh", 50d)
+            .put("intelligenceValidated", true)
+            .put("active", true)
+            .put("stage", "operational")
+            .put("confidence", 0.68d)
+            .put("tripCount", 6)
+            .put("lastObservedAt", Instant.ofEpochMilli(localMorningMs - 86400000L).toString())
+            .put("timeProfilesAcceptedAt", Instant.ofEpochMilli(localMorningMs - 43200000L).toString())
+            .put("directionMode", "forward")
+            .put("directionBearing", 90d)
+            .put("sectionPoints", new JSONArray()
+                .put(new JSONObject().put("lat", lat).put("lng", lng - 0.001d))
+                .put(new JSONObject().put("lat", lat).put("lng", lng + 0.001d)))
+            .put("timeProfiles", new JSONArray()
+                .put(new JSONObject()
+                    .put("bucket", "weekday_morning")
+                    .put("limitKmh", 250d)
+                    .put("tripCount", 4)
+                    .put("agreement", 1d)
+                    .put("eligible", true))
+                .put(new JSONObject()
+                    .put("bucket", "weekday_morning")
+                    .put("limitKmh", 40d)
+                    .put("tripCount", 3)
+                    .put("agreement", 1d)
+                    .put("eligible", true)));
+        JSONObject data = new JSONObject()
+            .put("corrections", new JSONArray())
+            .put("roadMemory", new JSONObject()
+                .put("candidates", new JSONArray().put(candidate)));
+
+        DriveSenseAutoTrackingService.NativeSpeedLimit resolved =
+            DriveSenseAutoTrackingService.findLocalSpeedLimit(
+                data,
+                lat,
+                lng,
+                90d,
+                localMorningMs
+            );
+
+        assertNotNull(resolved);
+        assertEquals(40d, resolved.limitKmh, 0.0d);
+        assertEquals("local_road_memory", resolved.source);
+
+        candidate.remove("timeProfilesAcceptedAt");
+        resolved = DriveSenseAutoTrackingService.findLocalSpeedLimit(
+            data,
+            lat,
+            lng,
+            90d,
+            localMorningMs
+        );
+        assertNotNull(resolved);
+        assertEquals(50d, resolved.limitKmh, 0.0d);
     }
 
     @Test
@@ -438,6 +756,88 @@ public class DriveSenseAutoTrackingServiceTest {
             lng,
             Instant.parse("2026-06-17T13:00:00Z").toEpochMilli()
         ));
+    }
+
+    @Test
+    public void nativeBackgroundSpeedLookupUsesOnlyEligibleLearnedCells() throws Exception {
+        double lat = 43.6532d;
+        double lng = -79.3832d;
+        String exactCell = DriveSenseAutoTrackingService.geohashEncode(lat, lng, 6);
+        String fallbackCell = DriveSenseAutoTrackingService.geohashEncode(lat, lng, 5);
+        long queryTime = Instant.parse("2026-07-29T12:00:00Z").toEpochMilli();
+        JSONObject exact = new JSONObject()
+            .put("limitKmh", 80d)
+            .put("source", "trip_consensus")
+            .put("confidence", 0.68d)
+            .put("tripCount", 1)
+            .put("evidenceCount", 1)
+            .put("tripEvidenceIds", new JSONArray().put("exact-trip-1"))
+            .put("lastUpdatedAt", "2026-07-28T12:00:00Z");
+        JSONObject fallback = new JSONObject()
+            .put("limitKmh", 50d)
+            .put("source", "trip_consensus")
+            .put("confidence", 0.68d)
+            .put("tripCount", 3)
+            .put("evidenceCount", 3)
+            .put("tripEvidenceIds", new JSONArray()
+                .put("fallback-trip-1")
+                .put("fallback-trip-2")
+                .put("fallback-trip-3"))
+            .put("lastUpdatedAt", "2026-07-28T12:00:00Z");
+        JSONObject data = new JSONObject().put("cells", new JSONObject()
+            .put(exactCell, exact)
+            .put(fallbackCell, fallback));
+
+        DriveSenseAutoTrackingService.NativeSpeedLimit resolved =
+            DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, lng, queryTime);
+        assertNotNull(resolved);
+        assertEquals(50d, resolved.limitKmh, 0d);
+        assertEquals("trip_consensus", resolved.source);
+
+        fallback.remove("tripEvidenceIds");
+        assertNotNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, lng, queryTime));
+
+        fallback.put("lastUpdatedAt", "2026-04-01T12:00:00Z");
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, lng, queryTime));
+
+        fallback.put("lastUpdatedAt", "2026-07-28T12:00:00Z");
+        fallback.put("conflict", true);
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, lng, queryTime));
+
+        fallback.put("conflict", false);
+        fallback.put("source", "inferred");
+        fallback.put("confidence", 0.90d);
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, lng, queryTime));
+
+        fallback.put("source", "trip_consensus");
+        fallback.put("expiresAt", "2026-07-29T12:00:00Z");
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, lng, queryTime));
+
+        fallback.remove("expiresAt");
+        fallback.put("limitKmh", 250d);
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, lng, queryTime));
+    }
+
+    @Test
+    public void nativeSpeedAlertMessagesHonorMetricAndImperialSettings() {
+        assertEquals(
+            "Speed warning. You are at 100 in a posted 80 kilometers per hour zone. Ease off smoothly.",
+            DriveSenseAutoTrackingService.nativeSpeedAlertMessage(
+                100d, 80d, true, false, false, "metric"
+            )
+        );
+        assertEquals(
+            "Speed warning. You are at 62 in a posted 50 miles per hour zone. Ease off smoothly.",
+            DriveSenseAutoTrackingService.nativeSpeedAlertMessage(
+                100d, 80d, true, false, false, "imperial"
+            )
+        );
+        assertEquals(
+            "Speed threshold exceeded: 62 mph in estimated 50 mph zone.",
+            DriveSenseAutoTrackingService.nativeSpeedAlertMessage(
+                100d, 80d, false, true, true, "imperial"
+            )
+        );
     }
 
     @Test
@@ -580,6 +980,249 @@ public class DriveSenseAutoTrackingServiceTest {
         assertEquals(30d, matching.limitKmh, 0.0d);
         assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(data, sectionLat, sectionLng, 270d, mondayMorning));
         assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(data, sectionLat, sectionLng, 90d, mondayLate));
+    }
+
+    @Test
+    public void savedSpeedResolverMatchesSharedWebContract() throws Exception {
+        JSONObject fixture = loadSavedSpeedResolverParityFixture();
+        assertEquals(1, fixture.getInt("contractVersion"));
+        JSONArray cases = fixture.getJSONArray("cases");
+
+        for (int index = 0; index < cases.length(); index++) {
+            JSONObject testCase = cases.getJSONObject(index);
+            JSONObject query = testCase.getJSONObject("query");
+            JSONObject expected = testCase.optJSONObject("expected");
+            JSONObject knowledge = new JSONObject(testCase.getJSONObject("knowledge").toString());
+            String supportSet = testCase.optString("roadMemorySupport", "");
+            JSONObject supportSets = fixture.optJSONObject("roadMemoryValidationSupport");
+            JSONArray support = supportSets == null ? null : supportSets.optJSONArray(supportSet);
+            if (support != null && support.length() > 0) {
+                JSONObject roadMemory = knowledge.optJSONObject("roadMemory");
+                if (roadMemory == null) {
+                    roadMemory = new JSONObject();
+                    knowledge.put("roadMemory", roadMemory);
+                }
+                JSONArray candidates = roadMemory.optJSONArray("candidates");
+                JSONArray mergedCandidates = new JSONArray();
+                for (int supportIndex = 0; supportIndex < support.length(); supportIndex++) {
+                    mergedCandidates.put(new JSONObject(support.getJSONObject(supportIndex).toString()));
+                }
+                if (candidates != null) {
+                    for (int candidateIndex = 0; candidateIndex < candidates.length(); candidateIndex++) {
+                        mergedCandidates.put(new JSONObject(candidates.getJSONObject(candidateIndex).toString()));
+                    }
+                }
+                roadMemory.put("candidates", mergedCandidates);
+            }
+            DriveSenseAutoTrackingService.NativeSpeedLimit resolved =
+                DriveSenseAutoTrackingService.findLocalSpeedLimit(
+                    knowledge,
+                    query.getDouble("lat"),
+                    query.getDouble("lng"),
+                    query.optDouble("headingDeg", Double.NaN),
+                    Instant.parse(query.getString("timestamp")).toEpochMilli(),
+                    query.has("utcOffsetMinutes") ? query.getInt("utcOffsetMinutes") : null
+                );
+
+            if (expected == null) {
+                assertNull(testCase.getString("id"), resolved);
+                continue;
+            }
+            assertNotNull(testCase.getString("id"), resolved);
+            assertEquals(testCase.getString("id"), expected.getDouble("limitKmh"), resolved.limitKmh, 0d);
+            assertEquals(testCase.getString("id"), expected.getString("source"), resolved.source);
+        }
+    }
+
+    @Test
+    public void nativeBackgroundSpeedLookupHonorsExclusionsAndConservativeLegacyRadius() throws Exception {
+        double lat = 43.6532d;
+        double lng = -79.3832d;
+        JSONObject correction = new JSONObject()
+            .put("geohash", DriveSenseAutoTrackingService.geohashEncode(lat, lng, 6))
+            .put("limitKmh", 50d)
+            .put("source", "user_confirmed_posted_sign")
+            .put("sectionPoints", new JSONArray()
+                .put(new JSONObject().put("lat", lat).put("lng", lng - 0.001d))
+                .put(new JSONObject().put("lat", lat).put("lng", lng + 0.001d)));
+        JSONObject excluded = new JSONObject()
+            .put("id", "private-parking-section")
+            .put("reason", "parking_private")
+            .put("directionMode", "forward")
+            .put("directionBearing", 90d)
+            .put("sectionPoints", correction.getJSONArray("sectionPoints"));
+        JSONObject data = new JSONObject()
+            .put("corrections", new JSONArray().put(correction))
+            .put("excludedSections", new JSONArray().put(excluded));
+        long queryTime = Instant.parse("2026-07-01T12:00:00Z").toEpochMilli();
+
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, lng, 90d, queryTime));
+        assertNotNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, lng, 270d, queryTime));
+
+        String geohash = DriveSenseAutoTrackingService.geohashEncode(lat, lng, 6);
+        double[] center = DriveSenseAutoTrackingService.geohashCenter(geohash);
+        JSONObject legacy = new JSONObject().put("corrections", new JSONArray().put(new JSONObject()
+            .put("geohash", geohash)
+            .put("limitKmh", 40d)
+            .put("source", "user_confirmed_posted_sign")));
+        // About 500 m north: inside the former native 800 m bleed radius but
+        // outside the web/native 350 m legacy-cell contract.
+        assertNull(DriveSenseAutoTrackingService.findLocalSpeedLimit(
+            legacy,
+            center[0] + (0.5d / 111d),
+            center[1],
+            queryTime
+        ));
+    }
+
+    @Test
+    public void nativeRoadMemoryUsesWebEligibilityAndRankingContract() throws Exception {
+        double lat = 43.6532d;
+        double lng = -79.3832d;
+        long queryTime = Instant.parse("2026-07-29T12:00:00Z").toEpochMilli();
+        JSONArray section = new JSONArray()
+            .put(new JSONObject().put("lat", lat).put("lng", lng - 0.001d))
+            .put(new JSONObject().put("lat", lat).put("lng", lng + 0.001d));
+        JSONObject lowerConfidenceNearer = new JSONObject()
+            .put("id", "nearer-lower-confidence")
+            .put("limitKmh", 40d)
+            .put("active", true)
+            .put("canAffectScoreAndAlerts", true)
+            .put("stage", "operational")
+            .put("tripCount", 9)
+            .put("evidenceConfidence", 0.68d)
+            .put("confidence", 0.64d)
+            .put("confidenceCalibrationFactor", 0.94d)
+            .put("lastObservedAt", "2026-07-28T12:00:00Z")
+            .put("sectionPoints", section);
+        JSONObject higherConfidenceFarther = new JSONObject()
+            .put("id", "farther-higher-confidence")
+            .put("limitKmh", 60d)
+            .put("active", true)
+            .put("canAffectScoreAndAlerts", true)
+            .put("stage", "operational")
+            .put("tripCount", 4)
+            .put("evidenceConfidence", 0.72d)
+            .put("confidence", 0.70d)
+            .put("confidenceCalibrationFactor", 0.97d)
+            .put("lastObservedAt", "2026-07-28T12:00:00Z")
+            .put("sectionPoints", new JSONArray()
+                .put(new JSONObject().put("lat", lat + 0.00025d).put("lng", lng - 0.001d))
+                .put(new JSONObject().put("lat", lat + 0.00025d).put("lng", lng + 0.001d)));
+        JSONObject implausibleHighestConfidence = new JSONObject()
+            .put("id", "implausible-limit")
+            .put("limitKmh", 250d)
+            .put("active", true)
+            .put("canAffectScoreAndAlerts", true)
+            .put("stage", "operational")
+            .put("tripCount", 10)
+            .put("evidenceConfidence", 0.72d)
+            .put("confidence", 0.72d)
+            .put("confidenceCalibrationFactor", 1d)
+            .put("lastObservedAt", "2026-07-28T12:00:00Z")
+            .put("sectionPoints", section);
+        JSONObject data = new JSONObject()
+            .put("roadMemory", new JSONObject().put("candidates", new JSONArray()
+                .put(lowerConfidenceNearer)
+                .put(higherConfidenceFarther)
+                .put(implausibleHighestConfidence)));
+
+        DriveSenseAutoTrackingService.NativeSpeedLimit resolved =
+            DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, lng, 90d, queryTime);
+        assertNotNull(resolved);
+        assertEquals(60d, resolved.limitKmh, 0d);
+
+        higherConfidenceFarther.put("lastObservedAt", "2026-04-01T12:00:00Z");
+        resolved = DriveSenseAutoTrackingService.findLocalSpeedLimit(data, lat, lng, 90d, queryTime);
+        assertNotNull(resolved);
+        assertEquals(40d, resolved.limitKmh, 0d);
+    }
+
+    @Test
+    public void storedSpeedMirrorKeepsOneReleasePlaintextCompatibility() throws Exception {
+        JSONObject parsed = DriveSenseAutoTrackingService.parseStoredSpeedKnowledge(
+            new JSONObject()
+                .put("schemaVersion", 2)
+                .put("cells", new JSONObject())
+                .put("corrections", new JSONArray())
+                .toString(),
+            "speed_knowledge_v1"
+        );
+
+        assertNotNull(parsed);
+        assertEquals(2, parsed.getInt("schemaVersion"));
+    }
+
+    @Test
+    public void storedSpeedSelectionPrefersMirrorAndUsesLegacyOnlyWhenMirrorKeyIsAbsent() throws Exception {
+        String mirror = new JSONObject().put("knowledgeRevision", 8).toString();
+        String legacy = new JSONObject().put("knowledgeRevision", 3).toString();
+
+        DriveSenseAutoTrackingService.StoredSpeedKnowledgeSelection selected =
+            DriveSenseAutoTrackingService.selectStoredSpeedKnowledgePayload(mirror, legacy, false);
+        assertNotNull(selected);
+        assertEquals(mirror, selected.raw);
+        assertEquals("speed_knowledge_native_mirror_v1", selected.storageKey);
+
+        DriveSenseAutoTrackingService.StoredSpeedKnowledgeSelection fallback =
+            DriveSenseAutoTrackingService.selectStoredSpeedKnowledgePayload(null, legacy, false);
+        assertNotNull(fallback);
+        assertEquals(legacy, fallback.raw);
+        assertEquals("speed_knowledge_v1", fallback.storageKey);
+
+        assertNull(DriveSenseAutoTrackingService.selectStoredSpeedKnowledgePayload(null, "\n", false));
+        assertNull(DriveSenseAutoTrackingService.selectStoredSpeedKnowledgePayload(null, legacy, true));
+    }
+
+    @Test
+    public void storedSpeedSelectionKeepsPresentBlankMirrorFailClosed() throws Exception {
+        String legacy = new JSONObject().put("knowledgeRevision", 3).toString();
+        DriveSenseAutoTrackingService.StoredSpeedKnowledgeSelection selected =
+            DriveSenseAutoTrackingService.selectStoredSpeedKnowledgePayload("  ", legacy, false);
+
+        assertNotNull(selected);
+        assertEquals("speed_knowledge_native_mirror_v1", selected.storageKey);
+        assertNull(DriveSenseAutoTrackingService.parseStoredSpeedKnowledge(selected.raw, selected.storageKey));
+    }
+
+    @Test(expected = org.json.JSONException.class)
+    public void storedSpeedSelectionKeepsPresentMalformedMirrorFailClosed() throws Exception {
+        String legacy = new JSONObject().put("knowledgeRevision", 3).toString();
+        DriveSenseAutoTrackingService.StoredSpeedKnowledgeSelection selected =
+            DriveSenseAutoTrackingService.selectStoredSpeedKnowledgePayload("{malformed", legacy, true);
+
+        assertNotNull(selected);
+        assertEquals("speed_knowledge_native_mirror_v1", selected.storageKey);
+        DriveSenseAutoTrackingService.parseStoredSpeedKnowledge(selected.raw, selected.storageKey);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void storedSpeedMirrorRejectsMalformedEncryptedEnvelope() throws Exception {
+        DriveSenseAutoTrackingService.parseStoredSpeedKnowledge(
+            new JSONObject()
+                .put("encrypted", true)
+                .put("version", 1)
+                .put("key_version", 1)
+                .put("ciphertext", "")
+                .toString()
+        );
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void storedSpeedMirrorRejectsUnsupportedStorageContext() throws Exception {
+        DriveSenseAutoTrackingService.parseStoredSpeedKnowledge(
+            new JSONObject().put("schemaVersion", 2).toString(),
+            "unexpected_speed_store"
+        );
+    }
+
+    private static JSONObject loadSavedSpeedResolverParityFixture() throws Exception {
+        try (InputStream stream = DriveSenseAutoTrackingServiceTest.class
+            .getClassLoader()
+            .getResourceAsStream("savedSpeedResolverParityFixture.json")) {
+            assertNotNull("Missing shared saved-speed resolver parity fixture", stream);
+            return new JSONObject(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
+        }
     }
 
     private static JSONObject loadParityFixture() throws Exception {

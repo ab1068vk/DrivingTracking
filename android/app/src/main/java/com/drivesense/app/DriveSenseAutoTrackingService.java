@@ -6,8 +6,11 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.bluetooth.BluetoothDevice;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.BroadcastReceiver;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
@@ -17,6 +20,7 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.location.Location;
+import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
 
@@ -43,13 +47,17 @@ import org.json.JSONObject;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 
 public class DriveSenseAutoTrackingService extends Service implements SensorEventListener {
+    private static volatile boolean dataErasureInProgress = false;
     static final String ACTION_START = "com.drivesense.app.action.START_NATIVE_AUTO";
     static final String ACTION_START_MANUAL_TRIP = "com.drivesense.app.action.START_NATIVE_MANUAL_TRIP";
     static final String ACTION_STOP = "com.drivesense.app.action.STOP_NATIVE_AUTO";
@@ -71,10 +79,13 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final int NIGHT_START_HOUR = 22;
     private static final int NIGHT_END_HOUR = 5;
     private static final String NIGHT_DETECTION_MODE_SUNSET = "sunset";
+    private static final String NIGHT_DETECTION_MODE_CIVIL_TWILIGHT = "civil_twilight";
     private static final String NIGHT_DETECTION_MODE_CUSTOM = "custom";
     private static final String DEFAULT_NIGHT_START_TIME = "22:00";
     private static final String DEFAULT_NIGHT_END_TIME = "05:00";
     private static final double SUN_ZENITH_DEGREES = 90.833d;
+    private static final double CIVIL_TWILIGHT_ZENITH_DEGREES = 96d;
+    private static final int DEFAULT_NIGHT_BOUNDARY_TOLERANCE_MINUTES = 5;
     private static final String CHANNEL_ID = "drivesense_native_auto_tracking";
     private static final String AUTO_STATUS_CHANNEL_ID = "drivesense_auto_status";
     private static final int MIN_VEHICLE_CONFIDENCE = 65;
@@ -96,7 +107,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final double GPS_STILL_DRIFT_M = 8.0d;
     private static final double GPS_VEHICLE_DRIFT_M = 5.0d;
     private static final double GPS_VEHICLE_DRIFT_RELAXED_M = 20.0d;
-    private static final float MAX_ACCURACY_M = 75f;
+    private static final float MAX_ACCURACY_M = 50f;
     private static final double MIN_POINT_DISTANCE_M = 8d;
     private static final double STATIONARY_SPEED_KMH = 5d;
     private static final double MIN_TRUSTED_SPEED_KMH = 18d;
@@ -118,14 +129,24 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final String SUMMARY_CHANNEL_ID = "drivesense_summary";
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
     private static final String SETTINGS_KEY = "drivesense_settings";
-    private static final String SPEED_KNOWLEDGE_KEY = "speed_knowledge_v1";
+    private static final String PARKING_LEARNING_KEY = "drivesense_parking_learning_v1";
+    private static final String SPEED_KNOWLEDGE_KEY = "speed_knowledge_native_mirror_v1";
+    private static final String LEGACY_SPEED_KNOWLEDGE_KEY = "speed_knowledge_v1";
+    private static final String SPEED_KNOWLEDGE_MIRROR_INITIALIZED_KEY =
+        "speed_knowledge_native_mirror_initialized_v1";
     private static final String DANGER_ZONES_KEY = "drivesense_danger_zones";
     private static final String COACH_PROGRAM_KEY = "drivesense_coach_programs_v1";
     private static final String GEOHASH_BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
     private static final int SPEED_KNOWLEDGE_GEOHASH_PRECISION = 6;
-    private static final double SPEED_KNOWLEDGE_MATCH_RADIUS_KM = 0.8d;
+    private static final int SPEED_KNOWLEDGE_FALLBACK_GEOHASH_PRECISION = 5;
+    // Keep legacy geohash-only rules inside the same conservative corridor as
+    // the web resolver. A wider native radius could otherwise speak a saved
+    // limit from a parallel road while the in-app score correctly rejected it.
+    private static final double SPEED_KNOWLEDGE_MATCH_RADIUS_KM = 0.35d;
     private static final double SPEED_KNOWLEDGE_SECTION_MATCH_RADIUS_KM = 0.045d;
     private static final double SPEED_KNOWLEDGE_DIRECTION_TOLERANCE_DEG = 60.0d;
+    private static final double SPEED_KNOWLEDGE_MAX_LIMIT_KMH = 210.0d;
+    private static final int SPEED_KNOWLEDGE_MIN_TRIP_CONSENSUS_EVIDENCE = 3;
     private static final String NOTIFICATION_PREFS = "drivesense_native_notification_state";
     private static final String KEY_LAST_PHONE_USE_NOTIFICATION_MS = "last_phone_use_notification_ms";
     private static final String KEY_LAST_TRIP_COMPLETED_NOTIFICATION_ID = "last_trip_completed_notification_id";
@@ -188,6 +209,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final double POSSIBLE_INCIDENT_ROTATION_DEG_S = 90.0d;
     private static final long POSSIBLE_INCIDENT_STOPPED_SECONDS = 8L;
     private static final long POSSIBLE_INCIDENT_HIGH_STOPPED_SECONDS = 15L;
+    private static final long COMPLETED_TRIP_SAVE_RETRY_MS = 60_000L;
+    private static final long PARKING_REFINEMENT_WINDOW_MS = 30_000L;
+    private static final int PARKING_REFINEMENT_MAX_FIXES = 6;
+    private static final double PARKING_REFINEMENT_MOVING_SPEED_KMH = 8.0d;
+    private static final double PARKING_REFINEMENT_MAX_DRIFT_M = 35.0d;
 
     private ActivityRecognitionClient activityClient;
     private FusedLocationProviderClient locationClient;
@@ -222,6 +248,18 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private long lastLiveStatusMs = 0L;
     private long lastActiveCheckpointMs = 0L;
     private long checkpointRecoveryEndOverrideMs = 0L;
+    private JSONObject pendingCompletedTrip;
+    private long nextCompletedTripSaveRetryMs = 0L;
+    private JSONArray pendingParkingRefinementPoints;
+    private JSONObject pendingParkingRefinementSignals;
+    private long pendingParkingRefinementDeadlineMs = 0L;
+    private long pendingParkingTimestampMs = 0L;
+    private String pendingParkingTripId = "";
+    private String pendingParkingSource = "";
+    private double pendingParkingAnchorLat = Double.NaN;
+    private double pendingParkingAnchorLng = Double.NaN;
+    private int pendingParkingRefinementFixCount = 0;
+    private boolean pendingParkingRefinementStopServiceAfter = false;
     private DriveSenseSpeechController speechController;
     private long speedingSinceMs = 0L;
     private long lastSpeedAlertMs = 0L;
@@ -254,6 +292,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private int lastActivityType = DetectedActivity.UNKNOWN;
     private int lastActivityConfidence = 0;
     private long lastActivityUpdateMs = 0L;
+    private long lastVehicleExitTransitionMs = 0L;
+    private long lastVehicleDisconnectMs = 0L;
+    private BroadcastReceiver vehicleConnectionReceiver;
     private float lastAx = Float.NaN;
     private float lastAy = Float.NaN;
     private float lastAz = Float.NaN;
@@ -272,6 +313,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     @Override
     public void onCreate() {
         super.onCreate();
+        dataErasureInProgress = false;
         updateForegroundNotification("Ready when you start moving");
         ensureSafetyAlertsChannel();
         speechController = new DriveSenseSpeechController(this);
@@ -297,6 +339,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 }
             }
         };
+        registerVehicleConnectionReceiver();
         restoreActiveTripCheckpointIfAvailable();
     }
 
@@ -344,7 +387,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             recordDiagnostic("service_armed", "Native service is armed for auto tracking.", "notification_end_trip", 0d, 0L, 0d);
             if (!keepArmed) {
                 DriveSenseNativeTripStore.setServiceEnabled(this, false);
-                stopSelf();
+                if (pendingParkingRefinementPoints == null) stopSelf();
                 return START_NOT_STICKY;
             }
         }
@@ -366,11 +409,19 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     @Override
     public void onDestroy() {
-        finishTrip("service_destroyed", false);
+        if (!dataErasureInProgress) {
+            finishTrip("service_destroyed", false);
+        }
+        clearPendingParkingRefinement();
+        unregisterVehicleConnectionReceiver();
         removeActivityUpdates();
         stopLocationUpdates();
         stopMotionSensors();
-        DriveSenseNativeTripStore.setServiceEnabled(this, false);
+        if (dataErasureInProgress) {
+            // Clear again after callbacks are detached so no final location
+            // callback can recreate native state during the stop race.
+            DriveSenseNativeTripStore.eraseAllForDataRights(this);
+        }
         if (speechController != null) speechController.shutdown();
         removeTrackingNotification();
         super.onDestroy();
@@ -382,13 +433,16 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         return null;
     }
 
-    static void start(Context context) {
+    static boolean start(Context context) {
         cancelAutoTrackingOffNotification(context);
         Intent intent = new Intent(context, DriveSenseAutoTrackingService.class);
         intent.setAction(ACTION_START);
         try {
             ContextCompat.startForegroundService(context, intent);
-        } catch (Exception ignored) {}
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     static void startManualTrip(Context context, long startTimeMs, String tripId) {
@@ -435,6 +489,27 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         showAutoTrackingOffNotification(context);
     }
 
+    static void stopForDataErasure(Context context) {
+        dataErasureInProgress = true;
+        DriveSenseNativeTripStore.setServiceEnabled(context, false);
+        try {
+            context.stopService(new Intent(context, DriveSenseAutoTrackingService.class));
+        } catch (Exception ignored) {
+            // The caller still clears every native store below.
+        }
+        cancelTrackingNotification(context);
+        cancelAutoTrackingOffNotification(context);
+    }
+
+    static void clearNotificationStateForDataErasure(Context context) {
+        context.getSharedPreferences(NOTIFICATION_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .commit();
+        cancelTrackingNotification(context);
+        cancelAutoTrackingOffNotification(context);
+    }
+
     static void stopSpeech(Context context) {
         if (!DriveSenseNativeTripStore.isServiceEnabled(context)) return;
         Intent intent = new Intent(context, DriveSenseAutoTrackingService.class);
@@ -451,6 +526,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         ensureAutoStatusChannel(context);
         Intent intent = new Intent(context, MainActivity.class);
         intent.putExtra("deeplink", "drivesense://settings");
+        intent.setData(Uri.parse("drivesense://settings"));
         PendingIntent pendingIntent = PendingIntent.getActivity(
             context,
             3,
@@ -506,9 +582,33 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     private void handleActivity(int type, int confidence) {
         long now = System.currentTimeMillis();
+        int previousActivityType = lastActivityType;
+        int previousActivityConfidence = lastActivityConfidence;
         lastActivityType = type;
         lastActivityConfidence = confidence;
         lastActivityUpdateMs = now;
+        boolean previousWasVehicle =
+            previousActivityType == DetectedActivity.IN_VEHICLE &&
+            previousActivityConfidence >= MIN_VEHICLE_CONFIDENCE;
+        boolean nextLooksLikeExit =
+            (
+                type == DetectedActivity.STILL ||
+                type == DetectedActivity.WALKING ||
+                type == DetectedActivity.RUNNING ||
+                type == DetectedActivity.ON_FOOT
+            ) &&
+            confidence >= 70;
+        if (isTripActive() && previousWasVehicle && nextLooksLikeExit) {
+            lastVehicleExitTransitionMs = now;
+            recordTimeline(
+                "vehicle_exit_transition",
+                "Activity changed from in vehicle to still or on foot.",
+                "activity_transition",
+                lastKnownSpeedKmh,
+                stillSinceMs > 0L ? Math.max(0L, (now - stillSinceMs) / 1000L) : 0L,
+                maxDriftSinceStopM
+            );
+        }
         if (isTripActive() && !hasLocationPermission()) {
             handleLocationPermissionLost("activity_update_permission_missing");
         }
@@ -624,6 +724,50 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         }
     }
 
+    private void registerVehicleConnectionReceiver() {
+        if (vehicleConnectionReceiver != null) return;
+        vehicleConnectionReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (intent == null ||
+                    !BluetoothDevice.ACTION_ACL_DISCONNECTED.equals(intent.getAction()) ||
+                    !isTripActive() ||
+                    !isSettingEnabled("obd_bluetooth_enabled", false)) {
+                    return;
+                }
+                lastVehicleDisconnectMs = System.currentTimeMillis();
+                recordTimeline(
+                    "vehicle_connection_disconnected",
+                    "The configured OBD Bluetooth vehicle connection disconnected.",
+                    "obd_bluetooth_disconnect",
+                    lastKnownSpeedKmh,
+                    stillSinceMs > 0L
+                        ? Math.max(0L, (lastVehicleDisconnectMs - stillSinceMs) / 1000L)
+                        : 0L,
+                    maxDriftSinceStopM
+                );
+            }
+        };
+        IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(vehicleConnectionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(vehicleConnectionReceiver, filter);
+            }
+        } catch (Exception ignored) {
+            vehicleConnectionReceiver = null;
+        }
+    }
+
+    private void unregisterVehicleConnectionReceiver() {
+        if (vehicleConnectionReceiver == null) return;
+        try {
+            unregisterReceiver(vehicleConnectionReceiver);
+        } catch (Exception ignored) {}
+        vehicleConnectionReceiver = null;
+    }
+
     private void requestActivityUpdates() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED) {
@@ -646,6 +790,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private void startManualTrip(long startTimeMs, String tripId) {
+        if (!retryPendingCompletedTripSave(false)) {
+            recordDiagnostic("manual_start_blocked", "Manual trip start delayed until the previous trip is safely queued.", "pending_completed_trip", 0d, 0L, 0d);
+            updateNotification("Previous trip recovery pending - open Road Sage");
+            return;
+        }
         long normalizedStartMs = startTimeMs > 0L ? startTimeMs : System.currentTimeMillis();
         if (isTripActive()) {
             if (nativeManualTrip) {
@@ -653,8 +802,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 return;
             }
             finishTrip("manual_trip_replaced_existing_native_trip", true);
+            if (!retryPendingCompletedTripSave(true)) {
+                recordDiagnostic("manual_start_blocked", "Manual trip start delayed until the previous trip is safely queued.", "pending_completed_trip", 0d, 0L, 0d);
+                return;
+            }
         }
         activeStartMs = normalizedStartMs;
+        lastVehicleExitTransitionMs = 0L;
+        lastVehicleDisconnectMs = 0L;
         activePoints = new JSONArray();
         activeTimeline = new JSONArray();
         activeMotionSamples = new JSONArray();
@@ -703,10 +858,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     private void startCandidateTrip(String reason, @Nullable Location triggerLocation) {
         if (isTripActive()) return;
+        cancelParkingRefinement("new_trip_started");
+        if (!retryPendingCompletedTripSave(false)) return;
         long triggerMs = triggerLocation != null && triggerLocation.getTime() > 0L
             ? triggerLocation.getTime()
             : System.currentTimeMillis();
         activeStartMs = triggerMs;
+        lastVehicleExitTransitionMs = 0L;
+        lastVehicleDisconnectMs = 0L;
         activePoints = new JSONArray();
         activeTimeline = new JSONArray();
         activeMotionSamples = new JSONArray();
@@ -827,6 +986,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (location.hasAccuracy() && location.getAccuracy() > MAX_ACCURACY_M) return;
 
         if (!isTripActive()) {
+            if (!retryPendingCompletedTripSave(false)) return;
+            boolean stopAfterRefinement = pendingParkingRefinementStopServiceAfter;
+            recordParkingRefinementFix(location);
+            if (stopAfterRefinement) return;
             handleArmedLocation(location);
             return;
         }
@@ -933,7 +1096,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             else point.put("accuracy", JSONObject.NULL);
             if (location.hasAltitude()) point.put("altitude", location.getAltitude());
             else point.put("altitude", JSONObject.NULL);
-            point.put("timestamp", iso(location.getTime() > 0L ? location.getTime() : System.currentTimeMillis()));
+            long pointTimeMs = location.getTime() > 0L ? location.getTime() : System.currentTimeMillis();
+            ZonedDateTime localTime = Instant.ofEpochMilli(pointTimeMs).atZone(ZoneId.systemDefault());
+            point.put("timestamp", iso(pointTimeMs));
+            point.put("timezone_id", localTime.getZone().getId());
+            point.put("utc_offset_minutes", localTime.getOffset().getTotalSeconds() / 60);
         } catch (JSONException ignored) {}
         return point;
     }
@@ -1207,6 +1374,13 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         String completedManualTripId = nativeManualTripId == null ? "" : nativeManualTripId;
         String completedRecoveryTripId = nativeRecoveryTripId == null ? "" : nativeRecoveryTripId;
         long stoppedSeconds = stillSinceMs > 0L ? Math.max(0L, (endMs - stillSinceMs) / 1000L) : 0L;
+        JSONObject parkingSignals = buildParkingSignals(
+            reason,
+            stoppedSeconds,
+            lastKnownSpeedKmh,
+            maxDriftSinceStopM,
+            completedManualTrip
+        );
         lastNativeAutoStopReason = reason;
         recordTimeline("ending_review", "Ending review started.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
         TailTrimResult tailTrim = trimParkedTail(points, reason, endMs);
@@ -1260,6 +1434,16 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             recordDiagnostic("trip_discarded", "Native trip was too short to save.", reason, 0d, stoppedSeconds, 0d);
             return;
         }
+        if (stats.nightClassification != null && stats.nightClassification.optBoolean("custom_fallback_used", false)) {
+            recordDiagnostic(
+                "night_detection_fallback",
+                "Night detection used the custom fallback window.",
+                stats.nightClassification.optString("fallback_reason", "gps_coordinates_unavailable"),
+                stats.maxSpeedKmh,
+                stoppedSeconds,
+                maxDriftSinceStopM
+            );
+        }
 
         JSONObject trip = new JSONObject();
         String tripId = completedManualTrip && !completedManualTripId.trim().isEmpty()
@@ -1281,6 +1465,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             trip.put("max_speed_kmh", round(stats.maxSpeedKmh, 1));
             trip.put("idle_time_seconds", stats.idleSeconds);
             trip.put("night_driving", stats.nightDriving);
+            if (stats.nightClassification != null) {
+                trip.put("night_classification", stats.nightClassification);
+                trip.put("trip_timezone_id", stats.nightClassification.optString("timezone_id", ZoneId.systemDefault().getId()));
+                trip.put("trip_utc_offset_minutes", stats.nightClassification.optInt("utc_offset_minutes", 0));
+            }
             trip.put("route_points", PrivacyZoneChecker.redactRoutePoints(this, points));
             trip.put("motion_samples", motionSamples);
             trip.put("native_motion_sample_count", motionSamples.length());
@@ -1290,11 +1479,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             trip.put("score_overall", JSONObject.NULL);
             trip.put("score_safety", JSONObject.NULL);
             trip.put("score_smoothness", JSONObject.NULL);
-            trip.put("score_eco", JSONObject.NULL);
             trip.put("score_confidence_label", "unavailable");
             trip.put("score_safety_confidence", "unavailable");
             trip.put("score_smoothness_confidence", "unavailable");
-            trip.put("score_eco_confidence", "unavailable");
             trip.put("needs_rescore", true);
             trip.put("score_status", "pending_javascript_scoring");
             trip.put("harsh_brakes_count", 0);
@@ -1338,6 +1525,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
         boolean completedTripSaved = DriveSenseNativeTripStore.addCompletedTrip(this, trip);
         if (!completedTripSaved) {
+            pendingCompletedTrip = trip;
+            nextCompletedTripSaveRetryMs = System.currentTimeMillis() + COMPLETED_TRIP_SAVE_RETRY_MS;
             recordDiagnostic(
                 "trip_save_failed",
                 "Native trip ended but could not be queued for app recovery.",
@@ -1364,29 +1553,315 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             rawParkingEndpoint.optDouble("lat", Double.NaN),
             rawParkingEndpoint.optDouble("lng", Double.NaN)
         );
-        JSONObject parkedResolution = privateParkingEndpoint ? null : DriveSenseParkingResolver.resolve(points, endMs);
-        if (parkedResolution != null) {
+        JSONObject parkedResolution = isAdministrativeStopReason(reason) || privateParkingEndpoint
+            ? null
+            : DriveSenseParkingResolver.resolve(points, endMs, parkingSignals);
+        String parkingSource = tailTrim.removedPoints > 0
+            ? "native_trimmed_parked_tail"
+            : isParkedStopReason(reason) ? "native_parking_stop" : "native_trip_end";
+        if (isAdministrativeStopReason(reason)) {
+            // Disabling/restarting the tracking service is not evidence that the
+            // vehicle parked. Preserve the already-confirmed car location instead
+            // of replacing it with the phone's walking/shutdown endpoint.
+            recordDiagnostic(
+                "parking_update_ignored",
+                "Administrative tracking shutdown preserved the current parked car.",
+                reason,
+                stats.maxSpeedKmh,
+                stoppedSeconds,
+                maxDriftSinceStopM
+            );
+        } else if (parkedResolution != null && parkedResolution.has("ignored_reason")) {
+            recordDiagnostic(
+                "parking_update_ignored",
+                "Transient stop did not replace the current parked car.",
+                parkedResolution.optString("ignored_reason", "transient_stop"),
+                stats.maxSpeedKmh,
+                stoppedSeconds,
+                maxDriftSinceStopM
+            );
+        } else if (parkedResolution != null) {
             DriveSenseNativeTripStore.saveLastParkedLocation(
                 this,
                 parkedResolution.optDouble("lat"),
                 parkedResolution.optDouble("lng"),
                 endMs,
                 tripId,
-                tailTrim.removedPoints > 0
-                    ? "native_trimmed_parked_tail"
-                    : isParkedStopReason(reason) ? "native_parking_stop" : "native_trip_end",
+                parkingSource,
                 parkedResolution
             );
+            if (!privateParkingEndpoint) {
+                beginParkingRefinement(
+                    points,
+                    parkedResolution,
+                    parkingSignals,
+                    endMs,
+                    tripId,
+                    parkingSource,
+                    !keepArmed
+                );
+            }
         } else {
-            // A completed newer trip with no trustworthy endpoint must not leave an
-            // older parking spot looking current. This also fails closed when the
-            // true endpoint is inside a privacy zone, even if a cluster candidate
-            // just outside the zone would otherwise look accurate.
-            DriveSenseNativeTripStore.clearLastParkedLocation(this);
+            // Preserve the last safe public coordinate for recovery/history, but
+            // make the newest parking outcome authoritative. The widget can now
+            // distinguish a protected stop from a GPS result that needs review.
+            DriveSenseNativeTripStore.suppressLastParkedLocation(
+                this,
+                endMs,
+                tripId,
+                privateParkingEndpoint ? "privacy_zone" : "trip_end_unavailable"
+            );
         }
         candidateConfirmedMs = 0L;
         candidateNearParked = false;
         sendTripCompletedNotification(trip, stats);
+    }
+
+    private JSONObject buildParkingSignals(
+        String reason,
+        long stoppedSeconds,
+        double lastMovingSpeedKmh,
+        double gpsDriftM,
+        boolean manualEnd
+    ) {
+        JSONObject signals = new JSONObject();
+        try {
+            signals.put("stop_reason", reason == null ? "" : reason);
+            signals.put("stopped_seconds", Math.max(0L, stoppedSeconds));
+            signals.put("last_moving_speed_kmh", Math.max(0d, lastMovingSpeedKmh));
+            signals.put("gps_drift_m", Double.isFinite(gpsDriftM) ? gpsDriftM : JSONObject.NULL);
+            signals.put("activity_type", activityTypeName(lastActivityType));
+            signals.put("activity_confidence", Math.max(0, Math.min(100, lastActivityConfidence)));
+            signals.put("manual_end", manualEnd);
+            signals.put(
+                "vehicle_exit_transition",
+                lastVehicleExitTransitionMs >= activeStartMs && lastVehicleExitTransitionMs > 0L
+            );
+            signals.put(
+                "vehicle_disconnected",
+                lastVehicleDisconnectMs >= activeStartMs && lastVehicleDisconnectMs > 0L
+            );
+            signals.put("parking_learning_profile", readParkingLearningProfile());
+        } catch (JSONException ignored) {}
+        return signals;
+    }
+
+    private JSONObject readParkingLearningProfile() {
+        try {
+            String raw = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE)
+                .getString(PARKING_LEARNING_KEY, null);
+            return raw == null || raw.trim().isEmpty() ? new JSONObject() : new JSONObject(raw);
+        } catch (Exception ignored) {
+            return new JSONObject();
+        }
+    }
+
+    private static long parkingRefinementDurationMs(JSONObject signals) {
+        JSONObject profile = signals != null ? signals.optJSONObject("parking_learning_profile") : null;
+        long requested = profile != null ? profile.optLong("refinement_duration_ms", PARKING_REFINEMENT_WINDOW_MS) : PARKING_REFINEMENT_WINDOW_MS;
+        return Math.max(PARKING_REFINEMENT_WINDOW_MS, Math.min(60_000L, requested));
+    }
+
+    private static int parkingRefinementMaxFixes(JSONObject signals) {
+        JSONObject profile = signals != null ? signals.optJSONObject("parking_learning_profile") : null;
+        int requested = profile != null ? profile.optInt("refinement_max_fixes", PARKING_REFINEMENT_MAX_FIXES) : PARKING_REFINEMENT_MAX_FIXES;
+        return Math.max(PARKING_REFINEMENT_MAX_FIXES, Math.min(12, requested));
+    }
+
+    private void beginParkingRefinement(
+        JSONArray points,
+        JSONObject initialResolution,
+        JSONObject signals,
+        long parkingTimestampMs,
+        String tripId,
+        String source,
+        boolean stopServiceAfter
+    ) {
+        if (!hasLocationPermission() || points == null || initialResolution == null) return;
+        clearPendingParkingRefinement();
+        try {
+            pendingParkingRefinementPoints = new JSONArray(points.toString());
+        } catch (Exception ignored) {
+            pendingParkingRefinementPoints = points;
+        }
+        pendingParkingRefinementSignals = signals;
+        pendingParkingTimestampMs = parkingTimestampMs;
+        pendingParkingTripId = tripId == null ? "" : tripId;
+        pendingParkingSource = source == null ? "native_trip_end" : source;
+        pendingParkingAnchorLat = initialResolution.optDouble("lat", Double.NaN);
+        pendingParkingAnchorLng = initialResolution.optDouble("lng", Double.NaN);
+        pendingParkingRefinementFixCount = 0;
+        pendingParkingRefinementStopServiceAfter = stopServiceAfter;
+        pendingParkingRefinementDeadlineMs = System.currentTimeMillis() + parkingRefinementDurationMs(signals);
+        if (!startParkingRefinementLocationUpdates()) {
+            cancelParkingRefinement("location_permission_lost");
+            return;
+        }
+        updateNotification("Parked - refining location");
+        recordDiagnostic(
+            "parking_refinement_started",
+            "Collecting a short post-stop GPS cluster.",
+            "post_stop_refinement",
+            0d,
+            0L,
+            0d
+        );
+    }
+
+    private void recordParkingRefinementFix(Location location) {
+        if (pendingParkingRefinementPoints == null || location == null) return;
+        long nowMs = System.currentTimeMillis();
+        if (nowMs > pendingParkingRefinementDeadlineMs) {
+            finishParkingRefinement("window_complete");
+            return;
+        }
+        double speedKmh = location.hasSpeed() ? Math.max(0d, location.getSpeed() * 3.6d) : 0d;
+        if (speedKmh > PARKING_REFINEMENT_MOVING_SPEED_KMH) {
+            cancelParkingRefinement("vehicle_moved");
+            return;
+        }
+        double driftM = haversineKm(
+            pendingParkingAnchorLat,
+            pendingParkingAnchorLng,
+            location.getLatitude(),
+            location.getLongitude()
+        ) * 1000d;
+        if (!Double.isFinite(driftM) || driftM > PARKING_REFINEMENT_MAX_DRIFT_M) {
+            cancelParkingRefinement("location_drifted");
+            return;
+        }
+        if (PrivacyZoneChecker.isInsidePrivacyZone(
+            this,
+            location.getLatitude(),
+            location.getLongitude()
+        )) {
+            DriveSenseNativeTripStore.suppressLastParkedLocation(
+                this,
+                pendingParkingTimestampMs,
+                pendingParkingTripId,
+                "privacy_zone"
+            );
+            cancelParkingRefinement("privacy_zone");
+            return;
+        }
+
+        JSONObject point = locationToJson(location, speedKmh);
+        try {
+            point.put("parking_refinement", true);
+        } catch (JSONException ignored) {}
+        pendingParkingRefinementPoints.put(point);
+        pendingParkingRefinementFixCount++;
+        if (
+            pendingParkingRefinementFixCount >= parkingRefinementMaxFixes(pendingParkingRefinementSignals) ||
+            nowMs >= pendingParkingRefinementDeadlineMs
+        ) {
+            finishParkingRefinement("fix_target_reached");
+        }
+    }
+
+    private void finishParkingRefinement(String reason) {
+        if (pendingParkingRefinementPoints == null) return;
+        if (pendingParkingRefinementFixCount <= 0) {
+            cancelParkingRefinement("no_refinement_fixes");
+            return;
+        }
+        JSONObject resolution = DriveSenseParkingResolver.resolve(
+            pendingParkingRefinementPoints,
+            System.currentTimeMillis(),
+            pendingParkingRefinementSignals
+        );
+        if (resolution != null && resolution.has("ignored_reason")) {
+            recordDiagnostic(
+                "parking_refinement_ignored",
+                "Post-stop fixes still looked like a transient vehicle stop.",
+                resolution.optString("ignored_reason", "transient_stop"),
+                0d,
+                pendingParkingRefinementFixCount,
+                0d
+            );
+        } else if (resolution != null) {
+            DriveSenseNativeTripStore.saveLastParkedLocation(
+                this,
+                resolution.optDouble("lat", Double.NaN),
+                resolution.optDouble("lng", Double.NaN),
+                pendingParkingTimestampMs,
+                pendingParkingTripId,
+                pendingParkingSource + "_refined",
+                resolution
+            );
+            recordDiagnostic(
+                "parking_refinement_completed",
+                "Parking location confidence updated from post-stop fixes.",
+                reason,
+                0d,
+                pendingParkingRefinementFixCount,
+                resolution.optDouble("spread_m", 0d)
+            );
+        } else {
+            recordDiagnostic(
+                "parking_refinement_unavailable",
+                "Post-stop fixes did not form a trustworthy parking cluster.",
+                reason,
+                0d,
+                pendingParkingRefinementFixCount,
+                0d
+            );
+        }
+        boolean stopServiceAfter = pendingParkingRefinementStopServiceAfter;
+        clearPendingParkingRefinement();
+        completeParkingRefinementLifecycle(stopServiceAfter);
+    }
+
+    private void cancelParkingRefinement(String reason) {
+        if (pendingParkingRefinementPoints == null) return;
+        recordDiagnostic(
+            "parking_refinement_cancelled",
+            "Post-stop parking refinement stopped.",
+            reason,
+            0d,
+            pendingParkingRefinementFixCount,
+            0d
+        );
+        boolean stopServiceAfter = pendingParkingRefinementStopServiceAfter;
+        clearPendingParkingRefinement();
+        completeParkingRefinementLifecycle(stopServiceAfter);
+    }
+
+    private boolean startParkingRefinementLocationUpdates() {
+        if (!hasLocationPermission()) return false;
+        stopLocationUpdates();
+        LocationRequest request = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000L)
+            .setMinUpdateIntervalMillis(1_000L)
+            .build();
+        try {
+            locationClient.requestLocationUpdates(request, locationCallback, getMainLooper());
+            return true;
+        } catch (SecurityException ignored) {
+            return false;
+        }
+    }
+
+    private void completeParkingRefinementLifecycle(boolean stopServiceAfter) {
+        if (stopServiceAfter || !DriveSenseNativeTripStore.isServiceEnabled(this)) {
+            stopLocationUpdates();
+            stopSelf();
+            return;
+        }
+        startArmedLocationUpdates();
+        updateNotification("Parked - waiting for movement");
+    }
+
+    private void clearPendingParkingRefinement() {
+        pendingParkingRefinementPoints = null;
+        pendingParkingRefinementSignals = null;
+        pendingParkingRefinementDeadlineMs = 0L;
+        pendingParkingTimestampMs = 0L;
+        pendingParkingTripId = "";
+        pendingParkingSource = "";
+        pendingParkingAnchorLat = Double.NaN;
+        pendingParkingAnchorLng = Double.NaN;
+        pendingParkingRefinementFixCount = 0;
+        pendingParkingRefinementStopServiceAfter = false;
     }
 
     private TripStats calculateStats(JSONArray points, long startMs, long endMs) {
@@ -1395,7 +1870,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         stats.durationSeconds = stats.wallClockDurationSeconds;
         if (points == null || points.length() < 2) return stats;
         NightSettings nightSettings = readNightSettings();
-        stats.nightDriving = isTripNightDriving(points, nightSettings);
+        NightClassificationResult nightClassification = classifyTripNightDriving(points, nightSettings);
+        stats.nightDriving = nightClassification.isNight;
+        stats.nightClassification = nightClassification.metadata;
 
         for (int i = 1; i < points.length(); i++) {
             JSONObject prev = points.optJSONObject(i - 1);
@@ -1913,6 +2390,30 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         });
     }
 
+    private boolean retryPendingCompletedTripSave(boolean force) {
+        if (pendingCompletedTrip == null) return true;
+        long nowMs = System.currentTimeMillis();
+        if (!force && nowMs < nextCompletedTripSaveRetryMs) return false;
+        if (!DriveSenseNativeTripStore.addCompletedTrip(this, pendingCompletedTrip)) {
+            nextCompletedTripSaveRetryMs = nowMs + COMPLETED_TRIP_SAVE_RETRY_MS;
+            updateNotification("Previous trip recovery pending - open Road Sage");
+            return false;
+        }
+        pendingCompletedTrip = null;
+        nextCompletedTripSaveRetryMs = 0L;
+        DriveSenseActiveTripCheckpointStore.clear(this);
+        recordDiagnostic(
+            "trip_save_recovered",
+            "Previous trip was safely queued after a storage retry.",
+            "completed_trip_retry",
+            0d,
+            0L,
+            0d
+        );
+        updateNotification("Previous trip recovered - ready for movement");
+        return true;
+    }
+
     private boolean isNativeVoiceAlertTypeEnabled(String alertKey) {
         if (!isSettingEnabled("voice_alerts_enabled", true)) return false;
         String key = alertKey == null ? "" : alertKey.trim().toLowerCase(Locale.US);
@@ -1978,7 +2479,12 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (message.startsWith("Sharp cornering detected.") || message.startsWith("Cornering threshold")) return "sharp_cornering";
         if (message.startsWith("Attention pattern recorded.")) return "heading_drift";
         if (message.startsWith("GPS heading pattern")) return "heading_drift";
-        if (message.startsWith("Phone use detected.") || message.startsWith("Phone-use window")) return "phone_use";
+        if (
+            message.startsWith("Phone use detected.") ||
+            message.startsWith("Phone-use window") ||
+            message.startsWith("Phone activity detected.") ||
+            message.startsWith("Foreground phone activity")
+        ) return "phone_use";
         if (message.startsWith("Possible incident signal recorded.")) return "possible_incident";
         return "native_voice_alert";
     }
@@ -2031,8 +2537,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                     : "Attention pattern recorded. Keep your eyes up and plan a break if you feel tired.";
             case "phone_use":
                 return technical
-                    ? "Phone-use window detected from Android Usage Access."
-                    : "Phone use detected. Keep your eyes up. Handle the phone only when parked.";
+                    ? "Foreground phone activity detected from Android Usage Access."
+                    : "Phone activity detected. Eyes on the road. Review it when parked.";
             default:
                 return technical ? "Telemetry alert recorded." : "Safety alert. Check Road Sage when it is safe to do so.";
         }
@@ -2130,7 +2636,24 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             String raw = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE)
                 .getString(DANGER_ZONES_KEY, null);
             if (raw == null || raw.trim().isEmpty()) return;
-            JSONArray zones = new JSONArray(raw);
+            JSONArray zones;
+            String trimmed = raw.trim();
+            if (trimmed.startsWith("{")) {
+                JSONObject encrypted = new JSONObject(trimmed);
+                if (!encrypted.optBoolean("encrypted", false)) return;
+                String ciphertext = encrypted.optString("ciphertext", "");
+                int keyVersion = encrypted.optInt("key_version", 0);
+                if (ciphertext.isEmpty() || keyVersion <= 0) return;
+                String plaintext = DriveSensePayloadCrypto.decrypt(
+                    ciphertext,
+                    "storage:" + DANGER_ZONES_KEY,
+                    keyVersion
+                );
+                zones = new JSONArray(plaintext);
+            } else {
+                // Legacy plaintext is accepted until the JS lazy migration rewrites it.
+                zones = new JSONArray(trimmed);
+            }
             JSONObject nearest = null;
             double nearestDistanceM = Double.POSITIVE_INFINITY;
             for (int i = 0; i < zones.length(); i++) {
@@ -2175,39 +2698,71 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private String nativeSpeedAlertMessage(double speedKmh, double speedLimitKmh, boolean postedLimit, boolean estimatedLimit) {
-        boolean technical = isTechnicalVoiceAlertStyle();
+        return nativeSpeedAlertMessage(
+            speedKmh,
+            speedLimitKmh,
+            postedLimit,
+            estimatedLimit,
+            isTechnicalVoiceAlertStyle(),
+            getSettingString("units", "metric")
+        );
+    }
+
+    static String nativeSpeedAlertMessage(
+        double speedKmh,
+        double speedLimitKmh,
+        boolean postedLimit,
+        boolean estimatedLimit,
+        boolean technical,
+        String units
+    ) {
+        boolean imperial = "imperial".equalsIgnoreCase(units == null ? "" : units.trim());
+        long displaySpeed = Math.round(imperial ? speedKmh * 0.621371d : speedKmh);
+        long displayLimit = Math.round(imperial ? speedLimitKmh * 0.621371d : speedLimitKmh);
+        String technicalUnit = imperial ? "mph" : "km/h";
+        String spokenUnit = imperial ? "miles per hour" : "kilometers per hour";
         if (technical) {
             if (postedLimit || estimatedLimit) {
                 return String.format(
                     Locale.US,
-                    "Speed threshold exceeded: %d km/h in %s %d km/h zone.",
-                    Math.round(speedKmh),
+                    "Speed threshold exceeded: %d %s in %s %d %s zone.",
+                    displaySpeed,
+                    technicalUnit,
                     postedLimit ? "posted" : "estimated",
-                    Math.round(speedLimitKmh)
+                    displayLimit,
+                    technicalUnit
                 );
             }
-            return String.format(Locale.US, "Speed threshold exceeded: %d km/h.", Math.round(speedKmh));
+            return String.format(
+                Locale.US,
+                "Speed threshold exceeded: %d %s.",
+                displaySpeed,
+                technicalUnit
+            );
         }
         if (postedLimit) {
             return String.format(
                 Locale.US,
-                "Speed warning. You are at %d in a posted %d kilometer per hour zone. Ease off smoothly.",
-                Math.round(speedKmh),
-                Math.round(speedLimitKmh)
+                "Speed warning. You are at %d in a posted %d %s zone. Ease off smoothly.",
+                displaySpeed,
+                displayLimit,
+                spokenUnit
             );
         }
         if (estimatedLimit) {
             return String.format(
                 Locale.US,
-                "Speed check. You are at %d in an estimated %d kilometer per hour zone. Check posted signs.",
-                Math.round(speedKmh),
-                Math.round(speedLimitKmh)
+                "Speed check. You are at %d in an estimated %d %s zone. Check posted signs.",
+                displaySpeed,
+                displayLimit,
+                spokenUnit
             );
         }
         return String.format(
             Locale.US,
-            "Speed check. You are driving %d kilometers per hour. Ease off and check posted signs.",
-            Math.round(speedKmh)
+            "Speed check. You are driving %d %s. Ease off and check posted signs.",
+            displaySpeed,
+            spokenUnit
         );
     }
 
@@ -2407,10 +2962,28 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     @Nullable
     private NativeSpeedLimit resolveLocalSpeedLimit(double lat, double lng, double headingDeg, long nowMs) {
         try {
-            String raw = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE)
-                .getString(SPEED_KNOWLEDGE_KEY, null);
-            if (raw == null || raw.trim().isEmpty()) return null;
-            return findLocalSpeedLimit(new JSONObject(raw), lat, lng, headingDeg, nowMs);
+            SharedPreferences preferences = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE);
+            String mirrorRaw = preferences.getString(SPEED_KNOWLEDGE_KEY, null);
+            boolean mirrorPresent = preferences.contains(SPEED_KNOWLEDGE_KEY);
+            // This is a one-way migration marker. Presence alone is enough to
+            // block legacy fallback, even if its stored value is damaged.
+            boolean mirrorInitialized = preferences.contains(SPEED_KNOWLEDGE_MIRROR_INITIALIZED_KEY);
+            // Package replacement can restart this service before the WebView has
+            // migrated the previous release's mirror. Read the old key only when
+            // the new mirror is genuinely absent; a present but malformed mirror
+            // must fail closed instead of silently falling back to stale data.
+            String legacyRaw = mirrorPresent || mirrorInitialized
+                ? null
+                : preferences.getString(LEGACY_SPEED_KNOWLEDGE_KEY, null);
+            StoredSpeedKnowledgeSelection selected = selectStoredSpeedKnowledgePayload(
+                mirrorRaw,
+                legacyRaw,
+                mirrorInitialized
+            );
+            if (selected == null) return null;
+            JSONObject data = parseStoredSpeedKnowledge(selected.raw, selected.storageKey);
+            if (data == null) return null;
+            return findLocalSpeedLimit(data, lat, lng, headingDeg, nowMs);
         } catch (Exception error) {
             recordDiagnostic(
                 "local_speed_lookup_failed",
@@ -2431,27 +3004,62 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     @Nullable
     static NativeSpeedLimit findLocalSpeedLimit(JSONObject data, double lat, double lng, double headingDeg, long nowMs) {
+        return findLocalSpeedLimit(data, lat, lng, headingDeg, nowMs, null);
+    }
+
+    @Nullable
+    static NativeSpeedLimit findLocalSpeedLimit(
+        JSONObject data,
+        double lat,
+        double lng,
+        double headingDeg,
+        long nowMs,
+        @Nullable Integer utcOffsetMinutes
+    ) {
         if (data == null || !Double.isFinite(lat) || !Double.isFinite(lng)) return null;
+        if (matchesExcludedSpeedSection(data, lat, lng, headingDeg, nowMs, utcOffsetMinutes)) return null;
         JSONArray corrections = data.optJSONArray("corrections");
-        if (corrections == null) return null;
+        if (corrections == null) corrections = new JSONArray();
 
         NativeSpeedLimitMatch bestMatch = null;
         long bestAppliedAtMs = Long.MIN_VALUE;
+        int bestAuthority = Integer.MAX_VALUE;
+        int bestSpecificity = Integer.MIN_VALUE;
         for (int index = 0; index < corrections.length(); index++) {
             JSONObject correction = corrections.optJSONObject(index);
             if (correction == null) continue;
             double limitKmh = correction.optDouble("limitKmh", Double.NaN);
             String geohash = correction.optString("geohash", "");
-            if (!Double.isFinite(limitKmh) || limitKmh <= 0d || geohash.isEmpty()) continue;
+            JSONArray sectionPoints = correction.optJSONArray("sectionPoints");
+            boolean hasSection = hasUsableTracedSection(sectionPoints);
+            if (!plausibleSavedSpeedLimit(limitKmh) || !hasSection) continue;
 
-            long expiresAtMs = parseIsoEpochMs(correction.optString("expiresAt", ""));
-            if (expiresAtMs > 0L && expiresAtMs <= nowMs) continue;
-            NativeSpeedLimitMatch match = correctionLocationMatch(correction, geohash, lat, lng, headingDeg, nowMs);
+            if (!correctionEffectiveAt(correction, nowMs)) continue;
+            NativeSpeedLimitMatch match = correctionLocationMatch(
+                correction,
+                geohash,
+                lat,
+                lng,
+                headingDeg,
+                nowMs,
+                utcOffsetMinutes
+            );
             if (match == null) continue;
 
             long appliedAtMs = parseIsoEpochMs(correction.optString("appliedAt", ""));
+            int authority = correctionAuthorityRank(correction);
+            int specificity = correctionSpecificity(correction);
             if (bestMatch != null) {
-                int comparison = compareSpeedLimitMatches(match, appliedAtMs, bestMatch, bestAppliedAtMs);
+                int comparison = compareSpeedLimitMatches(
+                    match,
+                    authority,
+                    specificity,
+                    appliedAtMs,
+                    bestMatch,
+                    bestAuthority,
+                    bestSpecificity,
+                    bestAppliedAtMs
+                );
                 if (comparison >= 0) continue;
             }
             String source = "user_confirmed_posted_sign".equals(correction.optString("source", ""))
@@ -2460,17 +3068,320 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             match.speedLimit = new NativeSpeedLimit(limitKmh, source);
             bestMatch = match;
             bestAppliedAtMs = appliedAtMs;
+            bestAuthority = authority;
+            bestSpecificity = specificity;
         }
-        return bestMatch == null ? null : bestMatch.speedLimit;
-    }
+        if (bestMatch != null) return bestMatch.speedLimit;
 
-    static boolean correctionMatchesLocation(JSONObject correction, String geohash, double lat, double lng, double headingDeg, long nowMs) {
-        return correctionLocationMatch(correction, geohash, lat, lng, headingDeg, nowMs) != null;
+        JSONObject roadMemory = data.optJSONObject("roadMemory");
+        JSONArray candidates = roadMemory == null ? null : roadMemory.optJSONArray("candidates");
+        NativeSpeedLimitMatch bestCandidateMatch = null;
+        double bestCandidateConfidence = Double.NEGATIVE_INFINITY;
+        int bestCandidateTripCount = -1;
+        if (candidates != null) {
+            for (int index = 0; index < candidates.length(); index++) {
+                JSONObject candidate = candidates.optJSONObject(index);
+                if (candidate == null || !roadMemoryCandidateEligible(candidate, nowMs)) continue;
+                double limitKmh = roadMemoryLimitAt(candidate, nowMs, utcOffsetMinutes);
+                String geohash = candidate.optString("geohash", "");
+                JSONArray sectionPoints = candidate.optJSONArray("sectionPoints");
+                boolean hasSection = hasUsableTracedSection(sectionPoints);
+                if (!plausibleSavedSpeedLimit(limitKmh) || !hasSection) continue;
+                NativeSpeedLimitMatch match = correctionLocationMatch(
+                    candidate,
+                    geohash,
+                    lat,
+                    lng,
+                    headingDeg,
+                    nowMs,
+                    utcOffsetMinutes
+                );
+                if (match == null) continue;
+                double confidence = roadMemoryCandidateCurrentConfidence(candidate, nowMs);
+                int tripCount = candidate.optInt("tripCount", 0);
+                if (bestCandidateMatch == null ||
+                    confidence > bestCandidateConfidence ||
+                    (confidence == bestCandidateConfidence && tripCount > bestCandidateTripCount) ||
+                    (confidence == bestCandidateConfidence && tripCount == bestCandidateTripCount &&
+                        match.distanceKm < bestCandidateMatch.distanceKm)) {
+                    match.speedLimit = new NativeSpeedLimit(limitKmh, "local_road_memory");
+                    bestCandidateMatch = match;
+                    bestCandidateConfidence = confidence;
+                    bestCandidateTripCount = tripCount;
+                }
+            }
+        }
+        if (bestCandidateMatch != null) return bestCandidateMatch.speedLimit;
+
+        // Road Memory carries corridor geometry and direction evidence, while
+        // a learned cell is only a coarse fallback. This ordering prevents a
+        // cell learned on a parallel road from overriding a matched corridor.
+        return findEligibleLocalSpeedCell(data, lat, lng, nowMs);
     }
 
     @Nullable
-    private static NativeSpeedLimitMatch correctionLocationMatch(JSONObject correction, String geohash, double lat, double lng, double headingDeg, long nowMs) {
-        if (!correctionActiveAt(correction, nowMs)) return null;
+    private static NativeSpeedLimit findEligibleLocalSpeedCell(
+        JSONObject data,
+        double lat,
+        double lng,
+        long timestampMs
+    ) {
+        JSONObject cells = data == null ? null : data.optJSONObject("cells");
+        if (cells == null) return null;
+        int[] precisions = {
+            SPEED_KNOWLEDGE_GEOHASH_PRECISION,
+            SPEED_KNOWLEDGE_FALLBACK_GEOHASH_PRECISION,
+        };
+        for (int precision : precisions) {
+            String geohash = geohashEncode(lat, lng, precision);
+            JSONObject cell = cells.optJSONObject(geohash);
+            if (!nativeSpeedCellEligible(cell, timestampMs)) continue;
+            return new NativeSpeedLimit(
+                cell.optDouble("limitKmh", Double.NaN),
+                cell.optString("source", "trip_consensus")
+            );
+        }
+        return null;
+    }
+
+    private static boolean nativeSpeedCellEligible(@Nullable JSONObject cell, long timestampMs) {
+        if (cell == null || timestampMs < 0L) return false;
+        double limitKmh = cell.optDouble("limitKmh", Double.NaN);
+        String source = cell.optString("source", "");
+        if (!plausibleSavedSpeedLimit(limitKmh) || !nativeSpeedCellSourceAllowed(source)) return false;
+        if (
+            "trip_consensus".equals(source) &&
+            nativeSpeedCellIndependentTripCount(cell) < SPEED_KNOWLEDGE_MIN_TRIP_CONSENSUS_EVIDENCE
+        ) return false;
+        if (cell.optBoolean("conflict", false)) return false;
+        Object conflictDetails = cell.opt("conflictDetails");
+        if (conflictDetails != null && conflictDetails != JSONObject.NULL &&
+            !(conflictDetails instanceof String && ((String) conflictDetails).isEmpty())) return false;
+
+        double confidence = cell.has("confidence")
+            ? cell.optDouble("confidence", Double.NaN)
+            : nativeSpeedCellDefaultConfidence(source);
+        if (!Double.isFinite(confidence) || confidence < 0.55d) return false;
+
+        Object rawExpiry = cell.opt("expiresAt");
+        Long expiresAtMs = parseFlexibleEpochMsOrNull(rawExpiry);
+        if (expiresAtMs != null && expiresAtMs <= timestampMs) return false;
+
+        Object rawVerifiedAt = firstPresentJsonValue(
+            cell,
+            "verifiedAt",
+            "lastVerifiedAt",
+            "appliedAt",
+            "lastUpdatedAt",
+            "speed_limit_verified_at"
+        );
+        Long verifiedAtMs = parseFlexibleEpochMsOrNull(rawVerifiedAt);
+        if (verifiedAtMs != null) {
+            long ageMs = Math.max(0L, timestampMs - verifiedAtMs);
+            long ageDays = (long) Math.floor(ageMs / (24d * 60d * 60d * 1000d));
+            if (ageDays > nativeSpeedCellReviewDays(source)) return false;
+        }
+        return true;
+    }
+
+    private static int nativeSpeedCellIndependentTripCount(JSONObject cell) {
+        Set<String> independentIds = new HashSet<>();
+        JSONArray rawIds = cell.optJSONArray("tripEvidenceIds");
+        if (rawIds != null) {
+            for (int index = 0; index < rawIds.length(); index++) {
+                String value = rawIds.optString(index, "").trim();
+                if (!value.isEmpty()) independentIds.add(value);
+            }
+        }
+        int tripCount = Math.max(0, cell.optInt("tripCount", 0));
+        int evidenceCount = Math.max(0, cell.optInt("evidenceCount", 0));
+        return Math.max(independentIds.size(), Math.min(tripCount, evidenceCount));
+    }
+
+    private static boolean nativeSpeedCellSourceAllowed(String source) {
+        return "trip_consensus".equals(source) ||
+            "user_confirmed_posted_sign".equals(source) ||
+            "user_entered_estimate".equals(source) ||
+            "user_correction".equals(source) ||
+            "openstreetmap".equals(source);
+    }
+
+    private static double nativeSpeedCellDefaultConfidence(String source) {
+        if ("user_confirmed_posted_sign".equals(source)) return 0.92d;
+        if ("openstreetmap".equals(source)) return 0.90d;
+        if ("user_entered_estimate".equals(source) || "user_correction".equals(source)) return 0.75d;
+        if ("trip_consensus".equals(source)) return 0.68d;
+        return 0d;
+    }
+
+    private static int nativeSpeedCellReviewDays(String source) {
+        if ("user_confirmed_posted_sign".equals(source)) return 365;
+        if ("openstreetmap".equals(source)) return 270;
+        if ("user_entered_estimate".equals(source) || "user_correction".equals(source)) return 120;
+        if ("trip_consensus".equals(source)) return 90;
+        return 0;
+    }
+
+    @Nullable
+    private static Object firstPresentJsonValue(JSONObject value, String... keys) {
+        if (value == null || keys == null) return null;
+        for (String key : keys) {
+            Object candidate = value.opt(key);
+            if (candidate != null && candidate != JSONObject.NULL) return candidate;
+        }
+        return null;
+    }
+
+    private static boolean matchesExcludedSpeedSection(
+        JSONObject data,
+        double lat,
+        double lng,
+        double headingDeg,
+        long timestampMs,
+        @Nullable Integer utcOffsetMinutes
+    ) {
+        JSONArray exclusions = data == null ? null : data.optJSONArray("excludedSections");
+        if (exclusions == null) return false;
+        for (int index = 0; index < exclusions.length(); index++) {
+            JSONObject exclusion = exclusions.optJSONObject(index);
+            if (exclusion == null || exclusion.optBoolean("active", true) == false) continue;
+            String geohash = exclusion.optString("geohash", "");
+            JSONArray sectionPoints = exclusion.optJSONArray("sectionPoints");
+            boolean hasSection = sectionPoints != null && sectionPoints.length() >= 2;
+            if (geohash.isEmpty() && !hasSection) continue;
+            NativeSpeedLimitMatch match = correctionLocationMatch(
+                exclusion,
+                geohash,
+                lat,
+                lng,
+                headingDeg,
+                timestampMs,
+                utcOffsetMinutes
+            );
+            if (match != null) return true;
+        }
+        return false;
+    }
+
+    private static boolean roadMemoryCandidateEligible(JSONObject candidate, long nowMs) {
+        if (candidate == null || nowMs <= 0L) return false;
+        boolean hasResolverContract = candidate.has("canAffectScoreAndAlerts") || candidate.has("evidenceConfidence");
+        if (hasResolverContract) {
+            if (!candidate.optBoolean("canAffectScoreAndAlerts", false) ||
+                !candidate.optBoolean("active", true) ||
+                candidate.optInt("tripCount", 0) < 4 ||
+                !"operational".equals(candidate.optString("stage", "operational"))) return false;
+            return roadMemoryCandidateEffectiveConfidence(candidate, nowMs) >= 0.64d;
+        }
+
+        // Backward compatibility for mirrors written by pre-contract builds.
+        if (!candidate.optBoolean("intelligenceValidated", false) ||
+            !candidate.optBoolean("active", true) ||
+            candidate.optInt("tripCount", 0) < 3 ||
+            !"operational".equals(candidate.optString("stage", "operational"))) return false;
+        return roadMemoryCandidateCurrentConfidence(candidate, nowMs) >= 0.62d;
+    }
+
+    private static double roadMemoryCandidateEffectiveConfidence(JSONObject candidate, long nowMs) {
+        long observedAtMs = latestRoadMemoryObservationMs(candidate);
+        if (observedAtMs <= 0L) return 0d;
+        long ageMs = Math.max(0L, nowMs - observedAtMs);
+        if (ageMs > 120L * 24L * 60L * 60L * 1000L) return 0d;
+        double ageDays = ageMs / (24d * 60d * 60d * 1000d);
+        double confidenceDecay = ageDays <= 45d ? 0d : Math.min(0.24d, (ageDays - 45d) * 0.0025d);
+        double evidenceConfidence = candidate.has("evidenceConfidence")
+            ? candidate.optDouble("evidenceConfidence", 0d)
+            : candidate.optDouble("confidence", 0d);
+        double effective = Math.max(0d, Math.min(1d, evidenceConfidence - confidenceDecay));
+        return Math.round(effective * 100d) / 100d;
+    }
+
+    private static double roadMemoryCandidateCurrentConfidence(JSONObject candidate, long nowMs) {
+        double effectiveConfidence = roadMemoryCandidateEffectiveConfidence(candidate, nowMs);
+        if (candidate.has("confidenceCalibrationFactor")) {
+            double factor = Math.max(0d, Math.min(1d, candidate.optDouble("confidenceCalibrationFactor", 1d)));
+            double calibrated = Math.round(effectiveConfidence * factor * 100d) / 100d;
+            return Math.min(effectiveConfidence, calibrated);
+        }
+        if (candidate.has("evidenceConfidence")) {
+            double storedEvidence = Math.max(0.0001d, candidate.optDouble("evidenceConfidence", 0d));
+            double storedCalibrated = Math.max(0d, candidate.optDouble("confidence", storedEvidence));
+            double inferredFactor = Math.max(0d, Math.min(1d, storedCalibrated / storedEvidence));
+            double calibrated = Math.round(effectiveConfidence * inferredFactor * 100d) / 100d;
+            return Math.min(effectiveConfidence, calibrated);
+        }
+        return effectiveConfidence;
+    }
+
+    private static long latestRoadMemoryObservationMs(JSONObject candidate) {
+        long observedAtMs = Math.max(
+            parseIsoEpochMs(candidate.optString("firstObservedAt", "")),
+            parseIsoEpochMs(candidate.optString("lastObservedAt", ""))
+        );
+        JSONArray recent = candidate.optJSONArray("recentObservations");
+        if (recent != null) {
+            for (int index = 0; index < recent.length(); index++) {
+                JSONObject observation = recent.optJSONObject(index);
+                if (observation == null) continue;
+                observedAtMs = Math.max(
+                    observedAtMs,
+                    parseIsoEpochMs(observation.optString("observedAt", ""))
+                );
+            }
+        }
+        return observedAtMs;
+    }
+
+    private static double roadMemoryLimitAt(JSONObject candidate, long nowMs, @Nullable Integer utcOffsetMinutes) {
+        double fallback = candidate == null ? Double.NaN : candidate.optDouble("limitKmh", Double.NaN);
+        if (candidate == null || nowMs <= 0L) return fallback;
+        JSONArray profiles = candidate.optJSONArray("timeProfiles");
+        boolean profilesAccepted = !candidate.optString("timeProfilesAcceptedAt", "").trim().isEmpty() ||
+            "time_profiles_accepted".equals(candidate.optString("reviewState", ""));
+        if (!profilesAccepted || profiles == null) return fallback;
+        String bucket = roadMemoryTimeBucket(nowMs, utcOffsetMinutes);
+        for (int index = 0; index < profiles.length(); index++) {
+            JSONObject profile = profiles.optJSONObject(index);
+            if (profile == null ||
+                !profile.optBoolean("eligible", false) ||
+                !bucket.equals(profile.optString("bucket", ""))) continue;
+            double limitKmh = profile.optDouble("limitKmh", Double.NaN);
+            if (plausibleSavedSpeedLimit(limitKmh)) return limitKmh;
+        }
+        return fallback;
+    }
+
+    private static boolean plausibleSavedSpeedLimit(double limitKmh) {
+        return Double.isFinite(limitKmh) && limitKmh > 0d && limitKmh <= SPEED_KNOWLEDGE_MAX_LIMIT_KMH;
+    }
+
+    private static String roadMemoryTimeBucket(long nowMs, @Nullable Integer utcOffsetMinutes) {
+        LocalDateTime date = localDateTimeAt(nowMs, utcOffsetMinutes);
+        int hour = date.getHour();
+        boolean weekday = date.getDayOfWeek().getValue() >= 1 && date.getDayOfWeek().getValue() <= 5;
+        if (hour < 5) return "overnight";
+        if (weekday && hour >= 6 && hour < 10) return "weekday_morning";
+        if (weekday && hour >= 15 && hour < 19) return "weekday_evening";
+        return "other_times";
+    }
+
+    static boolean correctionMatchesLocation(JSONObject correction, String geohash, double lat, double lng, double headingDeg, long nowMs) {
+        return correctionEffectiveAt(correction, nowMs) &&
+            correctionLocationMatch(correction, geohash, lat, lng, headingDeg, nowMs, null) != null;
+    }
+
+    @Nullable
+    private static NativeSpeedLimitMatch correctionLocationMatch(
+        JSONObject correction,
+        String geohash,
+        double lat,
+        double lng,
+        double headingDeg,
+        long nowMs,
+        @Nullable Integer utcOffsetMinutes
+    ) {
+        if (!correctionQualifierSemanticsValid(correction)) return null;
+        if (!correctionActiveAt(correction, nowMs, utcOffsetMinutes)) return null;
         if (!correctionMatchesDirection(correction, headingDeg)) return null;
         JSONArray sectionPoints = correction == null ? null : correction.optJSONArray("sectionPoints");
         double headingDeltaDeg = correctionHeadingDelta(correction, headingDeg);
@@ -2500,10 +3411,18 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     private static int compareSpeedLimitMatches(
         NativeSpeedLimitMatch candidate,
+        int candidateAuthority,
+        int candidateSpecificity,
         long candidateAppliedAtMs,
         NativeSpeedLimitMatch current,
+        int currentAuthority,
+        int currentSpecificity,
         long currentAppliedAtMs
     ) {
+        int authorityComparison = Integer.compare(candidateAuthority, currentAuthority);
+        if (authorityComparison != 0) return authorityComparison;
+        int specificityComparison = Integer.compare(currentSpecificity, candidateSpecificity);
+        if (specificityComparison != 0) return specificityComparison;
         int headingComparison = Double.compare(sortableMatchValue(candidate.headingDeltaDeg), sortableMatchValue(current.headingDeltaDeg));
         if (headingComparison != 0) return headingComparison;
         int distanceComparison = Double.compare(sortableMatchValue(candidate.distanceKm), sortableMatchValue(current.distanceKm));
@@ -2515,36 +3434,147 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         return Double.isFinite(value) ? value : Double.MAX_VALUE;
     }
 
-    private static boolean correctionActiveAt(@Nullable JSONObject correction, long nowMs) {
-        JSONObject rule = correction == null ? null : correction.optJSONObject("timeRule");
-        if (rule == null || !rule.optBoolean("enabled", false)) return true;
-        if (nowMs <= 0L) return false;
-        LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli(nowMs), ZoneId.systemDefault());
-        int jsDay = date.getDayOfWeek().getValue() % 7;
+    private static int correctionAuthorityRank(@Nullable JSONObject correction) {
+        return correction != null && "user_confirmed_posted_sign".equals(correction.optString("source", "")) ? 0 : 1;
+    }
+
+    private static int correctionSpecificity(@Nullable JSONObject correction) {
+        if (correction == null) return 0;
+        String mode = correction.optString("directionMode", "both");
+        int directionScore = "forward".equals(mode) || "reverse".equals(mode) ? 2 : 0;
+        JSONObject rule = correction.optJSONObject("timeRule");
+        return directionScore + (rule != null && rule.optBoolean("enabled", false) ? 1 : 0);
+    }
+
+    private static boolean correctionEffectiveAt(@Nullable JSONObject correction, long timestampMs) {
+        if (correction == null || timestampMs < 0L) return false;
+        Object rawValidFrom = correction.has("validFrom")
+            ? correction.opt("validFrom")
+            : correction.opt("valid_from");
+        Object rawExpiresAt = correction.opt("expiresAt");
+        boolean hasValidFrom = hasTimestampValue(rawValidFrom);
+        boolean hasExpiresAt = hasTimestampValue(rawExpiresAt);
+        Long validFromMs = parseFlexibleEpochMsOrNull(rawValidFrom);
+        Long expiresAtMs = parseFlexibleEpochMsOrNull(rawExpiresAt);
+        // A malformed validity boundary must fail closed instead of silently
+        // turning a temporary rule into an all-time rule.
+        if (hasValidFrom && validFromMs == null) return false;
+        if (hasExpiresAt && expiresAtMs == null) return false;
+        if (validFromMs != null && timestampMs < validFromMs) return false;
+        return expiresAtMs == null || timestampMs < expiresAtMs;
+    }
+
+    private static boolean correctionActiveAt(
+        @Nullable JSONObject correction,
+        long nowMs,
+        @Nullable Integer utcOffsetMinutes
+    ) {
+        Object rawRule = correction == null ? null : correction.opt("timeRule");
+        if (rawRule == null || rawRule == JSONObject.NULL) return true;
+        if (!(rawRule instanceof JSONObject)) return false;
+        JSONObject rule = (JSONObject) rawRule;
+        Object rawEnabled = rule.opt("enabled");
+        if (!(rawEnabled instanceof Boolean)) return false;
+        if (!((Boolean) rawEnabled)) return true;
+        if (nowMs < 0L) return false;
+        Object rawStartMinutes = rule.opt("startMinutes");
+        Object rawEndMinutes = rule.opt("endMinutes");
+        if (!(rawStartMinutes instanceof Number) || !(rawEndMinutes instanceof Number)) return false;
+        double rawStart = ((Number) rawStartMinutes).doubleValue();
+        double rawEnd = ((Number) rawEndMinutes).doubleValue();
+        if (!Double.isFinite(rawStart) || !Double.isFinite(rawEnd) ||
+            rawStart != Math.rint(rawStart) || rawEnd != Math.rint(rawEnd) ||
+            rawStart < 0d || rawStart > 1439d || rawEnd < 0d || rawEnd > 1439d) return false;
         JSONArray days = rule.optJSONArray("days");
-        boolean dayAllowed = false;
-        if (days != null) {
-            for (int index = 0; index < days.length(); index++) {
-                if (days.optInt(index, -1) == jsDay) {
-                    dayAllowed = true;
-                    break;
-                }
-            }
-        }
-        if (!dayAllowed) return false;
-        int startMinutes = rule.optInt("startMinutes", -1);
-        int endMinutes = rule.optInt("endMinutes", -1);
-        if (startMinutes < 0 || endMinutes < 0) return false;
+        if (!validTimeRuleDays(days)) return false;
+
+        LocalDateTime date = localDateTimeAt(nowMs, utcOffsetMinutes);
+        int jsDay = date.getDayOfWeek().getValue() % 7;
+        int startMinutes = (int) rawStart;
+        int endMinutes = (int) rawEnd;
         int minutes = date.getHour() * 60 + date.getMinute();
+        int scheduleDay = startMinutes > endMinutes && minutes <= endMinutes
+            ? (jsDay + 6) % 7
+            : jsDay;
+        boolean dayAllowed = timeRuleContainsDay(days, scheduleDay);
+        if (!dayAllowed) return false;
         if (startMinutes == endMinutes) return true;
         return startMinutes < endMinutes
             ? minutes >= startMinutes && minutes <= endMinutes
             : minutes >= startMinutes || minutes <= endMinutes;
     }
 
+    private static boolean correctionQualifierSemanticsValid(@Nullable JSONObject correction) {
+        if (correction == null || !correction.has("qualifierStatus") || correction.isNull("qualifierStatus")) {
+            return true;
+        }
+        Object rawQualifier = correction.opt("qualifierStatus");
+        if (!(rawQualifier instanceof String)) return false;
+        String qualifier = (String) rawQualifier;
+        if ("regulatory_text_no_qualifiers".equals(qualifier)) return true;
+        if ("conditional_temporary_work_zone".equals(qualifier)) {
+            return parseFlexibleEpochMsOrNull(correction.opt("expiresAt")) != null;
+        }
+        if (!"conditional_school_when_flashing".equals(qualifier) &&
+            !"conditional_school".equals(qualifier) &&
+            !"conditional_daytime".equals(qualifier) &&
+            !"conditional_night".equals(qualifier)) return false;
+        JSONObject rule = correction.optJSONObject("timeRule");
+        return rule != null && rule.opt("enabled") instanceof Boolean && rule.optBoolean("enabled", false);
+    }
+
+    private static boolean validTimeRuleDays(@Nullable JSONArray days) {
+        if (days == null || days.length() == 0 || days.length() > 7) return false;
+        boolean[] seen = new boolean[7];
+        for (int index = 0; index < days.length(); index++) {
+            Object raw = days.opt(index);
+            if (!(raw instanceof Number)) return false;
+            double numeric = ((Number) raw).doubleValue();
+            if (!Double.isFinite(numeric) || numeric != Math.rint(numeric) || numeric < 0d || numeric > 6d) {
+                return false;
+            }
+            int day = (int) numeric;
+            if (seen[day]) return false;
+            seen[day] = true;
+        }
+        return true;
+    }
+
+    private static boolean timeRuleContainsDay(@Nullable JSONArray days, int expectedDay) {
+        if (days == null) return false;
+        for (int index = 0; index < days.length(); index++) {
+            Object raw = days.opt(index);
+            if (raw == null || raw == JSONObject.NULL) continue;
+            try {
+                double numeric = raw instanceof Number
+                    ? ((Number) raw).doubleValue()
+                    : Double.parseDouble(String.valueOf(raw));
+                if (Double.isFinite(numeric) && numeric == Math.rint(numeric) &&
+                    numeric >= 0d && numeric <= 6d && (int) numeric == expectedDay) return true;
+            } catch (NumberFormatException ignored) {
+                // Invalid days are ignored exactly like the web normalizer.
+            }
+        }
+        return false;
+    }
+
+    private static LocalDateTime localDateTimeAt(long timestampMs, @Nullable Integer utcOffsetMinutes) {
+        if (utcOffsetMinutes != null && utcOffsetMinutes >= -18 * 60 && utcOffsetMinutes <= 18 * 60) {
+            ZoneOffset offset = ZoneOffset.ofTotalSeconds(utcOffsetMinutes * 60);
+            return LocalDateTime.ofInstant(Instant.ofEpochMilli(timestampMs), offset);
+        }
+        return LocalDateTime.ofInstant(Instant.ofEpochMilli(timestampMs), ZoneId.systemDefault());
+    }
+
     private static boolean correctionMatchesDirection(@Nullable JSONObject correction, double headingDeg) {
-        String mode = correction == null ? "both" : correction.optString("directionMode", "both");
-        if (!"forward".equals(mode) && !"reverse".equals(mode)) return true;
+        String mode = "both";
+        if (correction != null && correction.has("directionMode")) {
+            Object rawMode = correction.opt("directionMode");
+            if (!(rawMode instanceof String)) return false;
+            mode = (String) rawMode;
+            if (!"both".equals(mode) && !"forward".equals(mode) && !"reverse".equals(mode)) return false;
+        }
+        if ("both".equals(mode)) return true;
         if (!Double.isFinite(headingDeg)) return false;
         double bearing = correction.optDouble("directionBearing", Double.NaN);
         if (!Double.isFinite(bearing)) {
@@ -2624,6 +3654,15 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             !(Math.abs(lat) < 0.001d && Math.abs(lng) < 0.001d);
     }
 
+    private static boolean hasUsableTracedSection(@Nullable JSONArray sectionPoints) {
+        if (sectionPoints == null || sectionPoints.length() < 2) return false;
+        int usableCount = 0;
+        for (int index = 0; index < sectionPoints.length(); index++) {
+            if (isUsableCoordinate(sectionPoints.optJSONObject(index)) && ++usableCount >= 2) return true;
+        }
+        return false;
+    }
+
     private static double pointToSegmentDistanceKm(double lat, double lng, JSONObject start, JSONObject end) {
         double startLat = start.optDouble("lat", Double.NaN);
         double startLng = start.optDouble("lng", Double.NaN);
@@ -2682,7 +3721,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     @Nullable
-    private static double[] geohashCenter(String hash) {
+    static double[] geohashCenter(String hash) {
         if (hash == null || hash.trim().isEmpty()) return null;
         double[] latitude = new double[]{ -90d, 90d };
         double[] longitude = new double[]{ -180d, 180d };
@@ -2710,6 +3749,93 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             return Instant.parse(value).toEpochMilli();
         } catch (DateTimeParseException ignored) {
             return 0L;
+        }
+    }
+
+    @Nullable
+    static JSONObject parseStoredSpeedKnowledge(@Nullable String raw) throws Exception {
+        return parseStoredSpeedKnowledge(raw, SPEED_KNOWLEDGE_KEY);
+    }
+
+    @Nullable
+    static JSONObject parseStoredSpeedKnowledge(@Nullable String raw, String storageKey) throws Exception {
+        if (raw == null || raw.trim().isEmpty()) return null;
+        if (!SPEED_KNOWLEDGE_KEY.equals(storageKey) && !LEGACY_SPEED_KNOWLEDGE_KEY.equals(storageKey)) {
+            throw new IllegalArgumentException("Unsupported saved-speed storage key.");
+        }
+        String trimmed = raw.trim();
+        JSONObject parsed = new JSONObject(trimmed);
+        if (!parsed.optBoolean("encrypted", false)) {
+            // One-release compatibility for the old minimal native mirror. The
+            // next JS sync rewrites it with Android-Keystore-backed AES-GCM.
+            return parsed;
+        }
+        if (parsed.optInt("version", 0) != 1) {
+            throw new IllegalArgumentException("Unsupported saved-speed encryption envelope.");
+        }
+        String ciphertext = parsed.optString("ciphertext", "");
+        int keyVersion = parsed.optInt("key_version", 0);
+        if (ciphertext.isEmpty() || keyVersion <= 0) {
+            throw new IllegalArgumentException("Invalid saved-speed encryption envelope.");
+        }
+        String plaintext = DriveSensePayloadCrypto.decrypt(
+            ciphertext,
+            "storage:" + storageKey,
+            keyVersion
+        );
+        return new JSONObject(plaintext);
+    }
+
+    private static boolean hasStoredSpeedKnowledgePayload(@Nullable String raw) {
+        return raw != null && !raw.trim().isEmpty();
+    }
+
+    @Nullable
+    static StoredSpeedKnowledgeSelection selectStoredSpeedKnowledgePayload(
+        @Nullable String mirrorRaw,
+        @Nullable String legacyRaw,
+        boolean mirrorInitialized
+    ) {
+        // A non-null value means the mirror key exists. Empty or whitespace
+        // content is malformed, not absent, and must still suppress fallback.
+        if (mirrorRaw != null) {
+            return new StoredSpeedKnowledgeSelection(mirrorRaw, SPEED_KNOWLEDGE_KEY);
+        }
+        if (!mirrorInitialized && hasStoredSpeedKnowledgePayload(legacyRaw)) {
+            return new StoredSpeedKnowledgeSelection(legacyRaw, LEGACY_SPEED_KNOWLEDGE_KEY);
+        }
+        return null;
+    }
+
+    @Nullable
+    private static Long parseIsoEpochMsOrNull(String value) {
+        if (value == null || value.trim().isEmpty()) return null;
+        try {
+            return Instant.parse(value).toEpochMilli();
+        } catch (DateTimeParseException ignored) {
+            return null;
+        }
+    }
+
+    private static boolean hasTimestampValue(@Nullable Object value) {
+        return value != null && value != JSONObject.NULL && !String.valueOf(value).trim().isEmpty();
+    }
+
+    @Nullable
+    private static Long parseFlexibleEpochMsOrNull(@Nullable Object value) {
+        if (!hasTimestampValue(value)) return null;
+        if (value instanceof Number) {
+            double numeric = ((Number) value).doubleValue();
+            if (!Double.isFinite(numeric)) return null;
+            return Math.round(numeric < 1_000_000_000_000d ? numeric * 1000d : numeric);
+        }
+        String text = String.valueOf(value).trim();
+        try {
+            double numeric = Double.parseDouble(text);
+            if (!Double.isFinite(numeric)) return null;
+            return Math.round(numeric < 1_000_000_000_000d ? numeric * 1000d : numeric);
+        } catch (NumberFormatException ignored) {
+            return parseIsoEpochMsOrNull(text);
         }
     }
 
@@ -2803,6 +3929,16 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         lastDangerZoneAlertMs = 0L;
     }
 
+    static final class StoredSpeedKnowledgeSelection {
+        final String raw;
+        final String storageKey;
+
+        StoredSpeedKnowledgeSelection(String raw, String storageKey) {
+            this.raw = raw;
+            this.storageKey = storageKey;
+        }
+    }
+
     private double signedHeadingDiff(double h1, double h2) {
         double diff = h2 - h1;
         while (diff > 180d) diff -= 360d;
@@ -2823,6 +3959,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         ensureSafetyAlertsChannel();
         Intent intent = new Intent(this, MainActivity.class);
         intent.putExtra("deeplink", "drivesense://dashboard");
+        intent.setData(Uri.parse("drivesense://dashboard"));
         PendingIntent pendingIntent = PendingIntent.getActivity(
             this,
             2,
@@ -2882,6 +4019,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         ensureSafetyAlertsChannel();
         Intent intent = new Intent(this, MainActivity.class);
         intent.putExtra("deeplink", "drivesense://dashboard");
+        intent.setData(Uri.parse("drivesense://dashboard"));
         PendingIntent pendingIntent = PendingIntent.getActivity(
             this,
             0,
@@ -2892,7 +4030,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, SAFETY_ALERTS_CHANNEL_ID)
             .setSmallIcon(getResources().getIdentifier("ic_stat_drivesense", "drawable", getPackageName()))
             .setContentTitle("Eyes on the Road")
-            .setContentText("Possible distracted driving detected. Stay focused.")
+            .setContentText("Foreground phone activity detected while moving. Stay focused.")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
@@ -2921,6 +4059,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         ensureSummaryChannel();
         Intent intent = new Intent(this, MainActivity.class);
         intent.putExtra("deeplink", "drivesense://trips/" + tripId);
+        intent.setData(Uri.parse("drivesense://trips/" + Uri.encode(tripId)));
         PendingIntent pendingIntent = PendingIntent.getActivity(
             this,
             1,
@@ -3085,25 +4224,31 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         nativeManualTripId = checkpoint.optString("manual_trip_id", "");
         nativeRecoveryTripId = checkpointTripId;
         nativeManualTrip = checkpoint.optBoolean("manual", false);
-        candidateTrip = false;
+        candidateTrip = checkpoint.optBoolean("candidate", false);
         candidateNearParked = checkpoint.optBoolean("candidate_near_parked", false);
-        candidateConfirmedMs = checkpoint.optLong("candidate_confirmed_ms", activeStartMs);
+        candidateConfirmedMs = candidateTrip
+            ? 0L
+            : checkpoint.optLong("candidate_confirmed_ms", activeStartMs);
         recentHeadings.clear();
         nativeHeadingDriftWindow.clear();
         resetNativeAlertState();
         resetMotionState();
         recordTimeline(
             "checkpoint_recovered",
-            "Active trip recovered after Android restarted tracking.",
-            "encrypted_active_trip_checkpoint",
+            candidateTrip
+                ? "Early trip candidate recovered after Android restarted tracking."
+                : "Active trip recovered after Android restarted tracking.",
+            candidateTrip ? "encrypted_candidate_checkpoint" : "encrypted_active_trip_checkpoint",
             lastKnownSpeedKmh,
             0L,
             0d
         );
         recordDiagnostic(
             "checkpoint_recovered",
-            "Active trip recovered after Android restarted tracking.",
-            "encrypted_active_trip_checkpoint",
+            candidateTrip
+                ? "Early trip candidate recovered after Android restarted tracking."
+                : "Active trip recovered after Android restarted tracking.",
+            candidateTrip ? "encrypted_candidate_checkpoint" : "encrypted_active_trip_checkpoint",
             lastKnownSpeedKmh,
             0L,
             0d
@@ -3111,6 +4256,19 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         long checkpointAgeMs = Math.max(0L, nowMs - lastActiveCheckpointMs);
         if (checkpointAgeMs > ACTIVE_CHECKPOINT_RESUME_WINDOW_MS) {
             checkpointRecoveryEndOverrideMs = lastActiveCheckpointMs;
+            if (candidateTrip) {
+                reviewCandidate(true);
+                if (!isTripActive()) return;
+                if (candidateTrip) {
+                    discardCandidate(
+                        "stale_candidate_checkpoint",
+                        "Candidate discarded: recovery evidence was insufficient",
+                        true
+                    );
+                    return;
+                }
+                candidateConfirmedMs = Math.max(activeStartMs, lastActiveCheckpointMs);
+            }
             finishTrip("checkpoint_recovery_finalize", true);
             return;
         }
@@ -3122,7 +4280,6 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private void persistActiveTripCheckpoint(long nowMs, boolean force) {
         if (
             !isTripActive() ||
-            candidateTrip ||
             activePoints == null ||
             activePoints.length() < 2
         ) {
@@ -3144,6 +4301,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             checkpoint.put("start_source", nativeTripStartSource);
             checkpoint.put("manual", nativeManualTrip);
             checkpoint.put("manual_trip_id", nativeManualTripId);
+            checkpoint.put("candidate", candidateTrip);
             checkpoint.put("candidate_near_parked", candidateNearParked);
             checkpoint.put("candidate_confirmed_ms", candidateConfirmedMs);
             checkpoint.put("native_auto_start_reason", nativeAutoStartReason);
@@ -3290,6 +4448,12 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private boolean isParkedStopReason(String reason) {
         if (reason == null) return false;
         return reason.contains("parked") || reason.contains("still") || reason.contains("on_foot");
+    }
+
+    static boolean isAdministrativeStopReason(String reason) {
+        return "service_stopped_by_user".equals(reason) ||
+            "service_destroyed".equals(reason) ||
+            "manual_trip_replaced_existing_native_trip".equals(reason);
     }
 
     private void updateLiveTripNotification(boolean force) {
@@ -3562,12 +4726,22 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         );
         double sunsetOffset = getSettingDouble("night_sunset_offset_minutes", 0d);
         double sunriseOffset = getSettingDouble("night_sunrise_offset_minutes", 0d);
+        int boundaryTolerance = (int) Math.max(
+            0d,
+            Math.min(30d, getSettingDouble("night_boundary_tolerance_minutes", DEFAULT_NIGHT_BOUNDARY_TOLERANCE_MINUTES))
+        );
+        String resolvedMode = NIGHT_DETECTION_MODE_CUSTOM.equals(mode)
+            ? NIGHT_DETECTION_MODE_CUSTOM
+            : NIGHT_DETECTION_MODE_CIVIL_TWILIGHT.equals(mode)
+                ? NIGHT_DETECTION_MODE_CIVIL_TWILIGHT
+                : NIGHT_DETECTION_MODE_SUNSET;
         return new NightSettings(
-            NIGHT_DETECTION_MODE_CUSTOM.equals(mode) ? NIGHT_DETECTION_MODE_CUSTOM : NIGHT_DETECTION_MODE_SUNSET,
+            resolvedMode,
             startMinutes,
             endMinutes,
             sunsetOffset,
-            sunriseOffset
+            sunriseOffset,
+            boundaryTolerance
         );
     }
 
@@ -3586,52 +4760,201 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     static boolean isNightDrivingPoint(long timeMs, double lat, double lng, NightSettings settings) {
-        NightSettings resolvedSettings = settings != null
+        NightSettings resolvedSettings = resolvedNightSettings(settings);
+        ZonedDateTime localTime = Instant.ofEpochMilli(timeMs).atZone(ZoneId.systemDefault());
+        return evaluateNightPoint(timeMs, lat, lng, localTime, localTime.getZone().getId(), resolvedSettings).isNight;
+    }
+
+    private static NightSettings resolvedNightSettings(NightSettings settings) {
+        return settings != null
             ? settings
             : new NightSettings(
                 NIGHT_DETECTION_MODE_SUNSET,
                 NIGHT_START_HOUR * 60,
                 NIGHT_END_HOUR * 60,
                 0d,
-                0d
+                0d,
+                DEFAULT_NIGHT_BOUNDARY_TOLERANCE_MINUTES
             );
-        ZonedDateTime localTime = Instant.ofEpochMilli(timeMs).atZone(ZoneId.systemDefault());
-        int minutes = localTime.getHour() * 60 + localTime.getMinute();
-
-        if (NIGHT_DETECTION_MODE_SUNSET.equals(resolvedSettings.mode)) {
-            Double sunset = sunEventMinutes(localTime, lat, lng, false);
-            Double sunrise = sunEventMinutes(localTime, lat, lng, true);
-            if (sunset != null && sunrise != null) {
-                return isWithinClockWindow(
-                    minutes,
-                    sunset + resolvedSettings.sunsetOffsetMinutes,
-                    sunrise + resolvedSettings.sunriseOffsetMinutes
-                );
-            }
-        }
-
-        return isWithinClockWindow(minutes, resolvedSettings.startMinutes, resolvedSettings.endMinutes);
     }
 
-    private static boolean isNightDrivingPoint(JSONObject point, long timeMs, NightSettings settings) {
+    private static PointNightResult evaluateNightPoint(JSONObject point, long timeMs, NightSettings settings) {
         double lat = point != null ? point.optDouble("lat", Double.NaN) : Double.NaN;
         double lng = point != null ? point.optDouble("lng", Double.NaN) : Double.NaN;
-        return isNightDrivingPoint(timeMs, lat, lng, settings);
+        int storedOffsetMinutes = point != null ? point.optInt("utc_offset_minutes", Integer.MIN_VALUE) : Integer.MIN_VALUE;
+        boolean validStoredOffset = storedOffsetMinutes >= -14 * 60 && storedOffsetMinutes <= 14 * 60;
+        ZonedDateTime localTime = validStoredOffset
+            ? Instant.ofEpochMilli(timeMs).atZone(ZoneOffset.ofTotalSeconds(storedOffsetMinutes * 60))
+            : Instant.ofEpochMilli(timeMs).atZone(ZoneId.systemDefault());
+        String timezoneId = point != null
+            ? point.optString("timezone_id", localTime.getZone().getId())
+            : localTime.getZone().getId();
+        return evaluateNightPoint(timeMs, lat, lng, localTime, timezoneId, resolvedNightSettings(settings));
+    }
+
+    private static PointNightResult evaluateNightPoint(
+        long timeMs,
+        double lat,
+        double lng,
+        ZonedDateTime localTime,
+        String timezoneId,
+        NightSettings settings
+    ) {
+        int minutes = localTime.getHour() * 60 + localTime.getMinute();
+        boolean solarMode = NIGHT_DETECTION_MODE_SUNSET.equals(settings.mode) ||
+            NIGHT_DETECTION_MODE_CIVIL_TWILIGHT.equals(settings.mode);
+        if (!solarMode) {
+            boolean isNight = isWithinClockWindow(minutes, settings.startMinutes, settings.endMinutes);
+            return new PointNightResult(
+                isNight,
+                "custom",
+                isNight ? "inside_custom_window" : "outside_custom_window",
+                null,
+                timeMs,
+                localTime,
+                timezoneId,
+                Double.NaN,
+                Double.NaN,
+                settings.startMinutes,
+                settings.endMinutes
+            );
+        }
+
+        double zenith = NIGHT_DETECTION_MODE_CIVIL_TWILIGHT.equals(settings.mode)
+            ? CIVIL_TWILIGHT_ZENITH_DEGREES
+            : SUN_ZENITH_DEGREES;
+        Double eveningEvent = sunEventMinutes(localTime, lat, lng, false, zenith);
+        Double morningEvent = sunEventMinutes(localTime, lat, lng, true, zenith);
+        boolean coordinatesAvailable = Double.isFinite(lat) && Double.isFinite(lng) &&
+            Math.abs(lat) <= 89.8d && Math.abs(lng) <= 180d;
+        String fallbackReason = null;
+        double start = settings.startMinutes;
+        double end = settings.endMinutes;
+        if (eveningEvent != null && morningEvent != null) {
+            start = eveningEvent + settings.sunsetOffsetMinutes + settings.boundaryToleranceMinutes;
+            end = morningEvent + settings.sunriseOffsetMinutes - settings.boundaryToleranceMinutes;
+        } else {
+            fallbackReason = coordinatesAvailable ? "solar_event_unavailable" : "gps_coordinates_unavailable";
+        }
+        boolean isNight = isWithinClockWindow(minutes, start, end);
+        boolean fallbackUsed = fallbackReason != null;
+        return new PointNightResult(
+            isNight,
+            fallbackUsed ? "custom_fallback" : settings.mode,
+            fallbackUsed
+                ? isNight ? "inside_fallback_window" : "outside_fallback_window"
+                : isNight ? "inside_solar_window" : "outside_solar_window",
+            fallbackReason,
+            timeMs,
+            localTime,
+            timezoneId,
+            eveningEvent != null ? eveningEvent : Double.NaN,
+            morningEvent != null ? morningEvent : Double.NaN,
+            start,
+            end
+        );
     }
 
     static boolean isTripNightDriving(JSONArray points, NightSettings settings) {
-        if (points == null) return false;
+        return classifyTripNightDriving(points, settings).isNight;
+    }
+
+    static NightClassificationResult classifyTripNightDriving(JSONArray points, NightSettings settings) {
+        NightSettings resolvedSettings = resolvedNightSettings(settings);
+        PointNightResult first = null;
+        PointNightResult firstNight = null;
+        int evaluatedPointCount = 0;
+        int fallbackPointCount = 0;
+        String fallbackReason = null;
+        if (points == null) return new NightClassificationResult(false, buildNightMetadata(null, null, resolvedSettings, 0, 0, null));
         for (int i = 0; i < points.length(); i++) {
             JSONObject point = points.optJSONObject(i);
             if (point == null) continue;
             long timeMs = parseIsoOrDefault(point.optString("timestamp"), Long.MIN_VALUE);
             if (timeMs == Long.MIN_VALUE) continue;
-            if (isNightDrivingPoint(point, timeMs, settings)) return true;
+            PointNightResult result = evaluateNightPoint(point, timeMs, resolvedSettings);
+            evaluatedPointCount += 1;
+            if (first == null) first = result;
+            if (result.fallbackReason != null) {
+                fallbackPointCount += 1;
+                if (fallbackReason == null) fallbackReason = result.fallbackReason;
+                else if (!fallbackReason.contains(result.fallbackReason)) fallbackReason += "," + result.fallbackReason;
+            }
+            if (firstNight == null && result.isNight) firstNight = result;
         }
-        return false;
+        PointNightResult decision = firstNight != null ? firstNight : first;
+        return new NightClassificationResult(
+            firstNight != null,
+            buildNightMetadata(first, decision, resolvedSettings, evaluatedPointCount, fallbackPointCount, fallbackReason)
+        );
     }
 
-    private static Double sunEventMinutes(ZonedDateTime localTime, double lat, double lng, boolean sunrise) {
+    private static JSONObject buildNightMetadata(
+        PointNightResult first,
+        PointNightResult decision,
+        NightSettings settings,
+        int evaluatedPointCount,
+        int fallbackPointCount,
+        String fallbackReason
+    ) {
+        JSONObject metadata = new JSONObject();
+        try {
+            boolean isNight = decision != null && decision.isNight;
+            metadata.put("version", 1);
+            metadata.put("is_night", isNight);
+            metadata.put("mode", settings.mode);
+            metadata.put("method", decision != null ? decision.method : "unavailable");
+            metadata.put("reason", decision != null ? decision.reason : "no_timestamped_points");
+            metadata.put(
+                "solar_event_type",
+                NIGHT_DETECTION_MODE_CIVIL_TWILIGHT.equals(settings.mode)
+                    ? "civil_twilight"
+                    : NIGHT_DETECTION_MODE_SUNSET.equals(settings.mode)
+                        ? "sunrise_sunset"
+                        : JSONObject.NULL
+            );
+            metadata.put("boundary_tolerance_minutes", settings.boundaryToleranceMinutes);
+            metadata.put("sunset_offset_minutes", settings.sunsetOffsetMinutes);
+            metadata.put("sunrise_offset_minutes", settings.sunriseOffsetMinutes);
+            metadata.put("custom_start_time", formatClockMinutes(settings.startMinutes));
+            metadata.put("custom_end_time", formatClockMinutes(settings.endMinutes));
+            metadata.put("custom_fallback_used", fallbackPointCount > 0);
+            metadata.put("fallback_reason", fallbackReason != null ? fallbackReason : JSONObject.NULL);
+            metadata.put("fallback_point_count", fallbackPointCount);
+            metadata.put("evaluated_point_count", evaluatedPointCount);
+            metadata.put("trip_started_in_night", first != null && first.isNight);
+            metadata.put("trip_start_local_time", first != null ? formatClockMinutes(first.localMinutes()) : JSONObject.NULL);
+            metadata.put("decision_point_at", decision != null ? iso(decision.timeMs) : JSONObject.NULL);
+            metadata.put("decision_local_time", decision != null ? formatClockMinutes(decision.localMinutes()) : JSONObject.NULL);
+            metadata.put("local_date", decision != null ? decision.localTime.toLocalDate().toString() : JSONObject.NULL);
+            metadata.put("timezone_id", first != null ? first.timezoneId : ZoneId.systemDefault().getId());
+            metadata.put(
+                "utc_offset_minutes",
+                first != null ? first.localTime.getOffset().getTotalSeconds() / 60 : 0
+            );
+            metadata.put("evening_event_local_time", decision != null && Double.isFinite(decision.eveningEventMinutes)
+                ? formatClockMinutes(decision.eveningEventMinutes)
+                : JSONObject.NULL);
+            metadata.put("morning_event_local_time", decision != null && Double.isFinite(decision.morningEventMinutes)
+                ? formatClockMinutes(decision.morningEventMinutes)
+                : JSONObject.NULL);
+            metadata.put("night_window_start_local_time", decision != null
+                ? formatClockMinutes(decision.windowStartMinutes)
+                : JSONObject.NULL);
+            metadata.put("night_window_end_local_time", decision != null
+                ? formatClockMinutes(decision.windowEndMinutes)
+                : JSONObject.NULL);
+        } catch (JSONException ignored) {}
+        return metadata;
+    }
+
+    private static String formatClockMinutes(double minutes) {
+        int normalized = (int) Math.round(positiveModulo(minutes, 24d * 60d));
+        if (normalized >= 24 * 60) normalized = 0;
+        return String.format(Locale.US, "%02d:%02d", normalized / 60, normalized % 60);
+    }
+
+    private static Double sunEventMinutes(ZonedDateTime localTime, double lat, double lng, boolean sunrise, double zenith) {
         if (!Double.isFinite(lat) || !Double.isFinite(lng) || Math.abs(lat) > 89.8d || Math.abs(lng) > 180d) {
             return null;
         }
@@ -3655,7 +4978,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         double sinDec = 0.39782d * Math.sin(toRadians(trueLongitude));
         double cosDec = Math.cos(Math.asin(sinDec));
         double cosHour = (
-            Math.cos(toRadians(SUN_ZENITH_DEGREES)) - (sinDec * Math.sin(toRadians(lat)))
+            Math.cos(toRadians(zenith)) - (sinDec * Math.sin(toRadians(lat)))
         ) / (cosDec * Math.cos(toRadians(lat)));
         if (cosHour > 1d || cosHour < -1d) return null;
 
@@ -3736,6 +5059,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         long durationSeconds = 0L;
         int speedSamples = 0;
         boolean nightDriving = false;
+        JSONObject nightClassification = null;
     }
 
     static class NightSettings {
@@ -3744,6 +5068,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         final int endMinutes;
         final double sunsetOffsetMinutes;
         final double sunriseOffsetMinutes;
+        final int boundaryToleranceMinutes;
 
         NightSettings(
             String mode,
@@ -3752,11 +5077,84 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             double sunsetOffsetMinutes,
             double sunriseOffsetMinutes
         ) {
+            this(
+                mode,
+                startMinutes,
+                endMinutes,
+                sunsetOffsetMinutes,
+                sunriseOffsetMinutes,
+                DEFAULT_NIGHT_BOUNDARY_TOLERANCE_MINUTES
+            );
+        }
+
+        NightSettings(
+            String mode,
+            int startMinutes,
+            int endMinutes,
+            double sunsetOffsetMinutes,
+            double sunriseOffsetMinutes,
+            int boundaryToleranceMinutes
+        ) {
             this.mode = mode;
             this.startMinutes = startMinutes;
             this.endMinutes = endMinutes;
             this.sunsetOffsetMinutes = sunsetOffsetMinutes;
             this.sunriseOffsetMinutes = sunriseOffsetMinutes;
+            this.boundaryToleranceMinutes = Math.max(0, Math.min(30, boundaryToleranceMinutes));
+        }
+    }
+
+    static class NightClassificationResult {
+        final boolean isNight;
+        final JSONObject metadata;
+
+        NightClassificationResult(boolean isNight, JSONObject metadata) {
+            this.isNight = isNight;
+            this.metadata = metadata;
+        }
+    }
+
+    private static class PointNightResult {
+        final boolean isNight;
+        final String method;
+        final String reason;
+        final String fallbackReason;
+        final long timeMs;
+        final ZonedDateTime localTime;
+        final String timezoneId;
+        final double eveningEventMinutes;
+        final double morningEventMinutes;
+        final double windowStartMinutes;
+        final double windowEndMinutes;
+
+        PointNightResult(
+            boolean isNight,
+            String method,
+            String reason,
+            String fallbackReason,
+            long timeMs,
+            ZonedDateTime localTime,
+            String timezoneId,
+            double eveningEventMinutes,
+            double morningEventMinutes,
+            double windowStartMinutes,
+            double windowEndMinutes
+        ) {
+            this.isNight = isNight;
+            this.method = method;
+            this.reason = reason;
+            this.fallbackReason = fallbackReason;
+            this.timeMs = timeMs;
+            this.localTime = localTime;
+            this.timezoneId = timezoneId;
+            this.eveningEventMinutes = eveningEventMinutes;
+            this.morningEventMinutes = morningEventMinutes;
+            this.windowStartMinutes = windowStartMinutes;
+            this.windowEndMinutes = windowEndMinutes;
+        }
+
+        int localMinutes() {
+            return localTime.getHour() * 60 + localTime.getMinute();
         }
     }
 

@@ -107,6 +107,46 @@ final class DriveSensePayloadCrypto {
         return STORED_PREFIX + encrypt(plaintext, context);
     }
 
+    static byte[] encryptBytesForStorage(byte[] plaintext, String context) throws Exception {
+        Cipher cipher = Cipher.getInstance(TRANSFORMATION);
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey(0));
+        if (context != null) {
+            cipher.updateAAD(context.getBytes(StandardCharsets.UTF_8));
+        }
+        byte[] iv = cipher.getIV();
+        byte[] ciphertext = cipher.doFinal(plaintext);
+        ByteBuffer payload = ByteBuffer.allocate(1 + iv.length + ciphertext.length);
+        payload.put((byte) iv.length);
+        payload.put(iv);
+        payload.put(ciphertext);
+        return (STORED_PREFIX + Base64.encodeToString(payload.array(), Base64.NO_WRAP))
+            .getBytes(StandardCharsets.UTF_8);
+    }
+
+    static byte[] decryptStoredBytes(byte[] storedBytes, String context) throws Exception {
+        String stored = new String(storedBytes, StandardCharsets.UTF_8);
+        if (!stored.startsWith(STORED_PREFIX)) {
+            throw new IllegalArgumentException("Encrypted byte payload prefix is missing.");
+        }
+        byte[] payload = Base64.decode(stored.substring(STORED_PREFIX.length()), Base64.NO_WRAP);
+        ByteBuffer buffer = ByteBuffer.wrap(payload);
+        int ivLength = Byte.toUnsignedInt(buffer.get());
+        if (ivLength < 12 || ivLength > 16 || buffer.remaining() <= ivLength) {
+            throw new IllegalArgumentException("Invalid encrypted byte payload.");
+        }
+        byte[] iv = new byte[ivLength];
+        buffer.get(iv);
+        byte[] ciphertext = new byte[buffer.remaining()];
+        buffer.get(ciphertext);
+
+        Cipher cipher = Cipher.getInstance(TRANSFORMATION);
+        cipher.init(Cipher.DECRYPT_MODE, getExistingKey(0), new GCMParameterSpec(TAG_LENGTH_BITS, iv));
+        if (context != null) {
+            cipher.updateAAD(context.getBytes(StandardCharsets.UTF_8));
+        }
+        return cipher.doFinal(ciphertext);
+    }
+
     static String decryptStoredValue(String stored, String context) throws Exception {
         if (stored == null || !stored.startsWith(STORED_PREFIX)) return stored;
         return decrypt(stored.substring(STORED_PREFIX.length()), context);
@@ -122,7 +162,7 @@ final class DriveSensePayloadCrypto {
     }
 
     static void deleteKeyVersion(int keyVersion) throws Exception {
-        if (keyVersion <= 0) return;
+        if (keyVersion < 0) return;
         KeyStore keyStore = KeyStore.getInstance(ANDROID_KEYSTORE);
         keyStore.load(null);
         String alias = aliasForVersion(keyVersion);

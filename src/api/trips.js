@@ -1,8 +1,13 @@
 import { localTripRepository } from "@/lib/localTripRepository";
-import { suggestTripTag } from "@/lib/tripInsights";
 import { normalizeTripTags } from "@/lib/tripMetadata";
+import {
+  getEffectiveTripTags,
+  inferTripTags,
+  reconcileWeatherDerivedTags,
+} from "@/lib/tripTagIntelligence";
 import { buildTripSummary } from "@/lib/tripSummary";
 import { measureAsync } from "@/lib/performanceTriage";
+import { synchronizeLocalRoadMemory } from "@/lib/roadMemoryCoordinator";
 import { keepPreviousData } from '@tanstack/react-query';
 
 // Trip records can contain precise GPS traces. Keep them local-only even when a
@@ -30,6 +35,12 @@ export const tripService = {
     return repository().list({ sort, limit });
   }, { sort, limit }),
 
+  listForSpeedMap: ({ sort = "-start_time", offset = 0, limit = 80 } = {}) => (
+    measureAsync('tripService.listForSpeedMap', () => (
+      repository().listForSpeedMap({ sort, offset, limit })
+    ), { sort, offset, limit })
+  ),
+
   listAll: ({ sort = "-start_time" } = {}) => {
     return repository().listAll({ sort });
   },
@@ -42,32 +53,77 @@ export const tripService = {
     return repository().getById(id);
   },
 
-  create: (trip) => {
-    const suggestion = suggestTripTag(trip);
+  create: async (trip) => {
+    const history = await repository().listAllSummaries({ sort: "-start_time" }).catch(() => []);
+    const intelligence = inferTripTags(trip, history);
+    const manualTags = normalizeTripTags(trip);
+    const inferredTags = trip.tag_reviewed === true
+      ? []
+      : getEffectiveTripTags(trip, history).filter((tag) => !manualTags.includes(tag));
+    const tags = [...new Set([...manualTags, ...inferredTags])];
+    const primary = intelligence.primary;
+    const now = new Date().toISOString();
+    const tagSources = { ...(trip.tag_sources || {}) };
+    manualTags.forEach((tag) => {
+      tagSources[tag] = tagSources[tag] || {
+        source: trip.tag_reviewed === true ? 'user_confirmed' : 'provided',
+        confidence: trip.tag_reviewed === true ? 1 : null,
+        reason: trip.tag_reviewed === true ? 'Confirmed by you.' : 'Saved with the trip.',
+        applied_at: now,
+      };
+    });
+    intelligence.candidates
+      .filter((candidate) => inferredTags.includes(candidate.tag))
+      .forEach((candidate) => {
+        tagSources[candidate.tag] = {
+          source: candidate.source,
+          confidence: candidate.confidence,
+          reason: candidate.reason,
+          applied_at: now,
+        };
+    });
     const withSuggestion = {
-      ...suggestion,
-      tag: trip.tag ?? null,
-      tags: normalizeTripTags(trip),
       nickname: trip.nickname ?? "",
       notes: trip.notes ?? "",
       is_favorite: trip.is_favorite === true,
       ...trip,
-      auto_tag: trip.auto_tag ?? suggestion.auto_tag,
-      auto_tag_confidence: trip.auto_tag_confidence ?? suggestion.auto_tag_confidence,
+      tag: trip.tag ?? tags[0] ?? null,
+      tags,
+      tag_sources: tagSources,
+      auto_tag: trip.auto_tag ?? primary?.tag ?? null,
+      auto_tag_confidence: trip.auto_tag_confidence ?? primary?.confidence_label ?? 'low',
+      auto_tag_reason: trip.auto_tag_reason ?? primary?.reason ?? null,
+      auto_tags: trip.auto_tags ?? intelligence.recommended_tags,
+      tag_candidates: trip.tag_candidates ?? intelligence.candidates,
+      tag_intelligence_version: trip.tag_intelligence_version ?? intelligence.version,
     };
-    return repository().create(withSuggestion);
+    const saved = await repository().create(withSuggestion);
+    if (saved?.status === 'completed') {
+      await synchronizeLocalRoadMemory([saved], { rescore: true });
+    }
+    return saved;
   },
 
-  update: (id, patch) => {
-    return repository().update(id, patch);
+  update: async (id, patch) => {
+    if (!patch || !Object.prototype.hasOwnProperty.call(patch, 'weather_context')) {
+      return repository().update(id, patch);
+    }
+    const currentTrip = await repository().getById(id);
+    const tagPatch = reconcileWeatherDerivedTags(currentTrip, patch.weather_context);
+    return repository().update(id, {
+      ...patch,
+      ...tagPatch,
+    });
   },
 
   delete: (id) => {
     return repository().delete(id);
   },
 
-  upsertMany: (trips) => {
-    return repository().upsertMany(trips);
+  upsertMany: async (trips) => {
+    const saved = await repository().upsertMany(trips);
+    await synchronizeLocalRoadMemory(saved, { rescore: true });
+    return saved;
   },
 
   markCompletedForRescore: async (options = {}) => {

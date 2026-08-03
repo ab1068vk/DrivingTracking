@@ -161,6 +161,7 @@ vi.mock('react-router-dom', () => ({
   useNavigate: () => navigate,
   useParams: () => ({ id: 'trip-1' }),
   useLocation: () => ({ pathname: '/', search: '', hash: '', state: null }),
+  useSearchParams: () => [new URLSearchParams(), vi.fn()],
 }));
 
 vi.mock('@/components/ScoreRing', () => ({
@@ -220,6 +221,7 @@ vi.mock('@/lib/trackingStore', () => ({
   ACTIVE_TRIP_KEY: 'drivesense_active_trip',
   ACTIVE_TRIP_CHANGED_EVENT: 'roadsage-active-trip-changed',
   LAST_PARKED_KEY: 'drivesense_last_parked',
+  LAST_PARKING_STATE_KEY: 'drivesense_last_parking_state',
   SETTINGS_KEY: 'drivesense_settings',
   VOICE_ALERT_STYLE_VALUES: ['mode_default', 'coaching', 'technical'],
   activeTripStore: {
@@ -228,7 +230,13 @@ vi.mock('@/lib/trackingStore', () => ({
     clear: vi.fn(),
   },
   applyThemeMode: vi.fn(),
+  clearCurrentParkingState: vi.fn(async () => {}),
   getLastParkedLocation: vi.fn(() => null),
+  getLastParkingState: vi.fn(async () => null),
+  parkingStateRevision: vi.fn((value) => Number(value?.state_revision) || 0),
+  PARKED_LOCATION_PRIVACY_GUARD_M: 35,
+  reconcileNativeParkingState: vi.fn(async () => null),
+  removeLastParkedPhoto: vi.fn(async () => false),
   localSettings: {
     get: vi.fn(() => settings),
     hydrateFromNative: vi.fn(async () => settings),
@@ -768,6 +776,18 @@ describe('core page component renders', () => {
       cells: {
         dpz83f: { limitKmh: 50, source: 'trip_consensus', confidence: 0.55 },
       },
+      roadMemory: {
+        candidates: [{
+          id: 'road-memory-candidate',
+          active: true,
+          roadName: 'Queen Street',
+          limitKmh: 60,
+          confidence: 0.64,
+          tripCount: 3,
+          agreement: 1,
+          lastObservedAt: '2026-07-28T12:00:00.000Z',
+        }],
+      },
       corrections: [{
         id: 'posted-rule',
         roadName: 'King Street',
@@ -782,6 +802,7 @@ describe('core page component renders', () => {
     expect(html).toContain('Posted signs override app estimates');
     expect(html).toContain('Your confirmed posted sign');
     expect(html).toContain('Local learned estimate');
+    expect(html).toContain('Local Road Memory estimate');
     expect(html).toContain('/speed-limits?view=review');
     expect(html).toContain('/trips/trip-1/speed');
     expect(html).toContain('threshold exceeded');
@@ -927,6 +948,21 @@ describe('core page component renders', () => {
       climb_distance_km: 0.7,
       descent_distance_km: 0.4,
       estimated_private_distance_km: 0.4,
+      night_driving: true,
+      night_classification: {
+        version: 1,
+        is_night: true,
+        mode: 'sunset',
+        method: 'sunset',
+        trip_started_in_night: true,
+        trip_start_local_time: '17:30',
+        decision_local_time: '17:30',
+        evening_event_local_time: '16:51',
+        morning_event_local_time: '07:51',
+        boundary_tolerance_minutes: 5,
+        timezone_id: 'America/Toronto',
+        utc_offset_minutes: -300,
+      },
     });
     const { default: TripDetail } = await import('@/pages/TripDetail');
     const html = renderToStaticMarkup(<TripDetail />);
@@ -949,6 +985,9 @@ describe('core page component renders', () => {
     expect(html).toContain('traveled within privacy zones (estimated)');
     expect(html).toContain('legitimate uphill manoeuvre');
     expect(html).toContain('attention-pattern estimate');
+    expect(html).toContain('Night: sunset boundary reached');
+    expect(html).toContain('sunset was 4:51 PM');
+    expect(html).toContain('America/Toronto · UTC-05:00 at trip time');
     expect(html).toContain('What shaped this score');
     expect(html).toContain('does not reconstruct exact point deductions');
     expect(html).toContain('Braking efficiency');
@@ -1113,6 +1152,7 @@ describe('core page component renders', () => {
     const html = renderToStaticMarkup(<MapScreen />);
 
     expect(html).toContain('Show all filtered trips');
+    expect(html).not.toContain('Parking workspace');
     expect(html).toContain('2 completed trip summaries are not shown here because raw GPS retention removed route coordinates for map/playback. Summaries stay saved in Trip History.');
     expect(html).not.toContain('because route GPS is unavailable');
     expect(html).not.toContain('3 completed trip summaries are hidden');
@@ -1133,6 +1173,21 @@ describe('core page component renders', () => {
 
     expect(html).toContain('72 GPS readings - 64 map/playback points');
     expect(html).not.toContain('72 GPS readings - 0 map/playback points');
+  });
+
+  it('keeps parking tools on the dedicated widget companion page instead of Map', async () => {
+    const [{ default: Parking }, { default: MapScreen }] = await Promise.all([
+      import('@/pages/Parking'),
+      import('@/pages/MapScreen'),
+    ]);
+
+    const parkingHtml = renderToStaticMarkup(<Parking />);
+    const mapHtml = renderToStaticMarkup(<MapScreen />);
+
+    expect(parkingHtml).toContain('Where I parked');
+    expect(parkingHtml).toContain('Save where I parked');
+    expect(parkingHtml).toContain('Recent parking history');
+    expect(mapHtml).not.toContain('Parking workspace');
   });
 
   it('loads the complete trip-summary history for map evidence and trip selection', async () => {
