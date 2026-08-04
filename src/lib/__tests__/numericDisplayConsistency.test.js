@@ -33,9 +33,18 @@ function collectJsxFiles(directory) {
   });
 }
 
+// Configuration surfaces legitimately spell units out, because they are where
+// the user picks the unit rather than where a measurement is displayed. The
+// directory rule keeps that exemption intact for sections extracted out of
+// Settings.jsx, which would otherwise start failing purely by being moved.
+const EXCLUDED_DIRECTORY_SEGMENTS = [
+  path.join('src', 'components', 'settings'),
+];
+
 function isConfigurationSurface(file) {
   const base = path.basename(file);
-  return EXCLUDED_BASENAMES.has(base) || base.startsWith('SpeedLimit');
+  if (EXCLUDED_BASENAMES.has(base) || base.startsWith('SpeedLimit')) return true;
+  return EXCLUDED_DIRECTORY_SEGMENTS.some((segment) => file.includes(segment));
 }
 
 describe('driver-facing numeric display consistency', () => {

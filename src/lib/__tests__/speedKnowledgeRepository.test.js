@@ -500,7 +500,6 @@ describe('speedKnowledgeRepository native mirror', () => {
 
     const {
       SPEED_KNOWLEDGE_NATIVE_MIRROR_KEY,
-      SPEED_KNOWLEDGE_STORAGE_KEY,
       migrateSpeedKnowledgeToIndexedDb,
     } = await import('@/lib/speedKnowledgeRepository');
 
@@ -536,7 +535,6 @@ describe('speedKnowledgeRepository native mirror', () => {
 
     const {
       SPEED_KNOWLEDGE_NATIVE_MIRROR_KEY,
-      SPEED_KNOWLEDGE_STORAGE_KEY,
       getNativeSpeedKnowledgeMirrorStatus,
       migrateSpeedKnowledgeToIndexedDb,
     } = await import('@/lib/speedKnowledgeRepository');

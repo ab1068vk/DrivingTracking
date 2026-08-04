@@ -10,12 +10,10 @@ import {
 } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { AlertTriangle, ArrowLeft, Ban, CheckSquare2, Download, Gauge, GitMerge, HeartPulse, Info, Magnet, Map as MapIcon, MapPin, Pencil, Plus, RefreshCw, Scissors, Search, ShieldCheck, SlidersHorizontal, Trash2, Undo2, Upload, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Download, Gauge, Info, Map as MapIcon, Plus, RefreshCw, ShieldCheck, SlidersHorizontal, Undo2, Upload } from 'lucide-react';
 import { geohashEncode, LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 import { refreshTripsCrossingLocalSpeedCorrection, refreshTripsForLocalSpeedKnowledgeChanges, tripCrossesCorrection } from '@/lib/localSpeedScoreRefresh';
 import { correctionSectionIdentity } from '@/lib/roadSectionIdentity';
-import RoadSectionPreview from '@/components/RoadSectionPreview';
-import SpeedLimitEditorMap from '@/components/SpeedLimitEditorMap';
 import { beginMeasure, TRIAGE_DISABLE_MAPS } from '@/lib/performanceTriage';
 import {
   SPEED_MAP_LAYER_FAST_DEFAULTS,
@@ -29,13 +27,9 @@ import {
   mergeSpeedSections,
   snapSectionPointsToTripRoutesWithStats,
   speedMapSectionFlags,
-  speedLimitColor,
   summarizeSpeedMapSections,
 } from '@/lib/speedLimitMapSections';
 import {
-  speedLimitScorePreview,
-  speedLimitSourceBadgeClass,
-  speedLimitSourceLabel,
   summarizeTripScoreDeltas,
 } from '@/lib/speedLimitDisplay';
 import { tripService } from '@/api/trips';
@@ -43,16 +37,13 @@ import { getHydratedPrivacyZones, getPrivacyZones } from '@/lib/privacyZones';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import RoadSpeedCommandCenter from '@/components/RoadSpeedCommandCenter';
 import SpeedRescoreStatus from '@/components/SpeedRescoreStatus';
-import SpeedSignEvidenceReview from '@/components/SpeedSignEvidenceReview';
-import WhyThisSpeed from '@/components/WhyThisSpeed';
-import RoadMemoryChangeReview from '@/components/RoadMemoryChangeReview';
 import RoadMemoryIntelligencePanel from '@/components/RoadMemoryIntelligencePanel';
 import {
   listSpeedSignEvidence,
   SPEED_SIGN_EVIDENCE_CHANGED_EVENT,
   syncNativeSpeedSignEvidence,
 } from '@/lib/speedSignEvidence';
-import { assessSpeedLimitEvidence, speedLimitConfidenceLabel } from '@/lib/speedLimitConfidence';
+import { assessSpeedLimitEvidence } from '@/lib/speedLimitConfidence';
 import {
   buildCorrectionImpactPreview,
   buildSpeedLimitRecommendation,
@@ -95,11 +86,49 @@ import { buildLocalCorridorGraph, summarizeLocalCorridorGraph } from '@/lib/loca
 import { buildSpeedEvidenceDecision } from '@/lib/speedEvidenceReasoning';
 import { sanitizeSpeedKnowledge } from '@/lib/dataBackup';
 import { MAX_SAVED_SPEED_LIMIT_KMH } from '@/lib/speedKnowledgeCellPolicy';
+import SpeedLimitSavedWorkspace from '@/components/speedLimits/SpeedLimitSavedWorkspace';
+import SpeedLimitReviewWorkspace from '@/components/speedLimits/SpeedLimitReviewWorkspace';
+import SpeedLimitMapWorkspace from '@/components/speedLimits/SpeedLimitMapWorkspace';
 import {
-  convertDisplaySpeedToKmh,
-  convertSpeedKmh,
-  formatSpeedKmh,
-  speedInputValueFromKmh,
+  sourceLabel,
+  formatSpeedLimit,
+  formatSourceList,
+  speedSectionAttentionLabel,
+  directionLabel,
+  tripLabel,
+  undoActionText,
+  speedStatusToast,
+  mapSectionReasonText,
+} from '@/components/speedLimits/speedRuleFormatting';
+import {
+  qualifierStatusForDraft,
+  invalidCustomDayRule,
+  validityFromDraft,
+  qualifierDraftError,
+  invalidValidityWindow,
+  DEFAULT_MAP_DRAFT,
+  mapDraftForSection,
+  draftForCorrection,
+  normalizeMapDraftForCompare,
+  speedConflictCompareKey,
+  timeRuleFromDraft,
+} from '@/components/speedLimits/speedRuleDrafts';
+import {
+  sectionGeometryCompareKey,
+  hasTracedRoadGeometry,
+  distanceMeters,
+  sectionLengthMeters,
+  sectionMidpoint,
+} from '@/components/speedLimits/speedRuleGeometry';
+import {
+  correctionKey,
+  IGNORED_UNSET_SPEED_SECTIONS_STORAGE_KEY,
+  speedRuleLifecycleAt,
+  isUnsetMapSection,
+  ignoredUnsetSectionKey,
+  readIgnoredUnsetSectionKeys,
+} from '@/components/speedLimits/speedRuleSections';
+import {
   speedUnitLabel,
 } from '@/lib/unitFormatting';
 import {
@@ -107,20 +136,7 @@ import {
   reconcileSavedSpeedDrafts,
 } from '@/lib/speedLimitDraftReconciliation';
 
-const sourceLabel = (source) => speedLimitSourceLabel(source, { short: true });
-const correctionKey = (correction = {}) => correction?.id || correction?.ruleId || correction?.sectionKey || correction?.geohash;
-const IGNORED_UNSET_SPEED_SECTIONS_STORAGE_KEY = 'roadsage_ignored_unset_speed_sections_v1';
 const SPEED_MAP_TRIP_BATCH_SIZE = 80;
-const speedRuleLifecycleAt = (row = {}, nowMs = Date.now()) => {
-  if (row.historicalVersion === true) return 'historical';
-  const validFrom = row.validFrom ? new Date(row.validFrom).getTime() : null;
-  const expiresAt = row.expiresAt ? new Date(row.expiresAt).getTime() : null;
-  if (row.validFrom && !Number.isFinite(validFrom)) return 'invalid';
-  if (row.expiresAt && !Number.isFinite(expiresAt)) return 'invalid';
-  if (Number.isFinite(validFrom) && nowMs < validFrom) return 'future';
-  if (Number.isFinite(expiresAt) && nowMs >= expiresAt) return 'expired';
-  return 'active';
-};
 const SPEED_RULE_EXPORT_PRIVACY_WARNING = [
   'This export contains precise road locations, map-line coordinates, and your saved speed rules.',
   'Store it securely and share it only with people you trust.',
@@ -128,40 +144,11 @@ const SPEED_RULE_EXPORT_PRIVACY_WARNING = [
   'Continue with the export?',
 ].join('\n');
 
-const formatSpeedLimit = (value, units = 'metric') => formatSpeedKmh(value, units);
 
-const formatSourceList = (sources = []) => {
-  const labels = [...new Set((sources || []).filter(Boolean).map(sourceLabel))];
-  return labels.length ? labels.join(', ') : 'Unknown source';
-};
 
-const isUnsetMapSection = (section = {}) => (
-  !section.saved &&
-  !Number(section.effectiveLimitKmh ?? section.observedLimitKmh ?? section.limitKmh)
-);
 
-const ignoredUnsetSectionKey = (section = {}) => String(correctionKey(section) || '').trim();
 
-const readIgnoredUnsetSectionKeys = () => {
-  if (typeof window === 'undefined') return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(IGNORED_UNSET_SPEED_SECTIONS_STORAGE_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed.filter(Boolean).map(String) : [];
-  } catch {
-    return [];
-  }
-};
 
-const speedSectionAttentionLabel = (section = {}) => {
-  const flags = speedMapSectionFlags(section);
-  if (flags.expired) return 'Expired temporary rule';
-  if (flags.expiring) return 'Temporary rule expiring soon';
-  if (flags.stale) return 'Stale speed evidence';
-  if (flags.lowConfidence) return 'Low-confidence speed evidence';
-  if (flags.missingGeometry) return 'Needs traced road line';
-  if (flags.estimate) return 'Estimate ready for confirmation';
-  return 'Review saved rule';
-};
 
 const scheduleIdleWork = (callback) => {
   if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
@@ -172,358 +159,42 @@ const scheduleIdleWork = (callback) => {
   return () => window.clearTimeout(timer);
 };
 
-const mapDraftLimitForSection = (section = {}) => {
-  const limit = section.saved
-    ? Number(section.limitKmh)
-    : Number(section.observedLimitKmh ?? section.effectiveLimitKmh);
-  return Number.isFinite(limit) && limit > 0 ? String(Math.round(limit)) : '';
-};
 
-const mapDraftSourceForSection = (section = {}) => {
-  if (section.saved) return section.source || 'user_entered_estimate';
-  return (section.observedSources || []).includes('user_confirmed_posted_sign')
-    ? 'user_confirmed_posted_sign'
-    : 'user_entered_estimate';
-};
 
-const formatDate = (value) => {
-  if (value == null || value === '') return 'Unknown time';
-  const date = new Date(value);
-  const time = date.getTime();
-  return Number.isFinite(time) && time > 0 ? date.toLocaleString() : 'Unknown time';
-};
 
-const formatCoordinate = (value) => {
-  const number = Number(value);
-  return Number.isFinite(number) ? number.toFixed(5) : '0.00000';
-};
 
-const coordinateLabel = (source) => (
-  source === 'geohash_cell_center_legacy'
-    ? 'Approx cell center'
-    : 'Driven route point'
-);
 
-const directionLabel = (mode) => ({
-  forward: 'Drawn direction only',
-  reverse: 'Opposite direction only',
-  both: 'Both directions',
-}[mode] || 'Both directions');
 
-const SPEED_RULE_QUALIFIER_OPTIONS = [
-  ['regulatory_text_no_qualifiers', 'Standard / unconditional'],
-  ['conditional_school_when_flashing', 'School zone - flashing schedule'],
-  ['conditional_school', 'School-zone schedule'],
-  ['conditional_temporary_work_zone', 'Temporary work zone'],
-  ['conditional_daytime', 'Daytime-only rule'],
-  ['conditional_night', 'Night-only rule'],
-];
 
-const qualifierStatusForDraft = (draft = {}) => (
-  SPEED_RULE_QUALIFIER_OPTIONS.some(([value]) => value === draft.qualifierStatus)
-    ? draft.qualifierStatus
-    : 'regulatory_text_no_qualifiers'
-);
 
-const qualifierStatusLabel = (value) => (
-  SPEED_RULE_QUALIFIER_OPTIONS.find(([option]) => option === value)?.[1] ||
-  'Standard / unconditional'
-);
 
-const qualifierDraftPatch = (value, draft = {}) => {
-  const qualifierStatus = SPEED_RULE_QUALIFIER_OPTIONS.some(([option]) => option === value)
-    ? value
-    : 'regulatory_text_no_qualifiers';
-  if (
-    qualifierStatus !== 'regulatory_text_no_qualifiers' &&
-    qualifierStatus !== 'conditional_temporary_work_zone' &&
-    (draft.timeRuleMode || 'always') === 'always'
-  ) {
-    return {
-      qualifierStatus,
-      timeRuleMode: qualifierStatus.startsWith('conditional_school') ? 'weekdays' : 'daily',
-    };
-  }
-  return { qualifierStatus };
-};
 
-const timeRuleModeForRow = (row = {}) => {
-  const rule = row.timeRule;
-  if (rule?.enabled !== true) return 'always';
-  const days = [...(rule.days || [])].sort((a, b) => a - b).join(',');
-  if (days === '1,2,3,4,5') return 'weekdays';
-  if (days === '0,6') return 'weekends';
-  if (days === '0,1,2,3,4,5,6') return 'daily';
-  return 'custom';
-};
 
-/** @type {Array<[number, string]>} */
-const TIME_RULE_DAY_OPTIONS = [
-  [0, 'Sun'],
-  [1, 'Mon'],
-  [2, 'Tue'],
-  [3, 'Wed'],
-  [4, 'Thu'],
-  [5, 'Fri'],
-  [6, 'Sat'],
-];
 
-const normalizedDraftDays = (draft = {}) => [...new Set(
-  (Array.isArray(draft.customDays) ? draft.customDays : [])
-    .map(Number)
-    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
-)].sort((a, b) => a - b);
 
-const invalidCustomDayRule = (draft = {}) => (
-  draft.timeRuleMode === 'custom' && normalizedDraftDays(draft).length === 0
-);
 
-const timeString = (minutes, fallback = '07:00') => {
-  const value = Number(minutes);
-  if (!Number.isFinite(value)) return fallback;
-  const clamped = Math.max(0, Math.min(1439, Math.round(value)));
-  return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`;
-};
 
-const timeRuleLabel = (rule = null) => {
-  if (rule?.enabled !== true) return 'Always active';
-  const mode = timeRuleModeForRow({ timeRule: rule });
-  const dayLabel = mode === 'weekdays'
-    ? 'Weekdays'
-    : mode === 'weekends'
-      ? 'Weekends'
-      : mode === 'custom'
-        ? TIME_RULE_DAY_OPTIONS
-          .filter(([day]) => (rule.days || []).includes(day))
-          .map(([, label]) => label)
-          .join(', ')
-        : 'Every day';
-  return `${dayLabel} ${timeString(rule.startMinutes)}-${timeString(rule.endMinutes)}`;
-};
 
-const dateInputValue = (value, storedDate = '') => {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(String(storedDate || ''))) return String(storedDate);
-  if (!value) return '';
-  const date = new Date(value);
-  return Number.isFinite(date.getTime())
-    ? [
-      date.getFullYear(),
-      String(date.getMonth() + 1).padStart(2, '0'),
-      String(date.getDate()).padStart(2, '0'),
-    ].join('-')
-    : '';
-};
 
-const expiresAtFromDate = (value) => (
-  value ? new Date(`${value}T23:59:59.999`).toISOString() : null
-);
 
-const validFromFromDate = (value) => (
-  value ? new Date(`${value}T00:00:00`).toISOString() : null
-);
 
-const boundaryFromDraft = (draft = {}, kind = 'validFrom') => {
-  const dateKey = kind === 'expiresAt' ? 'expiresAtDate' : 'validFromDate';
-  const originalKey = kind === 'expiresAt' ? 'originalExpiresAt' : 'originalValidFrom';
-  const originalDateKey = kind === 'expiresAt'
-    ? 'originalExpiresAtDate'
-    : 'originalValidFromDate';
-  const selectedDate = String(draft?.[dateKey] || '');
-  if (
-    Object.prototype.hasOwnProperty.call(draft, originalKey) &&
-    selectedDate === String(draft?.[originalDateKey] || '')
-  ) {
-    return draft?.[originalKey] || null;
-  }
-  return kind === 'expiresAt'
-    ? expiresAtFromDate(selectedDate)
-    : validFromFromDate(selectedDate);
-};
 
-const validityFromDraft = (draft = {}) => ({
-  validFrom: boundaryFromDraft(draft, 'validFrom'),
-  validFromDate: String(draft.validFromDate || '') || null,
-  expiresAt: boundaryFromDraft(draft, 'expiresAt'),
-  expiresAtDate: String(draft.expiresAtDate || '') || null,
-});
 
-const qualifierDraftError = (draft = {}) => {
-  const qualifierStatus = qualifierStatusForDraft(draft);
-  if (
-    qualifierStatus === 'conditional_temporary_work_zone' &&
-    !validityFromDraft(draft).expiresAt
-  ) return 'Temporary work-zone rules need an Active until date.';
-  if (
-    qualifierStatus !== 'regulatory_text_no_qualifiers' &&
-    qualifierStatus !== 'conditional_temporary_work_zone' &&
-    (draft.timeRuleMode || 'always') === 'always'
-  ) return 'This conditional rule needs active days and times.';
-  return '';
-};
 
-const invalidValidityWindow = (draft = {}) => {
-  const { validFrom, expiresAt } = validityFromDraft(draft);
-  return Boolean(validFrom && expiresAt && new Date(validFrom).getTime() >= new Date(expiresAt).getTime());
-};
 
-const expiryLabel = (value) => (
-  value ? `Expires ${new Date(value).toLocaleDateString()}` : 'No expiry'
-);
 
-const validFromLabel = (value) => (
-  value ? `Effective ${new Date(value).toLocaleDateString()}` : 'All recorded history'
-);
 
-const DEFAULT_MAP_DRAFT = {
-  limitKmh: '',
-  source: 'user_confirmed_posted_sign',
-  qualifierStatus: 'regulatory_text_no_qualifiers',
-  note: '',
-  roadName: '',
-  directionMode: 'both',
-  timeRuleMode: 'always',
-  startTime: '07:00',
-  endTime: '17:00',
-  customDays: [1, 2, 3, 4, 5],
-  validFromDate: '',
-  expiresAtDate: '',
-  originalValidFrom: null,
-  originalValidFromDate: '',
-  originalExpiresAt: null,
-  originalExpiresAtDate: '',
-};
 
-const mapDraftForSection = (section = {}) => ({
-  ...DEFAULT_MAP_DRAFT,
-  limitKmh: mapDraftLimitForSection(section),
-  source: mapDraftSourceForSection(section),
-  qualifierStatus: qualifierStatusForDraft(section),
-  note: section.note || '',
-  roadName: section.roadName || '',
-  directionMode: section.directionMode || 'both',
-  timeRuleMode: timeRuleModeForRow(section),
-  startTime: timeString(section.timeRule?.startMinutes),
-  endTime: timeString(section.timeRule?.endMinutes, '17:00'),
-  customDays: Array.isArray(section.timeRule?.days)
-    ? [...section.timeRule.days]
-    : DEFAULT_MAP_DRAFT.customDays,
-  validFromDate: dateInputValue(section.validFrom, section.validFromDate),
-  expiresAtDate: dateInputValue(section.expiresAt, section.expiresAtDate),
-  originalValidFrom: section.validFrom || null,
-  originalValidFromDate: dateInputValue(section.validFrom, section.validFromDate),
-  originalExpiresAt: section.expiresAt || null,
-  originalExpiresAtDate: dateInputValue(section.expiresAt, section.expiresAtDate),
-});
 
-const draftForCorrection = (row = {}) => ({
-  limitKmh: String(row.limitKmh || ''),
-  source: row.source || 'user_entered_estimate',
-  qualifierStatus: qualifierStatusForDraft(row),
-  note: row.note || '',
-  roadName: row.roadName || '',
-  directionMode: row.directionMode || 'both',
-  timeRuleMode: timeRuleModeForRow(row),
-  startTime: timeString(row.timeRule?.startMinutes),
-  endTime: timeString(row.timeRule?.endMinutes, '17:00'),
-  customDays: Array.isArray(row.timeRule?.days)
-    ? [...row.timeRule.days]
-    : [...DEFAULT_MAP_DRAFT.customDays],
-  validFromDate: dateInputValue(row.validFrom, row.validFromDate),
-  expiresAtDate: dateInputValue(row.expiresAt, row.expiresAtDate),
-  originalValidFrom: row.validFrom || null,
-  originalValidFromDate: dateInputValue(row.validFrom, row.validFromDate),
-  originalExpiresAt: row.expiresAt || null,
-  originalExpiresAtDate: dateInputValue(row.expiresAt, row.expiresAtDate),
-});
 
-const normalizeMapDraftForCompare = (draft = {}) => JSON.stringify({
-  limitKmh: String(draft.limitKmh ?? '').trim(),
-  source: String(draft.source || DEFAULT_MAP_DRAFT.source),
-  qualifierStatus: qualifierStatusForDraft(draft),
-  note: String(draft.note ?? ''),
-  roadName: String(draft.roadName ?? ''),
-  directionMode: String(draft.directionMode || DEFAULT_MAP_DRAFT.directionMode),
-  timeRuleMode: String(draft.timeRuleMode || DEFAULT_MAP_DRAFT.timeRuleMode),
-  startTime: String(draft.startTime || DEFAULT_MAP_DRAFT.startTime),
-  endTime: String(draft.endTime || DEFAULT_MAP_DRAFT.endTime),
-  customDays: normalizedDraftDays(draft).join(','),
-  validFromDate: String(draft.validFromDate || ''),
-  expiresAtDate: String(draft.expiresAtDate || ''),
-});
 
-const normalizePointForCompare = (point = {}) => {
-  const lat = Number(point.lat);
-  const lng = Number(point.lng);
-  return Number.isFinite(lat) && Number.isFinite(lng)
-    ? { lat: Number(lat.toFixed(7)), lng: Number(lng.toFixed(7)) }
-    : null;
-};
 
-const normalizeSectionPointsForCompare = (section = {}) => {
-  const points = Array.isArray(section.sectionPoints) && section.sectionPoints.length
-    ? section.sectionPoints
-    : [section];
-  return points
-    .map(normalizePointForCompare)
-    .filter(Boolean);
-};
 
-const sectionGeometryCompareKey = (section = {}) => JSON.stringify(normalizeSectionPointsForCompare(section));
 
-const hasTracedRoadGeometry = (section = {}) => {
-  const points = (Array.isArray(section.sectionPoints) ? section.sectionPoints : [])
-    .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng) }))
-    .filter((point) => (
-      Number.isFinite(point.lat) && point.lat >= -90 && point.lat <= 90 &&
-      Number.isFinite(point.lng) && point.lng >= -180 && point.lng <= 180
-    ));
-  if (points.length < 2) return false;
-  const first = points[0];
-  return points.some((point) => point.lat !== first.lat || point.lng !== first.lng);
-};
 
-const speedConflictCompareKey = (conflict = null) => JSON.stringify(conflict ? {
-  savedLimitKmh: Number(conflict.savedLimitKmh) || null,
-  observedLimitKmh: Number(conflict.observedLimitKmh) || null,
-  deltaKmh: Number(conflict.deltaKmh) || null,
-  geohash: String(conflict.geohash || ''),
-} : null);
 
-const timeRuleFromDraft = (draft = {}) => {
-  const mode = draft.timeRuleMode || 'always';
-  if (mode === 'always') return { enabled: false };
-  const days = mode === 'weekdays'
-    ? [1, 2, 3, 4, 5]
-    : mode === 'weekends'
-      ? [0, 6]
-      : mode === 'custom'
-        ? normalizedDraftDays(draft)
-        : [0, 1, 2, 3, 4, 5, 6];
-  return {
-    enabled: true,
-    days,
-    startTime: draft.startTime || '07:00',
-    endTime: draft.endTime || '17:00',
-  };
-};
 
 const COMMON_SPEED_LIMITS_KMH = [30, 40, 50, 60, 70, 80, 100];
-const ROW_FILTERS = [
-  ['all', 'All'],
-  ['conflicts', 'Conflicts'],
-  ['posted', 'Posted'],
-  ['estimates', 'Estimates'],
-  ['timeRules', 'Timed'],
-  ['expiring', 'Expiring'],
-  ['historical', 'Historical'],
-];
-/** @type {Array<[string, string]>} */
-const ROW_SORTS = [
-  ['updated', 'Recently updated'],
-  ['impact', 'Conflict impact'],
-  ['road', 'Road name'],
-  ['limit', 'Speed limit'],
-];
 const SPEED_WORKSPACES = [
   { value: 'map', label: 'Map', Icon: MapIcon },
   { value: 'review', label: 'Needs review', Icon: AlertTriangle },
@@ -531,130 +202,13 @@ const SPEED_WORKSPACES = [
 ];
 const MAP_MODEL_WORKSPACES = new Set(['map', 'review']);
 
-const distanceMeters = (a, b) => {
-  const lat1 = Number(a?.lat) * Math.PI / 180;
-  const lat2 = Number(b?.lat) * Math.PI / 180;
-  const dLat = lat2 - lat1;
-  const dLng = (Number(b?.lng) - Number(a?.lng)) * Math.PI / 180;
-  if (![lat1, lat2, dLat, dLng].every(Number.isFinite)) return Infinity;
-  const value = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 6371000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
-};
 
-const sectionLengthMeters = (points = []) => points.reduce((sum, point, index) => (
-  index === 0 ? 0 : sum + distanceMeters(points[index - 1], point)
-), 0);
 
-const sectionMidpoint = (points = []) => {
-  const clean = (Array.isArray(points) ? points : [])
-    .map((point) => ({ lat: Number(point?.lat), lng: Number(point?.lng) }))
-    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
-  return clean[Math.floor(clean.length / 2)] || null;
-};
 
-const tripLabel = (trip = {}) => {
-  const title = trip.name || trip.title || trip.label;
-  if (title) return title;
-  const started = new Date(trip.start_time || trip.started_at || trip.created_at || 0);
-  return Number.isFinite(started.getTime())
-    ? started.toLocaleDateString()
-    : `Trip ${String(trip.id || '').slice(0, 8)}`;
-};
 
-const undoActionText = (action = '') => ({
-  save_correction: 'add',
-  update_correction: 'change',
-  resolve_conflict_update: 'conflict decision',
-  remove_correction: 'delete',
-  resolve_conflict: 'conflict decision',
-  repair_saved_speed_data: 'repair',
-  restore_speed_backup: 'restore',
-  restore_backup: 'restore',
-  prune: 'cleanup',
-}[action] || 'change');
 
-const statusMessageText = (value) => (
-  typeof value === 'string' ? value : String(value?.message || '')
-);
 
-const speedStatusToast = (value) => {
-  const message = statusMessageText(value).trim();
-  if (!message) return null;
-  const lower = message.toLowerCase();
-  if (
-    lower.startsWith('could not') ||
-    lower.startsWith('cannot') ||
-    lower.startsWith('enter a valid') ||
-    lower.startsWith('tap at least') ||
-    lower.startsWith('this section needs') ||
-    lower.startsWith('this road section needs') ||
-    lower.startsWith('select ') ||
-    lower.startsWith('there is no') ||
-    lower.startsWith('speed-rule backup is too large') ||
-    lower.startsWith('snap to route needs') ||
-    lower.startsWith('no recorded route samples') ||
-    lower.includes('failed')
-  ) {
-    return { title: 'Saved road speed issue', description: message, variant: 'destructive' };
-  }
-  if (
-    lower.includes('matching trip scores are updating') ||
-    lower.includes('affected trips could not be recalculated') ||
-    lower.includes('matching trips could not be recalculated')
-  ) {
-    return { title: 'Saved road speed saved', description: message };
-  }
-  if (
-    lower.startsWith('saved ') ||
-    lower.startsWith('adding ') ||
-    lower.startsWith('add road section') ||
-    lower.startsWith('auto-snap ') ||
-    lower.startsWith('choose ') ||
-    lower.startsWith('saved road speeds refreshed') ||
-    lower.startsWith('restored ') ||
-    lower.startsWith('downloading ') ||
-    lower.startsWith('exported ') ||
-    lower.startsWith('change undone') ||
-    lower.startsWith('conflict resolved') ||
-    lower.startsWith('road section split') ||
-    lower.startsWith('deleted ') ||
-    lower.startsWith('confirmed ') ||
-    lower.startsWith('removed expired') ||
-    lower.startsWith('section snapped') ||
-    lower.startsWith('snapped the line') ||
-    lower.startsWith('saved snapped')
-  ) {
-    return { title: 'Saved road speed updated', description: message };
-  }
-  if (lower.startsWith('prepared a merged')) {
-    return { title: 'Saved road speed ready', description: message };
-  }
-  return null;
-};
 
-const mapSectionReasonText = (section = {}, addMode = false, units = 'metric') => {
-  if (section.saved) {
-    const source = sourceLabel(section.source);
-    return `Saved local rule from ${source}; this rule is used before trip-derived map evidence.`;
-  }
-  if (addMode) return 'New traced road section; it will become a saved local rule after saving.';
-  if (section.roadMemoryCandidate) {
-    const stageText = section.canAffectScoreAndAlerts === true
-      ? 'This estimate can affect scoring and alerts.'
-      : section.stage === 'change_review'
-        ? `Recent drives may indicate a change to ${formatSpeedLimit(section.changeDetection?.proposedLimitKmh, units)}; scoring and alerts are paused here.`
-        : 'This is visible for exploration but does not affect scoring or alerts yet.';
-    return `Road Memory suggests ${formatSpeedLimit(section.effectiveLimitKmh, units)}. ${section.confidenceExplanation || `${Number(section.tripCount) || 1} repeated drives at ${Math.round((Number(section.confidence) || 0) * 100)}% confidence`}. ${stageText}`;
-  }
-  const points = Number(section.sampleCount || section.sectionPoints?.length || 0);
-  const sampleText = points > 0 ? `${points} route sample${points === 1 ? '' : 's'}` : 'recorded route evidence';
-  const observedLimit = Number(section.effectiveLimitKmh ?? section.observedLimitKmh);
-  if (Number.isFinite(observedLimit) && observedLimit > 0) {
-    return `Observed-only trip section from ${sampleText}; save it to turn it into a local posted sign or estimate.`;
-  }
-  return `Unset trip section from ${sampleText}; no saved rule covers this part of the recorded route yet.`;
-};
 
 const downloadBrowserJson = (filename, payload) => {
   const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
@@ -722,6 +276,8 @@ function SavedRoadSpeedsSkeleton() {
     </div>
   );
 }
+
+
 
 export default function SpeedLimits() {
   const [searchParams] = useSearchParams();
@@ -1277,6 +833,12 @@ export default function SpeedLimits() {
       warnings.push('Only one stored route sample matches this rule. Snap to route or trace a longer section before relying on it.');
     }
     return warnings;
+    // mapDraft fields are listed individually on purpose: the draft object gets
+    // a new identity on every keystroke, and recomputing the whole warning set
+    // then is wasteful. The fields below cover everything invalidCustomDayRule
+    // and qualifierDraftError read (timeRuleMode, customDays, qualifierStatus,
+    // and the validity dates).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     addMode,
     blockingOverlapChecks,
@@ -3978,1588 +3540,134 @@ export default function SpeedLimits() {
       )}
 
       {activeWorkspace === 'review' && (
-        <div ref={reviewWorkspaceRef} className="scroll-mt-24 space-y-4">
-          <SpeedSignEvidenceReview
-            showAll
-            showEmpty
-            onCountChange={setCameraReviewCount}
-          />
-          <RoadMemoryChangeReview
-            candidates={roadMemoryCandidates}
-            onChanged={() => refreshRowsAndMap({ silent: true, forceMap: true })}
-            onFocus={(candidate) => focusAttentionItem({
-              kind: 'memoryReview',
-              section: {
-                ...candidate,
-                roadMemoryCandidate: true,
-                source: 'local_road_memory',
-                effectiveLimitKmh: Number(candidate.limitKmh) || null,
-              },
-            })}
-          />
-      {!mapModelLoaded && (
-        <section className={`rounded-xl border px-3 py-2 text-sm font-medium ${
-          mapModelState.status === 'error'
-            ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200'
-            : 'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-200'
-        }`}>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <span>
-              {mapModelState.status === 'error'
-                ? 'Map evidence could not load. Saved rules are still available.'
-                : 'Loading trip evidence for conflicts and observed-only sections...'}
-            </span>
-            {mapModelState.status === 'error' && (
-              <button
-                type="button"
-                onClick={() => loadMapModel({ force: true })}
-                className="inline-flex items-center justify-center rounded-lg border border-current/30 px-2.5 py-1 text-xs font-semibold hover:bg-background/50"
-              >
-                Retry
-              </button>
-            )}
-          </div>
-        </section>
-      )}
-      <section className="rounded-2xl border border-sky-200 bg-sky-50/70 p-4 shadow-sm dark:border-sky-900/60 dark:bg-sky-950/20">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <Gauge className="h-4 w-4 text-sky-600" />
-              <h2 className="font-grotesk text-lg font-bold">Learning automatically</h2>
-              <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-800 dark:bg-sky-950/50 dark:text-sky-200">
-                {learningMemoryCandidates.length}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              These corridors came from your own GPS trips. Driving behavior can suggest where a limit may be, but it cannot prove a posted law. Strong suggestions are tested in shadow mode against parked decisions before they can affect scores, voice checks, or live alerts.
-            </p>
-          </div>
-          <span className="rounded-full bg-background/80 px-2.5 py-1 text-[11px] font-semibold text-muted-foreground">
-            No action required
-          </span>
-        </div>
-        {learningMemoryCandidates.length === 0 ? (
-          <div className="mt-3 rounded-xl border border-sky-200/80 bg-background/70 px-3 py-3 text-sm text-muted-foreground dark:border-sky-900/50">
-            No corridors are currently in the learning stage. Complete a normal public-road trip and Road Memory will check it automatically.
-          </div>
-        ) : (
-          <div
-            ref={learningInventoryRef}
-            className="mt-3 overflow-y-auto rounded-xl border border-sky-200 bg-background/80 thin-scrollbar dark:border-sky-900/60"
-            style={{ height: `${Math.min(learningMemoryCandidates.length, 6) * 76}px` }}
-            aria-label="Road Memory learning progress"
-          >
-            <div
-              className="relative w-full"
-              style={{ height: `${learningInventoryVirtualizer.getTotalSize()}px` }}
-            >
-              {learningInventoryVirtualizer.getVirtualItems().map((virtualItem) => {
-                const candidate = learningMemoryCandidates[virtualItem.index];
-                if (!candidate) return null;
-                const tripCount = Math.max(0, Number(candidate.tripCount) || 0);
-                const confidence = Math.max(0, Math.min(1, Number(candidate.confidence) || 0));
-                const progress = Math.max(8, Math.min(100, tripCount / 3 * 100));
-                const section = {
-                  ...candidate,
-                  saved: false,
-                  roadMemoryCandidate: true,
-                  source: 'local_road_memory',
-                  observedLimitKmh: Number(candidate.limitKmh) || null,
-                  effectiveLimitKmh: Number(candidate.limitKmh) || null,
-                };
-                return (
-                  <button
-                    key={candidate.id || candidate.sectionKey || virtualItem.index}
-                    type="button"
-                    onClick={() => focusAttentionItem({ kind: 'learning', section })}
-                    className="absolute left-0 top-0 w-full border-b border-sky-100 px-3 py-2 text-left hover:bg-sky-100/60 dark:border-sky-900/40 dark:hover:bg-sky-950/40"
-                    style={{
-                      height: `${virtualItem.size}px`,
-                      transform: `translateY(${virtualItem.start}px)`,
-                    }}
-                  >
-                    <span className="flex items-center justify-between gap-3">
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-semibold">
-                          {candidate.roadName || `Local corridor ${String(candidate.geohash || '').slice(0, 6)}`}
-                        </span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          Exploring {formatSpeedLimit(candidate.limitKmh, units)} · {tripCount} drive{tripCount === 1 ? '' : 's'} · {Math.round(confidence * 100)}% calibrated confidence
-                        </span>
-                      </span>
-                      <span className="shrink-0 rounded-full bg-sky-100 px-2 py-1 text-[11px] font-semibold text-sky-800 dark:bg-sky-950/50 dark:text-sky-200">
-                        {candidate.usageStage === 'shadow' ? 'Shadow check' : candidate.stage === 'suggested' ? 'Almost ready' : 'Learning'}
-                      </span>
-                    </span>
-                    <span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-sky-100 dark:bg-sky-950/70">
-                      <span className="block h-full rounded-full bg-sky-500" style={{ width: `${progress}%` }} />
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </section>
-      <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4 text-primary" />
-              <h2 className="font-grotesk text-lg font-bold">All road knowledge</h2>
-              <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold text-muted-foreground">
-                {reviewInventory.length}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              One inventory for saved posted limits, estimates, active Road Memory, learning corridors, possible changes, and stale evidence. Each status says whether it can currently affect scores and alerts.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2 text-[11px] font-semibold">
-            <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
-              {rows.length} manual
-            </span>
-            <span className="rounded-full bg-sky-100 px-2 py-1 text-sky-800 dark:bg-sky-950/40 dark:text-sky-200">
-              {roadMemoryCandidates.length} Road Memory
-            </span>
-          </div>
-        </div>
-        <label className="relative mt-3 block">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="search"
-            value={knowledgeQuery}
-            onChange={(event) => setKnowledgeQuery(event.target.value)}
-            placeholder="Search every saved, active, or learning road..."
-            className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-xs outline-none focus:border-primary"
-          />
-        </label>
-        {reviewInventory.length === 0 ? (
-          <div className="mt-3 rounded-xl border border-border bg-secondary/30 px-3 py-3 text-sm text-muted-foreground">
-            {knowledgeQuery ? 'No road knowledge matches this search.' : 'No road knowledge exists yet.'}
-          </div>
-        ) : (
-          <div
-            ref={reviewInventoryRef}
-            className="mt-3 overflow-y-auto rounded-xl border border-border bg-background/60 thin-scrollbar"
-            style={{ height: `${Math.min(reviewInventory.length, 7) * 68}px` }}
-            aria-label="Complete local road knowledge inventory"
-          >
-            <div
-              className="relative w-full"
-              style={{ height: `${reviewInventoryVirtualizer.getTotalSize()}px` }}
-            >
-              {reviewInventoryVirtualizer.getVirtualItems().map((virtualItem) => {
-                const item = reviewInventory[virtualItem.index];
-                if (!item) return null;
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => focusAttentionItem({ kind: item.focusKind, section: item.section })}
-                    className="absolute left-0 top-0 flex w-full items-center justify-between gap-3 border-b border-border px-3 py-2 text-left hover:bg-secondary/60"
-                    style={{
-                      height: `${virtualItem.size}px`,
-                      transform: `translateY(${virtualItem.start}px)`,
-                    }}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold">{item.title}</span>
-                      <span className="block truncate text-xs text-muted-foreground">{item.detail}</span>
-                    </span>
-                    <span className="flex shrink-0 flex-col items-end gap-1">
-                    <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
-                      item.tone === 'violet'
-                        ? 'bg-violet-100 text-violet-800 dark:bg-violet-950/40 dark:text-violet-200'
-                        : item.tone === 'amber'
-                          ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-100'
-                          : item.tone === 'slate'
-                            ? 'bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-100'
-                            : item.tone === 'cyan'
-                              ? 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-200'
-                              : item.tone === 'sky'
-                                ? 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-200'
-                                : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
-                    }`}>
-                      {item.badge}
-                    </span>
-                    <span className="text-[10px] font-semibold text-muted-foreground">
-                      Score + alerts {item.intelligence.canAffectScore ? 'active' : 'blocked'}
-                    </span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </section>
-      <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-                <div className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-primary" />
-              <h2 className="font-grotesk text-lg font-bold">Needs attention</h2>
-              <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold text-muted-foreground">
-                {attentionItems.length}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Only real conflicts, stale trusted evidence, confirmed trip zones, and saved rules with quality problems appear here. Ordinary learning roads do not require your input.
-            </p>
-          </div>
-          {firstConflictSection && (
-            <button
-              type="button"
-              onClick={() => focusAttentionItem({ kind: 'conflict', section: firstConflictSection })}
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700"
-            >
-              <AlertTriangle className="h-3.5 w-3.5" />
-              Review first conflict
-            </button>
-          )}
-        </div>
-        {attentionItems.length === 0 ? (
-          <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
-            No road-speed decisions need your attention right now. Automatic learning can continue by itself.
-          </div>
-        ) : (
-          <div className="mt-3 grid gap-2 lg:grid-cols-2">
-            {visibleAttentionItems.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => focusAttentionItem(item)}
-                className={`rounded-xl border p-3 text-left text-sm transition-colors hover:bg-secondary/70 ${
-                  item.kind === 'conflict'
-                    ? 'border-red-200 bg-red-50/80 dark:border-red-900/50 dark:bg-red-950/20'
-                    : 'border-border bg-secondary/30'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate font-semibold">{item.title}</div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">{item.detail}</div>
-                  </div>
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                    item.kind === 'conflict'
-                      ? 'bg-red-600 text-white'
-                      : item.kind === 'voice'
-                        ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200'
-                      : item.kind === 'observed'
-                        ? 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-200'
-                        : item.kind === 'memoryReview'
-                          ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-100'
-                        : item.kind === 'speedZone'
-                          ? 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-100'
-                        : item.kind === 'review'
-                          ? 'bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-100'
-                        : 'bg-secondary text-muted-foreground'
-                  }`}>
-                    {item.kind === 'conflict' ? 'Resolve' : item.kind === 'voice' ? 'Voice' : item.kind === 'speedZone' ? 'Zone' : item.kind === 'memoryReview' ? 'Review' : item.kind === 'review' ? 'Review' : 'Set'}
-                  </span>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-        {attentionItems.length > 24 && (
-          <button
-            type="button"
-            onClick={() => setShowAllAttention((value) => !value)}
-            className="mt-3 inline-flex items-center justify-center rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold hover:bg-secondary"
-          >
-            {showAllAttention
-              ? 'Show highest-priority items only'
-              : `Show all ${attentionItems.length} attention items`}
-          </button>
-        )}
-      </section>
-
-      <section className={`rounded-xl border p-3 ${
-        health?.healthy
-          ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/60 dark:bg-emerald-950/30'
-          : 'border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/30'
-      }`}>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex min-w-0 items-start gap-3">
-            <HeartPulse className="mt-0.5 h-5 w-5 flex-shrink-0" />
-            <div>
-              <h2 className="text-sm font-semibold">Local data health</h2>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {health?.healthy
-                  ? 'No conflicts, expired rules, stale evidence, invalid geometry, or road-level disagreements were found.'
-                  : `${health?.issueCount || 0} issue${health?.issueCount === 1 ? '' : 's'} found: ${health?.counts?.high || 0} high, ${health?.counts?.medium || 0} medium, ${health?.counts?.low || 0} low.`}
-              </p>
-              {!health?.healthy && health?.issues?.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-semibold">
-                  {Object.entries(health.counts || {})
-                    .filter(([key, count]) => !['high', 'medium', 'low'].includes(key) && count > 0)
-                    .map(([key, count]) => (
-                      <span key={key} className="rounded-full bg-background/80 px-2 py-1">
-                        {String(key).replace(/_/g, ' ')} {count}
-                      </span>
-                    ))}
-                </div>
-              )}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={cleanExpiredSpeedKnowledge}
-            disabled={!health || (!health.counts?.expired_rule && !health.counts?.stale_cell)}
-            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-40"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Clean expired
-          </button>
-        </div>
-      </section>
-        </div>
+        <SpeedLimitReviewWorkspace
+          attentionItems={attentionItems}
+          cleanExpiredSpeedKnowledge={cleanExpiredSpeedKnowledge}
+          firstConflictSection={firstConflictSection}
+          focusAttentionItem={focusAttentionItem}
+          health={health}
+          knowledgeQuery={knowledgeQuery}
+          learningInventoryRef={learningInventoryRef}
+          learningInventoryVirtualizer={learningInventoryVirtualizer}
+          learningMemoryCandidates={learningMemoryCandidates}
+          loadMapModel={loadMapModel}
+          mapModelLoaded={mapModelLoaded}
+          mapModelState={mapModelState}
+          refreshRowsAndMap={refreshRowsAndMap}
+          reviewInventory={reviewInventory}
+          reviewInventoryRef={reviewInventoryRef}
+          reviewInventoryVirtualizer={reviewInventoryVirtualizer}
+          reviewWorkspaceRef={reviewWorkspaceRef}
+          roadMemoryCandidates={roadMemoryCandidates}
+          rows={rows}
+          setCameraReviewCount={setCameraReviewCount}
+          setKnowledgeQuery={setKnowledgeQuery}
+          setShowAllAttention={setShowAllAttention}
+          showAllAttention={showAllAttention}
+          units={units}
+          visibleAttentionItems={visibleAttentionItems}
+        />
       )}
 
       {activeWorkspace === 'map' && (
-      <section className="space-y-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <MapIcon className="h-5 w-5 text-primary" />
-              <h2 className="font-grotesk text-lg font-bold">Road speed map</h2>
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Only posted signs you confirmed are solid. Saved estimates, Road Memory, and temporary trip evidence stay dashed; red sections disagree with a saved rule.
-            </p>
-          </div>
-          <div className="flex flex-col items-start gap-2 sm:items-end">
-            <div className="flex flex-wrap justify-start gap-2 sm:justify-end">
-              {firstConflictSection && (
-                <button
-                  type="button"
-                  onClick={() => focusAttentionItem({ kind: 'conflict', section: firstConflictSection })}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
-                >
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                  Review conflict
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={addMode ? cancelAddSection : startAddingSection}
-                className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold ${
-                  addMode ? 'border border-border bg-secondary text-foreground' : 'bg-primary text-primary-foreground'
-                }`}
-              >
-                {addMode ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
-                {addMode ? 'Cancel adding' : 'Add road speed'}
-              </button>
-              {hiddenUnsetSectionCount > 0 && (
-                <button
-                  type="button"
-                  onClick={restoreIgnoredUnsetMapSections}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
-                >
-                  <Undo2 className="h-3.5 w-3.5" />
-                  Restore hidden unset {hiddenUnsetSectionCount}
-                </button>
-              )}
-              {excludedSpeedSectionCount > 0 && (
-                <details className="relative">
-                  <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary [&::-webkit-details-marker]:hidden">
-                    <Undo2 className="h-3.5 w-3.5" />
-                    Manage exclusions {excludedSpeedSectionCount}
-                  </summary>
-                  <div className="absolute right-0 z-30 mt-2 w-80 space-y-2 rounded-xl border border-border bg-card p-3 shadow-xl">
-                    <p className="text-[11px] text-muted-foreground">These sections cannot be learned, matched, scored, or used for alerts.</p>
-                    {persistedExcludedSpeedSections.map((exclusion) => {
-                      const restoreId = exclusion.id || exclusion.exclusionId || exclusion.geohash;
-                      return (
-                        <div key={restoreId} className="flex items-center justify-between gap-2 rounded-lg bg-secondary/60 px-2.5 py-2">
-                          <span className="min-w-0 truncate text-xs font-semibold">
-                            {exclusion.roadName || `Private section ${String(exclusion.geohash || '').slice(0, 6)}`}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => restoreExcludedSpeedSections(exclusion)}
-                            disabled={String(busyGeohash || '').startsWith('restore-excluded-')}
-                            className="shrink-0 rounded-lg border border-border bg-background px-2 py-1 text-[11px] font-semibold disabled:opacity-50"
-                          >
-                            Allow
-                          </button>
-                        </div>
-                      );
-                    })}
-                    <button
-                      type="button"
-                      onClick={() => restoreExcludedSpeedSections()}
-                      disabled={String(busyGeohash || '').startsWith('restore-excluded-')}
-                      className="w-full rounded-lg border border-border bg-background px-2.5 py-2 text-xs font-semibold disabled:opacity-50"
-                    >
-                      Allow learning on all {excludedSpeedSectionCount}
-                    </button>
-                  </div>
-                </details>
-              )}
-              {addMode && (
-                <button
-                  type="button"
-                  onClick={toggleAutoSnapTrace}
-                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold ${
-                    autoSnapTrace
-                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200'
-                      : 'border-border bg-card text-muted-foreground'
-                  }`}
-                  aria-pressed={autoSnapTrace}
-                >
-                  <Magnet className="h-3.5 w-3.5" />
-                  Auto snap
-                </button>
-              )}
-            </div>
-            <label className="relative w-full sm:w-80">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <input
-                type="search"
-                value={mapQuery}
-                onChange={(event) => setMapQuery(event.target.value)}
-                placeholder="Search map by road, source, speed..."
-                className="w-full rounded-xl border border-border bg-background py-2 pl-9 pr-3 text-xs outline-none focus:border-primary"
-              />
-            </label>
-            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span><span className="mr-1 inline-block h-2.5 w-5 rounded bg-slate-400" />Not set</span>
-              <span><span className="mr-1 inline-block h-2.5 w-5 rounded border-2 border-dashed border-sky-500 bg-sky-100" />Road Memory estimate</span>
-              <span><span className="mr-1 inline-block h-2.5 w-5 rounded border-2 border-dotted border-sky-500 bg-sky-50" />Trip evidence</span>
-              <span><span className="mr-1 inline-block h-2.5 w-5 rounded border-2 border-dashed border-red-600 bg-red-100" />Conflict</span>
-              {[30, 40, 50, 60, 80, 100].map((limit) => (
-                <span key={limit}>
-                  <span className="mr-1 inline-block h-2.5 w-5 rounded" style={{ backgroundColor: speedLimitColor(limit) }} />
-                  {Math.round(convertSpeedKmh(limit, units) || limit)}
-                </span>
-              ))}
-              <span>{speedUnit}</span>
-            </div>
-          </div>
-        </div>
-
-        {mapModelLoading && (
-          <div className="flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-medium text-sky-800 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-200" role="status">
-            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-            Saved roads are ready. Adding recent trip evidence in the background…
-          </div>
-        )}
-        {!tripEvidenceLayersRequested && (
-          <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
-            <Gauge className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>
-              Fast start is on: only saved posted-sign roads are loaded. Open Filters to load Road Memory, estimates, observed roads, or roads without a saved speed.
-            </span>
-          </div>
-        )}
-        {(historicalRuleCount + scheduledOrExpiredRuleCount) > 0 && (
-          <div className="flex items-start gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-medium text-violet-900 dark:border-violet-900/60 dark:bg-violet-950/30 dark:text-violet-100">
-            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>
-              This map shows rules active right now. Saved roads keeps {historicalRuleCount} historical and {scheduledOrExpiredRuleCount} future/expired version{historicalRuleCount + scheduledOrExpiredRuleCount === 1 ? '' : 's'} in the visible timeline; use the Historical or Expiring filters to inspect them.
-            </span>
-          </div>
-        )}
-        {mapModelState.status === 'error' && (
-          <div className="flex flex-col gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200 sm:flex-row sm:items-center sm:justify-between">
-            <span>Trip evidence could not load. The saved-road map is still available.</span>
-            <button
-              type="button"
-              onClick={() => loadMapModel({ force: true })}
-              className="inline-flex items-center justify-center rounded-lg border border-current/30 px-2.5 py-1 font-semibold hover:bg-background/50"
-            >
-              Retry trip evidence
-            </button>
-          </div>
-        )}
-
-        {TRIAGE_DISABLE_MAPS ? (
-          <div className="flex h-[28rem] min-h-[22rem] items-center justify-center rounded-2xl border border-border bg-secondary/30 text-sm text-muted-foreground">
-            Map disabled for Phase 0 timing test
-          </div>
-        ) : <SpeedLimitEditorMap
-          trips={mapDisplayTrips}
-          corrections={currentMapRows}
-          preparedSections={mapSections}
-          selectedGeohash={correctionKey(selectedSection) || ''}
-          mapQuery={deferredMapQuery}
-          layers={mapLayers}
+        <SpeedLimitMapWorkspace
           addMode={addMode}
           addPath={addPath}
-          selectedSectionOverride={selectedSection}
-          onLayerChange={setMapLayers}
-          onSelect={selectMapSection}
-          onAddPoint={selectNewMapPoint}
-          onMoveAddPoint={moveAddPoint}
-          onMoveSectionPoint={moveSelectedSectionEndpoint}
-          emptyMessage={!tripEvidenceLayersRequested
-            ? 'No saved posted-sign road lines yet. Open Filters to load other local road evidence.'
-            : undefined}
-        />}
-
-        {addMode && (
-          <div className="grid gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950 shadow-sm dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100 lg:grid-cols-[1.1fr_0.9fr]">
-            <div>
-              <div className="font-semibold">Add speed trace</div>
-              <div className="mt-1 text-xs opacity-85">
-                {autoSnapTrace
-                  ? 'Tap the start and end of the segment; Auto snap fills the recorded route shape when possible. Drag trace points if needed, then enter the speed below.'
-                  : 'Tap along the road, drag trace points if needed, then enter the speed below.'}
-              </div>
-              <div className="mt-2 flex flex-wrap gap-1.5 text-xs font-semibold">
-                <span className="rounded-full bg-background/80 px-2 py-1">{addPath.length} point{addPath.length === 1 ? '' : 's'}</span>
-                <span className="rounded-full bg-background/80 px-2 py-1">{Math.round(traceLengthM)} m traced</span>
-                <span className="rounded-full bg-background/80 px-2 py-1">{autoSnapTrace ? 'Auto snap on' : 'Auto snap off'}</span>
-              </div>
-            </div>
-            {traceQuality && (
-              <div className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
-                traceQuality.level === 'good'
-                  ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200'
-                  : traceQuality.level === 'info'
-                    ? 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-200'
-                    : 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100'
-              }`}>
-                {traceQuality.text}
-              </div>
-            )}
-          </div>
-        )}
-
-        <details className="rounded-xl border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
-          <summary className="cursor-pointer font-semibold text-foreground">What the map actions do</summary>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-            <p><strong>Snap to route</strong> matches the trace to one ordered recorded route segment within 80 metres. It never contacts a routing service.</p>
-            <p><strong>Split at midpoint</strong> replaces one saved rule with two independently editable road sections.</p>
-            <p><strong>Trim start/end</strong> removes one bad tail point from a saved rule and immediately updates affected trip scores.</p>
-            <p><strong>Parking/private</strong> removes a saved rule or hides an unset section when it is a lot, driveway, or private access road.</p>
-            <p><strong>Edit trace points</strong> hides the selected section&apos;s old line while editing. Drag S, E, or numbered bend handles, then update the road speed to save the new geometry.</p>
-            <p><strong>Merge nearby</strong> joins two nearby saved sections only when their speeds match.</p>
-            <p><strong>Continue tracing</strong> means the road is still being drawn. It disappears immediately after a successful save.</p>
-          </div>
-        </details>
-
-        {selectedSection && (
-          <div className="max-h-[78vh] overflow-y-auto rounded-2xl border border-primary/30 bg-card p-4 shadow-sm sm:max-h-none sm:overflow-visible">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-primary">
-                  {selectedSection.saved ? 'Edit saved section' : 'Set road speed'}
-                </div>
-                <h3 className="mt-1 font-semibold">
-                  {mapDraft.roadName || selectedSection.roadName || `Road area ${selectedSection.geohash}`}
-                </h3>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {selectedSection.saved
-                    ? 'This value follows the highlighted saved road section. Create a separate section where the posted limit changes.'
-                    : addMode
-                      ? `${addPath.length} trace point${addPath.length === 1 ? '' : 's'}. ${autoSnapTrace ? 'Tap start and end; add more anchors only if the road match needs help.' : 'Tap along the road and around each bend; at least two points are required.'}`
-                    : `${selectedSectionPointCount} recorded point${selectedSectionPointCount === 1 ? '' : 's'} in this trip section. Enter the speed and save it as a road section.`}
-                </p>
-                {selectedSectionReason && (
-                  <div className="mt-2 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs font-medium text-muted-foreground">
-                    {selectedSectionReason}
-                  </div>
-                )}
-                <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-semibold">
-                  <span className={`rounded-full px-2 py-0.5 ${speedLimitSourceBadgeClass(mapDraft.source)}`}>
-                    {speedLimitSourceLabel(mapDraft.source, { short: true })}
-                  </span>
-                  <span className="rounded-full bg-secondary px-2 py-0.5 text-muted-foreground">
-                    {speedLimitScorePreview(selectedSection.limitKmh ?? selectedSection.observedLimitKmh, mapDraft.limitKmh)}
-                  </span>
-                  <span className="rounded-full bg-secondary px-2 py-0.5 text-muted-foreground">
-                    Observed {formatSpeedLimit(selectedSection.observedLimitKmh ?? selectedSection.effectiveLimitKmh, units)}
-                  </span>
-                  <span className="rounded-full bg-secondary px-2 py-0.5 text-muted-foreground">
-                    {formatSourceList(selectedSection.observedSources)}
-                  </span>
-                  {selectedEvidence && (
-                    <span className={`rounded-full px-2 py-0.5 ${
-                      selectedEvidence.level === 'high'
-                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
-                        : selectedEvidence.level === 'medium'
-                          ? 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-200'
-                          : 'bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-100'
-                    }`}>
-                      {speedLimitConfidenceLabel(selectedEvidence)} {selectedEvidence.confidencePercent}%
-                    </span>
-                  )}
-                  {selectedImpactPreview && (
-                    <span className="rounded-full bg-slate-900 px-2 py-0.5 text-white dark:bg-slate-100 dark:text-slate-900">
-                      {selectedImpactPreview.affectedTripCount} affected trip{selectedImpactPreview.affectedTripCount === 1 ? '' : 's'}
-                    </span>
-                  )}
-                  {selectedSection.conflict && (
-                    <span className="rounded-full bg-red-100 px-2 py-0.5 text-red-700 dark:bg-red-950/40 dark:text-red-300">
-                      Saved {formatSpeedLimit(selectedSection.conflict.savedLimitKmh, units)} vs observed {formatSpeedLimit(selectedSection.conflict.observedLimitKmh, units)}
-                    </span>
-                  )}
-                </div>
-                {!selectedSection.saved && addPath.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={undoAddPoint}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-secondary px-2.5 py-1.5 text-xs font-semibold"
-                    >
-                      <Undo2 className="h-3.5 w-3.5" />
-                      Undo last point
-                    </button>
-                    <button
-                      type="button"
-                      onClick={snapSelectedSectionToTrips}
-                      disabled={selectedSectionPointCount < 2}
-                      title="Match the trace to one ordered recorded route segment within 80 metres. No online routing service is used."
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-semibold disabled:opacity-50"
-                    >
-                      <Magnet className="h-3.5 w-3.5" />
-                      Snap to route
-                    </button>
-                  </div>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={closeMapEditor}
-                className="rounded-lg p-2 text-muted-foreground hover:bg-secondary"
-                aria-label="Close road speed editor"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[14rem_1fr_1fr_auto] xl:items-end">
-              <label className="grid gap-1 text-xs font-semibold">
-                Speed limit
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={units === 'imperial' ? 3 : 5}
-                    max={Math.floor(convertSpeedKmh(MAX_SAVED_SPEED_LIMIT_KMH, units) || MAX_SAVED_SPEED_LIMIT_KMH)}
-                    step="5"
-                    autoFocus
-                    value={speedInputValueFromKmh(mapDraft.limitKmh, units)}
-                    onChange={(event) => setMapDraft((current) => {
-                      const canonical = convertDisplaySpeedToKmh(event.target.value, units);
-                      return { ...current, limitKmh: canonical == null ? '' : String(canonical) };
-                    })}
-                    className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                  />
-                  <span className="text-muted-foreground">{speedUnit}</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {speedQuickPicks.map((limit) => (
-                    <button
-                      key={limit}
-                      type="button"
-                      onClick={() => setMapDraft((current) => ({
-                        ...current,
-                        limitKmh: String(convertDisplaySpeedToKmh(limit, units) ?? limit),
-                      }))}
-                      className={`rounded-lg border px-2 py-1 text-[11px] font-semibold ${
-                        Math.round(convertSpeedKmh(mapDraft.limitKmh, units) || 0) === limit
-                          ? 'border-primary bg-primary text-primary-foreground'
-                          : 'border-border bg-secondary text-foreground hover:bg-secondary/80'
-                      }`}
-                    >
-                      {limit}
-                    </button>
-                  ))}
-                </div>
-              </label>
-              <label className="grid gap-1 text-xs font-semibold">
-                Road name
-                <input
-                  type="text"
-                  value={mapDraft.roadName}
-                  onChange={(event) => setMapDraft((current) => ({ ...current, roadName: event.target.value }))}
-                  placeholder="Optional road name"
-                  className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                />
-              </label>
-              <label className="grid gap-1 text-xs font-semibold">
-                How do you know?
-                <select
-                  value={mapDraft.source}
-                  onChange={(event) => setMapDraft((current) => ({ ...current, source: event.target.value }))}
-                  className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                >
-                  <option value="user_confirmed_posted_sign">Posted sign</option>
-                  <option value="user_entered_estimate">Estimate</option>
-                </select>
-              </label>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={saveMapSection}
-                  disabled={busyGeohash === correctionKey(selectedSection) || !canSaveSelectedMapSection}
-                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60"
-                >
-                  {selectedSection.saved ? <Pencil className="h-3.5 w-3.5" /> : <Gauge className="h-3.5 w-3.5" />}
-                  {selectedSection.saved ? 'Update road speed' : 'Save road speed'}
-                </button>
-                {selectedSection.saved && (
-                  <button
-                    type="button"
-                    onClick={removeMapSection}
-                    disabled={busyGeohash === correctionKey(selectedSection)}
-                    className="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-red-700 disabled:opacity-60 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
-                    aria-label="Remove saved speed"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                )}
-                {!selectedSection.saved && isUnsetMapSection(selectedSection) && (
-                  <button
-                    type="button"
-                    onClick={ignoreUnsetMapSection}
-                    disabled={busyGeohash === correctionKey(selectedSection)}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary disabled:opacity-60"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Hide unset
-                  </button>
-                )}
-              </div>
-            </div>
-            {!selectedSection.saved && isUnsetMapSection(selectedSection) && (
-              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-950/30 dark:text-slate-200">
-                Hide unset removes this small prompt from the saved speed map and review list on this device. It does not delete the trip route.
-              </div>
-            )}
-            <details className="mt-3 rounded-xl border border-border bg-secondary/30 p-3">
-              <summary className="cursor-pointer text-xs font-semibold text-foreground">Cleanup and trace tools</summary>
-              <div className="mt-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-foreground">Cleanup tools</div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    Parking/private permanently blocks this geometry from learning, saved-speed matching, scores, alerts, and review prompts until you explicitly allow learning again.
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {selectedSection.saved && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => trimSavedMapSection('start')}
-                        disabled={busyGeohash === correctionKey(selectedSection) || (selectedSection.sectionPoints || []).length < 3}
-                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
-                      >
-                        <Scissors className="h-3.5 w-3.5" />
-                        Trim start
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => trimSavedMapSection('end')}
-                        disabled={busyGeohash === correctionKey(selectedSection) || (selectedSection.sectionPoints || []).length < 3}
-                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
-                      >
-                        <Scissors className="h-3.5 w-3.5" />
-                        Trim end
-                      </button>
-                    </>
-                  )}
-                  <button
-                    type="button"
-                    onClick={markSelectedSectionPrivate}
-                    disabled={busyGeohash === correctionKey(selectedSection)}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-60 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100"
-                  >
-                    <Ban className="h-3.5 w-3.5" />
-                    Parking/private
-                  </button>
-                </div>
-              </div>
-            </details>
-            {editorWarnings.length > 0 && (
-              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
-                {editorWarnings[0]}
-                {editorWarnings.length > 1 && ` +${editorWarnings.length - 1} more check${editorWarnings.length === 2 ? '' : 's'} in Advanced options.`}
-              </div>
-            )}
-            {selectedBlockingOverlap && (
-              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
-                <div className="font-semibold">This save would duplicate an active saved rule.</div>
-                <div className="mt-1">
-                  Overlaps {selectedBlockingOverlap.roadName || 'another saved road section'} at {formatSpeedLimit(selectedBlockingOverlap.limitKmh, units)}.
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {selectedBlockingOverlap.section && (
-                    <button
-                      type="button"
-                      onClick={() => selectMapSection(selectedBlockingOverlap.section)}
-                      className="rounded-lg border border-red-200 bg-background px-2.5 py-1.5 font-semibold text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-background/80 dark:text-red-300"
-                    >
-                      Edit existing rule
-                    </button>
-                  )}
-                  {selectedSection?.saved && (
-                    <button
-                      type="button"
-                      onClick={splitMapSection}
-                      disabled={(selectedSection.sectionPoints || []).length < 2}
-                      className="rounded-lg border border-red-200 bg-background px-2.5 py-1.5 font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50 dark:border-red-900/50 dark:bg-background/80 dark:text-red-300"
-                    >
-                      Split selected section
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMapDraft((current) => ({
-                        ...current,
-                        directionMode: current.directionMode === 'both' ? 'forward' : current.directionMode,
-                      }));
-                      setStatus('Set this rule to a specific direction or time window, then review the overlap warning again before saving.');
-                    }}
-                    className="rounded-lg border border-red-200 bg-background px-2.5 py-1.5 font-semibold text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-background/80 dark:text-red-300"
-                  >
-                    Make direction/time distinct
-                  </button>
-                </div>
-              </div>
-            )}
-            <details className="mt-3 rounded-xl border border-border bg-secondary/30 p-3">
-              <summary className="cursor-pointer text-xs font-semibold text-foreground">Advanced options</summary>
-              <div className="mt-3 grid gap-3 md:grid-cols-3">
-                <label className="grid gap-1 text-xs font-semibold">
-                  Note
-                  <input
-                    type="text"
-                    value={mapDraft.note}
-                    onChange={(event) => setMapDraft((current) => ({ ...current, note: event.target.value }))}
-                    placeholder="School zone, construction, sign changed..."
-                    className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                  />
-                </label>
-                <label className="grid gap-1 text-xs font-semibold">
-                  Applies by direction
-                  <select
-                    value={mapDraft.directionMode}
-                    onChange={(event) => setMapDraft((current) => ({ ...current, directionMode: event.target.value }))}
-                    className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                  >
-                    <option value="both">Both directions</option>
-                    <option value="forward">Drawn direction only</option>
-                    <option value="reverse">Opposite direction only</option>
-                  </select>
-                </label>
-                <label className="grid gap-1 text-xs font-semibold">
-                  Rule type
-                  <select
-                    value={qualifierStatusForDraft(mapDraft)}
-                    onChange={(event) => setMapDraft((current) => ({
-                      ...current,
-                      ...qualifierDraftPatch(event.target.value, current),
-                    }))}
-                    className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                  >
-                    {SPEED_RULE_QUALIFIER_OPTIONS.map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-3">
-                <label className="grid gap-1 text-xs font-semibold">
-                  Active days
-                  <select
-                    value={mapDraft.timeRuleMode}
-                    onChange={(event) => setMapDraft((current) => ({ ...current, timeRuleMode: event.target.value }))}
-                    className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                  >
-                    <option value="always">Always active</option>
-                    <option value="daily">Every day</option>
-                    <option value="weekdays">Weekdays</option>
-                    <option value="weekends">Weekends</option>
-                    <option value="custom">Choose days</option>
-                  </select>
-                </label>
-                <label className="grid gap-1 text-xs font-semibold">
-                  Start time
-                  <input
-                    type="time"
-                    value={mapDraft.startTime}
-                    disabled={mapDraft.timeRuleMode === 'always'}
-                    onChange={(event) => setMapDraft((current) => ({ ...current, startTime: event.target.value }))}
-                    className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50"
-                  />
-                </label>
-                <label className="grid gap-1 text-xs font-semibold">
-                  End time
-                  <input
-                    type="time"
-                    value={mapDraft.endTime}
-                    disabled={mapDraft.timeRuleMode === 'always'}
-                    onChange={(event) => setMapDraft((current) => ({ ...current, endTime: event.target.value }))}
-                    className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-50"
-                  />
-                </label>
-              </div>
-              <div className="mt-3 grid gap-3 md:max-w-2xl md:grid-cols-2">
-                <label className="grid gap-1 text-xs font-semibold">
-                  Effective from
-                  <input
-                    type="date"
-                    value={mapDraft.validFromDate}
-                    onChange={(event) => setMapDraft((current) => ({ ...current, validFromDate: event.target.value }))}
-                    className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                  />
-                  <span className="font-normal text-muted-foreground">Blank applies to all recorded history. Changing a speed with a new date preserves the older rule for earlier trips.</span>
-                </label>
-                <label className="grid content-start gap-1 text-xs font-semibold">
-                  Active until
-                  <input
-                    type="date"
-                    value={mapDraft.expiresAtDate}
-                    onChange={(event) => setMapDraft((current) => ({ ...current, expiresAtDate: event.target.value }))}
-                    className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                  />
-                  <span className="font-normal text-muted-foreground">Blank means no expiry. Daily schedules use the UTC offset recorded with each trip point.</span>
-                </label>
-              </div>
-              {mapDraft.timeRuleMode === 'custom' && (
-                <fieldset className="mt-3 rounded-xl border border-border bg-background p-3">
-                  <legend className="px-1 text-xs font-semibold">Active weekdays</legend>
-                  <div className="mt-1 flex flex-wrap gap-2">
-                    {TIME_RULE_DAY_OPTIONS.map(([day, label]) => (
-                      <label key={day} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-semibold">
-                        <input
-                          type="checkbox"
-                          checked={normalizedDraftDays(mapDraft).includes(day)}
-                          onChange={(event) => setMapDraft((current) => ({
-                            ...current,
-                            customDays: event.target.checked
-                              ? [...new Set([...(current.customDays || []), day])]
-                              : (current.customDays || []).filter((item) => Number(item) !== day),
-                          }))}
-                          className="accent-primary"
-                        />
-                        {label}
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-              )}
-              {qualifierDraftError(mapDraft) && (
-                <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
-                  {qualifierDraftError(mapDraft)}
-                </div>
-              )}
-              <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                <div className="rounded-xl border border-border bg-background p-3 text-xs">
-                  <div className="font-semibold text-foreground">Rule intelligence</div>
-                  <div className="mt-1 text-muted-foreground">
-                    {selectedRecommendation?.text || 'Enter a speed limit to calculate a recommendation.'}
-                  </div>
-                  {selectedImpactPreview && (
-                    <div className="mt-2">
-                      {selectedImpactPreview.affectedTripCount} affected trip{selectedImpactPreview.affectedTripCount === 1 ? '' : 's'} · {selectedImpactPreview.matchedPointCount} matched points · {selectedImpactPreview.estimatedEventCount} likely events
-                    </div>
-                  )}
-                </div>
-                <div className="rounded-xl border border-border bg-background p-3 text-xs">
-                  <div className="font-semibold text-foreground">Validation</div>
-                  {editorWarnings.length > 0 ? (
-                    <div className="mt-2 space-y-1 text-muted-foreground">
-                      {editorWarnings.map((warning) => <div key={warning}>- {warning}</div>)}
-                    </div>
-                  ) : (
-                    <div className="mt-2 text-emerald-700 dark:text-emerald-300">Geometry, evidence, and trip coverage checks passed.</div>
-                  )}
-                </div>
-              </div>
-              {selectedSection.saved && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={snapSelectedSectionToTrips}
-                    disabled={busyGeohash === correctionKey(selectedSection) || (selectedSection.sectionPoints || []).length < 2}
-                    title="Match this saved geometry to one ordered recorded route segment within 80 metres. No online routing service is used."
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
-                  >
-                    <Magnet className="h-3.5 w-3.5" />
-                    Snap to route
-                  </button>
-                  <button
-                    type="button"
-                    onClick={splitMapSection}
-                    disabled={busyGeohash === correctionKey(selectedSection) || (selectedSection.sectionPoints || []).length < 2}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
-                  >
-                    Split at midpoint
-                  </button>
-                  {mergeCandidate && (
-                    <button
-                      type="button"
-                      onClick={prepareMergeWithNearbySection}
-                      disabled={busyGeohash === correctionKey(selectedSection)}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-secondary disabled:opacity-60"
-                    >
-                      <GitMerge className="h-3.5 w-3.5" />
-                      Merge nearby ({Math.round(mergeCandidate.distanceM)} m)
-                    </button>
-                  )}
-                </div>
-              )}
-            </details>
-            {selectedSection.conflict && (
-              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
-                <span>
-                  Conflict: saved {formatSpeedLimit(selectedSection.conflict.savedLimitKmh, units)}, trip data suggests {formatSpeedLimit(selectedSection.conflict.observedLimitKmh, units)}
-                </span>
-                {!hasTracedRoadGeometry(selectedSection) && (
-                  <span className="w-full font-medium">
-                    Trace at least two distinct road points before choosing a value. Point-only rules stay blocked from scores and alerts.
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => resolveSavedSpeedConflict(selectedSection, selectedSection.conflict, 'use_observed', mapDraft)}
-                  disabled={busyGeohash === correctionKey(selectedSection) || !hasTracedRoadGeometry(selectedSection)}
-                  className="rounded-lg bg-red-600 px-2.5 py-1.5 text-white hover:bg-red-700 disabled:opacity-60"
-                >
-                  Use observed {formatSpeedLimit(selectedSection.conflict.observedLimitKmh, units)}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => resolveSavedSpeedConflict(selectedSection, selectedSection.conflict, 'keep_saved', mapDraft)}
-                  disabled={busyGeohash === correctionKey(selectedSection) || !hasTracedRoadGeometry(selectedSection)}
-                  className="rounded-lg border border-red-200 bg-background px-2.5 py-1.5 text-red-700 hover:bg-red-100 disabled:opacity-60 dark:border-red-900/50 dark:bg-background/80 dark:text-red-300"
-                >
-                  Keep saved {formatSpeedLimit(selectedSection.conflict.savedLimitKmh, units)}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </section>
+          autoSnapTrace={autoSnapTrace}
+          busyGeohash={busyGeohash}
+          canSaveSelectedMapSection={canSaveSelectedMapSection}
+          cancelAddSection={cancelAddSection}
+          closeMapEditor={closeMapEditor}
+          currentMapRows={currentMapRows}
+          deferredMapQuery={deferredMapQuery}
+          editorWarnings={editorWarnings}
+          excludedSpeedSectionCount={excludedSpeedSectionCount}
+          firstConflictSection={firstConflictSection}
+          focusAttentionItem={focusAttentionItem}
+          hiddenUnsetSectionCount={hiddenUnsetSectionCount}
+          historicalRuleCount={historicalRuleCount}
+          ignoreUnsetMapSection={ignoreUnsetMapSection}
+          loadMapModel={loadMapModel}
+          mapDisplayTrips={mapDisplayTrips}
+          mapDraft={mapDraft}
+          mapLayers={mapLayers}
+          mapModelLoading={mapModelLoading}
+          mapModelState={mapModelState}
+          mapQuery={mapQuery}
+          mapSections={mapSections}
+          markSelectedSectionPrivate={markSelectedSectionPrivate}
+          mergeCandidate={mergeCandidate}
+          moveAddPoint={moveAddPoint}
+          moveSelectedSectionEndpoint={moveSelectedSectionEndpoint}
+          persistedExcludedSpeedSections={persistedExcludedSpeedSections}
+          prepareMergeWithNearbySection={prepareMergeWithNearbySection}
+          removeMapSection={removeMapSection}
+          resolveSavedSpeedConflict={resolveSavedSpeedConflict}
+          restoreExcludedSpeedSections={restoreExcludedSpeedSections}
+          restoreIgnoredUnsetMapSections={restoreIgnoredUnsetMapSections}
+          saveMapSection={saveMapSection}
+          scheduledOrExpiredRuleCount={scheduledOrExpiredRuleCount}
+          selectMapSection={selectMapSection}
+          selectNewMapPoint={selectNewMapPoint}
+          selectedBlockingOverlap={selectedBlockingOverlap}
+          selectedEvidence={selectedEvidence}
+          selectedImpactPreview={selectedImpactPreview}
+          selectedRecommendation={selectedRecommendation}
+          selectedSection={selectedSection}
+          selectedSectionPointCount={selectedSectionPointCount}
+          selectedSectionReason={selectedSectionReason}
+          setMapDraft={setMapDraft}
+          setMapLayers={setMapLayers}
+          setMapQuery={setMapQuery}
+          setStatus={setStatus}
+          snapSelectedSectionToTrips={snapSelectedSectionToTrips}
+          speedQuickPicks={speedQuickPicks}
+          speedUnit={speedUnit}
+          splitMapSection={splitMapSection}
+          startAddingSection={startAddingSection}
+          toggleAutoSnapTrace={toggleAutoSnapTrace}
+          traceLengthM={traceLengthM}
+          traceQuality={traceQuality}
+          trimSavedMapSection={trimSavedMapSection}
+          tripEvidenceLayersRequested={tripEvidenceLayersRequested}
+          undoAddPoint={undoAddPoint}
+          units={units}
+        />
       )}
 
       {activeWorkspace === 'saved' && (
-        <>
-      <section className="space-y-3">
-        <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-3 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <SlidersHorizontal className="h-4 w-4 text-primary" />
-              <h2 className="font-grotesk text-lg font-bold">Saved speed rules</h2>
-              <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold text-muted-foreground">
-                {filteredRows.length} shown
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Search, triage, and edit local speed rules without hunting through every saved road area.
-            </p>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-[1fr_11rem] lg:w-[34rem]">
-            <label className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <input
-                type="search"
-                value={rowQueryInput}
-                onChange={(event) => updateRowQuery(event.target.value)}
-                placeholder="Search saved speeds..."
-                className="w-full rounded-xl border border-border bg-background py-2 pl-9 pr-3 text-sm outline-none focus:border-primary"
-              />
-            </label>
-            <select
-              value={rowSort}
-              onChange={(event) => updateRowSort(event.target.value)}
-              className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-              aria-label="Sort saved speeds"
-            >
-              {ROW_SORTS.map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {ROW_FILTERS.map(([value, label]) => {
-            const active = rowFilter === value;
-            return (
-              <button
-                key={value}
-                type="button"
-                onClick={() => updateRowFilter(value)}
-                className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
-                  active
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border bg-card text-foreground hover:bg-secondary'
-                }`}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-        {rows.length > 0 && (
-          <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-2 sm:flex-row sm:items-center sm:justify-between">
-            <button
-              type="button"
-              onClick={selectVisibleRows}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold hover:bg-secondary"
-            >
-              <CheckSquare2 className="h-3.5 w-3.5" />
-              {visibleRows.some((row) => row.historicalVersion !== true) && visibleRows
-                .filter((row) => row.historicalVersion !== true)
-                .every((row) => selectedRows.has(correctionKey(row)))
-                ? 'Clear visible'
-                : 'Select visible'}
-            </button>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-muted-foreground">{selectedRows.size} selected</span>
-              <button
-                type="button"
-                onClick={confirmSelectedAsPosted}
-                disabled={selectedRows.size === 0 || busyGeohash === 'bulk'}
-                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
-              >
-                <ShieldCheck className="h-3.5 w-3.5" />
-                Confirm posted
-              </button>
-              <button
-                type="button"
-                onClick={deleteSelectedRows}
-                disabled={selectedRows.size === 0 || busyGeohash === 'bulk'}
-                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-40 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete
-              </button>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {rows.length === 0 ? (
-        <div className="rounded-xl border border-border bg-card p-5">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary text-muted-foreground">
-              <Gauge className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-sm font-semibold">No manually saved rules</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Road Memory can still learn automatically from repeated drives. Use a trip review when you want to confirm a posted sign or correct an estimate.
-              </p>
-              <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px] sm:grid-cols-4">
-                <span className="rounded-lg bg-background/80 px-2 py-1.5">
-                  <strong>{health?.geometryCount || 0}/{health?.geometryTotal || 0}</strong> with full lines
-                </span>
-                <span className="rounded-lg bg-background/80 px-2 py-1.5">
-                  <strong>{health?.operationalRoadMemoryCount || 0}</strong> active memory
-                </span>
-                <span className="rounded-lg bg-background/80 px-2 py-1.5">
-                  <strong>{health?.learningRoadMemoryCount || 0}</strong> learning
-                </span>
-                <span className="rounded-lg bg-background/80 px-2 py-1.5">
-                  <strong>{geometryIndexState.indexedTripCount || 0}/{geometryIndexState.totalAvailable || 0}</strong> trip routes indexed
-                </span>
-              </div>
-            </div>
-          </div>
-          <Link
-            to="/trips"
-            className="mt-4 inline-flex items-center justify-center rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground"
-          >
-            Open trips
-          </Link>
-        </div>
-      ) : filteredRows.length === 0 ? (
-        <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
-          No saved speeds match the current filters.
-        </div>
-      ) : (
-        <div
-          ref={savedRowsListRef}
-          className="max-h-[78vh] overflow-y-auto pr-1 thin-scrollbar"
-          aria-label="Virtualized saved road speeds list"
-        >
-          <div
-            className="relative w-full"
-            style={{ height: `${savedRowsVirtualizer.getTotalSize()}px` }}
-          >
-          {virtualRowItems.map((virtualItem) => {
-            const model = rowCardModels[virtualItem.index];
-            if (!model) return null;
-            const {
-              key,
-              row,
-              draft,
-              disabled,
-              identity,
-              conflict,
-              evidence: rowEvidence,
-              recommendation: rowRecommendation,
-            } = model;
-            const rowImpact = visibleRowImpactByKey.get(key);
-            return (
-              <article
-                key={key}
-                ref={savedRowsVirtualizer.measureElement}
-                data-index={virtualItem.index}
-                className="absolute left-0 top-0 w-full rounded-xl border border-border bg-card p-3 shadow-sm"
-                style={{ transform: `translateY(${virtualItem.start}px)` }}
-              >
-                <div className="grid gap-3 lg:grid-cols-[1fr_16rem_13rem] lg:items-start">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <label className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-background">
-                        <input
-                          type="checkbox"
-                          checked={selectedRows.has(key)}
-                          onChange={() => toggleSelectedRow(key)}
-                          disabled={row.historicalVersion === true}
-                          className="h-4 w-4 accent-primary"
-                          aria-label={`Select ${identity.title}`}
-                        />
-                      </label>
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold text-foreground">
-                        <MapPin className="h-3.5 w-3.5" />
-                        {identity.title}
-                      </span>
-                    </div>
-                    <div className="mt-2">
-                      <RoadSectionPreview
-                        identity={identity}
-                        routePoints={linkedTrip?.route_points || []}
-                        legacyApproximate={row.coordinateSource === 'geohash_cell_center_legacy'}
-                      />
-                    </div>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                      <div className="rounded-lg bg-secondary/60 px-3 py-2">
-                        <div className="text-[11px] text-muted-foreground">Current value</div>
-                        <div className="font-semibold">{formatSpeedLimit(row.limitKmh, units)}</div>
-                      </div>
-                      <div className="rounded-lg bg-secondary/60 px-3 py-2">
-                        <div className="text-[11px] text-muted-foreground">Type</div>
-                        <div>
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${speedLimitSourceBadgeClass(row.source)}`}>
-                            {sourceLabel(row.source)}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="rounded-lg bg-secondary/60 px-3 py-2">
-                        <div className="text-[11px] text-muted-foreground">Updated</div>
-                        <div className="truncate font-semibold">{formatDate(row.appliedAt)}</div>
-                      </div>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold text-muted-foreground">
-                      <span className="rounded-full bg-secondary px-2 py-1">{directionLabel(row.directionMode)}</span>
-                      <span className="rounded-full bg-secondary px-2 py-1">{qualifierStatusLabel(row.qualifierStatus)}</span>
-                      <span className="rounded-full bg-secondary px-2 py-1">{timeRuleLabel(row.timeRule)}</span>
-                      <span className="rounded-full bg-secondary px-2 py-1">{validFromLabel(row.validFrom)}</span>
-                      <span className="rounded-full bg-secondary px-2 py-1">{expiryLabel(row.expiresAt)}</span>
-                      {row.historicalVersion === true && (
-                        <span className="rounded-full bg-violet-100 px-2 py-1 text-violet-800 dark:bg-violet-950/40 dark:text-violet-200" title="Retained so trips recorded before the replacement date continue to use the rule that was active then.">
-                          Historical version
-                        </span>
-                      )}
-                      <span className={`rounded-full px-2 py-1 ${
-                        rowEvidence.level === 'high'
-                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
-                          : rowEvidence.level === 'medium'
-                            ? 'bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-200'
-                            : 'bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-100'
-                      }`}>
-                        {speedLimitConfidenceLabel(rowEvidence)} {rowEvidence.confidencePercent}%
-                      </span>
-                      {rowImpact ? (
-                        <span className="rounded-full bg-secondary px-2 py-1">
-                          {rowImpact.affectedTripCount} affected trip{rowImpact.affectedTripCount === 1 ? '' : 's'}
-                        </span>
-                      ) : (
-                        <span className="rounded-full bg-secondary px-2 py-1">
-                          Impact loads only for visible roads after the map is opened
-                        </span>
-                      )}
-                      <span className="rounded-full bg-secondary px-2 py-1">
-                        {speedLimitScorePreview(row.limitKmh, draft.limitKmh)}
-                      </span>
-                      {conflict && (
-                        <span className="rounded-full bg-red-100 px-2 py-1 text-red-700 dark:bg-red-950/40 dark:text-red-300">
-                          Conflict: trip data suggests {formatSpeedLimit(conflict.observedLimitKmh, units)}
-                        </span>
-                      )}
-                      {Array.isArray(row.editHistory) && row.editHistory.length > 0 && (
-                        <span className="rounded-full bg-secondary px-2 py-1">{row.editHistory.length} previous edit{row.editHistory.length === 1 ? '' : 's'}</span>
-                      )}
-                    </div>
-                    <div className="mt-2 rounded-lg border border-border bg-secondary/30 px-3 py-2 text-xs">
-                      <div className="font-semibold text-foreground">{rowRecommendation.action}</div>
-                      <div className="mt-1 text-muted-foreground">{rowRecommendation.text}</div>
-                    </div>
-                    <WhyThisSpeed record={{ ...row, conflict }} className="mt-2" />
-                    <details className="mt-2 text-xs text-muted-foreground">
-                      <summary className="cursor-pointer font-medium">Saved location reference</summary>
-                      <div className="mt-1">
-                        {coordinateLabel(row.coordinateSource)}: {formatCoordinate(row.lat)}, {formatCoordinate(row.lng)}; cell {row.geohash}
-                      </div>
-                    </details>
-                    {Array.isArray(row.auditTrail) && row.auditTrail.length > 0 && (
-                      <details className="mt-2 text-xs text-muted-foreground">
-                        <summary className="cursor-pointer font-medium">Audit history ({row.auditTrail.length})</summary>
-                        <div className="mt-2 space-y-1">
-                          {[...row.auditTrail].reverse().slice(0, 5).map((entry, index) => (
-                            <div key={`${entry.changedAt}-${index}`}>
-                              {formatDate(entry.changedAt)}: {String(entry.action || 'updated').replace(/_/g, ' ')}
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
-                    {row.historicalVersion === true && (
-                      <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900 dark:border-violet-900/60 dark:bg-violet-950/30 dark:text-violet-100">
-                        Read-only historical rule. It is retained only so trips before {row.expiresAt ? formatDate(row.expiresAt) : 'the replacement boundary'} keep the speed rule that applied then.
-                      </div>
-                    )}
-                  </div>
-
-                  <details className="rounded-xl border border-border bg-secondary/25 p-2 lg:contents">
-                    <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-1 py-1 text-xs font-semibold lg:hidden [&::-webkit-details-marker]:hidden">
-                      <span>{row.historicalVersion === true ? 'View historical rule details' : 'Edit speed, direction, schedule, or notes'}</span>
-                      <span className="rounded-lg bg-background px-2 py-1 text-[11px] text-primary">Open</span>
-                    </summary>
-                    <div className="mt-2 grid gap-3 lg:contents">
-                  <fieldset disabled={row.historicalVersion === true} className="grid gap-2 disabled:opacity-70">
-                    <label className="flex items-center gap-2 text-xs font-semibold text-foreground">
-                      <Gauge className="h-4 w-4 text-muted-foreground" />
-                      <input
-                        type="number"
-                        min={units === 'imperial' ? 3 : 5}
-                        max={Math.floor(convertSpeedKmh(MAX_SAVED_SPEED_LIMIT_KMH, units) || MAX_SAVED_SPEED_LIMIT_KMH)}
-                        step="5"
-                        value={speedInputValueFromKmh(draft.limitKmh, units)}
-                        onChange={(event) => {
-                          const canonical = convertDisplaySpeedToKmh(event.target.value, units);
-                          updateDraft(key, { limitKmh: canonical == null ? '' : String(canonical) });
-                        }}
-                        className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                      />
-                      <span className="text-xs text-muted-foreground">{speedUnit}</span>
-                    </label>
-                    <div className="flex flex-wrap gap-1.5">
-                      {speedQuickPicks.map((limit) => (
-                        <button
-                          key={limit}
-                          type="button"
-                          onClick={() => updateDraft(key, {
-                            limitKmh: String(convertDisplaySpeedToKmh(limit, units) ?? limit),
-                          })}
-                          className={`rounded-lg border px-2 py-1 text-[11px] font-semibold ${
-                            Math.round(convertSpeedKmh(draft.limitKmh, units) || 0) === limit
-                              ? 'border-primary bg-primary text-primary-foreground'
-                              : 'border-border bg-secondary/80 text-foreground hover:bg-secondary'
-                          }`}
-                        >
-                          {limit}
-                        </button>
-                      ))}
-                    </div>
-                    <select
-                      value={draft.source || 'user_entered_estimate'}
-                      onChange={(event) => updateDraft(key, { source: event.target.value })}
-                      className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                    >
-                      <option value="user_confirmed_posted_sign">Posted sign</option>
-                      <option value="user_entered_estimate">Estimate</option>
-                    </select>
-                    <select
-                      value={qualifierStatusForDraft(draft)}
-                      onChange={(event) => updateDraft(key, qualifierDraftPatch(event.target.value, draft))}
-                      aria-label="Rule type"
-                      className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                    >
-                      {SPEED_RULE_QUALIFIER_OPTIONS.map(([value, label]) => (
-                        <option key={value} value={value}>{label}</option>
-                      ))}
-                    </select>
-                    <input
-                      type="text"
-                      value={draft.roadName ?? ''}
-                      onChange={(event) => updateDraft(key, { roadName: event.target.value })}
-                      placeholder="Road name (optional)"
-                      aria-label={`Road name for ${identity.title}`}
-                      className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                    />
-                    <input
-                      type="text"
-                      value={draft.note ?? ''}
-                      onChange={(event) => updateDraft(key, { note: event.target.value })}
-                      placeholder="Note"
-                      className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                    />
-                    <select
-                      value={draft.directionMode || 'both'}
-                      onChange={(event) => updateDraft(key, { directionMode: event.target.value })}
-                      className="rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-                    >
-                      <option value="both">Both directions</option>
-                      <option value="forward">Drawn direction only</option>
-                      <option value="reverse">Opposite direction only</option>
-                    </select>
-                    <div
-                      className={`grid gap-2 ${
-                        (draft.timeRuleMode || 'always') === 'always'
-                          ? 'grid-cols-1'
-                          : 'grid-cols-2 sm:grid-cols-3'
-                      }`}
-                    >
-                      <select
-                        value={draft.timeRuleMode || 'always'}
-                        onChange={(event) => updateDraft(key, { timeRuleMode: event.target.value })}
-                        className={`min-w-0 rounded-xl border border-border bg-background px-2 py-2 text-xs outline-none focus:border-primary ${
-                          (draft.timeRuleMode || 'always') === 'always' ? '' : 'col-span-2 sm:col-span-1'
-                        }`}
-                        aria-label="Active days"
-                      >
-                        <option value="always">Always</option>
-                        <option value="daily">Daily</option>
-                        <option value="weekdays">Weekdays</option>
-                        <option value="weekends">Weekends</option>
-                        <option value="custom">Choose days</option>
-                      </select>
-                      {(draft.timeRuleMode || 'always') !== 'always' && (
-                        <>
-                          <input
-                            type="time"
-                            value={draft.startTime || '07:00'}
-                            onChange={(event) => updateDraft(key, { startTime: event.target.value })}
-                            className="min-w-0 w-full rounded-xl border border-border bg-background px-2 py-2 text-xs outline-none focus:border-primary"
-                            aria-label="Start time"
-                          />
-                          <input
-                            type="time"
-                            value={draft.endTime || '17:00'}
-                            onChange={(event) => updateDraft(key, { endTime: event.target.value })}
-                            className="min-w-0 w-full rounded-xl border border-border bg-background px-2 py-2 text-xs outline-none focus:border-primary"
-                            aria-label="End time"
-                          />
-                        </>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
-                        Effective from
-                        <input
-                          type="date"
-                          value={draft.validFromDate || ''}
-                          onChange={(event) => updateDraft(key, { validFromDate: event.target.value })}
-                          className="min-w-0 rounded-xl border border-border bg-background px-2 py-2 text-xs text-foreground outline-none focus:border-primary"
-                        />
-                      </label>
-                      <label className="grid gap-1 text-xs font-semibold text-muted-foreground">
-                        Active until
-                        <input
-                          type="date"
-                          value={draft.expiresAtDate || ''}
-                          onChange={(event) => updateDraft(key, { expiresAtDate: event.target.value })}
-                          className="min-w-0 rounded-xl border border-border bg-background px-2 py-2 text-xs text-foreground outline-none focus:border-primary"
-                        />
-                      </label>
-                    </div>
-                    {(draft.timeRuleMode || 'always') === 'custom' && (
-                      <fieldset className="rounded-xl border border-border bg-background p-2">
-                        <legend className="px-1 text-[11px] font-semibold text-muted-foreground">Active weekdays</legend>
-                        <div className="flex flex-wrap gap-1.5">
-                          {TIME_RULE_DAY_OPTIONS.map(([day, label]) => (
-                            <label key={day} className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[11px] font-semibold">
-                              <input
-                                type="checkbox"
-                                checked={normalizedDraftDays(draft).includes(day)}
-                                onChange={(event) => updateDraft(key, {
-                                  customDays: event.target.checked
-                                    ? [...new Set([...(draft.customDays || []), day])]
-                                    : (draft.customDays || []).filter((item) => Number(item) !== day),
-                                })}
-                                className="accent-primary"
-                              />
-                              {label}
-                            </label>
-                          ))}
-                        </div>
-                      </fieldset>
-                    )}
-                    {invalidValidityWindow(draft) && (
-                      <div className="text-xs font-semibold text-red-700 dark:text-red-300">
-                        Effective from must be earlier than Active until.
-                      </div>
-                    )}
-                    {invalidCustomDayRule(draft) && (
-                      <div className="text-xs font-semibold text-red-700 dark:text-red-300">
-                        Choose at least one active day for this custom schedule.
-                      </div>
-                    )}
-                    {qualifierDraftError(draft) && (
-                      <div className="text-xs font-semibold text-red-700 dark:text-red-300">
-                        {qualifierDraftError(draft)}
-                      </div>
-                    )}
-                  </fieldset>
-
-                  <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
-                    {conflict && (
-                      <>
-                        {!hasTracedRoadGeometry(row) && (
-                          <div className="col-span-2 rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-xs font-semibold text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300 lg:col-span-1">
-                            Open this rule on the map and trace at least two distinct road points before resolving the conflict. Point-only rules stay blocked from scores and alerts.
-                          </div>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => resolveSavedSpeedConflict(row, conflict, 'use_observed', draft)}
-                          disabled={disabled || !hasTracedRoadGeometry(row) || invalidValidityWindow(draft) || invalidCustomDayRule(draft) || Boolean(qualifierDraftError(draft))}
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
-                        >
-                          <Gauge className="h-3.5 w-3.5" />
-                          Use observed {formatSpeedLimit(conflict.observedLimitKmh, units)}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => resolveSavedSpeedConflict(row, conflict, 'keep_saved', draft)}
-                          disabled={disabled || !hasTracedRoadGeometry(row) || invalidValidityWindow(draft) || invalidCustomDayRule(draft) || Boolean(qualifierDraftError(draft))}
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
-                        >
-                          <ShieldCheck className="h-3.5 w-3.5" />
-                          Keep saved {formatSpeedLimit(conflict.savedLimitKmh, units)}
-                        </button>
-                      </>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => saveRow(row)}
-                      disabled={disabled || invalidValidityWindow(draft) || invalidCustomDayRule(draft) || Boolean(qualifierDraftError(draft))}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                    >
-                      {draft.source === 'user_confirmed_posted_sign' ? <ShieldCheck className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
-                      Update
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeRow(row)}
-                      disabled={disabled}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Delete
-                    </button>
-                  </div>
-                    </div>
-                  </details>
-                </div>
-              </article>
-            );
-          })}
-          </div>
-        </div>
-      )}
-        </>
+        <SpeedLimitSavedWorkspace
+          busyGeohash={busyGeohash}
+          confirmSelectedAsPosted={confirmSelectedAsPosted}
+          deleteSelectedRows={deleteSelectedRows}
+          filteredRows={filteredRows}
+          geometryIndexState={geometryIndexState}
+          health={health}
+          linkedTrip={linkedTrip}
+          removeRow={removeRow}
+          resolveSavedSpeedConflict={resolveSavedSpeedConflict}
+          rowCardModels={rowCardModels}
+          rowFilter={rowFilter}
+          rowQueryInput={rowQueryInput}
+          rowSort={rowSort}
+          rows={rows}
+          saveRow={saveRow}
+          savedRowsListRef={savedRowsListRef}
+          savedRowsVirtualizer={savedRowsVirtualizer}
+          selectVisibleRows={selectVisibleRows}
+          selectedRows={selectedRows}
+          speedQuickPicks={speedQuickPicks}
+          speedUnit={speedUnit}
+          toggleSelectedRow={toggleSelectedRow}
+          units={units}
+          updateDraft={updateDraft}
+          updateRowFilter={updateRowFilter}
+          updateRowQuery={updateRowQuery}
+          updateRowSort={updateRowSort}
+          virtualRowItems={virtualRowItems}
+          visibleRowImpactByKey={visibleRowImpactByKey}
+          visibleRows={visibleRows}
+        />
       )}
 
       <details className="group rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-950 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">

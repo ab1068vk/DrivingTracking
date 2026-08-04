@@ -8,11 +8,11 @@ import PremiumProgramBuilder, {
 
 const focusCases = [
   ['harsh_brakes', 'braking', 'premium-program-builder-braking.webp', 'premium-program-builder-icon-braking.webp'],
-  ['rapid_accel', 'acceleration', 'premium-program-builder-acceleration-v2.webp', 'premium-program-builder-icon-acceleration-v2.png'],
-  ['sharp_turns', 'turns', 'premium-program-builder-turns-v2.webp', 'premium-program-builder-icon-turns-v2.png'],
+  ['rapid_accel', 'acceleration', 'premium-program-builder-acceleration-v2.webp', 'premium-program-builder-icon-acceleration-v2.webp'],
+  ['sharp_turns', 'turns', 'premium-program-builder-turns-v2.webp', 'premium-program-builder-icon-turns-v2.webp'],
   ['speeding', 'speed', 'premium-program-builder-speed.webp', 'premium-program-builder-icon-speed.webp'],
   ['phone_use', 'attention', 'premium-program-builder-attention.webp', 'premium-program-builder-icon-attention.webp'],
-  ['fatigue', 'fatigue', 'premium-program-builder-fatigue-v2.webp', 'premium-program-builder-icon-fatigue-v2.png'],
+  ['fatigue', 'fatigue', 'premium-program-builder-fatigue-v2.webp', 'premium-program-builder-icon-fatigue-v2.webp'],
   ['consistency', 'consistency', 'premium-program-builder-consistency.webp', 'premium-program-builder-icon-consistency.webp'],
 ];
 

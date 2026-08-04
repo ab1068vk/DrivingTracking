@@ -27,7 +27,7 @@ jobs:
         run: npm ci
 
       - name: Audit production and development dependencies
-        run: npm audit --audit-level=moderate
+        run: npm run check:audit
 
       - name: Block react-quill source imports
         run: |

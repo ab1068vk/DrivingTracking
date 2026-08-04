@@ -18,19 +18,19 @@ import premiumPlannerWindow from '@/assets/premium-planner-window-v2.jpg';
 import premiumPlannerSpeed from '@/assets/premium-planner-speed-v2.jpg';
 import premiumPlannerAreas from '@/assets/premium-planner-areas-v2.jpg';
 import premiumPlannerHistory from '@/assets/premium-planner-history-v2.jpg';
-import premiumPlannerGaugeIcon from '@/assets/premium-planner-icon-gauge-v3.png';
-import premiumPlannerClockIcon from '@/assets/premium-planner-icon-clock-v3.png';
-import premiumPlannerWindowIcon from '@/assets/premium-planner-icon-window-v3.png';
+import premiumPlannerGaugeIcon from '@/assets/premium-planner-icon-gauge-v3.webp';
+import premiumPlannerClockIcon from '@/assets/premium-planner-icon-clock-v3.webp';
+import premiumPlannerWindowIcon from '@/assets/premium-planner-icon-window-v3.webp';
 import premiumPlannerWindowRecommended from '@/assets/premium-planner-window-recommended-v4.jpg';
 import premiumPlannerWindowLateNight from '@/assets/premium-planner-window-late-night-v4.jpg';
 import premiumPlannerWindowLearning from '@/assets/premium-planner-window-learning-v4.jpg';
 import premiumPlannerWindowDisabled from '@/assets/premium-planner-window-disabled-v4.jpg';
-import premiumPlannerWindowRecommendedIcon from '@/assets/premium-planner-icon-window-recommended-v4.png';
-import premiumPlannerWindowLateNightIcon from '@/assets/premium-planner-icon-window-late-night-v4.png';
-import premiumPlannerWindowLearningIcon from '@/assets/premium-planner-icon-window-learning-v4.png';
-import premiumPlannerWindowDisabledIcon from '@/assets/premium-planner-icon-window-disabled-v4.png';
-import premiumPlannerSpeedIcon from '@/assets/premium-planner-icon-speed-v3.png';
-import premiumPlannerShieldIcon from '@/assets/premium-planner-icon-shield-v3.png';
+import premiumPlannerWindowRecommendedIcon from '@/assets/premium-planner-icon-window-recommended-v4.webp';
+import premiumPlannerWindowLateNightIcon from '@/assets/premium-planner-icon-window-late-night-v4.webp';
+import premiumPlannerWindowLearningIcon from '@/assets/premium-planner-icon-window-learning-v4.webp';
+import premiumPlannerWindowDisabledIcon from '@/assets/premium-planner-icon-window-disabled-v4.webp';
+import premiumPlannerSpeedIcon from '@/assets/premium-planner-icon-speed-v3.webp';
+import premiumPlannerShieldIcon from '@/assets/premium-planner-icon-shield-v3.webp';
 
 const INSIGHT_CARDS = Object.freeze([
   { id: 'actions', accent: 'green', art: premiumPlannerActions, emblem: premiumPlannerClockIcon, title: 'Before you start' },

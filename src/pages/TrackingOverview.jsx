@@ -230,7 +230,12 @@ export default function TrackingOverview() {
   const diagnostics = useMemo(() => getTrackingDiagnostics(), []);
 
   const summariesQuery = useQuery(tripSummaryQueryOptions());
-  const allTrips = Array.isArray(summariesQuery.data) ? summariesQuery.data : [];
+  // Memoized so the empty-state fallback keeps a stable identity; a fresh []
+  // on every render invalidated every downstream memo.
+  const allTrips = useMemo(
+    () => (Array.isArray(summariesQuery.data) ? summariesQuery.data : []),
+    [summariesQuery.data]
+  );
   const recentTrips = useMemo(() => allTrips.slice(0, OVERVIEW_TRIP_LIMIT), [allTrips]);
   const {
     dismiss: dismissPostDriveReview,
@@ -259,12 +264,14 @@ export default function TrackingOverview() {
     [activeTrip, liveNowMs]
   );
 
+  const hasActiveTrip = Boolean(activeTrip);
+
   useEffect(() => {
-    if (!activeTrip) return undefined;
+    if (!hasActiveTrip) return undefined;
     setLiveNowMs(Date.now());
     const interval = window.setInterval(() => setLiveNowMs(Date.now()), 1000);
     return () => window.clearInterval(interval);
-  }, [Boolean(activeTrip)]);
+  }, [hasActiveTrip]);
 
   useEffect(() => {
     let active = true;

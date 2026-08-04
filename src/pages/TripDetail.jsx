@@ -756,7 +756,9 @@ export default function TripDetail() {
       invalidateTripLists();
       qc.invalidateQueries({ queryKey: ['map-trips'] });
       const weather = updatedTrip?.weather_context;
-      if (['open_meteo', 'user_confirmed'].includes(weather?.source) && weather?.condition) {
+      if (updatedTrip?.weather_lookup_kept_confirmed) {
+        setFeedbackStatus('Open-Meteo had no usable observation, so the condition you confirmed locally was kept.');
+      } else if (['open_meteo', 'user_confirmed'].includes(weather?.source) && weather?.condition) {
         setFeedbackStatus(`Weather updated to ${String(weather.condition).replace(/_/g, ' ')}.`);
       } else if (weather?.status === 'skipped_privacy') {
         setFeedbackStatus('No weather request was sent because every route point is inside a privacy-zone buffer.');
@@ -930,8 +932,17 @@ export default function TripDetail() {
   const hiddenRouteRiskSegmentCount = routeRiskSegments.length - displayedRouteRiskSegments.length;
 
   useEffect(() => {
-    loadRouteRiskIndex(privacyZones).then(setRouteRiskIndex);
-  }, []);
+    // Editing a privacy zone has to rebuild the risk index; leaving this on
+    // mount-only kept scoring this open trip against the zones as they were
+    // when the page was opened.
+    let cancelled = false;
+    loadRouteRiskIndex(privacyZones).then((index) => {
+      if (!cancelled) setRouteRiskIndex(index);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [privacyZones]);
 
   useEffect(() => {
     let cancelled = false;
@@ -979,7 +990,8 @@ export default function TripDetail() {
   }, [trip?.id]);
 
   useEffect(() => {
-    if (!trip || !isAndroid()) {
+    // Depend on the trip id only, which is all this effect actually reads.
+    if (!trip?.id || !isAndroid()) {
       setCurrentUsageAccessGranted(null);
       return undefined;
     }

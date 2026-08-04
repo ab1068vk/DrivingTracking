@@ -862,7 +862,7 @@ class ScoringEngineTest {
   },
 ];
 
-function CodeBlock({ content, language, id }) {
+function CodeBlock({ content, language }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
@@ -933,7 +933,7 @@ export default function AndroidReference() {
           </button>
           {expanded[section.id] && (
             <div className="px-4 pb-4">
-              <CodeBlock content={section.content} language={section.language} id={section.id} />
+              <CodeBlock content={section.content} language={section.language} />
             </div>
           )}
         </motion.div>

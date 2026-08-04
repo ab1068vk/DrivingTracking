@@ -75,7 +75,7 @@ describe('dangerZoneEngine', () => {
       event(43.65, -79.38, 'high'),
       event(43.65, -79.38, 'medium'),
     ])], { minEvents: 1 })[0];
-    const critical = buildDangerZones([trip(Array.from({ length: 5 }, (_, index) => (
+    const critical = buildDangerZones([trip(Array.from({ length: 5 }, (_, _index) => (
       event(43.65, -79.38, 'high')
     )))], { minEvents: 1 })[0];
 

@@ -266,6 +266,35 @@ const sourceForWeatherContext = (weatherContext = null) => {
   return 'unavailable';
 };
 
+/**
+ * True only when a lookup produced a real observation. Unavailable, skipped,
+ * disabled, and no-match results are not observations and must never replace a
+ * condition the driver confirmed by hand.
+ * @param {Record<string, any> | null} weatherContext
+ */
+export function isUsableWeatherObservation(weatherContext = null) {
+  if (!weatherContext) return false;
+  if (sourceForWeatherContext(weatherContext) === 'unavailable') return false;
+  return Number.isFinite(Number(weatherContext.riskScore));
+}
+
+/**
+ * Decide which weather context survives a lookup. A failed, empty, or skipped
+ * result carries no evidence, so it must not overwrite a condition the driver
+ * confirmed by hand.
+ * @param {Record<string, any> | null} existingContext
+ * @param {Record<string, any> | null} fetchedContext
+ * @returns {{ context: Record<string, any> | null, keptConfirmed: boolean }}
+ */
+export function resolveWeatherContextAfterLookup(existingContext = null, fetchedContext = null) {
+  const keptConfirmed = existingContext?.source === 'user_confirmed' &&
+    !isUsableWeatherObservation(fetchedContext);
+  return {
+    context: keptConfirmed ? existingContext : fetchedContext,
+    keptConfirmed,
+  };
+}
+
 export function buildUserConfirmedWeatherContext(condition, observedAt = new Date().toISOString()) {
   const normalized = String(condition || '').trim().toLowerCase();
   const preset = USER_CONFIRMED_WEATHER[normalized];
@@ -568,9 +597,13 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
         'coordinate is rounded to 4 decimals',
       ],
     };
+    // Pass the caller's settings so a manual foreground "Get Weather" tap can
+    // skip the 3-9 minute obfuscation batch it would otherwise time out behind.
     data = await enqueueLocationRequest(
       'weather',
-      () => fetchOpenMeteoWeather(weatherRequest)
+      () => fetchOpenMeteoWeather(weatherRequest),
+      null,
+      { settings }
     );
     throwIfWeatherRequestAborted(signal);
     status = 'fetched';

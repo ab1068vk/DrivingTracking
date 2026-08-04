@@ -51,6 +51,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import android.util.Log;
 
 @CapacitorPlugin(
     name = "DriveSenseActivityRecognition",
@@ -70,6 +71,7 @@ import java.util.concurrent.ConcurrentHashMap;
     }
 )
 public class DriveSenseActivityRecognitionPlugin extends Plugin {
+    private static final String TAG = "ActivityRecognition";
     private static WeakReference<DriveSenseActivityRecognitionPlugin> instance;
     private ActivityRecognitionClient activityClient;
     private PendingIntent activityIntent;
@@ -1201,7 +1203,9 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         void delete(Context context) {
             try {
                 output.close();
-            } catch (Exception ignored) {}
+            } catch (Exception error) {
+                Log.w(TAG, "Could not delete", error);
+            }
             if (mediaStoreUri != null) {
                 context.getContentResolver().delete(mediaStoreUri, null, null);
             } else if (publicFile != null && publicFile.exists()) {

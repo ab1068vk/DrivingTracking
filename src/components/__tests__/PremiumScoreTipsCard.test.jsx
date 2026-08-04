@@ -19,7 +19,7 @@ describe('buildPremiumScoreTipViewModel', () => {
     const model = buildPremiumScoreTipViewModel(tip);
     expect(model.id).toBe(tone);
     expect(model.tip).toBe(tip);
-    expect(model.artwork).toContain(`premium-score-tip-${tone}.png`);
+    expect(model.artwork).toContain(`premium-score-tip-${tone}.webp`);
     expect(model.headline).not.toBe('');
   });
 
@@ -43,7 +43,7 @@ describe('PremiumScoreTipsCard', () => {
     expect(html).toContain('data-tone="speeding"');
     expect(html).toContain('data-tone="focus"');
     expect(html).toContain('data-tone="night"');
-    expect(html).toContain('premium-score-tip-speeding.png');
+    expect(html).toContain('premium-score-tip-speeding.webp');
     expect(html).toContain(`aria-label="${tips[0]}"`);
     expect(html.indexOf('data-tone="speeding"')).toBeLessThan(html.indexOf('data-tone="focus"'));
     expect(html.indexOf('data-tone="focus"')).toBeLessThan(html.indexOf('data-tone="night"'));

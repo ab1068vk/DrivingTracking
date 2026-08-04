@@ -1866,7 +1866,9 @@ export default function TripDrive3D({ trip, events = [], height = '430px', color
       rendererRef.current = null;
       controlsRef.current = null;
     };
-  }, [adaptiveQualityId, displayMode, durationSeconds, effectiveQuality, points, positionIndex, projection, sceneTheme, selectedQuality.id, timeline, trip?.id]);
+    // `units` is included because the speed-limit signs baked into the scene
+    // render the limit in the user's units; a unit change has to rebuild them.
+  }, [adaptiveQualityId, displayMode, durationSeconds, effectiveQuality, points, positionIndex, projection, sceneTheme, selectedQuality.id, timeline, trip?.id, units]);
 
   const seekToElapsed = (seconds, { log = true } = {}) => {
     const safeElapsed = Math.max(0, Math.min(durationSeconds, seconds));

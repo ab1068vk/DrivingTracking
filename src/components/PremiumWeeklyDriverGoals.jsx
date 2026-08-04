@@ -7,8 +7,8 @@ import premiumWeeklyGoalSpeeding from '@/assets/premium-weekly-goal-speeding-v3.
 import premiumWeeklyGoalScore from '@/assets/premium-weekly-goal-score-v3.jpg';
 import premiumWeeklyGoalNightDistance from '@/assets/premium-weekly-goal-night-distance-v3.jpg';
 import premiumWeeklyGoalNightTrips from '@/assets/premium-weekly-goal-night-trips-v3.jpg';
-import premiumSmoothBrakingRoad from '@/assets/premium-smooth-braking-road-v2.png';
-import premiumFatigueRiskShield from '@/assets/premium-fatigue-risk-shield.png';
+import premiumSmoothBrakingRoad from '@/assets/premium-smooth-braking-road-v2.webp';
+import premiumFatigueRiskShield from '@/assets/premium-fatigue-risk-shield.webp';
 
 const GOAL_PRESENTATION = Object.freeze({
   harsh_brakes: { artwork: premiumWeeklyGoalBraking },

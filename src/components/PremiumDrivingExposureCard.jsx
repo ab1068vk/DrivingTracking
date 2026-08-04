@@ -1,8 +1,8 @@
 // @ts-check
 import { AlertTriangle, Clock3, Coffee, MoonStar, ShieldCheck } from 'lucide-react';
-import premiumDrivingExposureClock from '@/assets/premium-driving-exposure-clock.png';
-import premiumDrivingExposureRest from '@/assets/premium-driving-exposure-rest.png';
-import premiumDrivingExposureWheel from '@/assets/premium-driving-exposure-wheel.png';
+import premiumDrivingExposureClock from '@/assets/premium-driving-exposure-clock.webp';
+import premiumDrivingExposureRest from '@/assets/premium-driving-exposure-rest.webp';
+import premiumDrivingExposureWheel from '@/assets/premium-driving-exposure-wheel.webp';
 
 const EXPOSURE_LEVELS = Object.freeze({
   low: { label: 'Low', icon: ShieldCheck },

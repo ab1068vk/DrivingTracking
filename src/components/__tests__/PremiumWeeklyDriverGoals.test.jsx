@@ -143,8 +143,8 @@ describe('premium weekly driver cards', () => {
     expect(html).toContain(`>${label}</strong>`);
     expect(html).toContain(`${count} long ${count === 1 ? 'drive' : 'drives'} this week`);
     expect(html).toContain('123456');
-    expect(html).toContain('premium-smooth-braking-road-v2.png');
-    expect(html).toContain('premium-fatigue-risk-shield.png');
+    expect(html).toContain('premium-smooth-braking-road-v2.webp');
+    expect(html).toContain('premium-fatigue-risk-shield.webp');
     expect(html).not.toContain('premium-weekly-insight-icon');
   });
 });

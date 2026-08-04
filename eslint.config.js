@@ -9,7 +9,11 @@ export default [
     ignores: ["android/**/build/**", "dist/**", "node_modules/**"],
   },
   {
-    files: ["src/**/*.{js,mjs,cjs,jsx}"],
+    // Baseline for non-JSX source, including src/lib, which previously had no
+    // unused-code rule at all. Deliberately excludes .jsx: only the React block
+    // below enables react/jsx-uses-vars, and without it every JSX-only usage
+    // looks unused and an autofix would strip working imports.
+    files: ["src/**/*.{js,mjs,cjs}"],
     languageOptions: {
       parserOptions: {
         ecmaVersion: 2022,
@@ -19,17 +23,38 @@ export default [
         },
       },
     },
+    plugins: {
+      "unused-imports": pluginUnusedImports,
+    },
     rules: {
       "no-dupe-keys": "error",
+      "unused-imports/no-unused-imports": "error",
+      "unused-imports/no-unused-vars": [
+        "error",
+        {
+          vars: "all",
+          varsIgnorePattern: "^_",
+          args: "after-used",
+          argsIgnorePattern: "^_",
+          caughtErrors: "none",
+          // Privacy code strips fields with { lat, lng, ...rest }; those bindings
+          // are unused on purpose and must not be reported or autofixed away.
+          ignoreRestSiblings: true,
+        },
+      ],
     },
   },
   {
     files: [
       "src/components/**/*.{js,mjs,cjs,jsx}",
       "src/pages/**/*.{js,mjs,cjs,jsx}",
+      "src/hooks/**/*.{js,mjs,cjs,jsx}",
+      // React components living in src/lib still need the hook rules; the
+      // non-React modules there stay on the minimal rule set below.
+      "src/lib/**/*.jsx",
       "src/Layout.jsx",
     ],
-    ignores: ["src/lib/**/*", "src/components/ui/**/*"],
+    ignores: ["src/lib/**/*.js", "src/components/ui/**/*"],
     ...pluginJs.configs.recommended,
     ...pluginReact.configs.flat.recommended,
     languageOptions: {
@@ -58,12 +83,16 @@ export default [
       "react/jsx-uses-react": "error",
       "unused-imports/no-unused-imports": "error",
       "unused-imports/no-unused-vars": [
-        "warn",
+        "error",
         {
           vars: "all",
           varsIgnorePattern: "^_",
           args: "after-used",
           argsIgnorePattern: "^_",
+          caughtErrors: "none",
+          // Privacy code strips fields with { lat, lng, ...rest }; those bindings
+          // are unused on purpose and must not be reported or autofixed away.
+          ignoreRestSiblings: true,
         },
       ],
       "react/prop-types": "off",
@@ -73,6 +102,10 @@ export default [
         { ignore: ["cmdk-input-wrapper", "toast-close"] },
       ],
       "react-hooks/rules-of-hooks": "error",
+      // Stale closures here have shipped as real bugs (state that silently
+      // stops updating). Deliberate mount-only effects must opt out explicitly
+      // with a disable comment stating why, not by omission.
+      "react-hooks/exhaustive-deps": "error",
     },
   },
 ];

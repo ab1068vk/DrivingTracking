@@ -1313,7 +1313,7 @@ function TripMapContent({
     } finally {
       endDraw({ outcome: 'complete' });
     }
-  }, [mapFailed, ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, parkedLocationDraggable, showPrivacyZones, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings, privacyZonesRevision]);
+  }, [mapFailed, ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, parkedLocationDraggable, showPrivacyZones, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings, units, privacyZonesRevision]);
 
   useEffect(() => {
     const safeCurrentLocation = validLatLngPoint(currentLocation);

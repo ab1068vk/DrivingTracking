@@ -181,7 +181,9 @@ final class DriveSenseCompletedTripJournal {
                 result.put("missingTripIds", missing);
                 result.put("failedTripIds", failed);
                 result.put("success", failed.length() == 0);
-            } catch (Exception ignored) {}
+            } catch (Exception error) {
+                Log.w(TAG, "Could not synchronized", error);
+            }
             return result;
         }
     }
@@ -218,7 +220,9 @@ final class DriveSenseCompletedTripJournal {
             long availableBytes = 0L;
             try {
                 availableBytes = new StatFs(context.getNoBackupFilesDir().getAbsolutePath()).getAvailableBytes();
-            } catch (Exception ignored) {}
+            } catch (Exception error) {
+                Log.w(TAG, "Could not synchronized", error);
+            }
             JSONObject status = new JSONObject();
             try {
                 status.put("journalVersion", VERSION);
@@ -235,7 +239,9 @@ final class DriveSenseCompletedTripJournal {
                 status.put("entryLimit", MAX_ENTRIES);
                 status.put("cloudBackupExcluded", true);
                 status.put("storageScope", "app_private_no_backup");
-            } catch (Exception ignored) {}
+            } catch (Exception error) {
+                Log.w(TAG, "Could not synchronized", error);
+            }
             return status;
         }
     }

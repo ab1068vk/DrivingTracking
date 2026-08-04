@@ -26,6 +26,7 @@ import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import android.util.Log;
 
 /**
  * Privacy-safe process and responsiveness watchdog.
@@ -34,6 +35,7 @@ import java.util.concurrent.TimeUnit;
  * query strings, JavaScript values, stack traces, or Android exit descriptions.
  */
 final class AppExperienceWatchdog {
+    private static final String TAG = "AppExperienceWatchdog";
     private static final String PREFS = "roadsage_app_watchdog";
     private static final String KEY_FOREGROUND = "foreground";
     private static final String KEY_LAST_STATE = "last_state";
@@ -513,6 +515,8 @@ final class AppExperienceWatchdog {
     private static void put(JSONObject object, String key, Object value) {
         try {
             object.put(key, value);
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not put", error);
+        }
     }
 }

@@ -13,7 +13,7 @@ import {
   Tag,
 } from 'lucide-react';
 import premiumHistoryDate from '@/assets/premium-history-date-v2.jpg';
-import premiumHistoryResults from '@/assets/premium-history-results.png';
+import premiumHistoryResults from '@/assets/premium-history-results.webp';
 import premiumHistorySearchBmw from '@/assets/premium-history-search-bmw-v2.jpg';
 import premiumHistorySnapshotDistance from '@/assets/premium-history-snapshot-distance-v3.webp';
 import premiumHistorySnapshotHero from '@/assets/premium-history-snapshot-hero-v3.webp';

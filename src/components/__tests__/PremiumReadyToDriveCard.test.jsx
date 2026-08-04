@@ -62,13 +62,13 @@ describe('PremiumReadyToDriveCard', () => {
     expect(html).toContain('Start a new trip');
     expect(html).toContain('Tap to begin tracking your route');
     expect(html).toContain('aria-label="Start trip"');
-    expect(html).toContain('premium-ready-city-hero-v6.png');
-    expect(html).toContain('premium-ready-start-generated-v1.png');
+    expect(html).toContain('premium-ready-city-hero-v6.webp');
+    expect(html).toContain('premium-ready-start-generated-v1.webp');
     expect(html).toContain('Start Private Trip');
     expect(html).not.toContain('Privacy mode');
-    expect(html).toContain('premium-ready-private-v6.png');
-    expect(html).toContain('premium-ready-private-shield-generated-v1.png');
-    expect(html).toContain('premium-ready-private-control-generated-v1.png');
+    expect(html).toContain('premium-ready-private-v6.webp');
+    expect(html).toContain('premium-ready-private-shield-generated-v1.webp');
+    expect(html).toContain('premium-ready-private-control-generated-v1.webp');
     expect(html).toContain('Save distance and duration only.');
     expect(html).toContain('No route, addresses, events, or score.');
     expect(html).not.toContain('Manual background setup needed');
@@ -111,7 +111,7 @@ describe('PremiumReadyToDriveCard', () => {
     expect(html).toContain('2 of 3 checks ready');
     expect(html).toContain('Manual background setup needed');
     expect(html).toContain('Action required');
-    expect(html).toContain('premium-ready-systems-v6.png');
+    expect(html).toContain('premium-ready-systems-v6.webp');
     expect(html).toContain('Location</span><small>Ready');
     expect(html).toContain('Background</span><small>Needed');
     expect(html).toContain('Notifications</span><small>Ready');

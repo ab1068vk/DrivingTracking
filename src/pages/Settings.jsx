@@ -1,5 +1,18 @@
 // @ts-check
-import { memo, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import {
+  SectionTitle,
+  SettingsSubheading,
+  SettingsSection,
+  SettingRow,
+  numberDraftValue,
+  updateOptionalNumberDraft,
+  formatLegalNoticeDate,
+  runAfterVisiblePaint,
+} from '@/components/settings/SettingsPrimitives';
+import {
+  SETTINGS_SECTIONS,
+} from '@/components/settings/settingsSectionManifest';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { tripService } from '@/api/trips';
@@ -62,6 +75,7 @@ import {
   BACKUP_TOO_LARGE_MESSAGE,
   MAX_BACKUP_BYTES,
 } from '@/lib/dataBackupConstants';
+import { describeBackupImportResult } from '@/lib/dataBackupPresentation';
 import {
   BACKUP_PASSPHRASE_MIN_LENGTH,
   BACKUP_PASSWORD_REQUIRED_CODE,
@@ -165,100 +179,6 @@ import {
 // - Added explicit copy explaining speed margin values affect live voice alert timing.
 // - Applied the same blank-safe numeric input handling to editable economics settings.
 
-function SectionTitle({ children, id }) {
-  return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
-}
-
-function SettingsSubheading({ children }) {
-  return <div className="px-1 pt-3 pb-1 text-[11px] font-bold uppercase tracking-widest text-muted-foreground">{children}</div>;
-}
-
-/**
- * @param {{ id: string, activeId: string, children: any }} props
- */
-const SettingsSection = /** @type {any} */ (memo(function SettingsSection(props) {
-  const { id, activeId, children } = /** @type {{ id: string, activeId: string, children: any }} */ (props);
-  if (activeId !== id) return null;
-  return (
-    <div className="settings-section">
-      {typeof children === 'function' ? children() : children}
-    </div>
-  );
-}, (/** @type {any} */ previous, /** @type {any} */ next) => (
-  previous.id === next.id && previous.activeId !== previous.id && next.activeId !== next.id
-)));
-
-function SettingRow({ icon: Icon = null, label, sublabel = '', children = null, onClick = null, danger = false, disabled = false }) {
-  const actionable = typeof onClick === 'function';
-  const activate = (event) => {
-    if (!actionable || disabled) return;
-    onClick(event);
-  };
-
-  return (
-    <div
-      data-setting-label={label}
-      role={actionable ? 'button' : undefined}
-      tabIndex={actionable && !disabled ? 0 : undefined}
-      aria-disabled={actionable && disabled ? true : undefined}
-      className={`scroll-mt-24 flex items-center justify-between gap-3 py-3 px-1 border-b border-border/50 last:border-0 ${actionable ? 'rounded-xl -mx-1 px-2 transition-colors' : ''} ${actionable && !disabled ? 'cursor-pointer hover:bg-secondary/50' : ''} ${actionable && disabled ? 'cursor-not-allowed opacity-60' : ''}`}
-      onClick={activate}
-      onKeyDown={(event) => {
-        if (!actionable || disabled || (event.key !== 'Enter' && event.key !== ' ')) return;
-        event.preventDefault();
-        activate(event);
-      }}
-    >
-      <div className="flex items-center gap-3 flex-1 min-w-0">
-        {Icon && (
-          <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${danger ? 'bg-red-50 dark:bg-red-950/30' : 'bg-secondary'}`}>
-            <Icon className={`w-4 h-4 ${danger ? 'text-red-500' : 'text-muted-foreground'}`} />
-          </div>
-        )}
-        <div className="min-w-0">
-          <div className={`break-words text-sm font-medium ${danger ? 'text-red-600 dark:text-red-400' : ''}`}>{label}</div>
-          {sublabel && <div className="mt-0.5 break-words text-xs text-muted-foreground">{sublabel}</div>}
-        </div>
-      </div>
-      <div className="flex-shrink-0 max-w-[46%]">{children}</div>
-    </div>
-  );
-}
-
-function numberDraftValue(value, fallback) {
-  return value === '' ? '' : value ?? fallback;
-}
-
-function updateOptionalNumberDraft(updateCfg, key, rawValue) {
-  if (rawValue === '') {
-    updateCfg({ [key]: '' });
-    return;
-  }
-  const number = Number(rawValue);
-  if (Number.isFinite(number)) {
-    updateCfg({ [key]: number });
-  }
-}
-
-function formatLegalNoticeDate(value) {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  }).format(date);
-}
-
-const runAfterVisiblePaint = (callback) => {
-  const run = () => window.setTimeout(callback, 0);
-  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-    window.requestAnimationFrame(run);
-  } else {
-    setTimeout(callback, 0);
-  }
-};
 
 const getNativeAutoTrackingStatusFromSettings = () => import('@/lib/activityRecognition')
   .then(({ getNativeAutoTrackingStatus }) => getNativeAutoTrackingStatus());
@@ -401,236 +321,6 @@ const regionDefaultOptions = (countryCode) => (
   Object.keys(REGION_SPEED_DEFAULTS[countryCode] || {}).filter((key) => key !== '_country')
 );
 
-const SETTINGS_SECTIONS = [
-  {
-    id: 'settings-experience',
-    group: 'app',
-    title: 'App Experience',
-    icon: SlidersHorizontal,
-    detail: 'Switch between the coaching workspace and the advanced tracking console.',
-    keywords: 'app experience mode coaching advanced tracking telemetry workspace switch',
-    searchItems: [
-      { label: 'App experience', targetLabel: 'App Experience', keywords: 'coaching mode advanced tracking mode workspace switch' },
-    ],
-  },
-  {
-    id: 'settings-tracking',
-    group: 'driving-device',
-    title: 'Tracking',
-    icon: Shield,
-    detail: 'Manual, auto-detect, background tracking, and pause controls.',
-    keywords: 'manual auto detect background pause delayed start not starting drive signal gps movement',
-    searchItems: [
-      { label: 'Tracking mode', keywords: 'manual only auto detect background auto' },
-      { label: 'Pause all tracking', keywords: 'stop disable trip detection' },
-      { label: 'Auto-tracking', keywords: 'automatic start driving signals' },
-      { label: 'Background tracking', keywords: 'record app closed location' },
-    ],
-  },
-  {
-    id: 'settings-android-permissions',
-    group: 'driving-device',
-    title: 'Android Permissions',
-    icon: Shield,
-    detail: 'Location, camera, activity, notification, battery, and native service setup.',
-    keywords: 'location camera speed sign activity notification battery unrestricted native service usage bluetooth permission granted denied prompt',
-    searchItems: [
-      { label: 'Foreground location permission', targetLabel: 'Location', keywords: 'gps while using app' },
-      { label: 'Background location permission', targetLabel: 'Background Location', keywords: 'always allow location' },
-      { label: 'Camera permission', targetLabel: 'Camera', keywords: 'speed sign scanner offline ocr' },
-      { label: 'Activity recognition permission', targetLabel: 'Physical Activity', keywords: 'physical activity driving detection' },
-      { label: 'Notification permission', targetLabel: 'Notifications', keywords: 'alerts prompt' },
-      { label: 'Battery optimization', keywords: 'unrestricted battery background service' },
-      { label: 'Native auto-tracking service', targetLabel: 'Native Auto Tracking', keywords: 'android background automatic trips' },
-    ],
-  },
-  {
-    id: 'settings-feature-permissions',
-    group: 'driving-device',
-    title: 'Feature Permissions',
-    icon: Info,
-    detail: 'See which app features need setup before they can work.',
-    keywords: 'blocked unavailable permission feature status camera speed sign scanner',
-    searchItems: [
-      { label: 'On-device speed-sign scanning', keywords: 'camera permission offline ocr mounted' },
-      { label: 'Motion sensor access', keywords: 'accelerometer gyroscope crash detection' },
-      { label: 'Phone Usage Access', keywords: 'distraction foreground app android' },
-      { label: 'OBD-II Bluetooth diagnostics', keywords: 'nearby devices ble adapter' },
-      { label: 'Road data and weather access', keywords: 'openstreetmap open meteo osrm network' },
-      { label: 'Voice alerts', keywords: 'speech coaching text to speech' },
-    ],
-  },
-  {
-    id: 'settings-appearance',
-    group: 'preferences',
-    title: 'Appearance',
-    icon: Monitor,
-    detail: 'Theme, premium visuals, and unit preferences.',
-    keywords: 'theme dark light system premium visuals units metric imperial kmh mph',
-    searchItems: [
-      { label: 'Theme', keywords: 'light dark system display' },
-      { label: 'Premium Visual Experience', keywords: 'dashboard rich visuals totals cards' },
-      { label: 'Units', keywords: 'metric imperial kmh mph kilometers miles' },
-    ],
-  },
-  {
-    id: 'settings-economics',
-    group: 'preferences',
-    title: 'Economics',
-    icon: Banknote,
-    detail: 'Currency, fuel, EV, carbon, and savings assumptions.',
-    keywords: 'currency symbol money cost price co2 carbon emissions average vehicle baseline electric ev grid intensity kwh tree fuel savings economics',
-    searchItems: [
-      { label: 'Currency symbol', keywords: 'money cost dollar euro pound' },
-      { label: 'Average vehicle CO2 baseline', keywords: 'emissions carbon comparison' },
-      { label: 'Default EV efficiency', keywords: 'electric kwh per 100 km' },
-      { label: 'Grid CO2 intensity', keywords: 'electricity emissions' },
-      { label: 'Tree-year equivalent', keywords: 'carbon impact summary' },
-    ],
-  },
-  {
-    id: 'settings-notifications',
-    group: 'preferences',
-    title: 'Notifications',
-    icon: Bell,
-    detail: 'Quiet hours, trip summaries, coaching, maintenance, and safety alerts.',
-    keywords: 'quiet hours trip summary coaching maintenance nudges alert',
-    searchItems: [
-      { label: 'Enable all notifications', keywords: 'master alerts toggle' },
-      { label: 'Quiet hours', keywords: 'do not disturb start end time' },
-      { label: 'Safety alerts', keywords: 'driving warning phone heading speeding danger zone' },
-      { label: 'Trip started and ended notifications', keywords: 'start finish summary' },
-      { label: 'Post-trip smart summary', keywords: 'score change phone use fuel saving' },
-      { label: 'Coaching notifications', keywords: 'milestones achievements streak weekly driving summary tips' },
-      { label: 'Maintenance reminders', keywords: 'vehicle service' },
-      { label: 'No-trip nudge', keywords: 'inactive reminder days' },
-    ],
-  },
-  {
-    id: 'settings-driving-goals',
-    group: 'coaching-detection',
-    title: 'Driving Goals',
-    icon: Target,
-    detail: 'Weekly score, mileage, night driving, and behavior targets.',
-    keywords: 'weekly score harsh brake speeding night goals target',
-    searchItems: [
-      { label: 'Maximum harsh brakes', keywords: 'weekly goal braking' },
-      { label: 'Maximum speeding events', keywords: 'weekly goal speed' },
-      { label: 'Minimum average score', keywords: 'weekly target' },
-      { label: 'Maximum night distance and trips', keywords: 'night km driving goal' },
-      { label: 'UBI annual mileage target', keywords: 'insurance mileage score' },
-    ],
-  },
-  {
-    id: 'settings-night-window',
-    group: 'coaching-detection',
-    title: 'Night Window',
-    icon: Clock,
-    detail: 'Night-trip detection window and sunset fallback.',
-    keywords: 'night window sunset sunrise custom time late drive scoring',
-    searchItems: [
-      { label: 'Night driving start time', keywords: 'late evening begins' },
-      { label: 'Night driving end time', keywords: 'morning ends' },
-      { label: 'Sunset and sunrise fallback', keywords: 'automatic night window' },
-    ],
-  },
-  {
-    id: 'settings-detection-thresholds',
-    group: 'coaching-detection',
-    title: 'Detection Features',
-    icon: SlidersHorizontal,
-    detail: 'Detection toggles, sensitivity, calibration, and re-scoring.',
-    keywords: 'harsh braking rapid acceleration speeding idle lane changing brake turn heading drift calibration rescore feedback accurate wrong false positive',
-    searchItems: [
-      { label: 'Detection feature switches', keywords: 'braking acceleration cornering speeding idle heading' },
-      { label: 'Detection sensitivity', keywords: 'threshold strict lenient false positive' },
-      { label: 'Calibration labels', keywords: 'feedback correct incorrect events' },
-      { label: 'Re-score trip history', keywords: 'recalculate scoring version migration' },
-      { label: 'Lane change and heading event scoring', keywords: 'advanced safety beta' },
-    ],
-  },
-  {
-    id: 'settings-advanced-models',
-    group: 'coaching-detection',
-    title: 'Advanced Models',
-    icon: Route,
-    detail: 'Sensor fusion, crash, route risk, voice alerts, OBD, and map overlays.',
-    keywords: 'route risk voice alerts obd bluetooth sensor fusion crash map line event marker cornering heatmap',
-    searchItems: [
-      { label: 'Sensor fusion', keywords: 'motion accelerometer gyroscope gps' },
-      { label: 'Crash detection', keywords: 'impact emergency safety' },
-      { label: 'Emergency workflow', keywords: 'crash response' },
-      { label: 'Predictive route risk', keywords: 'route warning hazard' },
-      { label: 'Trip start voice confirmation', keywords: 'tracking started recording active spoken confirmation' },
-      { label: 'Live voice alerts', keywords: 'spoken warning coaching safety test volume' },
-      { label: 'OBD-II Bluetooth', keywords: 'vehicle adapter diagnostics ble' },
-      { label: 'Map overlays', keywords: 'event markers heatmap route line' },
-    ],
-  },
-  {
-    id: 'settings-phone-use',
-    group: 'coaching-detection',
-    title: 'Phone Use Detection',
-    icon: Smartphone,
-    detail: 'Distraction detection, map display, scoring, and expert tuning.',
-    keywords: 'distraction usage access phone score map foreground app',
-    searchItems: [
-      { label: 'Android Usage Access', keywords: 'permission foreground app' },
-      { label: 'Phone use detection', keywords: 'distraction monitoring' },
-      { label: 'Live phone use alert', keywords: 'driving warning notification' },
-      { label: 'Show phone use on trip map', keywords: 'route markers' },
-      { label: 'Include phone use in trip score', keywords: 'safety penalty' },
-      { label: 'Phone detection expert tuning', keywords: 'threshold sensitivity duration' },
-    ],
-  },
-  {
-    id: 'settings-speed-warning',
-    group: 'coaching-detection',
-    title: 'Speed & Road Data',
-    icon: Gauge,
-    detail: 'Live speed checks, posted speed warnings, speed limits, weather, and automatic road-data lookup.',
-    keywords: 'speed limits overpass osm warning margin over limit openstreetmap road data weather',
-    searchItems: [
-      { label: 'Live speed check', keywords: 'over limit alert coaching' },
-      { label: 'On-device speed-sign scan', keywords: 'camera offline ocr mounted battery private notification auto start' },
-      { label: 'Mounted Ready screen', keywords: 'arm next drive auto manual start camera visible foreground trip parked safety no touch awake timeout' },
-      { label: 'Speed limits from OpenStreetMap', keywords: 'osm posted maxspeed' },
-      { label: 'Fallback estimate country', keywords: 'canada united states global regional estimate' },
-      { label: 'Weather from Open-Meteo', keywords: 'rain snow fog ice' },
-      { label: 'Automatic road-data lookup', keywords: 'auto fetch speed weather' },
-      { label: 'Snap route to roads with OSRM', keywords: 'map matching cleanup endpoint' },
-      { label: 'OSRM timeout and endpoint', keywords: 'server route matching link' },
-      { label: 'Speed check margin', keywords: 'strict lenient over limit kmh' },
-    ],
-  },
-  {
-    id: 'settings-privacy-data',
-    group: 'privacy-data',
-    title: 'Privacy & Data',
-    icon: Shield,
-    detail: 'Privacy zones, backups, exports, imports, deletion, and feedback data.',
-    keywords: 'privacy export import backup retention delete data saved filters event feedback security',
-    searchItems: [
-      { label: 'Legal and privacy notice', targetLabel: 'Legal, safety, data & privacy notice', keywords: 'safety data external services' },
-      { label: 'Privacy Intelligence', keywords: 'outbound records protections audit health' },
-      { label: 'Request timing obfuscation', keywords: 'random delay network privacy' },
-      { label: 'Decoy traffic', keywords: 'open meteo neutral location' },
-      { label: 'App lock', keywords: 'fingerprint face device authentication' },
-      { label: 'Screenshots and screen sharing', keywords: 'screen capture privacy' },
-      { label: 'Privacy zones', keywords: 'home work hidden location radius map' },
-      { label: 'Export all trips', keywords: 'csv download' },
-      { label: 'Export everything', keywords: 'data portability json download' },
-      { label: 'Export full backup', keywords: 'encrypted save password' },
-      { label: 'Import backup', keywords: 'restore encrypted json' },
-      { label: 'Erase all local data', keywords: 'delete erasure receipt local data' },
-      { label: 'Data retention', keywords: 'delete trips days forever' },
-      { label: 'Privacy log retention', keywords: 'operation records hours' },
-      { label: 'Raw GPS retention', keywords: 'route coordinates delete days' },
-      { label: 'Verify audit log', keywords: 'tamper chain integrity' },
-      { label: 'Delete all trips', keywords: 'erase permanent danger' },
-    ],
-  },
-];
 
 function SettingsAreaNavigation({ sections, activeId, onSelect, variant }) {
   const mobile = variant === 'mobile';
@@ -1048,6 +738,10 @@ export default function Settings() {
         });
       });
     }
+    // Reacts to navigation state only. `openPrivacyProtectionCheck` is
+    // re-created every render, so depending on it would re-navigate and
+    // re-scroll on every render instead of once per navigation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state, navigate]);
 
   const { data: scoreMigrationSummary = {
@@ -1074,11 +768,12 @@ export default function Settings() {
     staleTime: SETTINGS_HEAVY_QUERY_STALE_MS,
   });
 
-  const getSettingsTrips = () => qc.fetchQuery({
+  // Stable so effects can depend on it without refetching on every render.
+  const getSettingsTrips = useCallback(() => qc.fetchQuery({
     queryKey: ['settings-trips'],
     queryFn: () => tripService.listAll({ sort: '-start_time' }),
     staleTime: SETTINGS_HEAVY_QUERY_STALE_MS,
-  });
+  }), [qc]);
 
   const getSettingsTripsForExport = (options = {}) => tripService.listAllForExport({ sort: '-start_time', ...options });
 
@@ -1163,7 +858,7 @@ export default function Settings() {
     return () => {
       active = false;
     };
-  }, [privacyDeleteZone]);
+  }, [privacyDeleteZone, getSettingsTrips]);
 
   const updateCfg = (patch) => {
     const currentCfg = cfgRef.current;
@@ -2751,6 +2446,10 @@ export default function Settings() {
       window.removeEventListener('focus', refreshAndRestartIfReady);
       document.removeEventListener('visibilitychange', onVisibility);
     };
+    // Listeners are registered once per mount. `refreshSettingsFromNative` is
+    // re-created every render, so depending on it would detach and re-attach
+    // the focus/visibility listeners on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleBatteryOptimization = async () => {
@@ -3229,18 +2928,11 @@ export default function Settings() {
     setCfg(localSettings.get());
     applyThemeMode(localSettings.get().dark_mode);
     await qc.invalidateQueries();
+    const importReport = describeBackupImportResult(result);
     toast({
-      title: 'Import complete',
-      description: result.truncatedFields
-        ? `${result.trips} trips and ${result.vehicles} vehicles merged. ${result.warnings.join(' ')}`
-        : result.signatureRecovered
-        ? `${result.trips} trips and ${result.vehicles} vehicles merged from a readable backup whose old signature could not be verified. Settings were not imported.`
-        : !result.savedFiltersRestored && result.savedFilters
-        ? `${result.trips} trips and ${result.vehicles} vehicles merged, but saved filters could not be restored.`
-        : result.privacy_zones_need_reconfiguration
-        ? `${result.trips} trips and ${result.vehicles} vehicles merged. Re-add ${result.privacy_zones_need_reconfiguration} privacy zone${result.privacy_zones_need_reconfiguration === 1 ? '' : 's'} because backups do not store private coordinates.`
-        : `${result.trips} trips, ${result.vehicles} vehicles, and ${result.savedFilters || 0} saved filters merged.`,
-      variant: result.truncatedFields || result.signatureRecovered || (!result.savedFiltersRestored && result.savedFilters) || result.privacy_zones_need_reconfiguration ? 'destructive' : undefined,
+      title: importReport.title,
+      description: importReport.description,
+      variant: importReport.hasIssues ? 'destructive' : undefined,
     });
     setBackupImportOpen(false);
     setPendingBackupImportFile(null);
@@ -3253,6 +2945,11 @@ export default function Settings() {
       saved_filter_count: result.savedFilters || 0,
       warning_count: result.truncatedFields || 0,
       privacy_zones_need_reconfiguration: result.privacy_zones_need_reconfiguration || 0,
+      reported_issue_count: importReport.issues.length,
+      saved_filters_restored: result.savedFiltersRestored !== false,
+      calibration_labels_restored: result.calibrationLabelsRestored !== false,
+      speed_knowledge_restored: result.speedKnowledgeRestored !== false,
+      speed_knowledge_rescore_failed: result.speedKnowledgeRescoreFailed === true,
     }, { category: 'storage', title: 'Backup import notification shown' });
     return result;
   };
@@ -4255,7 +3952,9 @@ export default function Settings() {
             { key: 'ubi_optimal_annual_km', label: 'UBI optimal annual km', min: 3000, max: 30000, step: 500 },
             { key: 'ubi_mileage_score_spread_km', label: 'UBI mileage spread km', min: 2000, max: 20000, step: 500 },
           ].map(({ key, label, min, max, step }) => (
-            <div key={key} className="px-1">
+            // data-setting-label matches SettingRow so e2e can target a specific
+            // slider instead of relying on DOM order.
+            <div key={key} className="px-1" data-setting-label={label}>
               <div className="flex justify-between text-xs mb-1.5">
                 <span className="flex items-center gap-2 font-medium">
                   {label}

@@ -115,6 +115,9 @@ export default function AppExperienceDiagnosticsPanel({
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [importedReports, setImportedReports] = useState(() => getImportedAppExperienceReports());
+  // Reads a module-level store that takes no arguments. The counts are the
+  // intentional staleness signal for re-reading it, not unused inputs.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const historicalEvents = useMemo(() => getHistoricalAppExperienceEvents(), [performanceEntries.length, trackingEvents.length]);
   const report = useMemo(() => buildAppExperienceReport({
     trips,

@@ -4,16 +4,16 @@ import premiumSegmentHero from '@/assets/premium-segment-intelligence-hero-v1.we
 import premiumSegmentEarly from '@/assets/premium-segment-intelligence-early-v1.webp';
 import premiumSegmentMiddle from '@/assets/premium-segment-intelligence-middle-v1.webp';
 import premiumSegmentLate from '@/assets/premium-segment-intelligence-late-v1.webp';
-import premiumSegmentArrowIcon from '@/assets/premium-segment-icon-arrow-v1.png';
-import premiumSegmentCarIcon from '@/assets/premium-segment-icon-car-v1.png';
-import premiumSegmentEveningIcon from '@/assets/premium-segment-icon-evening-v1.png';
-import premiumSegmentMiddayIcon from '@/assets/premium-segment-icon-midday-v1.png';
-import premiumSegmentMorningIcon from '@/assets/premium-segment-icon-morning-v1.png';
-import premiumSegmentNetworkIcon from '@/assets/premium-segment-icon-network-v1.png';
-import premiumSegmentPinIcon from '@/assets/premium-segment-icon-pin-v1.png';
-import premiumSegmentRepeatIcon from '@/assets/premium-segment-icon-repeat-v1.png';
-import premiumSegmentShieldIcon from '@/assets/premium-segment-icon-shield-v1.png';
-import premiumSegmentTargetIcon from '@/assets/premium-segment-icon-target-v1.png';
+import premiumSegmentArrowIcon from '@/assets/premium-segment-icon-arrow-v1.webp';
+import premiumSegmentCarIcon from '@/assets/premium-segment-icon-car-v1.webp';
+import premiumSegmentEveningIcon from '@/assets/premium-segment-icon-evening-v1.webp';
+import premiumSegmentMiddayIcon from '@/assets/premium-segment-icon-midday-v1.webp';
+import premiumSegmentMorningIcon from '@/assets/premium-segment-icon-morning-v1.webp';
+import premiumSegmentNetworkIcon from '@/assets/premium-segment-icon-network-v1.webp';
+import premiumSegmentPinIcon from '@/assets/premium-segment-icon-pin-v1.webp';
+import premiumSegmentRepeatIcon from '@/assets/premium-segment-icon-repeat-v1.webp';
+import premiumSegmentShieldIcon from '@/assets/premium-segment-icon-shield-v1.webp';
+import premiumSegmentTargetIcon from '@/assets/premium-segment-icon-target-v1.webp';
 
 const SECTION_PRESENTATIONS = Object.freeze({
   early: {

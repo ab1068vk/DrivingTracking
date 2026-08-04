@@ -11,7 +11,11 @@ import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/spe
 import { LocalSpeedKnowledge } from '@/lib/localSpeedKnowledge';
 import { setJson } from '@/lib/mobileStorage';
 import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
-import { applyWeatherRiskToScores, fetchWeatherContextForTrip } from '@/lib/weatherContext';
+import {
+  applyWeatherRiskToScores,
+  fetchWeatherContextForTrip,
+  resolveWeatherContextAfterLookup,
+} from '@/lib/weatherContext';
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { getPrivacyZones, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
@@ -435,6 +439,13 @@ export async function buildWeatherOnlyTripContextPatch(trip, settings = localSet
   }
 
   stage(options.onProgress, 'Applying weather to this trip');
+  // A failed or empty Open-Meteo lookup is not evidence. Keep a condition the
+  // driver confirmed locally instead of replacing it with "unavailable".
+  const lookupStatus = weatherContext?.status || null;
+  const {
+    context: appliedWeatherContext,
+    keptConfirmed: keptConfirmedWeather,
+  } = resolveWeatherContextAfterLookup(trip.weather_context, weatherContext);
   const isolatedSettings = {
     ...effectiveSettings,
     speed_limit_lookup_enabled: false,
@@ -444,7 +455,7 @@ export async function buildWeatherOnlyTripContextPatch(trip, settings = localSet
   };
   const patch = await buildOpenSourceTripContextPatch(trip, isolatedSettings, {
     ...options,
-    weatherContextOverride: weatherContext,
+    weatherContextOverride: appliedWeatherContext,
   });
 
   // Preserve existing route, OSM and OSRM evidence. The isolated settings above
@@ -454,7 +465,11 @@ export async function buildWeatherOnlyTripContextPatch(trip, settings = localSet
   delete patch.route_points_map_count;
   delete patch.speed_limit_context;
   delete patch.map_matching_context;
-  return patch;
+  return {
+    ...patch,
+    weather_lookup_status: lookupStatus,
+    weather_lookup_kept_confirmed: keptConfirmedWeather,
+  };
 }
 
 export async function buildLocalSpeedKnowledgeScorePatch(trip, settings = localSettings.get()) {

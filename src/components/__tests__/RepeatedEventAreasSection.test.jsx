@@ -47,9 +47,9 @@ describe('RepeatedEventAreasSection', () => {
     expect(html).toContain('class="premium-event-areas"');
     expect(html).toContain('data-variant="coach"');
     expect(html).toContain('7 local areas need attention');
-    expect(html).toContain('premium-event-area-braking-v2.png');
-    expect(html).toContain('premium-event-area-speeding-v2.png');
-    expect(html).toContain('premium-event-area-turn-v2.png');
+    expect(html).toContain('premium-event-area-braking-v2.webp');
+    expect(html).toContain('premium-event-area-speeding-v2.webp');
+    expect(html).toContain('premium-event-area-turn-v2.webp');
     expect(html).toContain('Approximately 96 m area');
     expect(html).toContain('Show all areas');
     expect(html).toContain('1 hidden');

@@ -72,7 +72,7 @@ describe('PremiumMapTripCard', () => {
 
     expect(html).toContain('premium-map-trip-card');
     expect(html).toContain('premium-map-trip-orange-v2.webp');
-    expect(html).toContain('premium-map-trip-emblem-orange-v2.png');
+    expect(html).toContain('premium-map-trip-emblem-orange-v2.webp');
     expect(html).toContain('79 GPS readings');
     expect(html).toContain('61 map/playback points');
     expect(html).toContain('3 events');

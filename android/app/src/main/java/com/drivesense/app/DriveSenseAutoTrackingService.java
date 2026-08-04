@@ -55,8 +55,10 @@ import java.util.Deque;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
+import android.util.Log;
 
 public class DriveSenseAutoTrackingService extends Service implements SensorEventListener {
+    private static final String TAG = "AutoTrackingService";
     private static volatile boolean dataErasureInProgress = false;
     static final String ACTION_START = "com.drivesense.app.action.START_NATIVE_AUTO";
     static final String ACTION_START_MANUAL_TRIP = "com.drivesense.app.action.START_NATIVE_MANUAL_TRIP";
@@ -453,7 +455,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         intent.putExtra(EXTRA_TRIP_ID, tripId == null ? "" : tripId);
         try {
             ContextCompat.startForegroundService(context, intent);
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not start manual trip", error);
+        }
     }
 
     static void discardManualTrip(Context context, boolean keepArmed) {
@@ -463,7 +467,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         intent.putExtra(EXTRA_KEEP_ARMED, keepArmed);
         try {
             ContextCompat.startForegroundService(context, intent);
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not discard manual trip", error);
+        }
     }
 
     static void endActiveTrip(Context context, boolean keepArmed) {
@@ -473,7 +479,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         intent.putExtra(EXTRA_KEEP_ARMED, keepArmed);
         try {
             ContextCompat.startForegroundService(context, intent);
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not end active trip", error);
+        }
     }
 
     static void stop(Context context) {
@@ -577,7 +585,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         intent.putExtra(EXTRA_ACTIVITY_CONFIDENCE, activity.getConfidence());
         try {
             ContextCompat.startForegroundService(context, intent);
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not handle activity broadcast", error);
+        }
     }
 
     private void handleActivity(int type, int confidence) {
@@ -764,7 +774,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (vehicleConnectionReceiver == null) return;
         try {
             unregisterReceiver(vehicleConnectionReceiver);
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not unregister vehicle connection receiver", error);
+        }
         vehicleConnectionReceiver = null;
     }
 
@@ -959,7 +971,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
         try {
             locationClient.requestLocationUpdates(request, locationCallback, getMainLooper());
-        } catch (SecurityException ignored) {}
+        } catch (SecurityException error) {
+            Log.w(TAG, "Could not start armed location updates", error);
+        }
     }
 
     private void stopLocationUpdates() {
@@ -1101,7 +1115,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             point.put("timestamp", iso(pointTimeMs));
             point.put("timezone_id", localTime.getZone().getId());
             point.put("utc_offset_minutes", localTime.getOffset().getTotalSeconds() / 60);
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not location to json", error);
+        }
         return point;
     }
 
@@ -1521,7 +1537,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             trip.put("native_phone_usage_total_seconds", phoneUsage.optLong("total_seconds", 0L));
             trip.put("created_at", iso(endMs));
             trip.put("updated_at", iso(endMs));
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not finish trip", error);
+        }
 
         boolean completedTripSaved = DriveSenseNativeTripStore.addCompletedTrip(this, trip);
         if (!completedTripSaved) {
@@ -1642,7 +1660,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 lastVehicleDisconnectMs >= activeStartMs && lastVehicleDisconnectMs > 0L
             );
             signals.put("parking_learning_profile", readParkingLearningProfile());
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not finish trip", error);
+        }
         return signals;
     }
 
@@ -1748,7 +1768,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         JSONObject point = locationToJson(location, speedKmh);
         try {
             point.put("parking_refinement", true);
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not record parking refinement fix", error);
+        }
         pendingParkingRefinementPoints.put(point);
         pendingParkingRefinementFixCount++;
         if (
@@ -2055,7 +2077,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 activeMotionSamples.remove(0);
             }
             lastMotionSampleMs = timestampMs;
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not append motion sample", error);
+        }
     }
 
     private void evaluatePossibleIncident() {
@@ -2079,7 +2103,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             incident.put("emergency_workflow_pending", emergencyWorkflow);
             incident.put("source", "android_native_background");
             incident.put("native_background", true);
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not evaluate possible incident", error);
+        }
         activeIncidentEvents.put(incident);
         recordLiveTelemetryEvent(
             "possible_incident",
@@ -2183,7 +2209,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             incident.put("activity_type", activityType == DetectedActivity.STILL ? "still" : "unknown");
             incident.put("activity_confidence", activityConfidence);
             incident.put("confidence", peakLinear >= POSSIBLE_INCIDENT_HIGH_LINEAR_MS2 && stoppedSeconds >= POSSIBLE_INCIDENT_HIGH_STOPPED_SECONDS ? 0.9d : 0.72d);
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not evaluate possible incident", error);
+        }
         return incident;
     }
 
@@ -2241,7 +2269,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 event.put("emergency_workflow_acknowledged", "ok");
                 event.put("emergency_workflow_acknowledged_at", acknowledgedAt);
                 changed = true;
-            } catch (JSONException ignored) {}
+            } catch (JSONException error) {
+                Log.w(TAG, "Could not acknowledge incident events", error);
+            }
         }
         return changed;
     }
@@ -4436,7 +4466,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             status.put("possible_incident_active", activeIncidentEvents != null && activeIncidentEvents.length() > 0);
             DriveSenseNativeTripStore.setActiveTripStatus(this, status);
             lastLiveStatusMs = nowMs;
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not persist active trip status", error);
+        }
     }
 
     private void updateNotification(String text) {
@@ -4591,7 +4623,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             event.put("speed_kmh", Math.round(lastKnownSpeedKmh));
             activeTelemetryEvents.put(event);
             while (activeTelemetryEvents.length() > MAX_LIVE_TELEMETRY_EVENTS) activeTelemetryEvents.remove(0);
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not record live telemetry event", error);
+        }
     }
 
     private JSONArray latestLiveTelemetryEvents(int limit) {
@@ -4614,7 +4648,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             String type = event.optString("type", "observation");
             try {
                 counts.put(type, counts.optInt(type, 0) + 1);
-            } catch (JSONException ignored) {}
+            } catch (JSONException error) {
+                Log.w(TAG, "Could not live telemetry event counts", error);
+            }
         }
         return counts;
     }
@@ -4680,7 +4716,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             event.put("speed_kmh", Math.round(speedKmh));
             event.put("stopped_seconds", stoppedSeconds);
             event.put("drift_m", Math.round(driftM));
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not diagnostic event", error);
+        }
         return event;
     }
 
@@ -4944,7 +4982,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             metadata.put("night_window_end_local_time", decision != null
                 ? formatClockMinutes(decision.windowEndMinutes)
                 : JSONObject.NULL);
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not classify trip night driving", error);
+        }
         return metadata;
     }
 

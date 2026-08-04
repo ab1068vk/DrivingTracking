@@ -7,7 +7,7 @@ import {
   Route,
   Zap,
 } from 'lucide-react';
-import premiumEventScenes from '@/assets/premium-event-scenes.png';
+import premiumEventScenes from '@/assets/premium-event-scenes.webp';
 
 const EVENT_CARDS = Object.freeze([
   {

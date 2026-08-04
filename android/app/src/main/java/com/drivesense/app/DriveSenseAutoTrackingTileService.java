@@ -11,8 +11,10 @@ import android.service.quicksettings.TileService;
 import androidx.core.content.ContextCompat;
 
 import org.json.JSONObject;
+import android.util.Log;
 
 public class DriveSenseAutoTrackingTileService extends TileService {
+    private static final String TAG = "AutoTrackingTile";
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
     private static final String SETTINGS_KEY = "drivesense_settings";
 
@@ -77,7 +79,9 @@ public class DriveSenseAutoTrackingTileService extends TileService {
                 .edit()
                 .putString(SETTINGS_KEY, settings.toString())
                 .apply();
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not set background auto enabled", error);
+        }
     }
 
     private void setBackgroundAutoPaused() {
@@ -91,7 +95,9 @@ public class DriveSenseAutoTrackingTileService extends TileService {
                 .edit()
                 .putString(SETTINGS_KEY, settings.toString())
                 .apply();
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not set background auto paused", error);
+        }
     }
 
     private boolean isBackgroundAutoActive() {

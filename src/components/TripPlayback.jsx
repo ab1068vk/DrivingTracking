@@ -1,5 +1,5 @@
 // @ts-check
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Activity, Clock, Flag, Gauge, LocateFixed, Pause, Play, Route, SkipBack, SkipForward } from 'lucide-react';
@@ -385,6 +385,10 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
   const playbackPrivacySettings = useMemo(() => ({
     privacy_zones: privacySettings.privacy_zones,
     show_privacy_circles: privacySettings.show_privacy_circles,
+    // privacyZonesKey is a JSON snapshot of privacy_zones, used deliberately so
+    // an unchanged zone list with a new array identity does not re-mask and
+    // redraw the whole route.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [privacySettings.show_privacy_circles, privacyZonesKey, privacyZonesRevision]);
   const points = useMemo(() => prepareMapRoutePoints(
     maskRoutePointsForPrivacy(trip?.route_points || [], playbackPrivacySettings),
@@ -451,11 +455,11 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
   const nextEvent = timelineEvents.find((event) => event.playbackIndex > currentIdx);
   const selectedSegment = speedSegments.find((segment) => segment.id === selectedSegmentId);
   const routeComparison = useMemo(() => buildRouteComparison(trip, secondaryTrip), [secondaryTrip, trip]);
-  const segmentColor = (segment) => (
+  const segmentColor = useCallback((segment) => (
     colorMode === 'speedLimit' && segment.speedLimitColor
       ? segment.speedLimitColor
       : segment.color
-  );
+  ), [colorMode]);
 
   useEffect(() => {
     setCurrentIdx(0);
@@ -495,7 +499,9 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
           zoomAnimation: false,
         });
         leafletMapRef.current = map;
-        const initialCenter = resolveInitialMapCenter(points, secondaryPoints, privacySettings);
+        // Read the latest settings without making every settings edit redraw
+        // the whole playback map; this only seeds the initial view.
+        const initialCenter = resolveInitialMapCenter(points, secondaryPoints, settingsRef.current);
         safeMapSetView(map, [initialCenter.lat, initialCenter.lng], DEFAULT_MAP_ZOOM);
         if (!heightenedPrivacy) {
           window.L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 19 }).addTo(map);
@@ -721,7 +727,7 @@ function TripPlaybackContent({ trip, secondaryTrip = null, height = '380px', col
       markerHeadingRef.current = null;
       secondaryMarkerHeadingRef.current = null;
     };
-  }, [colorMode, events, heightenedPrivacy, playbackPrivacySettings, points, secondaryPoints, secondarySegments, speedSegments, trip?.id, secondaryTrip?.id, visiblePrivacyZones]);
+  }, [colorMode, events, heightenedPrivacy, playbackPrivacySettings, points, secondaryPoints, secondarySegments, segmentColor, speedSegments, trip?.id, secondaryTrip?.id, units, visiblePrivacyZones]);
 
   useEffect(() => {
     const map = leafletMapRef.current;

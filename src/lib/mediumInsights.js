@@ -181,7 +181,6 @@ export function buildCommuteDetections(trips = []) {
 
 export function buildTripCalendarMonth(trips = [], monthDate = new Date()) {
   const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
-  const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
   const firstGridDay = startOfDay(monthStart);
   firstGridDay.setDate(firstGridDay.getDate() - firstGridDay.getDay());
   const days = [];

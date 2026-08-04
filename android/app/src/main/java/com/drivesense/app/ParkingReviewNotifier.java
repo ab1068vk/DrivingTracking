@@ -15,9 +15,11 @@ import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 
 import org.json.JSONObject;
+import android.util.Log;
 
 /** Privacy-safe prompt for a low-confidence parking result. */
 final class ParkingReviewNotifier {
+    private static final String TAG = "ParkingReviewNotifier";
     private static final String CHANNEL_ID = "drivesense_parking";
     private static final int NOTIFICATION_ID = 4701;
     private static final String KEY_LAST_NOTIFIED_REVISION = "parking_review_notified_revision";
@@ -82,7 +84,9 @@ final class ParkingReviewNotifier {
                 .edit()
                 .putLong(KEY_LAST_NOTIFIED_REVISION, revision)
                 .apply();
-        } catch (SecurityException ignored) {}
+        } catch (SecurityException error) {
+            Log.w(TAG, "Could not notify if needed", error);
+        }
     }
 
     static void cancel(Context context) {

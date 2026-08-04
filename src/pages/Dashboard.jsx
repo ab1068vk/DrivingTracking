@@ -1,5 +1,20 @@
 // @ts-check
-import { convertPerDistanceRate, distanceUnitLabel, formatDistanceMeters, speedUnitLabel } from '@/lib/unitFormatting';
+import {
+  scheduleDashboardIdleWork,
+  hasLiveSpeedEvidence,
+  shouldMuteDashboardWebViewVoice,
+  createTierAwareSpeedLimitContext,
+  annotatePointWithResolvedSpeedLimit,
+  speedLimitBadgeForResolved,
+  checkAndSpeakSpeedAlert,
+  isRecoverableActiveTrip,
+  waitForTripEndingFeedbackPaint,
+  lastUsableParkingPoint,
+} from '@/components/dashboard/dashboardHelpers';
+import {
+  buildLocalSpeedPlanner,
+  normalizeLocalSpeedPlanner,
+} from '@/components/dashboard/dashboardSpeedPlanner';
 import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { limitedTripSummaryQueryOptions, tripService, tripSummaryQueryOptions } from '@/api/trips';
@@ -7,8 +22,8 @@ import { vehicleService } from '@/api/vehicles';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
-  Car, Play, Square, Navigation, Gauge, CalendarDays, Route, ChevronDown,
-  AlertTriangle, Zap, TrendingDown, CornerUpRight, RefreshCw, MapPin, Target, Flame, TrafficCone, X, Clock,
+  Car, Play, Square,
+  AlertTriangle, TrendingDown, RefreshCw, MapPin, X,
   ParkingSquare, CheckCircle2, Shield, Trash2, Camera
 } from 'lucide-react';
 import {
@@ -29,8 +44,7 @@ import {
   isNearRecentParkedLocation,
   reviewManualTripSave,
   trimParkedTail,
-  validateCandidateTrip,
-  haversineDistance
+  validateCandidateTrip
 } from '@/lib/tripEngine';
 import { resolveParkedLocation } from '@/lib/parkedLocationResolver';
 import { getParkingLearningProfile } from '@/lib/parkingLearning';
@@ -86,23 +100,11 @@ import {
   mergePhoneUseSignals,
 } from '@/lib/phoneUsageAccess';
 import { isDriverMetricEligible } from '@/lib/phoneUseSummary';
-import ScoreRing from '@/components/ScoreRing';
-import CalibrationStatusTag from '@/components/CalibrationStatusTag';
-import PremiumTotalsCard, { PremiumBaselineCard } from '@/components/PremiumTotalsCard';
 import PremiumReadyToDriveCard from '@/components/PremiumReadyToDriveCard';
-import PremiumEventSummary from '@/components/PremiumEventSummary';
-import PremiumPreTripPlanner from '@/components/PremiumPreTripPlanner';
-import PremiumDrivingScoreCard from '@/components/PremiumDrivingScoreCard';
-import PremiumDrivingExposureCard from '@/components/PremiumDrivingExposureCard';
-import PremiumScoreTipsCard from '@/components/PremiumScoreTipsCard';
-import { PremiumWeeklyGoalsCard, PremiumWeeklyInsightCards } from '@/components/PremiumWeeklyDriverGoals';
-import TripCard from '@/components/TripCard';
-import { getPremiumTripScoreDelta } from '@/lib/premiumTripPresentation';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LiveCoachOverlay from '@/components/LiveCoachOverlay';
 import InlineLoadError from '@/components/InlineLoadError';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
-import DeferredRecharts from '@/components/DeferredRecharts';
 import PostDriveReviewCard from '@/components/PostDriveReviewCard';
 import usePendingPostDriveReview from '@/hooks/usePendingPostDriveReview';
 import {
@@ -119,7 +121,6 @@ import {
 import { checkDangerZoneProximity, invalidateDangerZoneCache, loadDangerZones } from '@/lib/dangerZoneEngine';
 import { computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
 import { buildHabitProfile } from '@/lib/habitProfile';
-import { computePreTripRisk } from '@/lib/preTripRisk';
 import { buildDashboardActivityStats } from '@/lib/dashboardStats';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import {
@@ -130,16 +131,13 @@ import {
 import { logError } from '@/lib/errorReporting';
 import { calculateRecentBrakingImprovement, formatParkingReminder } from '@/lib/tripMetadata';
 import {
-  alertMarginForConfidence,
   annotateRouteSpeedLimits,
   shouldWarnForSpeed,
   speedLimitDefaultCountryKey,
-  VOICE_COOLDOWNS_BY_TIER,
 } from '@/lib/speedLimitSource';
-import { geohashCenter, LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
+import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
-import { assessSpeedLimitEvidence, speedLimitConfidenceLabel } from '@/lib/speedLimitConfidence';
 import {
   DASHBOARD_SPEED_LIMIT_REVIEW_DISMISSAL_KEY,
   buildDashboardSpeedLimitReviewFingerprint,
@@ -161,13 +159,12 @@ import {
 } from '@/lib/weatherContext';
 import {
   getVoiceAlertDeliveryStatus,
-  shouldMuteWebViewVoiceForTrip,
   speakSafetyAlert,
   speakSafetyAlertOnce,
   speakTripStartConfirmationOnce,
   stopSafetyAlerts,
 } from '@/lib/voiceAlerts';
-import { buildSpeedingMessage, buildVoiceAlertMessage } from '@/lib/voiceAlertMessages';
+import { buildVoiceAlertMessage } from '@/lib/voiceAlertMessages';
 import {
   buildSensorFusionSummary,
   createMotionSensorFusion,
@@ -175,9 +172,7 @@ import {
   enrichEventsWithSensorContext,
 } from '@/lib/sensorFusionModel';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
-import { estimatePredictiveRouteRisk } from '@/lib/predictiveRouteRisk';
 import { isExternalContextAutoFetchEnabled } from '@/lib/openSourceTripContext';
-import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { requestAppConfirm } from '@/lib/appDialog';
@@ -200,6 +195,8 @@ import {
   processPrivateTripPoint,
 } from '@/lib/privateTripMode';
 import { syncNativeCompletedTripsAndMilestones as syncNativeCompletedTrips } from '@/lib/milestoneNotificationCoordinator';
+import DashboardRiskPanel from '@/components/dashboard/DashboardRiskPanel';
+import DashboardSummaryPanels from '@/components/dashboard/DashboardSummaryPanels';
 import {
   NATIVE_MANUAL_TRIP_FINALIZED_EVENT,
   createNativeManualTripId,
@@ -209,455 +206,8 @@ import {
 
 const TripMap = lazy(() => import('@/components/TripMap'));
 
-const RECOVERABLE_TRIP_STATES = new Set([TRIP_STATES.CANDIDATE, TRIP_STATES.CONFIRMED]);
 const AUTO_START_TRIGGER_SECONDS = 2;
-const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
-const ROUTE_RISK_IS_APPROXIMATE = hasProvisionalCalibration(['route_risk_score']);
-const READINESS_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['pre_trip_readiness_score']);
-const LIVE_SPEED_ALERT_MIN_SECONDS = 30;
-const LIVE_SPEED_ALERT_MIN_POINTS = 3;
-const DANGER_ZONE_WATCH_LIMIT = 3;
-const LOCAL_SPEED_PLANNER_LIMIT = 3;
-const LOCAL_SPEED_NEARBY_RADIUS_M = 750;
-const LOCAL_SPEED_EXPIRING_SOON_MS = 14 * 24 * 60 * 60 * 1000;
 
-const scheduleDashboardIdleWork = (callback) => {
-  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-    const id = window.requestIdleCallback(callback, { timeout: 3000 });
-    return () => window.cancelIdleCallback?.(id);
-  }
-  const id = window.setTimeout(callback, 500);
-  return () => window.clearTimeout(id);
-};
-
-function tripElapsedSeconds(trip, nowValue = Date.now()) {
-  const startMs = new Date(trip?.start_time || 0).getTime();
-  const nowMs = typeof nowValue === 'number' ? nowValue : new Date(nowValue || Date.now()).getTime();
-  if (!Number.isFinite(startMs) || !Number.isFinite(nowMs) || nowMs < startMs) return 0;
-  return Math.round((nowMs - startMs) / 1000);
-}
-
-function isFreshTripPoint(point, trip) {
-  const pointMs = new Date(point?.timestamp || 0).getTime();
-  const startMs = new Date(trip?.start_time || 0).getTime();
-  if (!Number.isFinite(pointMs) || !Number.isFinite(startMs)) return true;
-  return pointMs >= startMs - 5000;
-}
-
-function hasLiveSpeedEvidence(trip, routePoints = [], point = null, nowValue = Date.now()) {
-  if (!trip) return false;
-  if (!isFreshTripPoint(point, trip)) return false;
-  if ((Array.isArray(routePoints) ? routePoints.length : 0) < LIVE_SPEED_ALERT_MIN_POINTS) return false;
-  return tripElapsedSeconds(trip, nowValue) >= LIVE_SPEED_ALERT_MIN_SECONDS;
-}
-
-function shouldMuteDashboardWebViewVoice(trip) {
-  return shouldMuteWebViewVoiceForTrip(trip, { isAndroidPlatform: isAndroid() });
-}
-
-function createTierAwareSpeedLimitContext(context, settings = {}) {
-  const limitKmh = context?.limitKmh ?? context?.effectiveLimitKmh ?? null;
-  const confidence = Number(context?.confidence) || 0;
-  const margin = alertMarginForConfidence(confidence, settings.threshold_speed_over_kmh ?? 5);
-  const tier = context?.tier || 'UNKNOWN';
-  const estimateGuidanceAllowed = settings.speed_estimates_enabled !== false || tier === 'POSTED';
-  if (!estimateGuidanceAllowed) {
-    return {
-      ...context,
-      limitKmh: null,
-      tier: 'UNKNOWN',
-      confidence: 0,
-      alertMarginKmh: Infinity,
-      shouldAlert: () => false,
-    };
-  }
-  return {
-    ...context,
-    limitKmh,
-    alertMarginKmh: margin,
-    shouldAlert: (speedKmh) => (
-      settings.speed_warning_enabled !== false &&
-      estimateGuidanceAllowed &&
-      Number.isFinite(Number(speedKmh)) &&
-      Number.isFinite(Number(limitKmh)) &&
-      Number(speedKmh) > Number(limitKmh) + margin
-    ),
-  };
-}
-
-function annotatePointWithResolvedSpeedLimit(point = {}, resolved = null) {
-  const limitKmh = Number(resolved?.limitKmh ?? resolved?.effectiveLimitKmh);
-  if (!Number.isFinite(limitKmh) || limitKmh <= 0) return point;
-  return {
-    ...point,
-    speed_limit_kmh: limitKmh,
-    speed_limit_source: resolved.limitSource || resolved.source || point.speed_limit_source,
-    speed_limit_tier: resolved.tier || point.speed_limit_tier,
-    speed_limit_confidence: resolved.confidence ?? point.speed_limit_confidence,
-    speed_limit_resolution_reason: resolved.resolutionReason || point.speed_limit_resolution_reason,
-    speed_limit_fallback_reason: resolved.fallbackReason || point.speed_limit_fallback_reason,
-    speed_limit_local_rule_id: resolved.localSpeedRule?.correctionId || point.speed_limit_local_rule_id,
-    speed_limit_local_match_type: resolved.localSpeedRule?.matchType || point.speed_limit_local_match_type,
-    speed_limit_local_match_distance_m: resolved.localSpeedRule?.matchDistanceM ?? point.speed_limit_local_match_distance_m,
-    speed_limit_local_match_reason: resolved.localSpeedRule?.matchReason || point.speed_limit_local_match_reason,
-  };
-}
-
-function speedLimitBadgeForResolved(resolved, units = 'metric') {
-  const tier = resolved?.tier || 'UNKNOWN';
-  const limit = Number(resolved?.limitKmh);
-  const displayLimit = Number.isFinite(limit) ? formatSpeed(limit, units) : null;
-  const badgeByTier = {
-    POSTED: {
-      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : displayLimit,
-      className: 'border-emerald-200/70 bg-emerald-400/20 text-emerald-50',
-    },
-    MAP_ESTIMATED: {
-      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `~${displayLimit} (road type)`,
-      className: 'border-amber-200/70 bg-amber-400/20 text-amber-50',
-    },
-    LEARNED_LOCAL: {
-      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `${displayLimit} (this road)`,
-      className: 'border-amber-200/70 bg-amber-300/15 text-amber-50',
-    },
-    REGION_DEFAULT: {
-      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `~${displayLimit} (regional estimate)`,
-      className: 'border-dashed border-amber-200/70 bg-amber-400/15 text-amber-50',
-    },
-    GPS_INFERRED: {
-      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `~${displayLimit} (estimated)`,
-      className: 'border-dashed border-slate-200/60 bg-slate-400/15 text-slate-50',
-    },
-    UNKNOWN: {
-      text: `— ${speedUnitLabel(units)}`,
-      className: 'border-slate-200/40 bg-slate-500/20 text-slate-100',
-    },
-  };
-  return badgeByTier[tier] || badgeByTier.UNKNOWN;
-}
-
-function checkAndSpeakSpeedAlert(speed, resolved, settings, onAlert, { voiceMuted = false } = {}) {
-  if (speed < 1) return;
-  const warning = shouldWarnForSpeed({ speedKmh: speed, candidate: resolved, settings });
-  if (!warning) return;
-
-  if (warning.visual) {
-    onAlert?.();
-  }
-  if (voiceMuted || !warning.voice) return;
-
-  const message = buildSpeedingMessage({
-    speedKmh: speed,
-    speedLimitKmh: resolved.limitKmh,
-    tier: resolved.tier,
-  }, null, { settings });
-  if (!message) return;
-
-  speakSafetyAlertOnce(
-    `speeding_${resolved.tier}`,
-    message,
-    settings,
-    VOICE_COOLDOWNS_BY_TIER[resolved.tier] ?? 60000
-  ).catch((error) => {
-    logError('speed_alert_voice', error, {
-      tier: resolved.tier,
-      speed_kmh: Math.round(speed),
-      speed_limit_kmh: resolved.limitKmh,
-    });
-  });
-}
-
-function isRecoverableActiveTrip(trip) {
-  if (!trip || typeof trip !== 'object') return false;
-  if (trip.status !== 'active') return false;
-  if (trip.end_time) return false;
-  return RECOVERABLE_TRIP_STATES.has(trip.trip_state);
-}
-
-function readinessPlannerTone(riskLevel) {
-  if (riskLevel === 'high') {
-    return {
-      status: 'Reset first',
-      headline: 'Not a great moment to start',
-      color: '#ef4444',
-      className: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200',
-      guidance: 'Take a short reset before driving, then start with extra following room and slower first inputs.',
-    };
-  }
-  if (riskLevel === 'moderate') {
-    return {
-      status: 'Use margin',
-      headline: 'Drive with extra margin',
-      color: '#f97316',
-      className: 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900/60 dark:bg-orange-950/30 dark:text-orange-200',
-      guidance: 'Start deliberately, keep more space ahead, and avoid trying to make up time.',
-    };
-  }
-  if (riskLevel === 'low') {
-    return {
-      status: 'Good to go',
-      headline: 'Good time to drive',
-      color: '#22c55e',
-      className: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200',
-      guidance: 'Conditions look steady. Mount the phone, confirm GPS is ready, and keep your usual smooth rhythm.',
-    };
-  }
-  return {
-    status: 'Learning',
-    headline: 'Use basic pre-drive checks',
-    color: '#64748b',
-    className: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-200',
-    guidance: 'The app needs more personal history for a firm estimate, but it can still flag fatigue, recent rest, and nearby history.',
-  };
-}
-
-function formatWatchDistance(distanceM, units = 'metric') {
-  const meters = Number(distanceM);
-  if (!Number.isFinite(meters)) return null;
-  return formatDistanceMeters(meters, units);
-}
-
-function eventTypeLabel(type) {
-  return ({
-    harsh_brake: 'harsh braking',
-    sharp_turn: 'sharp turns',
-    speeding: 'speeding',
-    rapid_acceleration: 'rapid acceleration',
-  }[type] || String(type || 'driving events').replace(/_/g, ' '));
-}
-
-function watchZoneSortDistance(zone) {
-  const distance = Number(zone?.distanceM);
-  return Number.isFinite(distance) ? distance : Number.MAX_SAFE_INTEGER;
-}
-
-function safeSpeedPlannerCoordinate(record = {}) {
-  const lat = Number(record.lat);
-  const lng = Number(record.lng);
-  if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
-  if (!record.geohash) return null;
-  try {
-    const center = geohashCenter(record.geohash);
-    return Number.isFinite(Number(center.lat)) && Number.isFinite(Number(center.lng))
-      ? { lat: Number(center.lat), lng: Number(center.lng) }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function distanceToCurrentLocationM(record = {}, currentLocation = null) {
-  if (!currentLocation) return null;
-  const currentLat = Number(currentLocation.lat);
-  const currentLng = Number(currentLocation.lng);
-  if (!Number.isFinite(currentLat) || !Number.isFinite(currentLng)) return null;
-
-  const sectionPoints = Array.isArray(record.sectionPoints) ? record.sectionPoints : [];
-  const pointDistances = sectionPoints
-    .map((point) => safeSpeedPlannerCoordinate(point))
-    .filter(Boolean)
-    .map((point) => haversineDistance(currentLat, currentLng, point.lat, point.lng) * 1000)
-    .filter(Number.isFinite);
-  if (pointDistances.length) return Math.round(Math.min(...pointDistances));
-
-  const coordinate = safeSpeedPlannerCoordinate(record);
-  if (!coordinate) return null;
-  const distanceM = haversineDistance(currentLat, currentLng, coordinate.lat, coordinate.lng) * 1000;
-  return Number.isFinite(distanceM) ? Math.round(distanceM) : null;
-}
-
-function speedRuleName(record = {}) {
-  return String(record.roadName || record.contextLabel || record.directionLabel || 'Saved road area').trim();
-}
-
-function speedRuleLimitLabel(record = {}, units = 'metric') {
-  const limit = Number(record.limitKmh);
-  return Number.isFinite(limit) && limit > 0 ? formatSpeed(limit, units) : 'speed rule';
-}
-
-function speedRuleExpiryLabel(expiresAt, nowMs = Date.now()) {
-  const expiryMs = new Date(expiresAt || 0).getTime();
-  if (!Number.isFinite(expiryMs) || expiryMs <= 0) return null;
-  const remainingMs = expiryMs - nowMs;
-  if (remainingMs <= 0) return 'expired';
-  const days = Math.ceil(remainingMs / 86400000);
-  return days <= 1 ? 'expires today' : `expires in ${days} days`;
-}
-
-function localSpeedIssueDetail(parts = []) {
-  return parts.filter(Boolean).join(' - ');
-}
-
-function buildLocalSpeedPlanner(data = {}, {
-  currentLocation = null,
-  nowMs = Date.now(),
-  units = 'metric',
-  activeDecision = null,
-} = {}) {
-  const cells = Object.entries(data?.cells || {});
-  const corrections = Array.isArray(data?.corrections) ? data.corrections : [];
-  const issues = [];
-  let nearbyRuleCount = 0;
-  let reviewCount = 0;
-
-  for (const correction of corrections) {
-    const evidence = assessSpeedLimitEvidence(correction, nowMs);
-    const distanceM = distanceToCurrentLocationM(correction, currentLocation);
-    const isNearby = distanceM != null && distanceM <= LOCAL_SPEED_NEARBY_RADIUS_M && !evidence.expired;
-    const expiryMs = new Date(correction.expiresAt || 0).getTime();
-    const expiringSoon = Number.isFinite(expiryMs) &&
-      expiryMs > nowMs &&
-      expiryMs - nowMs <= LOCAL_SPEED_EXPIRING_SOON_MS;
-    const expiryLabel = speedRuleExpiryLabel(correction.expiresAt, nowMs);
-    const distanceLabel = formatWatchDistance(distanceM, units);
-    const confidenceLabel = speedLimitConfidenceLabel(evidence).toLowerCase();
-    const name = speedRuleName(correction);
-    const limit = speedRuleLimitLabel(correction, units);
-
-    if (isNearby) {
-      nearbyRuleCount += 1;
-      issues.push({
-        key: `nearby:${correction.id || correction.ruleId || correction.geohash || name}`,
-        priority: evidence.needsReview ? 95 : 80,
-        title: `${limit} local rule nearby`,
-        detail: localSpeedIssueDetail([name, distanceLabel, confidenceLabel]),
-        tone: evidence.needsReview ? 'warn' : 'ok',
-      });
-      continue;
-    }
-
-    if (evidence.expired) {
-      reviewCount += 1;
-      issues.push({
-        key: `expired:${correction.id || correction.ruleId || correction.geohash || name}`,
-        priority: 70,
-        title: 'Expired local speed rule',
-        detail: localSpeedIssueDetail([name, limit, 'clean up or renew before relying on it']),
-        tone: 'warn',
-      });
-      continue;
-    }
-
-    if (expiringSoon) {
-      reviewCount += 1;
-      issues.push({
-        key: `expiring:${correction.id || correction.ruleId || correction.geohash || name}`,
-        priority: 62,
-        title: 'Temporary speed rule expiring',
-        detail: localSpeedIssueDetail([name, limit, expiryLabel]),
-        tone: 'warn',
-      });
-      continue;
-    }
-
-    if (evidence.needsReview) {
-      reviewCount += 1;
-      issues.push({
-        key: `review:${correction.id || correction.ruleId || correction.geohash || name}`,
-        priority: 50,
-        title: 'Saved speed rule needs review',
-        detail: localSpeedIssueDetail([name, limit, confidenceLabel]),
-        tone: 'warn',
-      });
-    }
-  }
-
-  for (const [geohash, cell] of cells) {
-    const evidence = assessSpeedLimitEvidence({ ...cell, geohash }, nowMs);
-    const distanceM = distanceToCurrentLocationM({ ...cell, geohash }, currentLocation);
-    const distanceLabel = formatWatchDistance(distanceM, units);
-    if (cell?.conflict === true || evidence.conflict) {
-      reviewCount += 1;
-      issues.push({
-        key: `cell-conflict:${geohash}`,
-        priority: distanceM != null && distanceM <= LOCAL_SPEED_NEARBY_RADIUS_M ? 92 : 78,
-        title: 'Conflicting local speed evidence',
-        detail: localSpeedIssueDetail([distanceLabel, 'parked review recommended']),
-        tone: 'warn',
-      });
-      continue;
-    }
-    if (evidence.needsReview && (distanceM == null || distanceM <= LOCAL_SPEED_NEARBY_RADIUS_M)) {
-      reviewCount += 1;
-      issues.push({
-        key: `cell-review:${geohash}`,
-        priority: distanceM == null ? 35 : 58,
-        title: 'Low-confidence learned speed area',
-        detail: localSpeedIssueDetail([distanceLabel, speedLimitConfidenceLabel(evidence).toLowerCase()]),
-        tone: 'warn',
-      });
-    }
-  }
-
-  return {
-    hasLocation: Boolean(currentLocation),
-    activeDecision,
-    items: issues
-      .sort((a, b) => b.priority - a.priority || String(a.title).localeCompare(String(b.title)))
-      .slice(0, LOCAL_SPEED_PLANNER_LIMIT),
-    summary: {
-      savedRuleCount: corrections.length,
-      learnedCellCount: cells.length,
-      nearbyRuleCount,
-      reviewCount,
-      confirmedCorridorCount: corrections.filter((correction) => (
-        correction?.source === 'user_confirmed_posted_sign' &&
-        correction?.historicalVersion !== true &&
-        Array.isArray(correction?.sectionPoints) && correction.sectionPoints.length >= 2
-      )).length,
-    },
-  };
-}
-
-function normalizeLocalSpeedPlanner(value) {
-  if (!value || typeof value !== 'object' || !Array.isArray(value.items)) {
-    return {
-      hasLocation: false,
-      activeDecision: null,
-      items: [],
-      summary: {
-        savedRuleCount: 0,
-        learnedCellCount: 0,
-        nearbyRuleCount: 0,
-        reviewCount: 0,
-        confirmedCorridorCount: 0,
-      },
-    };
-  }
-  return value;
-}
-
-function buildFallbackPlannerActions(preTripRisk) {
-  const actions = [];
-  if (preTripRisk.dataQuality?.missingCoreSignals?.length) {
-    actions.push('More trips are needed before personal time and trend signals become reliable.');
-  }
-  if (!preTripRisk.topSignals?.length) {
-    actions.push('Mount the phone, wait for GPS to settle, and start the first minute smoothly.');
-  }
-  return actions.slice(0, 2);
-}
-
-function waitForTripEndingFeedbackPaint() {
-  if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(resolve);
-    });
-  });
-}
-
-const lastUsableParkingPoint = (points = []) => (
-  [...(Array.isArray(points) ? points : [])].reverse().find((point) => (
-    Number.isFinite(Number(point?.lat)) &&
-    Number.isFinite(Number(point?.lng)) &&
-    !point?.masked_for_privacy &&
-    !point?.privacy_gap &&
-    !point?.privacy_live_redacted
-  )) || null
-);
 
 async function refineParkingLocationAfterTrip({
   points,
@@ -745,6 +295,7 @@ function ActiveTripElapsedClock({ startTime, fallbackSeconds = 0 }) {
 
   return formatDuration(seconds);
 }
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [activeTrip, setActiveTrip] = useState(null);
@@ -1139,6 +690,8 @@ export default function Dashboard() {
     return computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes);
   }, [analyticsCompletedTrips, habitProfile?.fatigueOnsetMinutes, settings]);
 
+  const latestCompletedTripId = completedTrips[0]?.id;
+
   useEffect(() => {
     getLastParkingState().then((state) => {
       setParkingState(state);
@@ -1146,17 +699,17 @@ export default function Dashboard() {
     }).catch((error) => {
       logError('dashboard_last_parked_location_load', error);
     });
-  }, [completedTrips[0]?.id]);
+  }, [latestCompletedTripId]);
 
   useEffect(() => {
     loadDangerZones().then(setDangerZones).catch((error) => {
       logError('dashboard_danger_zones_load', error);
     });
-  }, [completedTrips[0]?.id]);
+  }, [latestCompletedTripId]);
 
   useEffect(() => {
     setReadinessDismissed(false);
-  }, [completedTrips[0]?.id]);
+  }, [latestCompletedTripId]);
 
   // Resume active trip from session (crash recovery)
   useEffect(() => {
@@ -1192,23 +745,30 @@ export default function Dashboard() {
       locationService.current?.stop();
       activityStopRef.current?.();
     };
+    // Crash recovery must run exactly once per mount. startTimer/startGPS are
+    // re-created every render, so depending on them would restart recovery (and
+    // re-attach GPS) on every render instead of resuming the trip one time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const startTimer = (startTime) => {
+  // Both only touch refs and setState, so they have no reactive dependencies.
+  // Keeping them stable lets callers list them as dependencies honestly instead
+  // of re-creating every consumer on each render.
+  const stopTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const startTimer = useCallback((startTime) => {
     stopTimer();
     timerRef.current = setInterval(() => {
       if (document.visibilityState === 'visible') {
         setElapsed(Math.floor((Date.now() - startTime.getTime()) / 1000));
       }
     }, 5000);
-  };
-
-  const stopTimer = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  };
+  }, [stopTimer]);
 
   const clearNativeManualTripUi = useCallback(async (trip, completedTrip = null) => {
     trackingRef.current = false;
@@ -1250,7 +810,7 @@ export default function Dashboard() {
     }
     refreshTrackingStatusContext();
     refetch();
-  }, [refreshTrackingStatusContext, refetch, showPostDriveReview]);
+  }, [refreshTrackingStatusContext, refetch, showPostDriveReview, stopTimer]);
 
   const reconcileNativeManualTripCompletion = useCallback(async (reason = 'dashboard_native_manual_reconcile') => {
     const trip = activeTripRef.current;
@@ -1394,7 +954,7 @@ export default function Dashboard() {
     }
     refreshTrackingStatusContext();
     setLocationError('Auto-detected movement was ignored because it did not indicate vehicle-like travel.');
-  }, [refreshTrackingStatusContext]);
+  }, [refreshTrackingStatusContext, stopTimer]);
 
   const markActiveTripLocationPermissionLoss = useCallback((reason = 'web_geolocation_permission_denied') => {
     const current = activeTripRef.current;
@@ -2271,7 +1831,7 @@ export default function Dashboard() {
       startingTripRef.current = false;
       setStartingTrip(false);
     }
-  }, [dailyFatigue.shouldWarnBeforeTrip, refreshTrackingStatusContext, startGPS]);
+  }, [dailyFatigue.shouldWarnBeforeTrip, refreshTrackingStatusContext, startGPS, startTimer, updateLatestActivity]);
 
   const handleStartTripWithCamera = useCallback(() => {
     if (localSettings.get().speed_sign_scanner_enabled !== true) {
@@ -3364,7 +2924,6 @@ export default function Dashboard() {
   }, [tracking, handleStartTrip, refreshTrackingStatusContext, updateLatestActivity]);
 
   // Stats
-  const totalTrips = analyticsCompletedTrips.length;
   const {
     avgScore,
     avgScoreEvidence,
@@ -3422,7 +2981,7 @@ export default function Dashboard() {
       tips: buildScoreTips(analyticsDriverCompletedTrips),
       weeklyGoals: calculateWeeklyDrivingGoals(analyticsDriverCompletedTrips, settings),
     };
-  }, [analyticsCompletedTrips.length, analyticsDriverCompletedTrips, parkedLocation, parkingState, settings]);
+  }, [analyticsDriverCompletedTrips, parkedLocation, parkingState, settings]);
   const dashboardActivity = useMemo(
     () => buildDashboardActivityStats(analyticsCompletedTrips, {
       periodDays: activityPeriod === 'all_time' ? null : 7,
@@ -4392,387 +3951,32 @@ export default function Dashboard() {
           />
         </SectionErrorBoundary>
       )}
-      {/* Stats Grid */}
-      {settings.premium_visual_experience === true ? (
-        <PremiumTotalsCard trips={analyticsCompletedTrips} units={units} />
-      ) : (
-      <section className="rounded-3xl border border-border bg-card p-4 shadow-sm" aria-labelledby="dashboard-activity-heading">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 id="dashboard-activity-heading" className="font-semibold">
-              {isAllTimeActivity ? 'All-time totals' : 'Your last 7 days'}
-            </h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {isAllTimeActivity ? 'Everything recorded on this device' : 'Recent driving activity'}
-            </p>
-          </div>
-          <div className="flex rounded-xl bg-secondary p-1" role="group" aria-label="Dashboard totals period">
-            {[
-              { id: 'all_time', label: 'All time' },
-              { id: 'seven_days', label: '7 days' },
-            ].map((period) => (
-              <button
-                key={period.id}
-                type="button"
-                onClick={() => setActivityPeriod(period.id)}
-                aria-pressed={activityPeriod === period.id}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${activityPeriod === period.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                {period.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-          {[
-            { label: 'Distance', value: formatDistance(dashboardActivity.distanceKm, units), detail: 'completed trips', icon: Navigation },
-            { label: 'Time driving', value: formatDuration(Math.round(dashboardActivity.drivingSeconds)), detail: 'recorded time', icon: Clock },
-            { label: 'Trips', value: dashboardActivity.tripCount, detail: isAllTimeActivity ? 'all time' : 'last 7 days', icon: Car },
-            {
-              label: 'Active days',
-              value: isAllTimeActivity ? dashboardActivity.activeDays : `${dashboardActivity.activeDays}/7`,
-              detail: dashboardActivity.activeDays ? `${dashboardActivity.tripsPerActiveDay.toFixed(1)} trips / active day` : 'no driving days',
-              icon: CalendarDays,
-            },
-            { label: 'Average trip', value: formatDistance(dashboardActivity.averageTripKm, units), detail: 'typical distance', icon: Route },
-            { label: 'Longest trip', value: formatDistance(dashboardActivity.longestTripKm, units), detail: isAllTimeActivity ? 'all time' : 'last 7 days', icon: Gauge },
-          ].map(({ label, value, detail, icon: Icon }) => (
-            <div key={label} className="min-w-0 rounded-2xl bg-secondary/45 p-3">
-              <Icon className="mb-2 h-4 w-4 text-primary" />
-              <div className="truncate font-grotesk text-xl font-bold">{value}</div>
-              <div className="mt-0.5 text-xs font-semibold">{label}</div>
-              <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{detail}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-      )}
-
-      {completedTrips.length > 0 && (
-        settings.premium_visual_experience === true ? (
-          <PremiumBaselineCard
-            baseline={baseline}
-            baselineRangeLabel={baselineRangeLabel}
-            baselineText={baselineText}
-            peakStress={peakStress}
-          />
-        ) : (
-        <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-          <div className="flex items-start justify-between">
-            <div>
-              <h2 className="font-semibold text-base">Personal Baseline</h2>
-              <p className="text-xs text-muted-foreground mt-1">
-                {baselineText}
-              </p>
-            </div>
-            <div className={`text-sm font-bold capitalize ${
-              baseline.trend === 'improving' ? 'text-emerald-500' : baseline.trend === 'declining' ? 'text-red-500' : 'text-muted-foreground'
-            }`}>
-              {baseline.trend}
-            </div>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
-            <div className="bg-secondary/50 rounded-xl p-3">
-              <div className="font-grotesk font-bold text-xl">{baseline.this_week_avg ?? '-'}</div>
-              <div className="text-xs text-muted-foreground">this week</div>
-            </div>
-            <div className="bg-secondary/50 rounded-xl p-3">
-              <div className="font-grotesk font-bold text-xl">{baseline.baseline_avg == null ? '-' : baselineRangeLabel ? `${baseline.baseline_avg} (${baselineRangeLabel})` : baseline.baseline_avg}</div>
-              <div className="text-xs text-muted-foreground">approx baseline (recent trips)</div>
-            </div>
-            <div className="bg-secondary/50 rounded-xl p-3">
-              <div className="font-grotesk font-bold text-xl">{baseline.percentile == null ? '-' : `${baseline.percentile}%`}</div>
-              <div className="text-xs text-muted-foreground">percentile among your recorded weeks</div>
-              {baseline.percentile == null && (
-                <div className="mt-1 text-[11px] text-muted-foreground">Needs {baseline.percentile_min_weeks} scored weeks</div>
-              )}
-            </div>
-            <div className="bg-secondary/50 rounded-xl p-3">
-              <div className="flex items-center gap-2">
-                <TrafficCone className={`w-4 h-4 ${
-                  peakStress.insufficient_data ? 'text-muted-foreground' :
-                    peakStress.peak_stress_label === 'consistent' ? 'text-emerald-500' :
-                    peakStress.peak_stress_label === 'slightly stressed' ? 'text-yellow-500' :
-                      peakStress.peak_stress_label === 'traffic-affected' ? 'text-orange-500' : 'text-red-500'
-                }`} />
-                <div className="font-grotesk font-bold text-sm capitalize">{peakStress.peak_stress_label}</div>
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">rush hour behaviour</div>
-            </div>
-          </div>
-        </div>
-        )
-      )}
-
-      {/* Driver goals */}
-      {completedTrips.length > 0 && (
-        settings.premium_visual_experience === true ? (
-          <PremiumWeeklyGoalsCard goals={weeklyGoals} units={units} />
-        ) : (
-        <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-base">Weekly Driver Goals</h2>
-            <Target className="w-4 h-4 text-primary" />
-          </div>
-          {weeklyGoals.some((goal) => goal.status === 'building_evidence') && (
-            <div className="mb-3 rounded-xl bg-primary/5 px-3 py-2 text-[11px] font-medium text-muted-foreground">
-              Goals activate after {weeklyGoals[0]?.evidence?.minimum_trips || 3} trips and {formatDistance(weeklyGoals[0]?.evidence?.minimum_distance_km || 25, units)}. Until then, Road Sage is building evidence—not awarding easy completions.
-            </div>
-          )}
-          <div className="space-y-2">
-            {weeklyGoals.map((goal) => {
-              const evidencePct = goal.evidence
-                ? Math.min(
-                    100,
-                    (goal.evidence.trips / goal.evidence.minimum_trips) * 100,
-                    (goal.evidence.distance_km / goal.evidence.minimum_distance_km) * 100
-                  )
-                : 0;
-              const pct = !goal.qualified
-                ? evidencePct
-                : goal.met
-                  ? 100
-                  : goal.direction === 'under'
-                    ? (goal.target > 0 ? Math.min(99, (goal.target / Math.max(goal.target, goal.value)) * 100) : 0)
-                    : Math.min(99, goal.target > 0 ? (goal.value / goal.target) * 100 : 0);
-              const statusClass = !goal.qualified
-                ? 'text-primary font-semibold'
-                : goal.met ? 'text-emerald-500 font-semibold' : 'text-orange-500 font-semibold';
-              const barClass = !goal.qualified ? 'bg-primary' : goal.met ? 'bg-emerald-500' : 'bg-orange-500';
-              return (
-                <div key={goal.id}>
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="font-medium">{goal.label}</span>
-                    <span className={statusClass}>
-                      {!goal.qualified
-                        ? `${goal.evidence.trips}/${goal.evidence.minimum_trips} trips · ${formatDistance(goal.evidence.distance_km, units)}/${formatDistance(goal.evidence.minimum_distance_km, units)}`
-                        : goal.unit === 'km'
-                          ? `${formatDistance(goal.value, units)}/${formatDistance(goal.target, units)}`
-                          : String(goal.unit).includes('100 km')
-                            ? `${convertPerDistanceRate(goal.value, units)?.toFixed(1)}/${convertPerDistanceRate(goal.target, units)?.toFixed(1)} per 100 ${distanceUnitLabel(units)}`
-                            : `${goal.value}/${goal.target}${goal.unit ? ` ${goal.unit}` : goal.direction === 'over' ? '+' : ''}`
-                      }
-                    </span>
-                  </div>
-                  <div className="h-2 bg-secondary rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${barClass}`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-        )
-      )}
-
-      {/* Driver streak and fatigue */}
-      {completedTrips.length > 0 && (
-        settings.premium_visual_experience === true ? (
-          <PremiumWeeklyInsightCards
-            fatigueRisk={fatigueRisk}
-            noHarshBrakeStreak={noHarshBrakeStreak}
-          />
-        ) : (
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-card border border-border rounded-2xl p-4">
-            <Flame className="w-5 h-5 text-orange-500 mb-2" />
-            <div className="font-grotesk font-bold text-2xl">{noHarshBrakeStreak}</div>
-            <div className="text-xs text-muted-foreground">days without harsh braking</div>
-          </div>
-          <div className="bg-card border border-border rounded-2xl p-4">
-            <AlertTriangle className={`w-5 h-5 mb-2 ${fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500'}`} />
-            <div className="font-grotesk font-bold text-2xl capitalize">{fatigueRisk.level}</div>
-            <div className="text-xs text-muted-foreground">estimated fatigue risk (driving-time proxy) - {fatigueRisk.long_trip_count} long drives this week</div>
-          </div>
-        </div>
-        )
-      )}
-
-      {dailyFatigue.tripCount >= 1 && (
-        settings.premium_visual_experience === true ? (
-          <PremiumDrivingExposureCard dailyFatigue={dailyFatigue} />
-        ) : (
-        <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="font-semibold text-base capitalize">Driving-time exposure estimate · {dailyFatigue.fatigueLevel}</h2>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {dailyFatigue.totalDrivingMinutes} min driven today across {dailyFatigue.tripCount} trips
-              </p>
-              {dailyFatigue.minutesSinceLastTrip != null && (
-                <p className="mt-1 text-xs text-muted-foreground">Resting {dailyFatigue.minutesSinceLastTrip} min</p>
-              )}
-            </div>
-            <div className="font-grotesk text-2xl font-bold">~{dailyFatigue.cumulativeFatigueScore}/10</div>
-          </div>
-          <div className="mt-4 h-2 overflow-hidden rounded-full bg-secondary">
-            <div
-              className="h-full rounded-full"
-              style={{
-                width: `${Math.min(100, dailyFatigue.cumulativeFatigueScore * 10)}%`,
-                background: dailyFatigue.fatigueLevel === 'critical'
-                  ? '#ef4444'
-                  : dailyFatigue.fatigueLevel === 'high'
-                    ? '#f97316'
-                    : dailyFatigue.fatigueLevel === 'moderate'
-                      ? '#eab308'
-                      : '#22c55e',
-              }}
-            />
-          </div>
-          {dailyFatigue.recommendedBreakMinutes > 0 && (
-            <div className="mt-3 text-xs font-semibold text-orange-500">
-              Consider a {dailyFatigue.recommendedBreakMinutes}-min break before your next trip
-            </div>
-          )}
-        </div>
-        )
-      )}
-
-      {/* Score & Trend */}
-      {settings.premium_visual_experience === true ? (
-        <PremiumDrivingScoreCard
-          avgScore={avgScore}
-          evidence={avgScoreEvidence}
-          scoreTrend={scoreTrend}
-          tripCount={completedTrips.length}
-          isLoading={recentTripsLoaded === false}
-          showApproximateTag={OVERALL_SCORE_IS_APPROXIMATE}
-        />
-      ) : (
-      <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="font-semibold text-base">Driving Score</h2>
-              {OVERALL_SCORE_IS_APPROXIMATE && <CalibrationStatusTag />}
-            </div>
-            <p className="text-muted-foreground text-xs mt-0.5">Last {Math.min(10, completedTrips.length)} trips</p>
-          </div>
-          {completedTrips.length > 0 && (
-            <ScoreRing score={avgScore} evidence={avgScoreEvidence} size={72} strokeWidth={6} sublabel="avg" />
-          )}
-        </div>
-
-        {scoreTrend.length > 2 ? (
-          <DeferredRecharts height={60}>
-            {({ ResponsiveContainer, LineChart, Line, Tooltip }) => (
-              <ResponsiveContainer width="100%" height={60}>
-                <LineChart data={scoreTrend}>
-                  <Line
-                    type="monotone"
-                    dataKey="score"
-                    stroke="hsl(var(--primary))"
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                  <Tooltip
-                    contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: 8, fontSize: 11 }}
-                    formatter={(v) => [formatEstimatedScore(v), 'Score']}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </DeferredRecharts>
-        ) : (
-          <div className="h-12 flex items-center justify-center text-muted-foreground text-xs">
-            Complete more trips to see trend
-          </div>
-        )}
-      </div>
-      )}
-
-      {/* Coaching tips */}
-      {settings.premium_visual_experience === true ? (
-        (completedTrips.length > 0 || recentTripsLoaded === false) && (
-          <PremiumScoreTipsCard tips={tips} isLoading={recentTripsLoaded === false} />
-        )
-      ) : completedTrips.length > 0 && (
-        <div className="bg-card border border-border rounded-3xl p-5 shadow-sm">
-          <h2 className="font-semibold text-base mb-3">Score Tips</h2>
-          <div className="space-y-2">
-            {tips.map((tip) => (
-              <div key={tip} className="text-sm text-muted-foreground bg-secondary/50 rounded-xl p-3">
-                {tip}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Quick event stats */}
-      {completedTrips.length > 0 && (() => {
-        if (settings.premium_visual_experience === true) {
-          return <PremiumEventSummary trips={completedTrips} />;
-        }
-        const hb = completedTrips.reduce((s, t) => s + (t.harsh_brakes_count || 0), 0);
-        const ra = completedTrips.reduce((s, t) => s + (t.rapid_accel_count || 0), 0);
-        const st = completedTrips.reduce((s, t) => s + (t.sharp_turns_count || 0), 0);
-        const sp = completedTrips.reduce((s, t) => s + (t.speeding_events_count || 0), 0);
-        return (
-          <div>
-            <h2 className="font-semibold text-base mb-3">Event Summary</h2>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { label: 'Harsh Brakes', value: hb, icon: TrendingDown, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
-                { label: 'Rapid Accel', value: ra, icon: Zap, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30' },
-                { label: 'Sharp Turns', value: st, icon: CornerUpRight, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30' },
-                { label: 'Speeding', value: sp, icon: Gauge, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-              ].map(({ label, value, icon: Icon, color, bg }) => (
-                <div key={label} className={`${bg} rounded-2xl p-4 border border-border/50`}>
-                  <Icon className={`w-5 h-5 ${color} mb-2`} />
-                  <div className={`font-grotesk font-bold text-2xl ${color}`}>{value}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Recent Trips */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-semibold text-base">Recent Trips</h2>
-          <button onClick={() => refetch()} className="p-1.5 hover:bg-secondary rounded-lg transition-colors">
-            <RefreshCw className="w-4 h-4 text-muted-foreground" />
-          </button>
-        </div>
-
-        {recentTripsError ? (
-          <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" role="alert">
-            <div className="font-semibold">Saved trips could not be opened</div>
-            <div className="mt-1 text-sm">{recentTripError?.message || 'Your saved trips were not deleted. Retry the local storage read.'}</div>
-            <button type="button" onClick={() => refetch()} className="mt-3 rounded-xl bg-amber-900 px-3 py-2 text-sm font-semibold text-white dark:bg-amber-200 dark:text-amber-950">Retry safely</button>
-          </div>
-        ) : completedTrips.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="w-16 h-16 bg-secondary rounded-3xl flex items-center justify-center mb-4">
-              <Car className="w-8 h-8 text-muted-foreground" />
-            </div>
-            <div className="font-semibold text-foreground mb-1">No trips yet</div>
-            <div className="text-muted-foreground text-sm">Start your first trip to see it here</div>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {completedTrips.slice(0, 5).map((trip, i) => (
-              <TripCard
-                key={trip.id}
-                trip={trip}
-                units={units}
-                index={i}
-                premium={settings.premium_visual_experience === true}
-                scoreDelta={settings.premium_visual_experience === true
-                  ? getPremiumTripScoreDelta(trip, completedTrips)
-                  : null}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      <DashboardSummaryPanels
+        activityPeriod={activityPeriod}
+        analyticsCompletedTrips={analyticsCompletedTrips}
+        avgScore={avgScore}
+        avgScoreEvidence={avgScoreEvidence}
+        baseline={baseline}
+        baselineRangeLabel={baselineRangeLabel}
+        baselineText={baselineText}
+        completedTrips={completedTrips}
+        dailyFatigue={dailyFatigue}
+        dashboardActivity={dashboardActivity}
+        fatigueRisk={fatigueRisk}
+        isAllTimeActivity={isAllTimeActivity}
+        noHarshBrakeStreak={noHarshBrakeStreak}
+        peakStress={peakStress}
+        recentTripError={recentTripError}
+        recentTripsError={recentTripsError}
+        recentTripsLoaded={recentTripsLoaded}
+        refetch={refetch}
+        scoreTrend={scoreTrend}
+        setActivityPeriod={setActivityPeriod}
+        settings={settings}
+        tips={tips}
+        units={units}
+        weeklyGoals={weeklyGoals}
+      />
       <div className="space-y-3">
         {trackingExplanationPanel}
         {trackingReadinessPanel}
@@ -4789,329 +3993,3 @@ export default function Dashboard() {
   );
 }
 
-function DashboardRiskPanel({
-  completedTrips,
-  currentLocation,
-  dailyFatigue,
-  dangerZones,
-  habitProfile,
-  localSpeedPlanner,
-  onDismiss,
-  settings,
-}) {
-  const [cachedWeatherRiskScore, setCachedWeatherRiskScore] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!currentLocation) {
-      setCachedWeatherRiskScore(null);
-      return () => {
-        cancelled = true;
-      };
-    }
-    const now = new Date().toISOString();
-    resolveCachedWeatherContextForTrip([
-      { lat: Number(currentLocation.lat), lng: Number(currentLocation.lng), timestamp: now },
-    ], now, now, settings).then((context) => {
-      if (cancelled) return;
-      setCachedWeatherRiskScore(
-        context?.source === 'open_meteo' && Number.isFinite(Number(context.riskScore))
-          ? Number(context.riskScore)
-          : null
-      );
-    }).catch(() => {
-      if (!cancelled) setCachedWeatherRiskScore(null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [currentLocation, settings]);
-
-  const predictiveRouteRisk = useMemo(() => estimatePredictiveRouteRisk({
-    trips: completedTrips,
-    dangerZones,
-    weatherRiskScore: cachedWeatherRiskScore,
-    currentLocation,
-    habitProfile,
-  }), [cachedWeatherRiskScore, completedTrips, currentLocation, dangerZones, habitProfile]);
-  const historicalContextEnabled = settings.predictive_route_risk_enabled !== false;
-
-  const preTripRisk = useMemo(() => computePreTripRisk(completedTrips, settings, dailyFatigue, {
-    nearbyDangerZoneCount: historicalContextEnabled ? predictiveRouteRisk.nearbyDangerZoneCount : null,
-    predictiveRouteRisk: historicalContextEnabled ? predictiveRouteRisk : null,
-  }, habitProfile), [completedTrips, dailyFatigue, habitProfile, historicalContextEnabled, predictiveRouteRisk, settings]);
-  const readinessEvidence = preTripRisk.dataQuality?.readinessEvidence || 'unavailable';
-  const showReadinessNumber = preTripRisk.readinessScore != null;
-  const plannerTone = readinessPlannerTone(preTripRisk.riskLevel);
-  const units = settings.units || 'metric';
-  const nearbyWatchZones = currentLocation
-    ? checkDangerZoneProximity(currentLocation.lat, currentLocation.lng, dangerZones, 750)
-    : [];
-  const watchZones = (nearbyWatchZones.length ? nearbyWatchZones : [...(dangerZones || [])])
-    .sort((a, b) => (
-      watchZoneSortDistance(a) - watchZoneSortDistance(b) ||
-      (Number(b.severityScore) || 0) - (Number(a.severityScore) || 0)
-    ))
-    .slice(0, DANGER_ZONE_WATCH_LIMIT);
-  const fallbackActions = buildFallbackPlannerActions(preTripRisk);
-  const topPlannerActions = [
-    ...(preTripRisk.topSignals || []).map((signal) => signal.tip),
-    ...fallbackActions,
-  ].filter(Boolean).slice(0, 3);
-  const scoreText = showReadinessNumber
-    ? `${formatEstimatedScore(preTripRisk.readinessScore)}/100`
-    : 'Learning';
-  const historyStatus = predictiveRouteRisk.insufficientHistory
-    ? predictiveRouteRisk.primaryFactor
-    : `${predictiveRouteRisk.riskLevel} context - ${predictiveRouteRisk.primaryFactor}`;
-  const saferWindow = historicalContextEnabled && predictiveRouteRisk.safestWindow
-    ? predictiveRouteRisk.safestWindow
-    : historicalContextEnabled
-      ? 'Complete more scored trips before Road Sage can compare departure windows.'
-      : 'Historical context is disabled in Settings.';
-  const localSpeed = normalizeLocalSpeedPlanner(localSpeedPlanner);
-  const localSpeedSummary = localSpeed.summary || {};
-  const localSpeedEmptyText = localSpeedSummary.savedRuleCount || localSpeedSummary.learnedCellCount
-    ? localSpeed.hasLocation
-      ? 'No local speed warnings near your current position.'
-      : 'No local speed warnings need attention right now.'
-    : 'No saved local speed rules yet. Saved road speeds will appear here before a drive.';
-
-  const readinessRangeText = preTripRisk.readinessRange
-    ? `${preTripRisk.readinessRange.low}-${preTripRisk.readinessRange.high}`
-    : 'withheld';
-
-  if (settings.premium_visual_experience === true) {
-    const watchZoneItems = watchZones.map((zone) => {
-      const distance = formatWatchDistance(zone.distanceM, units);
-      return {
-        key: zone.id || `${zone.lat}:${zone.lng}`,
-        title: eventTypeLabel(zone.dominantType),
-        detail: [
-          distance ? `${distance} away` : '',
-          zone.eventCount ? `${zone.eventCount} past events` : '',
-        ].filter(Boolean).join(' - '),
-      };
-    });
-
-    return (
-      <PremiumPreTripPlanner
-        actions={topPlannerActions}
-        historicalContextEnabled={historicalContextEnabled}
-        historyStatus={historyStatus}
-        localSpeedEmptyText={localSpeedEmptyText}
-        localSpeedItems={localSpeed.items}
-        onDismiss={onDismiss}
-        plannerTone={plannerTone}
-        predictiveRouteRisk={predictiveRouteRisk}
-        preTripRisk={preTripRisk}
-        readinessApproximate={READINESS_SCORE_IS_APPROXIMATE}
-        readinessEvidence={readinessEvidence}
-        routeRiskApproximate={ROUTE_RISK_IS_APPROXIMATE}
-        saferWindow={saferWindow}
-        scoreText={scoreText}
-        watchZoneEmptyText={currentLocation
-          ? 'No repeated-event areas are near your current position.'
-          : 'Turn on location to check nearby repeated-event areas before starting.'}
-        watchZoneItems={watchZoneItems}
-      />
-    );
-  }
-  return (
-    <div className="rounded-2xl border border-border bg-card p-3 shadow-sm">
-      <div className="flex items-start gap-3">
-        <div
-          className="grid h-12 w-12 flex-shrink-0 place-items-center rounded-xl text-center text-[11px] font-bold text-white"
-          style={{
-            background: plannerTone.color,
-          }}
-        >
-          <span className="leading-tight">{scoreText}</span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <span className="flex min-w-0 flex-wrap items-center gap-2">
-              <h2 className="min-w-0 break-words font-semibold">Pre-trip readiness planner</h2>
-              {READINESS_SCORE_IS_APPROXIMATE && <CalibrationStatusTag />}
-            </span>
-            <button
-              onClick={onDismiss}
-              className="flex-shrink-0 rounded-lg p-1 text-muted-foreground hover:bg-secondary"
-              aria-label="Dismiss readiness card"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="mt-1 grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px]">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={`rounded-full border px-2.5 py-1 text-xs font-bold ${plannerTone.className}`}>
-                  {plannerTone.status}
-                </span>
-                <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-semibold capitalize text-muted-foreground">
-                  {readinessEvidence} evidence
-                </span>
-              </div>
-              <div className="mt-1 break-words text-base font-grotesk font-bold">{plannerTone.headline}</div>
-              <p className="mt-0.5 line-clamp-1 break-words text-xs text-muted-foreground">{plannerTone.guidance}</p>
-              {preTripRisk.primaryConcern !== 'Insufficient readiness evidence' && (
-                <p className="mt-1 break-words text-xs font-medium text-muted-foreground">
-                  Main reason: {preTripRisk.primaryConcern}
-                </p>
-              )}
-            </div>
-            <div className="rounded-xl bg-secondary/50 p-2.5">
-              <div className="text-[11px] font-semibold text-muted-foreground">Likely range</div>
-              <div className="font-grotesk text-lg font-bold capitalize">{readinessRangeText}</div>
-              <div className="text-[11px] capitalize text-muted-foreground">
-                {preTripRisk.riskLevel === 'unavailable'
-                  ? 'core evidence needed'
-                  : `${preTripRisk.dataQuality.confidenceScore}% confidence - ${preTripRisk.riskLevel} risk`}
-              </div>
-            </div>
-          </div>
-
-          <details className="group mt-3 border-t border-border pt-2">
-            <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-semibold text-primary marker:content-none">
-              Advanced readiness details
-              <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
-            </summary>
-            <div className="mt-3">
-          <div className="grid gap-3 lg:grid-cols-4">
-            <div className="rounded-2xl border border-border bg-secondary/35 p-3 text-xs">
-              <div className="flex items-center gap-2 font-semibold">
-                <CheckCircle2 className="h-4 w-4 text-primary" />
-                Before you start
-              </div>
-              <div className="mt-2 space-y-2 text-muted-foreground">
-                {topPlannerActions.map((action) => (
-                  <div key={action} className="break-words leading-snug">{action}</div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-border bg-secondary/35 p-3 text-xs">
-              <div className="flex items-center gap-2 font-semibold">
-                <Clock className="h-4 w-4 text-primary" />
-                Better window
-              </div>
-              <div className="mt-2 break-words leading-snug text-muted-foreground">{saferWindow}</div>
-            </div>
-
-            <div className="rounded-2xl border border-border bg-secondary/35 p-3 text-xs">
-              <div className="flex items-center gap-2 font-semibold">
-                <Gauge className="h-4 w-4 text-primary" />
-                Saved speed checks
-              </div>
-              <div className="mt-2 space-y-2 text-muted-foreground">
-                {localSpeed.items.length ? localSpeed.items.map((item) => (
-                  <div key={item.key} className="break-words leading-snug">
-                    <span className={item.tone === 'warn' ? 'font-medium text-orange-600 dark:text-orange-300' : 'font-medium text-foreground'}>
-                      {item.title}
-                    </span>
-                    {item.detail ? ` - ${item.detail}` : ''}
-                  </div>
-                )) : (
-                  <div className="break-words leading-snug">{localSpeedEmptyText}</div>
-                )}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-border bg-secondary/35 p-3 text-xs">
-              <div className="flex items-center gap-2 font-semibold">
-                <MapPin className="h-4 w-4 text-primary" />
-                Watch road areas
-              </div>
-              <div className="mt-2 space-y-2 text-muted-foreground">
-                {watchZones.length ? watchZones.map((zone) => {
-                  const distance = formatWatchDistance(zone.distanceM, units);
-                  return (
-                    <div key={zone.id || `${zone.lat}:${zone.lng}`} className="break-words leading-snug">
-                      <span className="font-medium text-foreground capitalize">{eventTypeLabel(zone.dominantType)}</span>
-                      {distance ? ` - ${distance} away` : ''}
-                      {zone.eventCount ? ` - ${zone.eventCount} past events` : ''}
-                    </div>
-                  );
-                }) : (
-                  <div className="break-words leading-snug">
-                    {currentLocation
-                      ? 'No repeated-event areas are near your current position.'
-                      : 'Turn on location to check nearby repeated-event areas before starting.'}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {preTripRisk.topSignals?.length > 0 && (
-            <div className="mt-4 rounded-2xl border border-border bg-background/50 p-3 text-xs">
-              <div className="mb-2 font-semibold text-muted-foreground">Risk factors ranked</div>
-              <div className="space-y-2">
-                {preTripRisk.topSignals.map((signal) => (
-                  <div key={signal.key} className="grid grid-cols-[minmax(0,1fr)_48px] items-start gap-3">
-                    <div className="min-w-0">
-                      <div className="break-words font-medium">{signal.label}</div>
-                      <div className="break-words text-muted-foreground">{signal.tip}</div>
-                    </div>
-                    <span className="text-right font-semibold">{signal.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {historicalContextEnabled && (
-            predictiveRouteRisk.insufficientHistory ? (
-              <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
-                <div className="font-semibold">Historical context</div>
-                <div className="mt-1 font-medium text-muted-foreground">Not enough driving history</div>
-                <p className="mt-1 text-muted-foreground">
-                  Complete a scored trip with recorded distance before a historical-context estimate is shown.
-                </p>
-              </div>
-            ) : (
-              <div className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="flex min-w-0 flex-wrap items-center gap-2 break-words font-semibold">
-                    Estimated historical context
-                    {ROUTE_RISK_IS_APPROXIMATE && <CalibrationStatusTag />}
-                  </span>
-                  <span className={`flex-shrink-0 font-bold capitalize ${
-                    predictiveRouteRisk.riskLevel === 'high' ? 'text-red-500' : predictiveRouteRisk.riskLevel === 'moderate' ? 'text-orange-500' : 'text-emerald-500'
-                  }`}>
-                    {predictiveRouteRisk.riskScore}/100
-                  </span>
-                </div>
-                <div className="mt-1 break-words font-medium text-muted-foreground">{historyStatus}</div>
-                <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.primaryFactor}</div>
-                <div className="mt-1 break-words text-muted-foreground">{predictiveRouteRisk.safestWindow}</div>
-                {predictiveRouteRisk.nearbyDangerZoneCount > 0 && (
-                  <div className="mt-1 font-semibold text-orange-600 dark:text-orange-300">
-                    {predictiveRouteRisk.nearbyDangerZoneCount} repeated event area{predictiveRouteRisk.nearbyDangerZoneCount === 1 ? '' : 's'} from your history nearby
-                  </div>
-                )}
-                <div className="mt-3 border-t border-border pt-2" aria-label="Estimated historical context component breakdown">
-                  <div className="mb-2 font-semibold text-muted-foreground">Signal contributions</div>
-                  {predictiveRouteRisk.componentBreakdown.map((component) => (
-                    <div key={component.key} className="mb-1.5 flex items-start justify-between gap-3 last:mb-0">
-                      <div className="min-w-0">
-                        <div className="break-words font-medium">{component.label}</div>
-                        <div className="break-words text-muted-foreground">{component.detail}</div>
-                      </div>
-                      <span className="flex-shrink-0 font-semibold">+{component.contribution}</span>
-                    </div>
-                  ))}
-                </div>
-                <p className="mt-3 border-t border-border pt-2 text-muted-foreground">
-                  Internal historical-context estimate only. No planned route is known, and signal thresholds are not validated against collision or casualty outcomes.
-                </p>
-              </div>
-            )
-          )}
-            </div>
-          </details>
-        </div>
-      </div>
-    </div>
-  );
-}

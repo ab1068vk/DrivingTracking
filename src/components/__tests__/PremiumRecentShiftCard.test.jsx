@@ -40,9 +40,9 @@ describe('PremiumRecentShiftCard', () => {
     expect(html).toContain('Braking pattern');
     expect(html).toContain('Phone-use pattern');
     expect(html).toContain('Smoothness');
-    expect(html).toContain('premium-recent-shift-route-layer.png');
-    expect(html).toContain('premium-recent-shift-car-layer.png');
-    expect(html).toContain('premium-recent-shift-shield.png');
+    expect(html).toContain('premium-recent-shift-route-layer.webp');
+    expect(html).toContain('premium-recent-shift-car-layer.webp');
+    expect(html).toContain('premium-recent-shift-shield.webp');
   });
 
   it('uses an explicit learning state without inventing a score or comparison count', () => {

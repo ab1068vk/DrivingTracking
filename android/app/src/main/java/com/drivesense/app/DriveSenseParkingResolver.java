@@ -8,9 +8,11 @@ import org.json.JSONObject;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import android.util.Log;
 
 /** Selects a robust, recorded GPS fix from the terminal stop rather than trusting one noisy point. */
 final class DriveSenseParkingResolver {
+    private static final String TAG = "ParkingResolver";
     private static final long MAX_WINDOW_MS = 5 * 60_000L;
     private static final int MAX_POINTS = 32;
     private static final double VEHICLE_SPEED_KMH = 12d;
@@ -40,7 +42,9 @@ final class DriveSenseParkingResolver {
             JSONObject ignored = new JSONObject();
             try {
                 ignored.put("ignored_reason", transientStopReason);
-            } catch (Exception ignoredException) {}
+            } catch (Exception error) {
+                Log.w(TAG, "Could not resolve", error);
+            }
             return ignored;
         }
 
@@ -96,7 +100,9 @@ final class DriveSenseParkingResolver {
                     "required_score",
                     learningProfile.optInt("minimum_automatic_confidence", 40)
                 );
-            } catch (Exception ignoredException) {}
+            } catch (Exception error) {
+                Log.w(TAG, "Could not resolve", error);
+            }
             return ignored;
         }
 
@@ -320,7 +326,9 @@ final class DriveSenseParkingResolver {
             result.put("confidence_score", normalizedScore);
             result.put("evidence", evidence);
             result.put("refinement_count", refinementCount);
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not resolve", error);
+        }
         return result;
     }
 

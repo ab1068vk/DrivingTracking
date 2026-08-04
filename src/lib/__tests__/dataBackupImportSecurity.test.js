@@ -34,7 +34,7 @@ import {
   STORAGE_KEY as SPEED_KNOWLEDGE_STORAGE_KEY,
 } from '@/lib/localSpeedKnowledge';
 import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { setJson } from '@/lib/mobileStorage';
 import { maskTripForPrivacy } from '@/lib/privacyZones';
 import { analyzeRoadMemoryIntelligence } from '@/lib/roadMemoryIntelligence';
 import { speedKnowledgeCellEligibility } from '@/lib/speedKnowledgeCellPolicy';

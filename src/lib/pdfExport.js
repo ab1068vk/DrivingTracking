@@ -298,7 +298,7 @@ export async function exportMonthlyReportPDF(trips = [], period = 'month', setti
   return { filename, native: false };
 }
 
-export async function exportTechnicalReportPDF(report = {}, settings = {}) {
+export async function exportTechnicalReportPDF(report = {}, _settings = {}) {
   const doc = new jsPDF();
   const now = new Date(report.generated_at || Date.now());
   const filename = `road-sage-technical-report-${now.toISOString().slice(0, 10)}.pdf`;
@@ -417,7 +417,7 @@ export async function exportTechnicalReportPDF(report = {}, settings = {}) {
   return { filename, native: false };
 }
 
-export async function exportUBIReportPDF(ubiReport, settings = {}) {
+export async function exportUBIReportPDF(ubiReport, _settings = {}) {
   const doc = new jsPDF();
   const now = new Date(ubiReport.generatedAt || Date.now());
   const insufficientData = ubiReport.insufficientData === true || ubiReport.ubiScore == null;

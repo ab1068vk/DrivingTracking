@@ -363,6 +363,7 @@ function SpeedLimitEditorMapContent({
   onSelectRef.current = onSelect;
   onAddPointRef.current = onAddPoint;
   onMoveAddPointRef.current = onMoveAddPoint;
+  const addPointsDraggable = Boolean(onMoveAddPoint);
   onMoveSectionPointRef.current = onMoveSectionPoint;
   const rawSections = useMemo(
     () => Array.isArray(preparedSections) ? preparedSections : buildSpeedMapSections(trips, corrections),
@@ -474,6 +475,10 @@ function SpeedLimitEditorMapContent({
       editLayerRef.current = null;
       tileLayerRef.current = null;
     };
+    // Creates and destroys the Leaflet map, so it must run once per mount.
+    // `center` is only the initial view here; the effect below already re-fits
+    // the map when `center` changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -588,7 +593,7 @@ function SpeedLimitEditorMapContent({
       const latLng = [Number(point.lat), Number(point.lng)];
       if (!isLatLng(latLng)) return;
       const marker = L.marker(latLng, {
-        draggable: Boolean(onMoveAddPoint),
+        draggable: addPointsDraggable,
         icon: L.divIcon({
           html: `<div style="width:${index === addPath.length - 1 ? 18 : 14}px;height:${index === addPath.length - 1 ? 18 : 14}px;border-radius:999px;background:#2563eb;border:3px solid white;box-shadow:0 4px 12px rgba(37,99,235,.36);"></div>`,
           className: '',
@@ -602,7 +607,9 @@ function SpeedLimitEditorMapContent({
       });
       if (index === addPath.length - 1) marker.bindTooltip('Tap to continue or drag points to adjust', { permanent: true });
     });
-  }, [addPath, mapReady]);
+    // Only draggability is reactive here; the drag handler itself is read from
+    // onMoveAddPointRef so a new callback identity does not redraw the markers.
+  }, [addPath, mapReady, addPointsDraggable]);
 
   useEffect(() => {
     const selectedLayers = selectedLayerRef.current;

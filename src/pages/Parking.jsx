@@ -551,7 +551,7 @@ export default function Parking() {
     await clearCurrentParkingState();
     await refresh({ resetDisplay: true });
     setActionStatus('Current parked-car marker cleared. Parking history was kept.');
-  }, [armUndo, refresh]);
+  }, [armUndo, refresh, parkingState?.location?.photo_file_id]);
 
   const setParkingReminder = useCallback(async (requestedAt = null) => {
     if (!parkingState?.status) {

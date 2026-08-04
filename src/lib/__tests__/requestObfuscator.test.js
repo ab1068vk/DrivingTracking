@@ -74,6 +74,30 @@ describe('request timing obfuscation', () => {
     expect(fetch.mock.calls[0][0]).toContain('latitude=0&longitude=0');
   });
 
+  it('runs a caller-scoped immediate request without waiting for the batch window', async () => {
+    const request = vi.fn(async () => 'weather-result');
+
+    await expect(
+      enqueueLocationRequest('weather', request, null, {
+        settings: { request_obfuscation_enabled: false },
+      })
+    ).resolves.toBe('weather-result');
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('still batches a caller-scoped immediate request during heightened privacy mode', async () => {
+    localSettings.update({ heightened_privacy_mode: true });
+    const request = vi.fn(async () => 'weather-result');
+
+    const resultPromise = enqueueLocationRequest('weather', request, null, {
+      settings: { request_obfuscation_enabled: false },
+    });
+    expect(request).not.toHaveBeenCalled();
+
+    await vi.runAllTimersAsync();
+    await expect(resultPromise).resolves.toBe('weather-result');
+  });
+
   it('treats request timing obfuscation as enabled during heightened privacy mode', () => {
     localSettings.update({
       heightened_privacy_mode: true,

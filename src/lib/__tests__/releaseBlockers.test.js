@@ -1,4 +1,9 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import {
+  readDashboardSource,
+  readSettingsSource,
+  readSpeedLimitsSource,
+} from '@/lib/__tests__/helpers/pageSourceBundle';
 import { readFileSync } from 'node:fs';
 import { authService, migrateLegacyAuthTokens } from '@/api/auth';
 import { apiClient, getAuthToken } from '@/api/client';
@@ -193,7 +198,7 @@ describe('release blocker regressions', () => {
   it('does not use brittle detection return-shape probes at trip scoring call sites', () => {
     const sources = [
       readFileSync(new URL('../localTripRepository.js', import.meta.url), 'utf8'),
-      readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8'),
+      readDashboardSource(),
       readFileSync(new URL('../openSourceTripContext.js', import.meta.url), 'utf8'),
     ].join('\n');
 
@@ -733,7 +738,7 @@ describe('release blocker regressions', () => {
 
   it('keeps the legal notice practical and permanently discoverable from Settings', () => {
     const noticeDialogSource = readFileSync(new URL('../../components/LegalNoticeDialog.jsx', import.meta.url), 'utf8');
-    const settingsPageSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
+    const settingsPageSource = readSettingsSource();
 
     expect(noticeDialogSource).toContain('Practical limits');
     expect(noticeDialogSource).toContain('Tracking reliability');
@@ -757,7 +762,7 @@ describe('release blocker regressions', () => {
     expect(source).toContain('no_effect');
     expect(source).toContain("if (result !== 'no_effect')");
     expect(source).toContain("severity: failedKeys.length ? 'warn' : 'info'");
-    const settingsPageSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
+    const settingsPageSource = readSettingsSource();
     const backupSource = readFileSync(new URL('../dataBackup.js', import.meta.url), 'utf8');
     expect(settingsPageSource).not.toContain('localSettings.set(next)');
     expect(backupSource).not.toContain('localSettings.set({ ...localSettings.get(), ...sanitizedSettings })');
@@ -773,7 +778,7 @@ describe('release blocker regressions', () => {
     const pdfExportSource = readFileSync(new URL('../pdfExport.js', import.meta.url), 'utf8');
     const tripEngineSource = readFileSync(new URL('../tripEngine.js', import.meta.url), 'utf8');
     const systemLogsPageSource = readFileSync(new URL('../../pages/SystemLogs.jsx', import.meta.url), 'utf8');
-    const settingsPageSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
+    const settingsPageSource = readSettingsSource();
 
     expect(activitySource).toContain('android_native_auto_tracking_started');
     expect(activitySource).toContain('android_phone_usage_summary_loaded');
@@ -819,7 +824,7 @@ describe('release blocker regressions', () => {
   });
 
   it('keeps critical post-trip, odometer, and coach persistence failures diagnostically logged', () => {
-    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+    const dashboardSource = readDashboardSource();
     const vehiclesSource = readFileSync(new URL('../../pages/Vehicles.jsx', import.meta.url), 'utf8');
     const coachSource = readFileSync(new URL('../../pages/DrivingCoach.jsx', import.meta.url), 'utf8');
 
@@ -843,7 +848,7 @@ describe('release blocker regressions', () => {
   it('wraps heavy trip and dashboard sections in recoverable error boundaries', () => {
     const appSource = readFileSync(new URL('../../App.jsx', import.meta.url), 'utf8');
     const tripDetailSource = readFileSync(new URL('../../pages/TripDetail.jsx', import.meta.url), 'utf8');
-    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+    const dashboardSource = readDashboardSource();
     const tripMapSource = readFileSync(new URL('../../components/TripMap.jsx', import.meta.url), 'utf8');
     const tripPlaybackSource = readFileSync(new URL('../../components/TripPlayback.jsx', import.meta.url), 'utf8');
 
@@ -863,7 +868,7 @@ describe('release blocker regressions', () => {
   });
 
   it('keeps posted-sign speed corrections in parked review only', () => {
-    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+    const dashboardSource = readDashboardSource();
     const reviewSource = readFileSync(new URL('../../components/SpeedLimitConflictReview.jsx', import.meta.url), 'utf8');
     const tripDetailSource = readFileSync(new URL('../../pages/TripDetail.jsx', import.meta.url), 'utf8');
 
@@ -882,7 +887,7 @@ describe('release blocker regressions', () => {
   });
 
   it('saves the exact reviewed privacy-zone radius from the protection check', () => {
-    const settingsSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
+    const settingsSource = readSettingsSource();
 
     expect(settingsSource).toContain('validatePrivacyRadius(check?.radius_m ?? privacyDraft.radius_m)');
     expect(settingsSource).toContain('radius_m: String(validation.radius)');
@@ -893,7 +898,7 @@ describe('release blocker regressions', () => {
   });
 
   it('keeps the privacy-zone protection check scrollable on small screens', () => {
-    const settingsSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
+    const settingsSource = readSettingsSource();
     const protectionCheckSource = readFileSync(new URL('../../components/PrivacyZoneProtectionCheck.jsx', import.meta.url), 'utf8');
 
     expect(settingsSource).toContain('max-h-[calc(100dvh-1rem)]');
@@ -918,7 +923,7 @@ describe('release blocker regressions', () => {
   });
 
   it('falls manual Android trips back to foreground GPS when background GPS fails', () => {
-    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+    const dashboardSource = readDashboardSource();
 
     expect(dashboardSource).toContain('forceForeground');
     expect(dashboardSource).toContain("await startGPS({ forceForeground: true })");
@@ -927,7 +932,7 @@ describe('release blocker regressions', () => {
   });
 
   it('uses raw GPS evidence before discarding manually ended trips', () => {
-    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+    const dashboardSource = readDashboardSource();
 
     expect(dashboardSource).toContain('const manualRawStats = isManualTrip');
     expect(dashboardSource).toContain('points: rawPoints');
@@ -936,8 +941,8 @@ describe('release blocker regressions', () => {
   });
 
   it('keeps manual tracking background limits visible and persistent', () => {
-    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
-    const settingsSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8');
+    const dashboardSource = readDashboardSource();
+    const settingsSource = readSettingsSource();
     const onboardingSource = readFileSync(new URL('../../pages/Onboarding.jsx', import.meta.url), 'utf8');
     const liveCoachSource = readFileSync(new URL('../../components/LiveCoachOverlay.jsx', import.meta.url), 'utf8');
     const nativeServiceSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
@@ -1084,7 +1089,7 @@ describe('release blocker regressions', () => {
   });
 
   it('shows saved road speeds before trip enrichment and yields while drawing dense maps', () => {
-    const speedLimitsSource = readFileSync(new URL('../../pages/SpeedLimits.jsx', import.meta.url), 'utf8');
+    const speedLimitsSource = readSpeedLimitsSource();
     const speedLimitEditorMapSource = readFileSync(new URL('../../components/SpeedLimitEditorMap.jsx', import.meta.url), 'utf8');
 
     expect(speedLimitsSource).toContain('Saved roads are ready. Adding recent trip evidence in the background');

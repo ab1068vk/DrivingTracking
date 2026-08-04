@@ -85,7 +85,9 @@ class DriveSenseNativeTripStore {
             if (wasActive != isActive || wasCandidate != isCandidate) {
                 WhereIParkedWidgetProvider.refreshAll(context);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not set active trip status", error);
+        }
     }
 
     static void clearActiveTripStatus(Context context) {
@@ -131,7 +133,9 @@ class DriveSenseNativeTripStore {
                         event.put("emergency_workflow_acknowledged", "ok");
                         event.put("emergency_workflow_acknowledged_at", acknowledgedAt);
                         tripChanged = true;
-                    } catch (JSONException ignored) {}
+                    } catch (JSONException error) {
+                        Log.w(TAG, "Could not acknowledge pending emergency workflow", error);
+                    }
                 }
             }
             if (trip.optBoolean("emergency_workflow_pending", false)) {
@@ -140,7 +144,9 @@ class DriveSenseNativeTripStore {
                     trip.put("emergency_workflow_acknowledged_at", acknowledgedAt);
                     trip.put("emergency_workflow_acknowledged_action", "ok");
                     tripChanged = true;
-                } catch (JSONException ignored) {}
+                } catch (JSONException error) {
+                    Log.w(TAG, "Could not acknowledge pending emergency workflow", error);
+                }
             }
             if (tripChanged) changed = true;
             next.put(trip);
@@ -426,7 +432,9 @@ class DriveSenseNativeTripStore {
                         photoId,
                         Instant.parse(expiry).toEpochMilli()
                     );
-                } catch (Exception ignored) {}
+                } catch (Exception error) {
+                    Log.w(TAG, "Could not should preserve higher confidence", error);
+                }
             } else if (!photoId.isEmpty()) {
                 ParkingPhotoExpiryScheduler.cancel(context, photoId);
             }
@@ -533,7 +541,9 @@ class DriveSenseNativeTripStore {
             saveParkingState(context, incomingState);
             WhereIParkedWidgetProvider.refreshAll(context);
             ParkingReviewNotifier.reconcile(context);
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not save last parked location", error);
+        }
     }
 
     static void suppressLastParkedLocation(
@@ -557,7 +567,9 @@ class DriveSenseNativeTripStore {
             saveParkingState(context, state);
             WhereIParkedWidgetProvider.refreshAll(context);
             ParkingReviewNotifier.cancel(context);
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not save last parked location", error);
+        }
     }
 
     private static void saveParkingState(Context context, JSONObject state) throws Exception {
@@ -603,7 +615,9 @@ class DriveSenseNativeTripStore {
             );
             nativePreferences.edit().putString(KEY_LAST_PARKED, encrypted).commit();
             WhereIParkedWidgetProvider.refreshAll(context);
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not clear parking photo reference", error);
+        }
     }
 
     private static void purgePrivateExactParkedLocations(Context context) {
@@ -709,7 +723,9 @@ class DriveSenseNativeTripStore {
             prefs(context).edit().putString(KEY_PARKING_REMINDER_STATE, encrypted).apply();
             WhereIParkedWidgetProvider.scheduleReminderDeadlineRefresh(context, reminderAtMs);
             WhereIParkedWidgetProvider.refreshAll(context);
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not get parking reminder state", error);
+        }
     }
 
     static void clearParkingReminderState(Context context) {

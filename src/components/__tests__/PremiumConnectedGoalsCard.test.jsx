@@ -51,12 +51,12 @@ describe('PremiumConnectedGoalsCard', () => {
 
     expect(html).toContain('class="premium-connected-goals group"');
     expect(html).toContain('data-tone="complete"');
-    expect(html).toContain('premium-connected-goals-hero.png');
-    expect(html).toContain('premium-connected-goal-harsh-brakes-v2.png');
-    expect(html).toContain('premium-connected-goal-speeding-v2.png');
-    expect(html).toContain('premium-connected-goal-score-v2.png');
-    expect(html).toContain('premium-connected-goal-night-distance-v2.png');
-    expect(html).toContain('premium-connected-goal-night-trips-v2.png');
+    expect(html).toContain('premium-connected-goals-hero.webp');
+    expect(html).toContain('premium-connected-goal-harsh-brakes-v2.webp');
+    expect(html).toContain('premium-connected-goal-speeding-v2.webp');
+    expect(html).toContain('premium-connected-goal-score-v2.webp');
+    expect(html).toContain('premium-connected-goal-night-distance-v2.webp');
+    expect(html).toContain('premium-connected-goal-night-trips-v2.webp');
     expect(html).toContain('data-art="braking"');
     expect(html).toContain('data-art="speeding"');
     expect(html).toContain('data-art="score"');
@@ -125,7 +125,7 @@ describe('PremiumConnectedGoalsCard', () => {
     expect(html).toContain('2/4 trips · 19.3 km / 40.0 km');
     expect(html).toContain('123456789 / 5');
     expect(html).toContain('class="premium-connected-goal-copy"');
-    expect(html).toContain('premium-connected-goals-atlas.png');
+    expect(html).toContain('premium-connected-goals-atlas.webp');
   });
 
   it('renders an honest empty state without demonstration metrics', () => {

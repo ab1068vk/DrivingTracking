@@ -8,12 +8,12 @@ import {
   ShieldCheck,
   Smartphone,
 } from 'lucide-react';
-import premiumReadyHero from '@/assets/premium-ready-city-hero-v6.png';
-import premiumReadyManual from '@/assets/premium-ready-systems-v6.png';
-import premiumReadyPrivate from '@/assets/premium-ready-private-v6.png';
-import premiumReadyPrivateControl from '@/assets/premium-ready-private-control-generated-v1.png';
-import premiumReadyPrivateShield from '@/assets/premium-ready-private-shield-generated-v1.png';
-import premiumReadyStartControl from '@/assets/premium-ready-start-generated-v1.png';
+import premiumReadyHero from '@/assets/premium-ready-city-hero-v6.webp';
+import premiumReadyManual from '@/assets/premium-ready-systems-v6.webp';
+import premiumReadyPrivate from '@/assets/premium-ready-private-v6.webp';
+import premiumReadyPrivateControl from '@/assets/premium-ready-private-control-generated-v1.webp';
+import premiumReadyPrivateShield from '@/assets/premium-ready-private-shield-generated-v1.webp';
+import premiumReadyStartControl from '@/assets/premium-ready-start-generated-v1.webp';
 
 const MANUAL_SYSTEMS = Object.freeze([
   { id: 'location', label: 'Location', icon: LocateFixed },

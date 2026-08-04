@@ -69,7 +69,9 @@ test('settings controls persist real settings instead of only moving UI state', 
   await expectSetting(page, 'notifications_enabled', false);
 
   await openSettingsArea(page, 'Driving Goals');
-  await setRangeValue(page.locator('input[type="range"]').first(), 10);
+  // Target the slider by label. `.first()` silently drifted onto
+  // "Minimum qualifying trips" as sliders were added above it.
+  await setRangeValue(page.locator('[data-setting-label="Max harsh brakes"] input[type="range"]'), 10);
   await expectSetting(page, 'weekly_goal_harsh_brakes', 10);
 
   await openSettingsArea(page, 'Night Window');

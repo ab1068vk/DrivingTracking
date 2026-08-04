@@ -126,7 +126,6 @@ export function buildRoadSectionIdentity(trip = {}, geohash = '') {
   const corePoints = points.slice(coreStart, coreEnd + 1).filter(isPublicPoint);
   const displayPoints = points.slice(displayStart, displayEnd + 1).filter(isPublicPoint);
   const first = corePoints[0];
-  const last = corePoints.at(-1) || first;
   const roadName = dominantRoad || mode(corePoints.map(pointRoadName));
   const beforeRoad = nearbyDifferentRoad(points, coreStart - 1, -1, roadName);
   const afterRoad = nearbyDifferentRoad(points, coreEnd + 1, 1, roadName);

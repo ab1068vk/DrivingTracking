@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readSettingsSource } from '@/lib/__tests__/helpers/pageSourceBundle';
 
-const settingsSource = fs.readFileSync(
-  path.resolve(process.cwd(), 'src/pages/Settings.jsx'),
-  'utf8'
-);
+// Bundled with src/components/settings so these privacy contracts keep
+// scanning extracted sections too.
+const settingsSource = readSettingsSource();
 const protectionCheckSource = fs.readFileSync(
   path.resolve(process.cwd(), 'src/components/PrivacyZoneProtectionCheck.jsx'),
   'utf8'

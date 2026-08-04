@@ -259,4 +259,25 @@ describe('activityRecognition auto-stop logic', () => {
     expect(driftM).toBeGreaterThan(11);
     expect(driftM).toBeLessThan(11.2);
   });
+
+  it('skips privacy-redacted points instead of measuring drift to 0,0', () => {
+    // Redaction stores coordinates as null. Number(null) is 0, so treating
+    // those as usable would report thousands of km of drift to Null Island and
+    // could block auto-stop for the rest of the trip.
+    const driftM = computeGpsPositionDrift(43.6532, -79.3832, [
+      { lat: 43.6533, lng: -79.3832 },
+      { lat: null, lng: null, masked_for_privacy: true },
+      { lat: '', lng: '' },
+      { lat: undefined, lng: undefined },
+    ]);
+
+    expect(driftM).toBeLessThan(12);
+  });
+
+  it('returns no drift when every recent point is unusable', () => {
+    expect(computeGpsPositionDrift(43.6532, -79.3832, [
+      { lat: null, lng: null },
+      { lat: 'abc', lng: 'def' },
+    ])).toBe(0);
+  });
 });

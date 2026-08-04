@@ -112,10 +112,10 @@ describe('PremiumEventAreasCard', () => {
     expect(html).toContain('premium-event-areas');
     expect(html).toContain('data-accent="braking"');
     expect(html).toContain('data-risk="critical"');
-    expect(html).toContain('premium-event-areas-shield-v3.png');
-    expect(html).toContain('premium-event-area-braking-v2.png');
-    expect(html).toContain('premium-event-area-speeding-v2.png');
-    expect(html).toContain('premium-event-area-turn-v2.png');
+    expect(html).toContain('premium-event-areas-shield-v3.webp');
+    expect(html).toContain('premium-event-area-braking-v2.webp');
+    expect(html).toContain('premium-event-area-speeding-v2.webp');
+    expect(html).toContain('premium-event-area-turn-v2.webp');
     expect(html).toContain('Approximately 96 m area');
     expect(html).toContain('Harsh braking');
     expect(html).toContain('Speeding');
@@ -137,7 +137,7 @@ describe('PremiumEventAreasCard', () => {
     const emptyHtml = renderToStaticMarkup(<PremiumEventAreasCard {...baseProps} completedTripCount={987654} />);
     expect(emptyHtml).toContain('987654');
     expect(emptyHtml).toContain('No repeated event area has enough evidence yet');
-    expect(emptyHtml).toContain('premium-event-areas-shield-v3.png');
+    expect(emptyHtml).toContain('premium-event-areas-shield-v3.webp');
     expect(emptyHtml).not.toContain('premium-event-areas-map-button');
     expect(emptyHtml).toContain('all 987654 completed trips have been checked');
     expect(emptyHtml).toContain('<strong>987654</strong> trips checked');
@@ -161,17 +161,17 @@ describe('PremiumEventAreasCard', () => {
     />);
     expect(mapHtml).toContain('Repeated Driving-Event Areas');
     expect(mapHtml).toContain('Your repeated harsh-braking, speeding, or sharp-turn locations');
-    expect(mapHtml).toContain('premium-event-areas-highway-v7.png');
+    expect(mapHtml).toContain('premium-event-areas-highway-v7.webp');
     expect(mapHtml).toContain('premium-event-areas-evidence-shell');
     expect(mapHtml).toContain('<polyline');
-    expect(mapHtml).toContain('premium-event-areas-shield-wheel-v4.png');
-    expect(mapHtml).toContain('premium-event-areas-trip-map-v4.png');
+    expect(mapHtml).toContain('premium-event-areas-shield-wheel-v4.webp');
+    expect(mapHtml).toContain('premium-event-areas-trip-map-v4.webp');
     expect(mapHtml).toContain('Repeated driving-event area totals by type');
     expect(mapHtml).toContain('Harsh braking. 1 learned area, 12 qualifying events.');
     expect(mapHtml).toContain('Speeding. 1 learned area, 4 qualifying events.');
     expect(mapHtml).toContain('Sharp turns. 1 learned area, 2 qualifying events.');
     expect(mapHtml).toContain('Each area contains at least <b>3</b>');
-    expect(mapHtml).not.toContain('premium-event-areas-shield-v3.png');
+    expect(mapHtml).not.toContain('premium-event-areas-shield-v3.webp');
     expect(mapHtml).not.toContain('Coordinates stay in the existing private map workflow');
   });
 

@@ -610,8 +610,11 @@ export function computeGpsPositionDrift(stoppedLat, stoppedLng, recentPoints = [
   }
 
   return recentPoints.reduce((maxDrift, point) => {
-    const lat = Number(point?.lat);
-    const lng = Number(point?.lng);
+    // Number(null) is 0, so a privacy-redacted point stored as { lat: null }
+    // would otherwise measure drift all the way to 0,0 and inflate maxDrift.
+    if (point?.lat == null || point?.lat === '' || point?.lng == null || point?.lng === '') return maxDrift;
+    const lat = Number(point.lat);
+    const lng = Number(point.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return maxDrift;
     return Math.max(maxDrift, haversineDistance(anchorLat, anchorLng, lat, lng) * 1000);
   }, 0);

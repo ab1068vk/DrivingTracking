@@ -6,14 +6,14 @@ import {
   MapPin,
   Route,
 } from 'lucide-react';
-import premiumEventAreasHighway from '@/assets/premium-event-areas-highway-v7.png';
-import premiumEventAreasMap from '@/assets/premium-event-areas-map-v2.png';
-import premiumEventAreasShield from '@/assets/premium-event-areas-shield-v3.png';
-import premiumEventAreasShieldWheel from '@/assets/premium-event-areas-shield-wheel-v4.png';
-import premiumEventAreasTripMap from '@/assets/premium-event-areas-trip-map-v4.png';
-import premiumEventAreaBraking from '@/assets/premium-event-area-braking-v2.png';
-import premiumEventAreaSpeeding from '@/assets/premium-event-area-speeding-v2.png';
-import premiumEventAreaTurn from '@/assets/premium-event-area-turn-v2.png';
+import premiumEventAreasHighway from '@/assets/premium-event-areas-highway-v7.webp';
+import premiumEventAreasMap from '@/assets/premium-event-areas-map-v2.webp';
+import premiumEventAreasShield from '@/assets/premium-event-areas-shield-v3.webp';
+import premiumEventAreasShieldWheel from '@/assets/premium-event-areas-shield-wheel-v4.webp';
+import premiumEventAreasTripMap from '@/assets/premium-event-areas-trip-map-v4.webp';
+import premiumEventAreaBraking from '@/assets/premium-event-area-braking-v2.webp';
+import premiumEventAreaSpeeding from '@/assets/premium-event-area-speeding-v2.webp';
+import premiumEventAreaTurn from '@/assets/premium-event-area-turn-v2.webp';
 import { DANGER_ZONE_CELL_SIZE_M, DANGER_ZONE_MIN_EVENTS } from '@/lib/dangerZoneEngine';
 import { formatDistance } from '@/lib/tripEngine';
 

@@ -51,18 +51,20 @@ export default function TripDrive3DPage({ embeddedTrip = null, embeddedLoading =
   const durationSeconds = Number(trip?.duration_seconds) > 0 ? Number(trip.duration_seconds) : timeline.stats.durationSeconds;
   const maxSpeedKmh = Number(trip?.max_speed_kmh) > 0 ? Number(trip.max_speed_kmh) : timeline.stats.maxSpeedKmh;
 
+  const openedRoutePointCount = routePointCount(trip);
+
   useEffect(() => {
     if (!trip?.id) return;
     recordSystemEvent('trip_3d_page_opened', {
       trip_id: trip.id,
       available,
-      route_point_count: routePointCount(trip),
+      route_point_count: openedRoutePointCount,
       event_count: events.length,
     }, {
       category: 'navigation',
       title: '3D drive page opened',
     });
-  }, [available, events.length, trip?.id, trip?.route_points]);
+  }, [available, events.length, trip?.id, openedRoutePointCount]);
 
   if (isLoading) {
     return (

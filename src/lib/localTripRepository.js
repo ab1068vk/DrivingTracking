@@ -1205,7 +1205,7 @@ const weatherAdjustmentNeedsRescore = (trip = {}) => {
   return !Array.isArray(overallSources) || !overallSources.includes(expectedDataSource);
 };
 
-const needsRescore = (trip, thresholds = buildDrivingThresholds(localSettings.get()), options = {}) => (
+const needsRescore = (trip, _thresholds = buildDrivingThresholds(localSettings.get()), options = {}) => (
   trip?.status === 'completed' &&
   trip?.privacy_mode !== 'summary_only' &&
   !trip.route_data_expired_at &&

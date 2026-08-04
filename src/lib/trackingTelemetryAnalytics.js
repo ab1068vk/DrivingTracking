@@ -170,7 +170,6 @@ export function buildNormalizedComparison(primaryTrip = {}, secondaryTrip = {}, 
   const normalize = (trip) => {
     const series = buildTripTelemetrySeries(trip, { maxPoints: 900 });
     return Array.from({ length: bins + 1 }, (_, index) => {
-      const progress = index / bins * 100;
       return nearestTelemetrySample(series, series[0]?.timestamp + ((series[series.length - 1]?.timestamp - series[0]?.timestamp) * index / bins));
     }).map((row, index) => ({ progress: index / bins * 100, speedKmh: row?.speedKmh ?? null }));
   };

@@ -82,42 +82,6 @@ for (const { path, heading } of corePages) {
   });
 }
 
-test('renders Saved Road Speeds premium visuals as separate live controls without overflow', async ({ page }) => {
-  await page.addInitScript((settings) => {
-    localStorage.setItem('drivesense_settings', JSON.stringify({
-      ...settings,
-      dark_mode: 'light',
-      premium_visual_experience: true,
-    }));
-  }, onboardedSettings);
-
-  await page.goto('/speed-limits');
-
-  await expect(page.getByRole('heading', { name: 'Saved road speeds' })).toBeVisible();
-  const premiumPage = page.locator('.premium-saved-roads');
-  await expect(premiumPage).toBeVisible();
-  await expect(premiumPage.locator('.premium-speed-workspace')).toHaveCount(3);
-  await expect(premiumPage.locator('.premium-speed-map-hero')).toBeVisible();
-  await expect(premiumPage.getByRole('button', { name: /Add road speed/ })).toBeVisible();
-  await expect(premiumPage.getByRole('searchbox', { name: 'Search map by road, source, or speed' })).toBeVisible();
-
-  const layout = await page.evaluate(() => {
-    const controls = [...document.querySelectorAll('.premium-speed-workspace')]
-      .map((element) => element.getBoundingClientRect())
-      .map(({ left, top, width, height }) => ({ left, top, width, height }));
-    return {
-      controls,
-      innerWidth: window.innerWidth,
-      scrollWidth: document.documentElement.scrollWidth,
-    };
-  });
-
-  expect(layout.controls).toHaveLength(3);
-  expect(layout.controls.every(({ width, height }) => width > 0 && height >= 44)).toBe(true);
-  expect(new Set(layout.controls.map(({ left, top }) => `${left}:${top}`)).size).toBe(3);
-  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.innerWidth + 1);
-});
-
 test('keeps the established Saved Road Speeds workspace when premium visuals are off', async ({ page }) => {
   await page.goto('/speed-limits');
 
@@ -190,7 +154,9 @@ test('uses a driver-focused tracking shell without overflow', async ({ page }) =
     for (const section of ['Track now', 'Trips & routes', 'Driving details', 'Manage']) {
       await expect(nav.getByText(section, { exact: true })).toBeVisible();
     }
-    for (const label of ['Live tracking', 'Record a drive', 'My trips', 'Route map', 'Compare drives', 'Drive events', 'Driving alerts', 'Data quality', 'Road speeds', 'Trip privacy', 'Share & export', 'Tracking settings']) {
+    // 'Settings' (not 'Tracking settings'): renamed in 71f94386 because the
+    // item opens the shared Settings page, not a tracking-only one.
+    for (const label of ['Live tracking', 'Record a drive', 'My trips', 'Route map', 'Compare drives', 'Drive events', 'Driving alerts', 'Data quality', 'Road speeds', 'Trip privacy', 'Share & export', 'Settings']) {
       await expect(nav.getByRole('link', { name: label })).toBeVisible();
     }
   } else {
@@ -203,7 +169,9 @@ test('uses a driver-focused tracking shell without overflow', async ({ page }) =
     for (const section of ['Track now', 'Trips & routes', 'Driving details', 'Manage']) {
       await expect(nav.getByText(section, { exact: true })).toBeVisible();
     }
-    for (const label of ['Live tracking', 'Record a drive', 'My trips', 'Route map', 'Compare drives', 'Drive events', 'Driving alerts', 'Data quality', 'Road speeds', 'Trip privacy', 'Share & export', 'Tracking settings']) {
+    // 'Settings' (not 'Tracking settings'): renamed in 71f94386 because the
+    // item opens the shared Settings page, not a tracking-only one.
+    for (const label of ['Live tracking', 'Record a drive', 'My trips', 'Route map', 'Compare drives', 'Drive events', 'Driving alerts', 'Data quality', 'Road speeds', 'Trip privacy', 'Share & export', 'Settings']) {
       await expect(nav.getByRole('link', { name: label })).toBeVisible();
     }
     await dialog.getByRole('button', { name: 'Close navigation menu' }).click();

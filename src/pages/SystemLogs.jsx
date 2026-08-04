@@ -451,6 +451,9 @@ export default function SystemLogs() {
   }, [logs]);
   const privacyRetentionHours = useMemo(
     () => Math.round(getPrivacyLogRetentionMs() / (60 * 60 * 1000)),
+    // getPrivacyLogRetentionMs reads the stored setting itself; the setting
+    // value is the intentional staleness signal for re-reading it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [settings.privacy_log_retention_hours]
   );
 

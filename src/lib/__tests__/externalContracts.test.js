@@ -50,7 +50,7 @@ describe('external service contracts', () => {
 
   it('calls Overpass with the expected speed-limit query envelope', async () => {
     // Checklist: "Trigger Open-Meteo and Overpass lookups and confirm retained records are protected or unverified accurately."
-    vi.stubGlobal('fetch', vi.fn(async (_url, options) => ({
+    vi.stubGlobal('fetch', vi.fn(async (_url, _options) => ({
       ok: true,
       json: async () => ({
         elements: [{
@@ -363,7 +363,7 @@ describe('external service contracts', () => {
 
   it('calls Open-Meteo forecast with midpoint, day, timezone, and hourly fields', async () => {
     // Checklist: "Trigger Open-Meteo and Overpass lookups and confirm retained records are protected or unverified accurately."
-    vi.stubGlobal('fetch', vi.fn(async (url) => ({
+    vi.stubGlobal('fetch', vi.fn(async (_url) => ({
       ok: true,
       json: async () => ({
         utc_offset_seconds: -14400,
@@ -563,7 +563,7 @@ describe('external service contracts', () => {
   });
 
   it('uses a privacy-safe route point for Open-Meteo instead of a private midpoint', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url) => ({
+    vi.stubGlobal('fetch', vi.fn(async (_url) => ({
       ok: true,
       json: async () => ({
         utc_offset_seconds: -14400,
@@ -680,7 +680,7 @@ describe('external service contracts', () => {
 
   it('calls OSRM match with ordered lon-lat coordinates and per-point radiuses', async () => {
     // Checklist: "Configure OSRM endpoint and consent, then confirm raw sharing is labeled raw with consent."
-    vi.stubGlobal('fetch', vi.fn(async (url) => ({
+    vi.stubGlobal('fetch', vi.fn(async (_url) => ({
       ok: true,
       json: async () => ({
         matchings: [{

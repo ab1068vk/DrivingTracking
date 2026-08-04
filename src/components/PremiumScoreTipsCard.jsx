@@ -1,12 +1,12 @@
 import { Gauge, ShieldCheck, Sparkles } from 'lucide-react';
-import premiumScoreTipAcceleration from '@/assets/premium-score-tip-acceleration.png';
-import premiumScoreTipBraking from '@/assets/premium-score-tip-braking.png';
-import premiumScoreTipCornering from '@/assets/premium-score-tip-cornering.png';
-import premiumScoreTipEvidence from '@/assets/premium-score-tip-evidence.png';
-import premiumScoreTipExcellent from '@/assets/premium-score-tip-excellent.png';
-import premiumScoreTipFocus from '@/assets/premium-score-tip-focus.png';
-import premiumScoreTipNight from '@/assets/premium-score-tip-night.png';
-import premiumScoreTipSpeeding from '@/assets/premium-score-tip-speeding.png';
+import premiumScoreTipAcceleration from '@/assets/premium-score-tip-acceleration.webp';
+import premiumScoreTipBraking from '@/assets/premium-score-tip-braking.webp';
+import premiumScoreTipCornering from '@/assets/premium-score-tip-cornering.webp';
+import premiumScoreTipEvidence from '@/assets/premium-score-tip-evidence.webp';
+import premiumScoreTipExcellent from '@/assets/premium-score-tip-excellent.webp';
+import premiumScoreTipFocus from '@/assets/premium-score-tip-focus.webp';
+import premiumScoreTipNight from '@/assets/premium-score-tip-night.webp';
+import premiumScoreTipSpeeding from '@/assets/premium-score-tip-speeding.webp';
 
 const TIP_PRESENTATIONS = [
   {

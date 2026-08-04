@@ -211,6 +211,12 @@ export default function LiveCoachOverlay({
     }, normalized?.displayMs || DISPLAY_MS);
   };
 
+  // showNext is self-recursive via setTimeout, so a useCallback would have to
+  // depend on itself. Reading it through a ref keeps the coach interval below
+  // from restarting every render while still calling the latest closure.
+  const showNextRef = useRef(showNext);
+  showNextRef.current = showNext;
+
   useEffect(() => {
     setDismissed(false);
     previousCountsRef.current = {
@@ -477,7 +483,7 @@ export default function LiveCoachOverlay({
       if (nextMessage && canDisplayAlert(nextMessage.voiceKey, nextMessage.voiceCooldownMs)) {
         if (nextMessage.missionPrompt) missionPromptCountRef.current += 1;
         queueRef.current.push(nextMessage);
-        showNext();
+        showNextRef.current?.();
       }
     };
 

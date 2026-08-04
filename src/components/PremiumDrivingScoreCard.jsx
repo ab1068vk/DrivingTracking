@@ -12,11 +12,11 @@ import premiumDrivingScoreHero from '@/assets/premium-driving-score-hero-v2.webp
 import premiumDrivingScorePeak from '@/assets/premium-driving-score-peak-v3.webp';
 import premiumDrivingScoreRange from '@/assets/premium-driving-score-range-v3.webp';
 import premiumDrivingScoreTrend from '@/assets/premium-driving-score-trend-v2.webp';
-import premiumTelemetryHeaderGauge from '@/assets/premium-telemetry-header-gauge-generated.png';
-import premiumTelemetryPerformanceGauge from '@/assets/premium-telemetry-performance-gauge-generated.png';
-import premiumTelemetrySliders from '@/assets/premium-telemetry-sliders-generated-v2.png';
-import premiumTelemetrySummit from '@/assets/premium-telemetry-summit-generated-v3.png';
-import premiumTelemetryTrajectory from '@/assets/premium-telemetry-trajectory-generated.png';
+import premiumTelemetryHeaderGauge from '@/assets/premium-telemetry-header-gauge-generated.webp';
+import premiumTelemetryPerformanceGauge from '@/assets/premium-telemetry-performance-gauge-generated.webp';
+import premiumTelemetrySliders from '@/assets/premium-telemetry-sliders-generated-v2.webp';
+import premiumTelemetrySummit from '@/assets/premium-telemetry-summit-generated-v3.webp';
+import premiumTelemetryTrajectory from '@/assets/premium-telemetry-trajectory-generated.webp';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 
 function validScore(value) {

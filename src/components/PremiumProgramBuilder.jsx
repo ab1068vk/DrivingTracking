@@ -12,11 +12,11 @@ import premiumProgramAttention from '@/assets/premium-program-builder-attention.
 import premiumProgramFatigue from '@/assets/premium-program-builder-fatigue-v2.webp';
 import premiumProgramConsistency from '@/assets/premium-program-builder-consistency.webp';
 import premiumProgramIconBraking from '@/assets/premium-program-builder-icon-braking.webp';
-import premiumProgramIconAcceleration from '@/assets/premium-program-builder-icon-acceleration-v2.png';
-import premiumProgramIconTurns from '@/assets/premium-program-builder-icon-turns-v2.png';
+import premiumProgramIconAcceleration from '@/assets/premium-program-builder-icon-acceleration-v2.webp';
+import premiumProgramIconTurns from '@/assets/premium-program-builder-icon-turns-v2.webp';
 import premiumProgramIconSpeed from '@/assets/premium-program-builder-icon-speed.webp';
 import premiumProgramIconAttention from '@/assets/premium-program-builder-icon-attention.webp';
-import premiumProgramIconFatigue from '@/assets/premium-program-builder-icon-fatigue-v2.png';
+import premiumProgramIconFatigue from '@/assets/premium-program-builder-icon-fatigue-v2.webp';
 import premiumProgramIconConsistency from '@/assets/premium-program-builder-icon-consistency.webp';
 
 const PROGRAM_VISUALS = Object.freeze({

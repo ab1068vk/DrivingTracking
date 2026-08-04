@@ -13,13 +13,13 @@ import {
   Target,
   TrendingUp,
 } from 'lucide-react';
-import premiumConnectedGoalsHero from '@/assets/premium-connected-goals-hero.png';
-import premiumConnectedGoalsAtlas from '@/assets/premium-connected-goals-atlas.png';
-import premiumConnectedGoalHarshBrakes from '@/assets/premium-connected-goal-harsh-brakes-v2.png';
-import premiumConnectedGoalSpeeding from '@/assets/premium-connected-goal-speeding-v2.png';
-import premiumConnectedGoalScore from '@/assets/premium-connected-goal-score-v2.png';
-import premiumConnectedGoalNightDistance from '@/assets/premium-connected-goal-night-distance-v2.png';
-import premiumConnectedGoalNightTrips from '@/assets/premium-connected-goal-night-trips-v2.png';
+import premiumConnectedGoalsHero from '@/assets/premium-connected-goals-hero.webp';
+import premiumConnectedGoalsAtlas from '@/assets/premium-connected-goals-atlas.webp';
+import premiumConnectedGoalHarshBrakes from '@/assets/premium-connected-goal-harsh-brakes-v2.webp';
+import premiumConnectedGoalSpeeding from '@/assets/premium-connected-goal-speeding-v2.webp';
+import premiumConnectedGoalScore from '@/assets/premium-connected-goal-score-v2.webp';
+import premiumConnectedGoalNightDistance from '@/assets/premium-connected-goal-night-distance-v2.webp';
+import premiumConnectedGoalNightTrips from '@/assets/premium-connected-goal-night-trips-v2.webp';
 import { formatDistance } from '@/lib/tripEngine';
 import {
   buildPremiumWeeklyGoals,

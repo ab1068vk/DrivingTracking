@@ -1,3 +1,5 @@
+When adding the files or making new once make sure they do not get tooo large
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -5,8 +7,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project overview
 
 Road Sage (package name `drivesense-app`) is a local-first driving tracker: React 18 + Vite web app packaged with Capacitor 8 into an Android app, backed by custom Java native services (background tracking, activity recognition, phone-usage evidence, IMU sampling, notifications, quick-settings tile, SharedPreferences storage). It records trips, scores driving behavior, maps routes, and generates reports, keeping data on-device unless an optional backend is configured.
-
-Read `docs/PROJECT_README.md` first for the full current feature surface, GPS-derived-safety-proxy limitation table, and privacy/security defaults — it is kept up to date and is more authoritative than any summary here. `docs/TECHNICAL_REFERENCE.md` is a large generated file (source inventory, calculation snippets, routes, dependencies); don't read it in full, grep it for specific symbols instead. Regenerate both with `node scripts/generate-technical-reference.mjs` after meaningful source changes.
 
 ## Commands
 
@@ -61,6 +61,7 @@ Android debug build (from `android/`): `.\gradlew.bat assembleDebug`. Android in
 **Android upgrade-safety guardrails.** `scripts/check-recovery-contract.mjs` (run via `npm run recovery:guard`, part of `prebuild`) asserts the Capacitor `appId`, Gradle `namespace`/`applicationId` stay `com.drivesense.app` and enforces `versionCode` invariants — changing the Android package identity breaks in-place upgrades and is guarded deliberately. See `docs/RECOVERY_PLAN.md` before touching package identity, backup format, or settings migration.
 
 **Privacy/security-sensitive code paths** (treat changes here carefully and check `docs/PRIVACY_INTELLIGENCE.md`):
+
 - `src/lib/privacyZones.js`, `privacyMode.js`, `privateTripMode.js` — mask routes/events near private places; backups never restore private coordinates.
 - `src/lib/mapPopupHtml.js` / Leaflet popup rendering — user/external values must stay HTML-escaped.
 - `src/lib/dataBackup.js` + `dataBackupConstants.js` — versioned backup migration (v1–v9), treats imported data as untrusted, requires explicit confirmation before any note-truncating import.
@@ -69,8 +70,9 @@ Android debug build (from `android/`): `.\gradlew.bat assembleDebug`. Android in
 - `scripts/check-certificate-pins.mjs` — Android TLS pin renewal cadence (`docs/CERTIFICATE_PIN_RENEWAL.md`).
 
 **Test layout:**
+
 - Unit/component tests: colocated `__tests__/` folders under `src/components/`, `src/pages/`, `src/api/`, `src/lib/`, plus `src/lib/__tests__/` and `src/tests/`. Fixtures in `src/lib/__fixtures__/`. Run with Vitest (`--pool=forks --maxWorkers=1` — respect this when adding tests that share module-level state).
-- `src/lib/__tests__` includes deterministic *mocked* Overpass/Open-Meteo/OSRM contract tests; the *live* network version (`scripts/run-live-contracts.mjs`) is excluded from the default `npm test` run and only runs via `test:contracts:live` or CI's weekly/manual schedule.
+- `src/lib/__tests__` includes deterministic _mocked_ Overpass/Open-Meteo/OSRM contract tests; the _live_ network version (`scripts/run-live-contracts.mjs`) is excluded from the default `npm test` run and only runs via `test:contracts:live` or CI's weekly/manual schedule.
 - Playwright specs in `e2e/` run against a built + previewed app (`playwright.config.js`), covering Dashboard/Settings/Trips navigation smoke.
 - Android instrumentation tests live under `android/app/src/androidTest/`.
 - `npm run generate-scoring-version -- --check`-style golden/parity tests exist for JS/Android scoring consistency (night-window classification, trip-stat math) — when changing scoring constants shared with Android, check both sides agree.

@@ -78,11 +78,11 @@ describe('PremiumDrivingScoreCard', () => {
     expect(html).toContain('data-telemetry-icon="trajectory-route"');
     expect(html).toContain('data-telemetry-icon="summit-flag"');
     expect(html).toContain('data-telemetry-icon="range-sliders"');
-    expect(html).toContain('premium-telemetry-header-gauge-generated.png');
-    expect(html).toContain('premium-telemetry-performance-gauge-generated.png');
-    expect(html).toContain('premium-telemetry-trajectory-generated.png');
-    expect(html).toContain('premium-telemetry-summit-generated-v3.png');
-    expect(html).toContain('premium-telemetry-sliders-generated-v2.png');
+    expect(html).toContain('premium-telemetry-header-gauge-generated.webp');
+    expect(html).toContain('premium-telemetry-performance-gauge-generated.webp');
+    expect(html).toContain('premium-telemetry-trajectory-generated.webp');
+    expect(html).toContain('premium-telemetry-summit-generated-v3.webp');
+    expect(html).toContain('premium-telemetry-sliders-generated-v2.webp');
     expect(html).toContain('premium-driving-score-gauge-outer-rim');
     expect(html).toContain('premium-driving-score-gauge-rim-inset');
     expect(html).toContain('premium-driving-score-gauge-inner-rim');

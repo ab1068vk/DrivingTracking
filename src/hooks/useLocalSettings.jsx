@@ -95,5 +95,9 @@ export default function useLocalSettings() {
         value: settingsSnapshot[key],
       };
     },
+    // The proxy closes over settingsSnapshot rather than referencing
+    // selectedValues directly; selectedValues is the intentional invalidation
+    // key that tells us the tracked settings actually changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   })), [selectedValues]);
 }

@@ -1,9 +1,18 @@
 export const COMMUTE_MATCH_RADIUS_M = 225;
 
+// Number(null) and Number('') are 0, so a redacted point stored as
+// { lat: null, lng: null } would otherwise become a real-looking cell at 0,0
+// instead of being skipped.
+const finiteCoordinate = (value) => {
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
 const routeCell = (point) => {
-  const lat = Number(point?.lat);
-  const lng = Number(point?.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const lat = finiteCoordinate(point?.lat);
+  const lng = finiteCoordinate(point?.lng);
+  if (lat === null || lng === null) return null;
   const latCellDegrees = COMMUTE_MATCH_RADIUS_M / 111320;
   const lngCellDegrees = COMMUTE_MATCH_RADIUS_M / (111320 * Math.max(0.2, Math.cos(lat * Math.PI / 180)));
   return `${Math.round(lat / latCellDegrees)},${Math.round(lng / lngCellDegrees)}`;

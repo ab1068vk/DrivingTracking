@@ -19,6 +19,8 @@ import {
   buildUserConfirmedWeatherContext,
   classifyWeatherSamples,
   fetchWeatherContextForTrip,
+  isUsableWeatherObservation,
+  resolveWeatherContextAfterLookup,
 } from '@/lib/weatherContext';
 import { createPrivacyCellHashes, maskTripForPrivacy } from '@/lib/privacyZones';
 
@@ -287,6 +289,43 @@ describe('open-source trip context', () => {
       weather_risk_score: null,
       weather_score_adjustment: 0,
     });
+  });
+
+  it('treats only a real observation as usable weather evidence', async () => {
+    const disabled = await fetchWeatherContextForTrip([], null, null, {
+      weather_context_enabled: false,
+    });
+
+    expect(isUsableWeatherObservation(null)).toBe(false);
+    expect(isUsableWeatherObservation(disabled)).toBe(false);
+    expect(isUsableWeatherObservation(buildUserConfirmedWeatherContext('rain'))).toBe(true);
+    expect(isUsableWeatherObservation({
+      provider: 'open-meteo',
+      status: 'fetched',
+      riskScore: 20,
+    })).toBe(true);
+  });
+
+  it('keeps a locally confirmed condition when a lookup returns nothing usable', async () => {
+    const confirmed = buildUserConfirmedWeatherContext('rain', '2026-01-01T12:05:00.000Z');
+    const noMatch = await fetchWeatherContextForTrip([], null, null, {
+      weather_context_enabled: false,
+    });
+
+    const kept = resolveWeatherContextAfterLookup(confirmed, noMatch);
+    expect(kept.keptConfirmed).toBe(true);
+    expect(kept.context).toMatchObject({ source: 'user_confirmed', condition: 'rain' });
+
+    // A real observation still wins over the earlier confirmation.
+    const observed = { provider: 'open-meteo', status: 'fetched', riskScore: 30 };
+    const replaced = resolveWeatherContextAfterLookup(confirmed, observed);
+    expect(replaced.keptConfirmed).toBe(false);
+    expect(replaced.context).toBe(observed);
+
+    // Trips with no confirmation still record the unavailable result.
+    const noPrior = resolveWeatherContextAfterLookup(null, noMatch);
+    expect(noPrior.keptConfirmed).toBe(false);
+    expect(noPrior.context).toBe(noMatch);
   });
 
   it('skips Open-Meteo when only cell-hashed privacy-zone geometry is available', async () => {

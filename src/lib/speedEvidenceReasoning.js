@@ -256,7 +256,6 @@ export function buildSpeedEvidenceDecision(record = {}, context = {}) {
   const provenance = buildResolverProvenance(record);
   const evidence = assessSpeedLimitEvidence(record, applicability.evaluatedAtMs);
   const source = evidence.source;
-  const stage = record.stage || (record.operational ? 'operational' : '');
   const confirmed = source === 'user_confirmed_posted_sign';
   const mappedPosted = source === 'openstreetmap';
   const operationalMemory = source === 'local_road_memory' &&

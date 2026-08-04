@@ -7,7 +7,7 @@ import {
   Satellite,
   ShieldCheck,
 } from 'lucide-react';
-import premiumMapRouteIntelligence from '@/assets/premium-map-route-intelligence.png';
+import premiumMapRouteIntelligence from '@/assets/premium-map-route-intelligence.webp';
 import { formatDistance, formatDuration, formatSpeed, getTripComponentScore } from '@/lib/tripEngine';
 import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
 import { buildMapDiagnosticsAggregate } from '@/lib/mapDiagnostics';

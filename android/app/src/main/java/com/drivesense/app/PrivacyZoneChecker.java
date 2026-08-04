@@ -165,7 +165,9 @@ final class PrivacyZoneChecker {
                     placeholder.put("privacy_zone_id", zone.optString("id", ""));
                     placeholder.put("privacy_zone_label", zone.optString("label", "Private place"));
                     redactedPoints.put(placeholder);
-                } catch (Exception ignored) {}
+                } catch (Exception placeholderError) {
+                    Log.w(TAG, "Could not build privacy placeholder point", placeholderError);
+                }
             }
         }
 
@@ -245,7 +247,9 @@ final class PrivacyZoneChecker {
         try {
             zone.put("id", "native_privacy_sync_unavailable");
             zone.put("label", "Private place");
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not fail closed zone", error);
+        }
         return zone;
     }
 
@@ -335,7 +339,9 @@ final class PrivacyZoneChecker {
             if (!point.has(field)) continue;
             try {
                 point.put(field, JSONObject.NULL);
-            } catch (Exception ignored) {}
+            } catch (Exception error) {
+                Log.w(TAG, "Could not null kinematic fields", error);
+            }
         }
     }
 

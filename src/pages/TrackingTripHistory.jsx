@@ -55,7 +55,9 @@ export default function TrackingTripHistory() {
     ...tripSummaryQueryOptions(),
     select: (rows) => rows.filter((trip) => trip.status === 'completed'),
   });
-  const trips = query.data || [];
+  // Memoized so the empty-state fallback keeps a stable identity; a fresh []
+  // on every render invalidated the visible/totals memos below.
+  const trips = useMemo(() => query.data || [], [query.data]);
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
   const visible = useMemo(() => trips.filter((trip) => {
     const route = trackingTripRouteStatus(trip);

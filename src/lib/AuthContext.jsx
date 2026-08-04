@@ -11,12 +11,15 @@ export const AuthProvider = ({ children }) => {
   const [isLoadingPublicSettings, setIsLoadingPublicSettings] = useState(true);
   const [authError, setAuthError] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const [appPublicSettings, setAppPublicSettings] = useState({
+  const [appPublicSettings] = useState({
     public_settings: { requires_auth: false },
   });
 
   useEffect(() => {
     checkAppState();
+    // Auth bootstrap runs once per mount. `checkAppState` is re-created every
+    // render and sets state, so depending on it would re-check in a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const checkAppState = async () => {

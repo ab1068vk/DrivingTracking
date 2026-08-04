@@ -58,7 +58,9 @@ final class DriveSenseActiveTripCheckpointStore {
                 if (!source.has(key)) continue;
                 try {
                     point.put(key, source.opt(key));
-                } catch (Exception ignored) {}
+                } catch (Exception error) {
+                    Log.w(TAG, "Could not compact route points", error);
+                }
             }
             if (point.has("timestamp")) compacted.put(point);
         }
@@ -206,7 +208,9 @@ final class DriveSenseActiveTripCheckpointStore {
             try {
                 status.put("state", "unknown");
                 status.put("present", false);
-            } catch (Exception ignored) {}
+            } catch (Exception fallbackError) {
+                Log.w(TAG, "Could not write unknown checkpoint status fallback", fallbackError);
+            }
             return status;
         }
     }

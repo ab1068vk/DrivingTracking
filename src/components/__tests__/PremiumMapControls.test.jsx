@@ -22,9 +22,9 @@ describe('PremiumMapControls', () => {
     expect(html).toContain('data-control="map" data-tone="navigation" data-map-tab="mode" aria-pressed="true"');
     expect(html).toContain('data-control="playback" data-tone="playback" data-map-tab="mode" aria-pressed="false"');
     expect(html).toContain('data-control="layers" data-tone="layers" data-map-tab="utility" aria-pressed="true"');
-    expect(html).toContain('premium-map-control-view.png');
-    expect(html).toContain('premium-map-control-playback.png');
-    expect(html).toContain('premium-map-control-layers.png');
+    expect(html).toContain('premium-map-control-view.webp');
+    expect(html).toContain('premium-map-control-playback.webp');
+    expect(html).toContain('premium-map-control-layers.webp');
     expect(html).toContain('Explore the map');
     expect(html).toContain('Replay route history');
     expect(html).toContain('Manage map overlays');

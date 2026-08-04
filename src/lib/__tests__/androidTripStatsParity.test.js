@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readDashboardSource } from '@/lib/__tests__/helpers/pageSourceBundle';
 import { readFileSync } from 'node:fs';
 import fixture from '@/lib/__fixtures__/androidTripStatsParityFixture.json';
 import { calculateSegmentMetrics, calculateTripStats, DEFAULT_THRESHOLDS, reviewManualTripSave } from '@/lib/tripEngine';
@@ -211,7 +212,7 @@ describe('Android auto-tracking stats parity', () => {
   it('supports confirmed native manual trips for background alerts', () => {
     const serviceSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
     const pluginSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseActivityRecognitionPlugin.java', import.meta.url), 'utf8');
-    const dashboardSource = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+    const dashboardSource = readDashboardSource();
 
     expect(serviceSource).toContain('ACTION_START_MANUAL_TRIP');
     expect(serviceSource).toContain('nativeTripStartSource = "native_manual";');

@@ -10,8 +10,10 @@ import android.os.Process;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import android.util.Log;
 
 class DriveSensePhoneUsageTracker {
+    private static final String TAG = "PhoneUsageTracker";
     private static final long MIN_SESSION_MS = 5_000L;
     private static final long MERGE_GAP_MS = 10_000L;
     private static final long MAX_SESSION_MS = 30 * 60_000L;
@@ -154,7 +156,9 @@ class DriveSensePhoneUsageTracker {
             result.put("event_count", sessions.length());
             result.put("total_seconds", totalSeconds);
             result.put("package_filter_applied", true);
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not query trip usage", error);
+        }
         return result;
     }
 
@@ -165,7 +169,9 @@ class DriveSensePhoneUsageTracker {
             result.put("events", new JSONArray());
             result.put("event_count", 0);
             result.put("total_seconds", 0);
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not empty result", error);
+        }
         return result;
     }
 
@@ -255,7 +261,9 @@ class DriveSensePhoneUsageTracker {
                     "started_after_unlock",
                     previous.optBoolean("started_after_unlock", false) || startedAfterUnlock
                 );
-            } catch (JSONException ignored) {}
+            } catch (JSONException error) {
+                Log.w(TAG, "Could not is ignored package", error);
+            }
             return mergedEndMs;
         }
 
@@ -270,7 +278,9 @@ class DriveSensePhoneUsageTracker {
             session.put("started_after_screen_on", startedAfterScreenOn);
             session.put("started_after_unlock", startedAfterUnlock);
             session.put("source", "android_usage_access");
-        } catch (JSONException ignored) {}
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not is ignored package", error);
+        }
         sessions.put(session);
         return effectiveEndMs;
     }

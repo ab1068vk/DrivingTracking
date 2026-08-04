@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { readDashboardSource } from '@/lib/__tests__/helpers/pageSourceBundle';
 
 describe('post-drive review lifecycle wiring', () => {
   it('reserves dismissal for the explicit X action', () => {
-    const dashboard = readFileSync(new URL('../../pages/Dashboard.jsx', import.meta.url), 'utf8');
+    const dashboard = readDashboardSource();
     const trackingOverview = readFileSync(new URL('../../pages/TrackingOverview.jsx', import.meta.url), 'utf8');
 
     expect(dashboard).toContain('onDismiss={dismissPostDriveReview}');

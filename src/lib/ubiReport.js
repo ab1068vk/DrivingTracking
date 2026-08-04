@@ -50,7 +50,7 @@ const unavailableCategory = (label, value) => ({
   value,
 });
 
-export function computeUBIReport(trips = [], settings = {}, vehicles = []) {
+export function computeUBIReport(trips = [], settings = {}, _vehicles = []) {
   const completed = (trips || []).filter((trip) => trip?.status === 'completed');
   const totalKm = completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
   const totalDrivingMinutes = completed.reduce((sum, trip) => sum + (Number(trip.duration_seconds) || 0) / 60, 0);

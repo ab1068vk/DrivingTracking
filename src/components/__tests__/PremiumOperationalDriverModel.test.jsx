@@ -86,17 +86,17 @@ describe('PremiumOperationalDriverModel', () => {
     expect(html).toContain('class="premium-operational-model"');
     expect(html).toContain('data-ready="true"');
     expect(html).toContain('>Precision Driver</h2>');
-    expect(html).toContain('premium-operational-model-hero-v1.png');
-    expect(html).toContain('premium-operational-model-strength-v1.png');
-    expect(html).toContain('premium-operational-model-braking-v1.png');
-    expect(html).toContain('premium-operational-model-fatigue-v1.png');
-    expect(html).toContain('premium-operational-icon-brain-v1.png');
-    expect(html).toContain('premium-operational-icon-aggression-v1.png');
-    expect(html).toContain('premium-operational-icon-smoothness-v1.png');
-    expect(html).toContain('premium-operational-icon-speed-v1.png');
-    expect(html).toContain('premium-operational-icon-consistency-v1.png');
-    expect(html).toContain('premium-operational-icon-braking-v1.png');
-    expect(html).toContain('premium-operational-icon-fatigue-v1.png');
+    expect(html).toContain('premium-operational-model-hero-v1.webp');
+    expect(html).toContain('premium-operational-model-strength-v1.webp');
+    expect(html).toContain('premium-operational-model-braking-v1.webp');
+    expect(html).toContain('premium-operational-model-fatigue-v1.webp');
+    expect(html).toContain('premium-operational-icon-brain-v1.webp');
+    expect(html).toContain('premium-operational-icon-aggression-v1.webp');
+    expect(html).toContain('premium-operational-icon-smoothness-v1.webp');
+    expect(html).toContain('premium-operational-icon-speed-v1.webp');
+    expect(html).toContain('premium-operational-icon-consistency-v1.webp');
+    expect(html).toContain('premium-operational-icon-braking-v1.webp');
+    expect(html).toContain('premium-operational-icon-fatigue-v1.webp');
     expect(html.match(/class="premium-operational-signal /g)).toHaveLength(4);
     expect(html.match(/class="premium-operational-insight"/g)).toHaveLength(3);
     expect(html).toContain('Driver signal radar. Aggression: 10 percent');
@@ -107,12 +107,12 @@ describe('PremiumOperationalDriverModel', () => {
   });
 
   it.each([
-    ['rapid_accel', 'premium-operational-weakness-acceleration-v1.jpg', 'premium-operational-icon-acceleration-v1.png'],
-    ['sharp_turns', 'premium-operational-weakness-turns-v1.jpg', 'premium-operational-icon-turns-v1.png'],
-    ['speeding', 'premium-operational-weakness-speeding-v1.jpg', 'premium-operational-icon-speeding-v1.png'],
-    ['phone_use', 'premium-operational-weakness-phone-v1.jpg', 'premium-operational-icon-phone-v1.png'],
-    ['fatigue', 'premium-operational-model-fatigue-v1.png', 'premium-operational-icon-fatigue-v1.png'],
-    ['consistency', 'premium-operational-weakness-consistency-v1.jpg', 'premium-operational-icon-consistency-v1.png'],
+    ['rapid_accel', 'premium-operational-weakness-acceleration-v1.jpg', 'premium-operational-icon-acceleration-v1.webp'],
+    ['sharp_turns', 'premium-operational-weakness-turns-v1.jpg', 'premium-operational-icon-turns-v1.webp'],
+    ['speeding', 'premium-operational-weakness-speeding-v1.jpg', 'premium-operational-icon-speeding-v1.webp'],
+    ['phone_use', 'premium-operational-weakness-phone-v1.jpg', 'premium-operational-icon-phone-v1.webp'],
+    ['fatigue', 'premium-operational-model-fatigue-v1.webp', 'premium-operational-icon-fatigue-v1.webp'],
+    ['consistency', 'premium-operational-weakness-consistency-v1.jpg', 'premium-operational-icon-consistency-v1.webp'],
   ])('selects content-matched generated artwork for %s', (focusId, expectedAsset, expectedIcon) => {
     const html = renderToStaticMarkup(
       <PremiumOperationalDriverModel
@@ -135,7 +135,7 @@ describe('PremiumOperationalDriverModel', () => {
   it.each([
     ['morning', 'premium-operational-strength-morning-v1.jpg'],
     ['afternoon', 'premium-operational-strength-afternoon-v1.jpg'],
-    ['evening', 'premium-operational-model-strength-v1.png'],
+    ['evening', 'premium-operational-model-strength-v1.webp'],
     ['night', 'premium-operational-strength-night-v1.jpg'],
   ])('selects newly generated stable-strength artwork for %s data', (id, expectedAsset) => {
     const label = id[0].toUpperCase() + id.slice(1);

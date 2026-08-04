@@ -13,6 +13,7 @@ This folder is the home for all project Markdown documentation.
 - [Privacy Intelligence](PRIVACY_INTELLIGENCE.md): privacy dashboard behavior, protection checks, audit chain, transmission logging, storage/encryption notes, test coverage, and release-readiness limits.
 - [3D Replay](TRIP_3D_REPLAY.md): complete 3D replay implementation guide covering routes, data contracts, Three.js rendering, privacy masking, playback controls, diagnostics, snippets, tests, and troubleshooting.
 - [Manual trip no-movement debug](MANUAL_TRIP_NO_MOVEMENT_DEBUG.md): incident documentation for manual Start Trip sessions being discarded as "no real movement", including code paths, snippets, diagnostics, likely failure points, and acceptance criteria.
+- [Branch: page splits and audit fixes](BRANCH_PAGE_SPLITS_AND_AUDIT_FIXES.md): what the `refactor/page-splits-and-audit-fixes` branch changed, how to tell whether a device-side fault came from it, and how to discard it.
 - [Recovery plan](RECOVERY_PLAN.md): Android package identity, settings, backup, and upgrade compatibility guardrails.
 - [Upgrade verification](UPGRADE_VERIFICATION.md): physical-device in-place upgrade verification notes.
 - [Version code 2 verification](VERSION_CODE_2_VERIFICATION.md): version-code 2 upgrade verification notes.

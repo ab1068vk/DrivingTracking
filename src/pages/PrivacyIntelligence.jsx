@@ -662,7 +662,9 @@ function MiniMetric({ label, value }) {
 }
 
 export function TransmissionsTab({ data, onClear }) {
-  const entries = data?.transmissions?.entries || [];
+  // Memoized so the empty-state fallback keeps a stable identity; a fresh []
+  // on every render re-ran the filter below.
+  const entries = useMemo(() => data?.transmissions?.entries || [], [data?.transmissions?.entries]);
   const outboundReadout = data?.transmissions?.outboundReadout || {};
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');

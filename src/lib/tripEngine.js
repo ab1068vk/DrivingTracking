@@ -1639,18 +1639,6 @@ function safeMax(values = [], fallback = 0) {
   return values.length ? Math.max(...values) : fallback;
 }
 
-function percentileValue(values, p) {
-  const sorted = values
-    .filter((value) => Number.isFinite(value))
-    .sort((a, b) => a - b);
-  if (!sorted.length) return 0;
-  const index = (p / 100) * (sorted.length - 1);
-  const lower = Math.floor(index);
-  const upper = Math.ceil(index);
-  if (lower === upper) return sorted[lower];
-  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
-}
-
 function isPrivacyBoundaryPoint(point) {
   return point?.privacy_boundary === true || point?.is_privacy_boundary === true;
 }
@@ -2150,31 +2138,6 @@ function zoneFromP85(p85Speed) {
   if (p85Speed < 80) return { inferredZone: 'zone_60_70', inferredZoneKmh: 70 };
   if (p85Speed < 110) return { inferredZone: 'zone_80_100', inferredZoneKmh: 100 };
   return { inferredZone: 'zone_highway', inferredZoneKmh: 120 };
-}
-
-function sortedInsert(values, value) {
-  let low = 0;
-  let high = values.length;
-  while (low < high) {
-    const mid = Math.floor((low + high) / 2);
-    if (values[mid] < value) low = mid + 1;
-    else high = mid;
-  }
-  values.splice(low, 0, value);
-}
-
-function sortedRemove(values, value) {
-  let low = 0;
-  let high = values.length - 1;
-  while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
-    if (values[mid] < value) low = mid + 1;
-    else if (values[mid] > value) high = mid - 1;
-    else {
-      values.splice(mid, 1);
-      return;
-    }
-  }
 }
 
 function percentileFromSorted(sortedValues, p) {
@@ -3145,7 +3108,7 @@ export function detectLaneChanges(cleanPoints = [], motionSamples = [], orientat
   };
 }
 
-export function calculateLaneChangingScore(laneChangeResult = {}, distKm = 0, thresholds = DEFAULT_THRESHOLDS) {
+export function calculateLaneChangingScore(laneChangeResult = {}, distKm = 0, _thresholds = DEFAULT_THRESHOLDS) {
   const laneChanges = Array.isArray(laneChangeResult?.lane_changes) ? laneChangeResult.lane_changes : [];
   const count = laneChanges.length;
   const distanceKm = Math.max(0, Number(distKm) || 0);
@@ -4231,7 +4194,7 @@ export function calculateSmoothBrakingRatio(cleanPoints = [], thresholds = DEFAU
  * @example
  * const sequences = extractBrakingSequences(points, DEFAULT_THRESHOLDS, { minEntryKmh: 30 });
  */
-export function extractBrakingSequences(routePoints, thresholds = DEFAULT_THRESHOLDS, {
+export function extractBrakingSequences(routePoints, _thresholds = DEFAULT_THRESHOLDS, {
   startSpeedKmh = 25,
   endSpeedKmh = 5,
   minEntryKmh = 25,
@@ -4507,7 +4470,7 @@ function brakingEfficiencyGrade(score, roadType = 'urban') {
  * @example
  * const braking = calculateBrakingEfficiency(points, events, DEFAULT_THRESHOLDS);
  */
-export function calculateBrakingEfficiency(routePoints, drivingEvents = [], thresholds = DEFAULT_THRESHOLDS) {
+export function calculateBrakingEfficiency(routePoints, _drivingEvents = [], thresholds = DEFAULT_THRESHOLDS) {
   const roadType = classifyRoadType(routePoints).road_type === 'highway' ? 'highway' : 'urban';
   const sequences = extractBrakingSequences(routePoints, thresholds, {
     startSpeedKmh: 25,
@@ -5138,7 +5101,7 @@ export function calculateOvertakeQualityScore(routePoints, drivingEvents = [], t
  * @example
  * const conditions = detectSlipperyConditionProxy(points, events, DEFAULT_THRESHOLDS);
  */
-export function detectSlipperyConditionProxy(routePoints, drivingEvents = [], thresholds = DEFAULT_THRESHOLDS) {
+export function detectSlipperyConditionProxy(routePoints, _drivingEvents = [], thresholds = DEFAULT_THRESHOLDS) {
   const sequences = extractBrakingSequences(routePoints, thresholds, {
     startSpeedKmh: 30,
     endSpeedKmh: 5,
@@ -5186,7 +5149,7 @@ export function detectSlipperyConditionProxy(routePoints, drivingEvents = [], th
  * @example
  * const segments = calculateRoadTypeSegmentedScores(points, events, stats, DEFAULT_THRESHOLDS);
  */
-export function calculateRoadTypeSegmentedScores(routePoints, drivingEvents = [], stats = {}, thresholds = DEFAULT_THRESHOLDS, options = {}) {
+export function calculateRoadTypeSegmentedScores(routePoints, drivingEvents = [], _stats = {}, thresholds = DEFAULT_THRESHOLDS, options = {}) {
   const points = routePoints || [];
   const roadTypeDetails = classifyRoadTypesByPointDetailed(points, 30, options);
   const roadTypes = roadTypeDetails.map((item) => item.road_type);
@@ -6789,10 +6752,6 @@ function stopStartScoreForContext(patternCount, distanceKm, minDistanceKm) {
   if (distanceKm < minDistanceKm) return null;
   const maxObservedPatternCycles = (distanceKm / STOP_START_NORMALISATION_WINDOW_KM) * STOP_START_MAX_CYCLES_PER_5_KM;
   return Math.round(100 - clamp((patternCount / Math.max(1, maxObservedPatternCycles)) * 100, 0, 100));
-}
-
-function highwayEvidenceDistanceKm(routePoints = [], thresholds = DEFAULT_THRESHOLDS) {
-  return stopStartEvidenceDistances(routePoints, thresholds).highwayDistanceKm;
 }
 
 function stopStartEvidenceDistances(routePoints = [], thresholds = DEFAULT_THRESHOLDS, roadTypesByPoint = null) {

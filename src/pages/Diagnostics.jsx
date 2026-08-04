@@ -275,6 +275,9 @@ export default function Diagnostics() {
 
   useEffect(() => {
     refresh();
+    // One refresh per mount. `refresh` is re-created every render and sets
+    // state, so depending on it would re-trigger itself in a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const health = useMemo(() => buildTrackingHealth({

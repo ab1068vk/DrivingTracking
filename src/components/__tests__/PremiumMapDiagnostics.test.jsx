@@ -79,7 +79,7 @@ describe('PremiumMapDiagnostics', () => {
     );
 
     expect(html).toContain('class="premium-map-diagnostics"');
-    expect(html).toContain('premium-map-route-intelligence.png');
+    expect(html).toContain('premium-map-route-intelligence.webp');
     expect(html).toContain('Route diagnostics');
     expect(html).toContain('Standard');
     expect(html).toContain('Maximum speed');
@@ -112,7 +112,7 @@ describe('PremiumMapDiagnostics', () => {
 
     expect(html).toContain('premium-map-diagnostics--standard');
     expect(html).toContain('data-visual-experience="standard"');
-    expect(html).not.toContain('premium-map-route-intelligence.png');
+    expect(html).not.toContain('premium-map-route-intelligence.webp');
     expect(html).toContain('Maximum speed');
     expect(html).toContain('Stops');
     expect(html).toContain('Recorded time');

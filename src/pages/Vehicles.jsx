@@ -1,5 +1,5 @@
 // @ts-check
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { limitedTripSummaryQueryOptions, tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
@@ -140,7 +140,6 @@ export function buildFleetIntelligence(vehicles = [], trips = [], settings = {})
   const unassignedTrips = getUnassignedCompletedTrips(completedTrips);
   const reviewTrips = getTripsNeedingVehicleReview(completedTrips);
   const serviceItems = vehicles.flatMap((vehicle) => {
-    const vehicleTrips = getTripsForVehicle(vehicle, completedTrips);
     const odometerKm = getVehicleOdometerKm(vehicle, completedTrips);
     const plan = buildVehicleMaintenancePlan(vehicle, { odometerKm });
     return [...plan.due_items, ...plan.soon_items].map((item) => ({ vehicle, item }));
@@ -418,7 +417,9 @@ export default function Vehicles() {
   }, [recentTripsLoaded, tripStatsEnabled]);
   const trips = fullHistoryTrips.length > 0 ? fullHistoryTrips : recentTrips;
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['vehicles'] });
+  // Stable so the odometer-sync effect can depend on it without re-syncing on
+  // every render. The query client identity is already stable.
+  const invalidate = useCallback(() => qc.invalidateQueries({ queryKey: ['vehicles'] }), [qc]);
   const invalidateTrips = () => {
     qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
     qc.invalidateQueries({ queryKey: tripQueryKeys.map });
@@ -556,7 +557,7 @@ export default function Vehicles() {
     return () => {
       cancelled = true;
     };
-  }, [vehicles, trips]);
+  }, [vehicles, trips, invalidate]);
 
   const tripListFor = (vehicle) => getTripsForVehicle(vehicle, trips);
   const tripCountFor = (vehicle) => tripListFor(vehicle).length;
@@ -882,9 +883,6 @@ export default function Vehicles() {
           const fuelTotals = fuelTotalsFor(v);
           const costSummary = buildVehicleCostSummary(v, vehicleTrips);
           const isElectricVehicle = normalizePowertrain(v.powertrain || v.fuel_type) === 'electric';
-          const efficiencyLabel = isElectricVehicle
-            ? `${v.ev_efficiency_kwh_per_100km || 18} kWh/100km`
-            : `${v.fuel_efficiency_l_per_100km || 8.5} L/100km`;
 
           return (
             <motion.div key={v.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}

@@ -73,9 +73,9 @@ describe('PremiumDrivingExposureCard', () => {
     expect(html).toContain(`width:${score * 10}%`);
     expect(html).toContain('123456');
     expect(html).toContain('9876 trips');
-    expect(html).toContain('premium-driving-exposure-wheel.png');
-    expect(html).toContain('premium-driving-exposure-clock.png');
-    expect(html).toContain('premium-driving-exposure-rest.png');
+    expect(html).toContain('premium-driving-exposure-wheel.webp');
+    expect(html).toContain('premium-driving-exposure-clock.webp');
+    expect(html).toContain('premium-driving-exposure-rest.webp');
   });
 
   it('keeps the unavailable rest state explicit and accessible', () => {

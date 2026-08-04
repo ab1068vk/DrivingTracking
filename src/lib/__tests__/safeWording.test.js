@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  DASHBOARD_EXTRACTION_DIRS,
+  SETTINGS_EXTRACTION_DIRS,
+  readPageSource,
+} from '@/lib/__tests__/helpers/pageSourceBundle';
 
 const rootDir = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
 
@@ -38,11 +43,25 @@ function readProjectFile(relativePath) {
   return readFileSync(join(rootDir, relativePath), 'utf8');
 }
 
+// Pages whose content is being split into component directories. The banned
+// wording scan below is entirely negative, so it would keep passing while
+// scanning nothing once copy moves out of the page. Bundling the extraction
+// directory in keeps the scan honest.
+const BUNDLED_SOURCE_DIRS = {
+  'src/pages/Settings.jsx': SETTINGS_EXTRACTION_DIRS,
+  'src/pages/Dashboard.jsx': DASHBOARD_EXTRACTION_DIRS,
+};
+
+function readCheckedSource(relativePath) {
+  const extraDirs = BUNDLED_SOURCE_DIRS[relativePath];
+  return extraDirs ? readPageSource(relativePath, extraDirs) : readProjectFile(relativePath);
+}
+
 describe('safe Privacy Intelligence wording', () => {
   it('keeps UI, report, README, and Privacy Intelligence docs free of overclaim wording', () => {
     const failures = [];
     for (const relativePath of checkedFiles) {
-      const source = readProjectFile(relativePath);
+      const source = readCheckedSource(relativePath);
       for (const banned of bannedWording) {
         if (banned.pattern.test(source)) {
           failures.push(`${relativePath}: ${banned.label}`);

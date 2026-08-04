@@ -1,7 +1,11 @@
 import { runNativeRoadDataRequest } from '@/lib/nativeRoadDataQueue';
 import { privacyGatedFetch } from '@/lib/privacyGatedFetch';
 import { localSettings } from '@/lib/trackingStore';
-import { effectivePrivacySettings, isHeightenedPrivacyMode } from '@/lib/privacyMode';
+import {
+  effectivePrivacySettings,
+  HEIGHTENED_PRIVACY_MODE_KEY,
+  isHeightenedPrivacyMode,
+} from '@/lib/privacyMode';
 
 const BATCH_MIN_MS = 3 * 60 * 1000;
 const BATCH_MAX_MS = 9 * 60 * 1000;
@@ -94,17 +98,33 @@ async function flushBatch() {
   initialized = true;
 }
 
-export function enqueueLocationRequest(tag, fn, nativeRequest = null) {
+/**
+ * @param {string} tag
+ * @param {() => Promise<any>} fn
+ * @param {{url?:string}|null} nativeRequest
+ * @param {{settings?:Record<string, any>}} options
+ *   `settings` lets a caller-scoped request opt out of batching (a manual
+ *   foreground tap cannot wait 3-9 minutes for the next batch). Heightened
+ *   privacy mode still wins: it is read from both the override and the stored
+ *   settings so a caller can never weaken it.
+ */
+export function enqueueLocationRequest(tag, fn, nativeRequest = null, options = {}) {
   if (typeof fn !== 'function') {
     return Promise.reject(new TypeError('Location request must be a function.'));
   }
-  const settings = effectivePrivacySettings(localSettings.get());
+  const storedSettings = localSettings.get();
+  const requestedSettings = options?.settings || storedSettings;
+  const settings = effectivePrivacySettings(
+    isHeightenedPrivacyMode(storedSettings)
+      ? { ...requestedSettings, [HEIGHTENED_PRIVACY_MODE_KEY]: true }
+      : requestedSettings
+  );
   if (settings?.request_obfuscation_enabled === false) return fn();
 
   if (nativeRequest?.url && !isHeightenedPrivacyMode(settings)) {
     const delay = randomInt(BATCH_MIN_MS, BATCH_MAX_MS);
     return runNativeRoadDataRequest(tag, nativeRequest, delay)
-      .then((result) => result ?? enqueueLocationRequest(tag, fn))
+      .then((result) => result ?? enqueueLocationRequest(tag, fn, null, options))
       .catch(() => fn());
   }
 

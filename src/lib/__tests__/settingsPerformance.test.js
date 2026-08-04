@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { readSettingsSource } from '@/lib/__tests__/helpers/pageSourceBundle';
 
-const settingsSource = readFileSync(new URL('../../pages/Settings.jsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+// Bundled with src/components/settings so these contracts keep scanning the
+// same text once sections are extracted out of the page.
+const settingsSource = readSettingsSource();
 const hookSource = readFileSync(new URL('../../hooks/useLocalSettings.jsx', import.meta.url), 'utf8');
 const dialogSource = readFileSync(new URL('../../components/ui/dialog.jsx', import.meta.url), 'utf8');
 const alertDialogSource = readFileSync(new URL('../../components/ui/alert-dialog.jsx', import.meta.url), 'utf8');

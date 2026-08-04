@@ -12,9 +12,9 @@ import {
   Zap,
 } from 'lucide-react';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
-import premiumRecentShiftRoute from '@/assets/premium-recent-shift-route-layer.png';
-import premiumRecentShiftCar from '@/assets/premium-recent-shift-car-layer.png';
-import premiumRecentShiftShield from '@/assets/premium-recent-shift-shield.png';
+import premiumRecentShiftRoute from '@/assets/premium-recent-shift-route-layer.webp';
+import premiumRecentShiftCar from '@/assets/premium-recent-shift-car-layer.webp';
+import premiumRecentShiftShield from '@/assets/premium-recent-shift-shield.webp';
 
 const REASON_META = Object.freeze({
   harsh_per_10km: {

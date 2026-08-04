@@ -35,10 +35,6 @@ const finiteNumber = (value) => {
 
 const sourceGroup = (source) => SOURCE_GROUPS[source] || 'review';
 
-const pointSource = (point = {}) => (
-  point.speed_limit_source ?? point.limitSource ?? point.speedLimitSource ?? point.source ?? 'unknown'
-);
-
 const pointLimit = (point = {}) => finiteNumber(point.speed_limit_kmh ?? point.limitKmh ?? point.speedLimitKmh);
 
 const correctionKey = (correction = {}, index = 0) => (

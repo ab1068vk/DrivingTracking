@@ -31,9 +31,14 @@ function SectionMap({ routePoints = [], sectionPoints = [], fallbackPoint = null
     () => sectionPoints.filter(validPoint).map((point) => [Number(point.lat), Number(point.lng)]),
     [sectionPoints]
   );
-  const fallback = validPoint(fallbackPoint)
-    ? [Number(fallbackPoint.lat), Number(fallbackPoint.lng)]
-    : null;
+  // Keyed on the coordinates rather than the prop object so a caller passing a
+  // fresh object literal each render does not rebuild the preview layers.
+  const fallbackLat = validPoint(fallbackPoint) ? Number(fallbackPoint.lat) : null;
+  const fallbackLng = validPoint(fallbackPoint) ? Number(fallbackPoint.lng) : null;
+  const fallback = useMemo(
+    () => (fallbackLat == null || fallbackLng == null ? null : [fallbackLat, fallbackLng]),
+    [fallbackLat, fallbackLng]
+  );
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return undefined;
@@ -106,7 +111,7 @@ function SectionMap({ routePoints = [], sectionPoints = [], fallbackPoint = null
       map.setView(fallback, 16);
     }
     setTimeout(() => map.invalidateSize(), 0);
-  }, [fallback?.[0], fallback?.[1], fullRoute, ready, section]);
+  }, [fallback, fullRoute, ready, section]);
 
   return (
     <div className="relative">

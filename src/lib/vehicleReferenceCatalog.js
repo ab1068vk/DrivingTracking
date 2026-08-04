@@ -84,8 +84,10 @@ const sourceById = new Map(VEHICLE_REFERENCE_SOURCES.map((source) => [source.id,
 export const getVehicleReferenceSource = (id) => sourceById.get(String(id || '')) || null;
 
 export function getVehicleReferenceSources(vehicle = {}) {
-  const make = String(vehicle.make || '').trim().toLowerCase();
-  const market = String(vehicle.market || 'CA').trim().toUpperCase();
+  // The default only covers undefined, so read through optional chaining to
+  // honour the "missing vehicle is fine" contract for null as well.
+  const make = String(vehicle?.make || '').trim().toLowerCase();
+  const market = String(vehicle?.market || 'CA').trim().toUpperCase();
   return VEHICLE_REFERENCE_SOURCES.filter((source) => {
     if (Array.isArray(source.makes)) return source.makes.includes(make);
     return source.region === 'GLOBAL' || source.region === market;

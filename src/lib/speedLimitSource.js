@@ -790,7 +790,10 @@ async function loadCachedWaysForBounds(bounds, settings, cache, nextCache) {
       await enqueueLocationRequest(
         'overpass',
         () => fetchOverpassWays(bounds, settings),
-        overpassNativeRequest(bounds, settings)
+        overpassNativeRequest(bounds, settings),
+        // A manual Get Road Data tap passes request_obfuscation_enabled: false
+        // so it runs now instead of waiting for the next batch.
+        { settings }
       ),
       settings
     );

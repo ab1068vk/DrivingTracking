@@ -10,8 +10,10 @@ import android.os.Build;
 import androidx.core.content.ContextCompat;
 
 import org.json.JSONObject;
+import android.util.Log;
 
 public final class DriveSenseBootReceiver extends BroadcastReceiver {
+    private static final String TAG = "BootReceiver";
     @Override
     public void onReceive(Context context, Intent intent) {
         if (context == null || intent == null) return;
@@ -88,6 +90,8 @@ public final class DriveSenseBootReceiver extends BroadcastReceiver {
             event.put("timestamp", java.time.Instant.now().toString());
             event.put("source", "android");
             DriveSenseNativeTripStore.addDiagnosticEvent(context, event);
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.w(TAG, "Could not record", error);
+        }
     }
 }

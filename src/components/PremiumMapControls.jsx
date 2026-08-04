@@ -1,7 +1,7 @@
 // @ts-check
-import premiumMapControlLayers from '@/assets/premium-map-control-layers.png';
-import premiumMapControlPlayback from '@/assets/premium-map-control-playback.png';
-import premiumMapControlView from '@/assets/premium-map-control-view.png';
+import premiumMapControlLayers from '@/assets/premium-map-control-layers.webp';
+import premiumMapControlPlayback from '@/assets/premium-map-control-playback.webp';
+import premiumMapControlView from '@/assets/premium-map-control-view.webp';
 
 const CONTROLS = Object.freeze([
   {
