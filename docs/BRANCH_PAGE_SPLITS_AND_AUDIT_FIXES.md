@@ -19,7 +19,7 @@ intended anywhere.
 
 ## 1. How to throw this away
 
-All of this work is in **one commit** on
+All of this work is in **one commit — `1197df72`** on the branch
 **`refactor/page-splits-and-audit-fixes`**. To discard every bit of it:
 
 ```bash
@@ -34,10 +34,10 @@ three earlier `codex/whatnow` commits intact. **Do not `git checkout main` for
 this**: `main` is three commits further back and would also drop unrelated
 earlier work.
 
-To keep the work but undo it in place instead:
+To keep the branch but undo it in place instead:
 
 ```bash
-git revert <the commit sha>
+git revert 1197df72
 ```
 
 Confirm you are rid of it with `git log --oneline -1` (should read
