@@ -14,6 +14,25 @@ export function clamp(value, min, max) {
 }
 
 /**
+ * Convert an event count into a displayed "per N km" rate.
+ * Uses the trip's real distance rather than a normalization floor, so short trips are not
+ * reported at a fraction of their true rate. Non-positive distance falls back to 1 km because
+ * a rate is undefined without distance travelled.
+ * @param {number} count - Number of events observed.
+ * @param {number} distanceKm - Distance actually travelled, in kilometres.
+ * @param {number} [per=10] - Rate denominator in kilometres.
+ * @returns {number} Rate rounded to one decimal place.
+ * @example eventRatePerDistance(2, 0.3) // 66.7
+ */
+export function eventRatePerDistance(count, distanceKm, per = 10) {
+  const events = Number(count);
+  if (!Number.isFinite(events)) return 0;
+  const distance = Number(distanceKm);
+  const effectiveDistance = Number.isFinite(distance) && distance > 0 ? distance : 1;
+  return Math.round((events / effectiveDistance) * per * 10) / 10;
+}
+
+/**
  * Calculate Pearson correlation for paired numeric samples.
  * Invalid pairs are discarded so callers can pass raw sensor-derived arrays.
  * @param {number[]} xs

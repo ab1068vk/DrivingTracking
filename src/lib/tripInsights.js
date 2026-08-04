@@ -833,7 +833,7 @@ const hasCurrentScoringVersion = (trip = {}) => tripScoringVersion(trip) === SCO
 
 export function computePersonalBaseline(completedTrips = []) {
   const completed = (Array.isArray(completedTrips) ? completedTrips : [])
-    .filter((trip) => trip.status === 'completed' && Number(trip.score_overall) > 0)
+    .filter((trip) => trip.status === 'completed' && finiteScore(trip.score_overall) != null)
     .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
   const avg = (items) => {
     const score = distanceWeightedScore(items);
@@ -1205,7 +1205,7 @@ function calculateConsistencyIqrMultiplier(trips = []) {
 
 export function calculateDrivingConsistency(trips = []) {
   const completedWithScores = trips
-    .filter((trip) => trip.status === 'completed' && Number(trip.score_overall) > 0);
+    .filter((trip) => trip.status === 'completed' && finiteScore(trip.score_overall) != null);
   const scores = completedWithScores
     .map((trip) => Number(trip.score_overall))
     .sort((a, b) => a - b);

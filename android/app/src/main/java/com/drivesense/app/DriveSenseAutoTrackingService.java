@@ -19,6 +19,8 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.hardware.TriggerEvent;
+import android.hardware.TriggerEventListener;
 import android.location.Location;
 import android.net.Uri;
 import android.os.Build;
@@ -58,8 +60,18 @@ import java.util.Set;
 import android.util.Log;
 
 public class DriveSenseAutoTrackingService extends Service implements SensorEventListener {
+    /** Armed-state GPS aggressiveness while no trip is in progress. */
+    private enum ArmedTier { HIGH_ACCURACY, BALANCED, DORMANT }
+
     private static final String TAG = "AutoTrackingService";
     private static volatile boolean dataErasureInProgress = false;
+    // Process-scoped liveness marker. A kill resets statics along with the process, so the
+    // watchdog can tell "service running" from "process was killed" without polling or
+    // trusting a heartbeat timestamp that Doze could delay.
+    private static volatile boolean serviceRunning = false;
+    // Set only on user/app-authorized stop paths. onDestroy() uses it to tell a real stop
+    // apart from the OS or an OEM battery manager tearing the service down mid-drive.
+    private boolean explicitStopRequested = false;
     static final String ACTION_START = "com.drivesense.app.action.START_NATIVE_AUTO";
     static final String ACTION_START_MANUAL_TRIP = "com.drivesense.app.action.START_NATIVE_MANUAL_TRIP";
     static final String ACTION_STOP = "com.drivesense.app.action.STOP_NATIVE_AUTO";
@@ -113,9 +125,16 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final double MIN_POINT_DISTANCE_M = 8d;
     private static final double STATIONARY_SPEED_KMH = 5d;
     private static final double MIN_TRUSTED_SPEED_KMH = 18d;
+    // Mirrors the reported-vs-implied speed agreement checks in src/lib/tripEngine.js.
+    private static final double MIN_REPORTED_MOVEMENT_DISPLACEMENT_M = 2d;
+    private static final double REPORTED_SPEED_AGREEMENT_KMH = 12d;
     private static final double MAX_SPEED_KMH = 220d;
     private static final double AUTO_START_SPEED_KMH = 5d;
     private static final long AUTO_START_MOVING_MS = 2_000L;
+    // Armed-tier back-off thresholds: how long activity recognition must report a confident
+    // STILL before armed GPS drops to balanced accuracy, then releases location entirely.
+    private static final long ARMED_BALANCED_AFTER_STILL_MS = 2 * 60_000L;
+    private static final long ARMED_DORMANT_AFTER_STILL_MS = 10 * 60_000L;
     private static final long ACTIVITY_UPDATE_INTERVAL_MS = 5_000L;
     private static final long PARKING_COOLDOWN_MS = 5 * 60_000L;
     private static final double PARKING_COOLDOWN_RADIUS_M = 75.0d;
@@ -233,6 +252,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private long stillSinceMs = 0L;
     private long nonVehicleSinceMs = 0L;
     private Location previousLocation;
+    private ArmedTier armedTier = ArmedTier.HIGH_ACCURACY;
+    private long armedStillSinceMs = 0L;
+    private Sensor significantMotionSensor;
+    private TriggerEventListener significantMotionListener;
     private Location armedPreviousLocation;
     private long lastLocationMs = 0L;
     private long armedMovingSinceMs = 0L;
@@ -315,6 +338,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     @Override
     public void onCreate() {
         super.onCreate();
+        serviceRunning = true;
+        explicitStopRequested = false;
         dataErasureInProgress = false;
         updateForegroundNotification("Ready when you start moving");
         ensureSafetyAlertsChannel();
@@ -378,6 +403,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             discardActiveTrip("manual_trip_saved_by_app", keepArmed);
             recordDiagnostic("manual_native_trip_discarded", "Native manual trip mirror discarded.", "manual_trip_saved_by_app", 0d, 0L, 0d);
             if (!keepArmed) {
+                explicitStopRequested = true;
+                DriveSenseTrackingWatchdog.cancel(this);
                 DriveSenseNativeTripStore.setServiceEnabled(this, false);
                 stopSelf();
                 return START_NOT_STICKY;
@@ -388,6 +415,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             finishTrip("notification_end_trip", keepArmed);
             recordDiagnostic("service_armed", "Native service is armed for auto tracking.", "notification_end_trip", 0d, 0L, 0d);
             if (!keepArmed) {
+                explicitStopRequested = true;
+                DriveSenseTrackingWatchdog.cancel(this);
                 DriveSenseNativeTripStore.setServiceEnabled(this, false);
                 if (pendingParkingRefinementPoints == null) stopSelf();
                 return START_NOT_STICKY;
@@ -396,6 +425,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (ACTION_START.equals(action) || action == null) {
             recordDiagnostic("service_armed", "Native service is armed for auto tracking.", "service_start", 0d, 0L, 0d);
         }
+        DriveSenseTrackingWatchdog.armPeriodicCheck(this);
         requestActivityUpdates();
         if (!isTripActive()) startArmedLocationUpdates();
 
@@ -409,9 +439,59 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         return START_STICKY;
     }
 
+    static boolean isRunning() {
+        return serviceRunning;
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        // Aggressive OEM launchers kill the whole process when the task is swiped away.
+        // Restarting from here is allowed on Android 12+ because this app is *currently*
+        // running a foreground service, which is a documented background-start exemption.
+        if (!DriveSenseNativeTripStore.isServiceEnabled(this)) {
+            super.onTaskRemoved(rootIntent);
+            return;
+        }
+        if (isTripActive()) persistActiveTripCheckpoint(System.currentTimeMillis(), true);
+        recordDiagnostic(
+            "task_removed",
+            "App task removed while tracking was armed; requesting restart.",
+            "on_task_removed",
+            lastKnownSpeedKmh,
+            0L,
+            0d
+        );
+        Intent restart = new Intent(getApplicationContext(), DriveSenseAutoTrackingService.class)
+            .setAction(ACTION_START);
+        try {
+            ContextCompat.startForegroundService(getApplicationContext(), restart);
+        } catch (Exception ignored) {
+            // The process may be killed before the binder call lands; the watchdog below is
+            // the backstop for exactly that race.
+        }
+        DriveSenseTrackingWatchdog.scheduleImmediateCheck(getApplicationContext());
+        super.onTaskRemoved(rootIntent);
+    }
+
     @Override
     public void onDestroy() {
-        if (!dataErasureInProgress) {
+        // An involuntary destroy (OEM battery sweep, low-memory stop) must not finalize the
+        // drive: doing so splits one real trip into several. Freeze it as a checkpoint instead
+        // so a relaunch resumes it, and let restoreActiveTripCheckpointIfAvailable() decide
+        // resume-vs-finalize based on how long the gap turned out to be.
+        boolean involuntaryStop = isTripActive() && !explicitStopRequested && !dataErasureInProgress;
+        if (involuntaryStop) {
+            persistActiveTripCheckpoint(System.currentTimeMillis(), true);
+            recordDiagnostic(
+                "service_destroyed_involuntary",
+                "Tracking stopped without an explicit stop; trip kept resumable.",
+                "service_destroyed",
+                lastKnownSpeedKmh,
+                0L,
+                0d
+            );
+            DriveSenseTrackingWatchdog.onTrackingInterrupted(this);
+        } else if (!dataErasureInProgress) {
             finishTrip("service_destroyed", false);
         }
         clearPendingParkingRefinement();
@@ -419,6 +499,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         removeActivityUpdates();
         stopLocationUpdates();
         stopMotionSensors();
+        stopSignificantMotionWatch();
         if (dataErasureInProgress) {
             // Clear again after callbacks are detached so no final location
             // callback can recreate native state during the stop race.
@@ -426,6 +507,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         }
         if (speechController != null) speechController.shutdown();
         removeTrackingNotification();
+        serviceRunning = false;
         super.onDestroy();
     }
 
@@ -640,6 +722,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         boolean gpsVeryStable = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
         boolean gpsParkedStable = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_M && !Double.isNaN(stoppedAnchorLat);
         boolean gpsParkedRelaxed = maxDriftSinceStopM < GPS_VEHICLE_DRIFT_RELAXED_M && !Double.isNaN(stoppedAnchorLat);
+
+        updateArmedTier(type, confidence, now);
 
         if (!isTripActive()) {
             if (inVehicle &&
@@ -958,14 +1042,32 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         recordDiagnostic("armed_location_watch", "Waiting for movement after a parked or ended trip.", "armed_gps_backup", lastKnownSpeedKmh, 0L, 0d);
     }
 
+    /**
+     * Entry point used when arming and after a trip ends: always start fully responsive so a
+     * new drive is never missed, then let {@link #updateArmedTier} back off if the vehicle
+     * turns out to be parked.
+     */
     private void startArmedLocationUpdates() {
+        armedTier = ArmedTier.HIGH_ACCURACY;
+        armedStillSinceMs = 0L;
+        stopSignificantMotionWatch();
+        applyArmedLocationRequest();
+    }
+
+    private void applyArmedLocationRequest() {
         if (!hasLocationPermission()) {
             return;
         }
 
         stopLocationUpdates();
-        LocationRequest request = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000L)
-            .setMinUpdateIntervalMillis(2_000L)
+        // Dormant deliberately holds no location request at all; activity recognition and the
+        // significant-motion trigger are what wake it back up.
+        if (armedTier == ArmedTier.DORMANT) return;
+
+        boolean balanced = armedTier == ArmedTier.BALANCED;
+        int priority = balanced ? Priority.PRIORITY_BALANCED_POWER_ACCURACY : Priority.PRIORITY_HIGH_ACCURACY;
+        LocationRequest request = new LocationRequest.Builder(priority, balanced ? 30_000L : 5_000L)
+            .setMinUpdateIntervalMillis(balanced ? 15_000L : 2_000L)
             .setMinUpdateDistanceMeters(5f)
             .build();
 
@@ -974,6 +1076,92 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         } catch (SecurityException error) {
             Log.w(TAG, "Could not start armed location updates", error);
         }
+    }
+
+    /**
+     * Backs armed GPS off while the vehicle is confidently parked. Holding
+     * PRIORITY_HIGH_ACCURACY 24/7 drains the battery for no benefit and makes the app a
+     * bigger target for the OEM battery managers that kill tracking in the first place.
+     */
+    private void updateArmedTier(int type, int confidence, long now) {
+        if (isTripActive()) {
+            armedStillSinceMs = 0L;
+            return;
+        }
+
+        boolean confidentlyStill = type == DetectedActivity.STILL && confidence >= MIN_STILL_CONFIDENCE;
+        if (!confidentlyStill) {
+            armedStillSinceMs = 0L;
+            applyArmedTier(ArmedTier.HIGH_ACCURACY, "activity_moving");
+            return;
+        }
+
+        if (armedStillSinceMs == 0L) armedStillSinceMs = now;
+        long stillForMs = now - armedStillSinceMs;
+        if (stillForMs >= ARMED_DORMANT_AFTER_STILL_MS) {
+            applyArmedTier(ArmedTier.DORMANT, "still_sustained");
+        } else if (stillForMs >= ARMED_BALANCED_AFTER_STILL_MS) {
+            applyArmedTier(ArmedTier.BALANCED, "still_confirmed");
+        }
+    }
+
+    private void applyArmedTier(ArmedTier tier, String reason) {
+        if (armedTier == tier) return;
+        armedTier = tier;
+        if (tier == ArmedTier.DORMANT) {
+            startSignificantMotionWatch();
+        } else {
+            stopSignificantMotionWatch();
+        }
+        applyArmedLocationRequest();
+        recordDiagnostic(
+            "armed_tier_" + tier.name().toLowerCase(Locale.US),
+            "Armed GPS tier changed to " + tier.name().toLowerCase(Locale.US) + ".",
+            reason,
+            lastKnownSpeedKmh,
+            0L,
+            0d
+        );
+    }
+
+    private void startSignificantMotionWatch() {
+        if (sensorManager == null || significantMotionListener != null) return;
+        if (significantMotionSensor == null) {
+            significantMotionSensor = sensorManager.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION);
+        }
+        if (significantMotionSensor == null) return;
+        significantMotionListener = new TriggerEventListener() {
+            @Override
+            public void onTrigger(TriggerEvent event) {
+                // Trigger sensors are one-shot; clear the handle before re-arming GPS so a
+                // later dormant transition can register a fresh listener.
+                significantMotionListener = null;
+                escalateArmedTierForMotion("significant_motion");
+            }
+        };
+        try {
+            sensorManager.requestTriggerSensor(significantMotionListener, significantMotionSensor);
+        } catch (Exception error) {
+            significantMotionListener = null;
+            Log.w(TAG, "Could not register significant motion trigger", error);
+        }
+    }
+
+    private void stopSignificantMotionWatch() {
+        if (sensorManager != null && significantMotionSensor != null && significantMotionListener != null) {
+            try {
+                sensorManager.cancelTriggerSensor(significantMotionListener, significantMotionSensor);
+            } catch (Exception error) {
+                Log.w(TAG, "Could not cancel significant motion trigger", error);
+            }
+        }
+        significantMotionListener = null;
+    }
+
+    private void escalateArmedTierForMotion(String reason) {
+        if (isTripActive()) return;
+        armedStillSinceMs = 0L;
+        applyArmedTier(ArmedTier.HIGH_ACCURACY, reason);
     }
 
     private void stopLocationUpdates() {
@@ -1086,6 +1274,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         lastLocationMs = location.getTime() > 0L ? location.getTime() : now;
 
         if (speedKmh >= AUTO_START_SPEED_KMH) {
+            // Movement seen on a balanced-accuracy fix: restore full accuracy immediately so
+            // the trip start is timed from responsive GPS rather than a 30s sample.
+            escalateArmedTierForMotion("armed_gps_movement");
             if (armedMovingSinceMs == 0L) armedMovingSinceMs = now;
             if (now - armedMovingSinceMs >= AUTO_START_MOVING_MS) {
                 startCandidateTrip("armed_gps_movement", location);
@@ -1968,9 +2159,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     private boolean isNoise(double distanceM, double impliedSpeedKmh, double reportedSpeedKmh, double previousAccuracy, double currentAccuracy) {
         double floor = noiseFloor(previousAccuracy, currentAccuracy);
-        // Frequent samples can each be shorter than the accuracy-derived floor.
-        // Reported vehicle speed is independent evidence that the step is real.
-        boolean reportedShowsVehicleMovement = reportedSpeedKmh >= MIN_TRUSTED_SPEED_KMH;
+        // Frequent samples can each be shorter than the accuracy-derived floor. A trusted
+        // vehicle-speed reading can support those short steps only when it agrees with real
+        // coordinate displacement, otherwise a stale speed reading turns duplicate fixes or a
+        // poor-accuracy wobble into accepted movement.
+        // Must stay in step with calculateSegmentMetrics in src/lib/tripEngine.js.
+        boolean reportedShowsVehicleMovement = reportedSpeedKmh >= MIN_TRUSTED_SPEED_KMH &&
+            distanceM >= MIN_REPORTED_MOVEMENT_DISPLACEMENT_M &&
+            Math.abs(reportedSpeedKmh - impliedSpeedKmh) <= REPORTED_SPEED_AGREEMENT_KMH;
         boolean tinyMovement = distanceM < floor && !reportedShowsVehicleMovement;
         boolean displacementSaysStill = impliedSpeedKmh < STATIONARY_SPEED_KMH && distanceM < floor * 1.5d;
         boolean reportedDisagrees = reportedSpeedKmh < MIN_TRUSTED_SPEED_KMH && displacementSaysStill;
@@ -1978,7 +2174,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private double reliableSpeed(double impliedSpeedKmh, double reportedSpeedKmh) {
-        boolean reportedCloseToImplied = Math.abs(reportedSpeedKmh - impliedSpeedKmh) <= 12d;
+        boolean reportedCloseToImplied = Math.abs(reportedSpeedKmh - impliedSpeedKmh) <= REPORTED_SPEED_AGREEMENT_KMH;
         boolean reportedTooLowForMovement = reportedSpeedKmh < MIN_TRUSTED_SPEED_KMH &&
             impliedSpeedKmh >= MIN_TRUSTED_SPEED_KMH &&
             !reportedCloseToImplied;
@@ -4149,6 +4345,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private void stopEverything() {
+        explicitStopRequested = true;
+        DriveSenseTrackingWatchdog.cancel(this);
         finishTrip("service_stopped_by_user", false);
         removeActivityUpdates();
         stopLocationUpdates();

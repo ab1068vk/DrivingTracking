@@ -15,7 +15,10 @@ export async function getDeviceAuthenticationAvailability() {
 }
 
 export async function authenticateDevice(reason = 'Verify your identity') {
-  if (!isAndroid()) return { verified: true, native: false };
+  // Fail closed where no device authenticator exists, so a future caller that forgets its own
+  // platform guard cannot be waved through. Callers that legitimately proceed without device
+  // auth (web/dev builds) must opt in by checking `unsupported`, never by trusting `verified`.
+  if (!isAndroid()) return { verified: false, native: false, unsupported: true };
   const result = await BiometricAuth.authenticate({
     title: 'Unlock Road Sage',
     subtitle: reason,

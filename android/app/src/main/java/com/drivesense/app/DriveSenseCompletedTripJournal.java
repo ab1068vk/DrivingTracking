@@ -39,7 +39,44 @@ final class DriveSenseCompletedTripJournal {
     private static final long ORPHAN_MAX_AGE_MS = 24L * 60L * 60_000L;
     private static final Object LOCK = new Object();
 
+    private static final String KEY_OVERFLOW_COUNT = "completed_trip_journal_overflow_count";
+    private static final String KEY_OVERFLOW_AT_MS = "completed_trip_journal_overflow_at_ms";
+    private static final String KEY_OVERFLOW_REASON = "completed_trip_journal_overflow_reason";
+
     private DriveSenseCompletedTripJournal() {}
+
+    /**
+     * A refused trip is real data the user drove and will never see, so it must not fail
+     * silently. The counter is surfaced through {@link #status(Context)} and cleared once the
+     * JS layer drains the queue, letting the app warn instead of losing trips quietly.
+     */
+    private static void recordOverflow(Context context, String reason) {
+        Log.e(TAG, "Completed trip journal is full; trip not queued (" + reason + ")");
+        try {
+            android.content.SharedPreferences prefs = DriveSenseNativeTripStore.prefs(context);
+            int previous = prefs.getInt(KEY_OVERFLOW_COUNT, 0);
+            prefs.edit()
+                .putInt(KEY_OVERFLOW_COUNT, previous + 1)
+                .putLong(KEY_OVERFLOW_AT_MS, System.currentTimeMillis())
+                .putString(KEY_OVERFLOW_REASON, reason)
+                .apply();
+        } catch (Exception error) {
+            Log.w(TAG, "Could not record journal overflow", error);
+        }
+    }
+
+    /** Called once queued trips are safely handed to the JS store. */
+    static void clearOverflowRecord(Context context) {
+        try {
+            DriveSenseNativeTripStore.prefs(context).edit()
+                .remove(KEY_OVERFLOW_COUNT)
+                .remove(KEY_OVERFLOW_AT_MS)
+                .remove(KEY_OVERFLOW_REASON)
+                .apply();
+        } catch (Exception error) {
+            Log.w(TAG, "Could not clear journal overflow record", error);
+        }
+    }
 
     static JSONArray getCompletedTrips(Context context) {
         synchronized (LOCK) {
@@ -84,13 +121,17 @@ final class DriveSenseCompletedTripJournal {
                 return false;
             }
             int manifestCount = manifestFiles(directory).length;
-            if (!manifestFile.exists() && manifestCount >= MAX_ENTRIES) return false;
+            if (!manifestFile.exists() && manifestCount >= MAX_ENTRIES) {
+                recordOverflow(context, "entry_limit");
+                return false;
+            }
 
             long existingEntryBytes = bytesForStem(directory, stem);
             long estimatedEncryptedBytes = estimateEncryptedBytes(plaintext.length, chunkCount) + MAX_MANIFEST_BYTES;
             long currentBytes = directoryBytes(directory);
             if (currentBytes - existingEntryBytes + estimatedEncryptedBytes > MAX_TOTAL_JOURNAL_BYTES) {
                 Log.e(TAG, "Completed trip journal reached its bounded total size");
+                recordOverflow(context, "size_limit");
                 return false;
             }
 
@@ -175,6 +216,10 @@ final class DriveSenseCompletedTripJournal {
                     failed.put(tripId);
                 }
             }
+            // Space has been reclaimed, so a past overflow is no longer an active warning.
+            if (removed > 0 && manifestFiles(directory(context)).length < MAX_ENTRIES) {
+                clearOverflowRecord(context);
+            }
             try {
                 result.put("requested", requested);
                 result.put("removed", removed);
@@ -237,6 +282,14 @@ final class DriveSenseCompletedTripJournal {
                 status.put("lastVerifiedSaveAtMs", scan.lastVerifiedSaveAtMs > 0L ? scan.lastVerifiedSaveAtMs : JSONObject.NULL);
                 status.put("availableDeviceBytes", availableBytes > 0L ? availableBytes : JSONObject.NULL);
                 status.put("entryLimit", MAX_ENTRIES);
+                android.content.SharedPreferences prefs = DriveSenseNativeTripStore.prefs(context);
+                int droppedCount = prefs.getInt(KEY_OVERFLOW_COUNT, 0);
+                long droppedAtMs = prefs.getLong(KEY_OVERFLOW_AT_MS, 0L);
+                status.put("droppedTripCount", droppedCount);
+                status.put("droppedAtMs", droppedAtMs > 0L ? droppedAtMs : JSONObject.NULL);
+                status.put("droppedReason", droppedCount > 0
+                    ? prefs.getString(KEY_OVERFLOW_REASON, "entry_limit")
+                    : JSONObject.NULL);
                 status.put("cloudBackupExcluded", true);
                 status.put("storageScope", "app_private_no_backup");
             } catch (Exception error) {
@@ -292,11 +345,17 @@ final class DriveSenseCompletedTripJournal {
         File manifestFile = manifestFile(directory, stem);
         if (manifestFile.exists() && readManifest(manifestFile, stem) == null) return false;
         int manifestCount = manifestFiles(directory).length;
-        if (!manifestFile.exists() && manifestCount >= MAX_ENTRIES) return false;
+        if (!manifestFile.exists() && manifestCount >= MAX_ENTRIES) {
+            recordOverflow(context, "entry_limit");
+            return false;
+        }
         long existingEntryBytes = bytesForStem(directory, stem);
         long estimatedEncryptedBytes = estimateEncryptedBytes(plaintext.length, chunkCount) + MAX_MANIFEST_BYTES;
         long currentBytes = directoryBytes(directory);
-        if (currentBytes - existingEntryBytes + estimatedEncryptedBytes > MAX_TOTAL_JOURNAL_BYTES) return false;
+        if (currentBytes - existingEntryBytes + estimatedEncryptedBytes > MAX_TOTAL_JOURNAL_BYTES) {
+            recordOverflow(context, "size_limit");
+            return false;
+        }
 
         String generation = UUID.randomUUID().toString().replace("-", "");
         List<File> writtenChunks = new ArrayList<>();

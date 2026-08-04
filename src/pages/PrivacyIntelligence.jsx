@@ -172,7 +172,9 @@ export async function runPrivacyAuthentication({
 } = {}) {
   try {
     const result = await authenticate('Access Privacy Intelligence');
-    if (result?.verified) {
+    // Platforms without a device authenticator (web/dev builds) have nothing to verify
+    // against, so the page stays reachable there instead of locking permanently.
+    if (result?.verified || result?.unsupported) {
       setAuthed?.(true);
       setError?.('');
       return true;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clamp, pearsonCorrelation } from '@/lib/mathUtils';
+import { clamp, eventRatePerDistance, pearsonCorrelation } from '@/lib/mathUtils';
 
 describe('mathUtils clamp', () => {
   it('returns the minimum for NaN input', () => {
@@ -9,6 +9,27 @@ describe('mathUtils clamp', () => {
   it('keeps inclusive boundary values', () => {
     expect(clamp(100, 0, 100)).toBe(100);
     expect(clamp(-1, 0, 100)).toBe(0);
+  });
+});
+
+describe('mathUtils eventRatePerDistance', () => {
+  it('uses real distance so short trips are not understated', () => {
+    // A 1 km normalization floor would report this as 20 per 10 km.
+    expect(eventRatePerDistance(2, 0.3)).toBeCloseTo(66.7, 1);
+  });
+
+  it('matches the plain rate for distances over a kilometre', () => {
+    expect(eventRatePerDistance(4, 20)).toBe(2);
+  });
+
+  it('falls back to a one kilometre denominator when distance is missing or zero', () => {
+    expect(eventRatePerDistance(3, 0)).toBe(30);
+    expect(eventRatePerDistance(3, null)).toBe(30);
+    expect(eventRatePerDistance(3, NaN)).toBe(30);
+  });
+
+  it('returns zero for a non-numeric count', () => {
+    expect(eventRatePerDistance(undefined, 10)).toBe(0);
   });
 });
 

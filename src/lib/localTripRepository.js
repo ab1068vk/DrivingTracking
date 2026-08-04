@@ -1,6 +1,7 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { acknowledgeNativeCompletedTrips, getNativeCompletedTrips } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
+import { eventRatePerDistance } from '@/lib/mathUtils';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
 import {
   buildDrivingThresholds,
@@ -225,6 +226,9 @@ const localStorageMeta = () => {
   }
 };
 
+const DB_OPEN_TIMEOUT_MS = 15_000;
+const DB_OPEN_BLOCKED_MESSAGE = 'IndexedDB open blocked. Close any other Road Sage window or tab and try again.';
+
 const openDbByName = (dbName) => new Promise((resolve, reject) => {
   if (!canUseIndexedDb()) {
     reject(new Error('IndexedDB unavailable'));
@@ -232,15 +236,37 @@ const openDbByName = (dbName) => new Promise((resolve, reject) => {
   }
 
   const request = indexedDB.open(dbName, DB_VERSION);
+  let settled = false;
+
+  // A version upgrade held open by another live connection fires neither success nor error.
+  // Without the handlers below the promise never settles and every trip read/write queued
+  // behind it hangs silently, which presents to the user as total data loss.
+  const timeoutId = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    reject(new Error(`IndexedDB open timed out for ${dbName}. ${DB_OPEN_BLOCKED_MESSAGE}`));
+  }, DB_OPEN_TIMEOUT_MS);
+  timeoutId?.unref?.();
+
+  const settle = (finish, value) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeoutId);
+    finish(value);
+  };
+
   request.onupgradeneeded = (event) => {
+    // Upgrading means we are past the blocked phase; a long migration must not trip the timeout.
+    clearTimeout(timeoutId);
     tripDbMigrationRunner.migrate({
       db: request.result,
       oldVersion: event.oldVersion,
       transaction: request.transaction,
     });
   };
-  request.onsuccess = () => resolve(request.result);
-  request.onerror = () => reject(request.error);
+  request.onsuccess = () => settle(resolve, request.result);
+  request.onerror = () => settle(reject, request.error);
+  request.onblocked = () => settle(reject, new Error(`${DB_OPEN_BLOCKED_MESSAGE} (${dbName})`));
 });
 
 const openDb = () => migrateConfiguredDbName().then(() => openDbByName(DB_NAME));
@@ -924,7 +950,6 @@ export const normalizeRetiredTripEventTypes = (trip = {}) => {
   const legacyHeadingCount = drivingEvents.length
     ? drivingEvents.filter((event) => event?.type === 'heading_deviation_legacy').length
     : Number(next.heading_deviation_legacy_count ?? next.lane_changes_count) || 0;
-  const distanceKm = Math.max(1, Number(next.distance_km) || 1);
   const needsCountRefresh = drivingEvents.length > 0 && (
     next.heading_deviation_count !== modernHeadingCount ||
     next.heading_deviation_legacy_count !== legacyHeadingCount
@@ -934,9 +959,9 @@ export const normalizeRetiredTripEventTypes = (trip = {}) => {
     delete next.lane_changes_count;
     delete next.lane_changes_per_10km;
     next.heading_deviation_count = modernHeadingCount;
-    next.heading_deviations_per_10km = Math.round((modernHeadingCount / distanceKm) * 100) / 10;
+    next.heading_deviations_per_10km = eventRatePerDistance(modernHeadingCount, next.distance_km);
     next.heading_deviation_legacy_count = legacyHeadingCount;
-    next.heading_deviation_legacy_per_10km = Math.round((legacyHeadingCount / distanceKm) * 100) / 10;
+    next.heading_deviation_legacy_per_10km = eventRatePerDistance(legacyHeadingCount, next.distance_km);
     changed = true;
   }
 

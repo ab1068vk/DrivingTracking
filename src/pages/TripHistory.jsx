@@ -13,6 +13,7 @@ import {
   getPremiumHistoryPageWindow,
 } from '@/components/PremiumTripHistoryPanels';
 import SpeedLimitConflictReview from '@/components/SpeedLimitConflictReview';
+import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import { useLocalSettingSelector } from '@/hooks/useLocalSettings';
 import { formatDistance, formatDuration, getTripComponentScore } from '@/lib/tripEngine';
 import { getJson, setJson } from '@/lib/mobileStorage';
@@ -938,6 +939,12 @@ export default function TripHistory() {
             onPrevious={() => changePremiumPage(pageWindow.page - 1)}
             onNext={() => changePremiumPage(pageWindow.page + 1)}
           />
+        <SectionErrorBoundary
+          context="trip_history_premium_list"
+          title="Trip list unavailable"
+          message="Something went wrong while rendering these trips. Filters and search above still work."
+          resetKey={`${filterBy}-${sortBy}-${pageWindow.page}`}
+        >
         <div ref={tripListRef} className="space-y-3 scroll-mt-24" aria-label="Premium trip history list">
           {premiumTrips.map((trip, index) => (
             <TripCard
@@ -952,6 +959,7 @@ export default function TripHistory() {
             />
           ))}
         </div>
+        </SectionErrorBoundary>
           <PremiumHistoryResultsPager
             start={pageWindow.start}
             end={pageWindow.end}
@@ -972,23 +980,30 @@ export default function TripHistory() {
             total={sorted.length}
             onPageChange={changePage}
           />
-          <div className="space-y-2">
-            {pageTrips.map((trip, index) => (
-              <TripCard
-                key={trip.id}
-                trip={trip}
-                compact
-                units={units}
-                index={pageStart + index}
-                scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
-                onToggleFavorite={(target) => updateTripMut.mutate({
-                  id: target.id,
-                  patch: { is_favorite: target.is_favorite !== true },
-                })}
-                onIntent={handleTripIntent}
-              />
-            ))}
-          </div>
+          <SectionErrorBoundary
+            context="trip_history_list"
+            title="Trip list unavailable"
+            message="Something went wrong while rendering these trips. Filters and search above still work."
+            resetKey={`${filterBy}-${sortBy}-${safePage}`}
+          >
+            <div className="space-y-2">
+              {pageTrips.map((trip, index) => (
+                <TripCard
+                  key={trip.id}
+                  trip={trip}
+                  compact
+                  units={units}
+                  index={pageStart + index}
+                  scoreDelta={scoreDeltaForTrip(trip, tripsByRecentOrder)}
+                  onToggleFavorite={(target) => updateTripMut.mutate({
+                    id: target.id,
+                    patch: { is_favorite: target.is_favorite !== true },
+                  })}
+                  onIntent={handleTripIntent}
+                />
+              ))}
+            </div>
+          </SectionErrorBoundary>
           {pageCount > 1 && (
             <TripPageControls
               page={safePage}

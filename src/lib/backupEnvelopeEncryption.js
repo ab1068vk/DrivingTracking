@@ -7,6 +7,12 @@ export const ENCRYPTED_BACKUP_EXTENSION = '.drivesensebackup';
 export const ENCRYPTED_BACKUP_MIME_TYPE = 'application/vnd.road-sage.encrypted-backup+json';
 export const BACKUP_PASSPHRASE_MIN_LENGTH = 12;
 export const BACKUP_KDF_ITERATIONS = 210_000;
+// Backup files are shared (support requests, cloud drives, new-phone restore), so the
+// iteration count is untrusted input. An unbounded value would stall PBKDF2 for minutes
+// before the app could even report a wrong passphrase. Keep headroom above the current
+// default so backups written by future versions still restore.
+export const BACKUP_KDF_MIN_ITERATIONS = 1_000;
+export const BACKUP_KDF_MAX_ITERATIONS = 1_000_000;
 
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
@@ -181,6 +187,13 @@ const decompressBackupText = async (
   }
 };
 
+const isSupportedIterationCount = (value) => {
+  const iterations = Number(value);
+  return Number.isInteger(iterations) &&
+    iterations >= BACKUP_KDF_MIN_ITERATIONS &&
+    iterations <= BACKUP_KDF_MAX_ITERATIONS;
+};
+
 const validateEnvelope = (envelope) => {
   if (
     !envelope ||
@@ -197,7 +210,7 @@ const validateEnvelope = (envelope) => {
     envelope.kdf !== ENCRYPTED_BACKUP_KDF ||
     envelope.cipher !== ENCRYPTED_BACKUP_CIPHER ||
     (envelope.compression != null && envelope.compression !== ENCRYPTED_BACKUP_COMPRESSION) ||
-    !Number.isInteger(Number(envelope.iterations)) ||
+    !isSupportedIterationCount(envelope.iterations) ||
     typeof envelope.salt !== 'string' ||
     typeof envelope.iv !== 'string' ||
     typeof envelope.ciphertext !== 'string'

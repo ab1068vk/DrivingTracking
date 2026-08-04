@@ -16,6 +16,7 @@ import {
   sanitizeSpeedKnowledge,
 } from '@/lib/dataBackup';
 import {
+  BACKUP_UNSUPPORTED_ENCRYPTION_CODE,
   decryptBackupText,
   encryptBackupText,
   isEncryptedBackupEnvelope,
@@ -1006,6 +1007,27 @@ describe('backup trip import sanitization', () => {
 
     const imported = await importDriveSenseBackup(file, { passphrase });
     expect(imported).toMatchObject({ trips: 1, vehicles: 0 });
+  });
+
+  it('rejects an untrusted iteration count instead of stalling PBKDF2', async () => {
+    const passphrase = 'correct horse battery staple';
+    const encrypted = await encryptBackupText('{"app":"Road Sage"}', passphrase);
+    const envelope = JSON.parse(encrypted);
+
+    // A shared backup file could otherwise force a multi-minute key derivation before the
+    // app can even report that the passphrase was wrong.
+    const hostile = JSON.stringify({ ...envelope, iterations: 2_000_000_000 });
+    await expect(decryptBackupText(hostile, passphrase)).rejects.toMatchObject({
+      code: BACKUP_UNSUPPORTED_ENCRYPTION_CODE,
+    });
+
+    const degenerate = JSON.stringify({ ...envelope, iterations: 1 });
+    await expect(decryptBackupText(degenerate, passphrase)).rejects.toMatchObject({
+      code: BACKUP_UNSUPPORTED_ENCRYPTION_CODE,
+    });
+
+    // The count this app actually writes must still round-trip.
+    await expect(decryptBackupText(encrypted, passphrase)).resolves.toContain('Road Sage');
   });
 
   it('stops decompression when an encrypted backup expands beyond its safe limit', async () => {

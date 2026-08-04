@@ -1,6 +1,7 @@
 import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
+import { eventRatePerDistance } from '@/lib/mathUtils';
 import { BACKUP_EXCLUDED_KEYS, localSettings, sanitizeImportedSettings } from '@/lib/trackingStore';
 import {
   boundsOverlapPrivacyZone,
@@ -1366,15 +1367,14 @@ const migrateLegacyLaneChangeTrip = (trip) => {
   const modernCount = Array.isArray(events)
     ? events.filter((event) => event?.type === 'heading_deviation').length
     : Number(trip.heading_deviation_count) || 0;
-  const distanceKm = Math.max(1, Number(trip.distance_km) || 1);
   const { lane_changes_count: _laneChangesCount, lane_changes_per_10km: _laneChangesPer10Km, ...rest } = trip;
   return {
     ...rest,
     driving_events: events,
     heading_deviation_count: modernCount,
-    heading_deviations_per_10km: Math.round((modernCount / distanceKm) * 100) / 10,
+    heading_deviations_per_10km: eventRatePerDistance(modernCount, trip.distance_km),
     heading_deviation_legacy_count: legacyCount,
-    heading_deviation_legacy_per_10km: Math.round((legacyCount / distanceKm) * 100) / 10,
+    heading_deviation_legacy_per_10km: eventRatePerDistance(legacyCount, trip.distance_km),
   };
 };
 

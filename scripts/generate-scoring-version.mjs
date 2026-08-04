@@ -36,6 +36,11 @@ const generatedSource = (version) => `/**
 export const SCORING_VERSION = '${version}';
 `;
 
+// Compare content, not bytes: git checks this file out with CRLF wherever core.autocrlf
+// is enabled (the Windows default), while the generator always emits LF. Without this the
+// check fails permanently on those machines even when the version hash is correct.
+const normalizeEol = (source) => source.replace(/\r\n/g, '\n');
+
 const constantsUrl = `${pathToFileURL(constantsPath).href}?scoring-version=${Date.now()}`;
 const constantsModule = await import(constantsUrl);
 const constantsPayload = Object.fromEntries(
@@ -48,15 +53,16 @@ const hashInput = stableSerialize(constantsPayload);
 const version = createHash('sha256').update(hashInput).digest('hex').slice(0, 8);
 const nextSource = generatedSource(version);
 const currentSource = readFileSync(generatedPath, 'utf8');
+const isUpToDate = normalizeEol(currentSource) === normalizeEol(nextSource);
 
 if (checkOnly) {
-  if (currentSource !== nextSource) {
+  if (!isUpToDate) {
     console.error(`Generated scoring version is stale. Expected ${version}.`);
     console.error('Run: npm run scoring:version');
     process.exit(1);
   }
   console.log(`Scoring version ${version} is current.`);
-} else if (currentSource !== nextSource) {
+} else if (!isUpToDate) {
   writeFileSync(generatedPath, nextSource);
   console.log(`Generated scoring version ${version}.`);
 } else {

@@ -1,6 +1,6 @@
 import { saveExportToDownloads } from './nativeDownloads';
 import { logSystemFailure, recordSystemEvent } from './systemLog';
-import { clamp, pearsonCorrelation } from './mathUtils';
+import { clamp, eventRatePerDistance, pearsonCorrelation } from './mathUtils';
 import { detectTripStops, estimateTripEconomics, FATIGUE_HEATMAP_SEGMENT_SECONDS } from './tripInsights';
 import { createPrivacyExportSalt, isPointInPrivacyZone, maskEventCoordinatesForPrivacy, maskTripForPrivacyExport } from './privacyZones';
 import { applyDifferentialPrivacyToAggregates } from './differentialPrivacy';
@@ -5471,7 +5471,9 @@ export function detectHeadingDriftBeta(cleanPoints = [], durationSeconds = 0, th
     const windowSpeedStdDev = speedStdDevFromSummary(windowLength, speedSum, speedSumSq);
     if (windowHeadingStdDev > headingThreshold && windowSpeedStdDev < 6) {
       const elapsedFraction = Math.max(0, (startMs - startTime) / 1000) / Math.max(1, durationSeconds);
-      const startHour = new Date(startMs).getHours();
+      // Use the hour the trip was actually driven in (stored utc_offset_minutes), not the
+      // device's current timezone, so re-scoring after travel/DST keeps the circadian window.
+      const startHour = pointLocalTimeContext(cleanPoints[i])?.localHour ?? new Date(startMs).getHours();
       const circadianMultiplier = startHour >= 2 && startHour < 5 ? HEADING_DRIFT_CIRCADIAN_MULTIPLIER : 1;
       weightedScore += (1 + elapsedFraction) * circadianMultiplier;
       headingDriftWindowCount++;
@@ -6019,7 +6021,10 @@ export function calculateFatigueScore(durationSeconds, routePoints = []) {
 
   let timeScore = 0;
   if (points.length > 0) {
-    const startHour = new Date(points[0].timestamp).getHours();
+    // Use the hour the trip was actually driven in (stored utc_offset_minutes), not the
+    // device's current timezone, so re-scoring after travel/DST keeps the fatigue buckets.
+    const startHour = pointLocalTimeContext(points[0])?.localHour
+      ?? new Date(points[0].timestamp).getHours();
     if (startHour >= 2 && startHour < 5) timeScore = 5;
     else if (startHour >= 5 && startHour < 7) timeScore = 3;
     else if (startHour >= 13 && startHour < 15) timeScore = 2;
@@ -7184,9 +7189,9 @@ export function calculateTripScores(
     sharp_turns_count: counts[EVENT_TYPES.SHARP_TURN],
     speeding_events_count: counts[EVENT_TYPES.SPEEDING],
     heading_deviation_count: counts[EVENT_TYPES.HEADING_DEVIATION],
-    heading_deviations_per_10km: round1((counts[EVENT_TYPES.HEADING_DEVIATION] / distKm) * 10),
+    heading_deviations_per_10km: eventRatePerDistance(counts[EVENT_TYPES.HEADING_DEVIATION], stats.distance_km),
     heading_deviation_legacy_count: counts[EVENT_TYPES.HEADING_DEVIATION_LEGACY],
-    heading_deviation_legacy_per_10km: round1((counts[EVENT_TYPES.HEADING_DEVIATION_LEGACY] / distKm) * 10),
+    heading_deviation_legacy_per_10km: eventRatePerDistance(counts[EVENT_TYPES.HEADING_DEVIATION_LEGACY], stats.distance_km),
     heading_deviation_available: advancedSafetyEnabled || counts[EVENT_TYPES.HEADING_DEVIATION] > 0,
     heading_deviation_scoring_enabled: advancedSafetyEnabled,
     stop_start_pattern_count: stopStartPatternCount,

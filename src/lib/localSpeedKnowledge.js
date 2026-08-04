@@ -142,7 +142,9 @@ function distanceKm(lat1, lng1, lat2, lng2) {
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
     Math.sin(dLng / 2) ** 2;
-  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  // Math.max(0, ...) guards the floating-point overshoot that makes `a` fractionally
+  // exceed 1 for near-identical coordinates, which would otherwise yield NaN.
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
 }
 
 function pointToSegmentDistanceKm(lat, lng, start, end) {

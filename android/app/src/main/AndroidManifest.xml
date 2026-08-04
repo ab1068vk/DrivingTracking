@@ -76,6 +76,11 @@
             android:exported="false" />
 
         <receiver
+            android:name=".DriveSenseTrackingWatchdog"
+            android:enabled="true"
+            android:exported="false" />
+
+        <receiver
             android:name=".WhereIParkedWidgetProvider"
             android:enabled="true"
             android:exported="false"
@@ -102,6 +107,12 @@
 
         <service
             android:name=".RoadDataJobService"
+            android:enabled="true"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <service
+            android:name=".DriveSenseTrackingWatchdogJobService"
             android:enabled="true"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
