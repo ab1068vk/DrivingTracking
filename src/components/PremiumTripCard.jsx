@@ -142,7 +142,7 @@ export default function PremiumTripCard({
         '--premium-trip-score-color': scorePresentation.hue,
       })}
     >
-      <img className="premium-trip-scene" src={asset} alt="" aria-hidden="true" />
+      <img loading="lazy" className="premium-trip-scene" src={asset} alt="" aria-hidden="true" />
       <div className="premium-trip-grid" aria-hidden="true" />
       <button
         type="button"
@@ -157,7 +157,7 @@ export default function PremiumTripCard({
       <div className="premium-trip-content">
         <header className="premium-trip-header">
           <div className="premium-trip-emblem" aria-hidden="true">
-            <img src={emblem} alt="" />
+            <img loading="lazy" src={emblem} alt="" />
           </div>
 
           <div className="premium-trip-heading">

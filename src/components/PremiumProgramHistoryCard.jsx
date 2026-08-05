@@ -122,7 +122,7 @@ export default function PremiumProgramHistoryCard({ programs = [] }) {
   return (
     <section className="premium-program-history" aria-labelledby="premium-program-history-title">
       <div className="premium-program-history-grid" aria-hidden="true" />
-      <img className="premium-program-history-hero" src={premiumProgramHistoryHero} alt="" aria-hidden="true" />
+      <img loading="lazy" className="premium-program-history-hero" src={premiumProgramHistoryHero} alt="" aria-hidden="true" />
 
       <header className="premium-program-history-header">
         <div className="premium-program-history-eyebrow">
@@ -166,7 +166,7 @@ export default function PremiumProgramHistoryCard({ programs = [] }) {
                 aria-label={`${item.title}: ${item.completedCount} of ${item.targetTripCount} drives, ${item.statusLabel}, ${item.improvementLabel}`}
               >
                 <div className="premium-program-history-art" aria-hidden="true">
-                  <img src={item.artwork} alt="" />
+                  <img loading="lazy" src={item.artwork} alt="" />
                 </div>
 
                 <div className="premium-program-history-item-copy">

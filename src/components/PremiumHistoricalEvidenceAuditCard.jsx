@@ -122,7 +122,7 @@ export default function PremiumHistoricalEvidenceAuditCard({
       aria-labelledby="premium-historical-audit-title"
       aria-busy={loading}
     >
-      <img
+      <img loading="lazy"
         className="premium-historical-audit-hero"
         src={premiumHistoricalAuditHero}
         alt=""
@@ -157,9 +157,9 @@ export default function PremiumHistoricalEvidenceAuditCard({
             data-state={measured ? 'measured' : 'unavailable'}
             aria-label={`${label}: ${value}`}
           >
-            <img className="premium-historical-audit-art" src={art} alt="" aria-hidden="true" />
+            <img loading="lazy" className="premium-historical-audit-art" src={art} alt="" aria-hidden="true" />
             <span className="premium-historical-audit-metric-veil" aria-hidden="true" />
-            <img className="premium-historical-audit-icon" src={icon} alt="" aria-hidden="true" />
+            <img loading="lazy" className="premium-historical-audit-icon" src={icon} alt="" aria-hidden="true" />
             <span className="premium-historical-audit-copy">
               <strong>{value}</strong>
               <span>{label}</span>
@@ -170,14 +170,14 @@ export default function PremiumHistoricalEvidenceAuditCard({
 
       {notices.length > 0 && (
         <aside className="premium-historical-audit-notices" aria-label="Historical evidence exclusions and privacy">
-          <img
+          <img loading="lazy"
             className="premium-historical-audit-notices-art"
             src={premiumHistoricalAuditPrivacy}
             alt=""
             aria-hidden="true"
           />
           <span className="premium-historical-audit-notice-veil" aria-hidden="true" />
-          <img
+          <img loading="lazy"
             className="premium-historical-audit-lock"
             src={premiumHistoricalAuditPrivacyIcon}
             alt=""

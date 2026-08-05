@@ -29,6 +29,11 @@ final class DriveSenseSpeechController {
     private final AudioManager audioManager;
     private final ArrayDeque<SpeechRequest> pending = new ArrayDeque<>();
     private final Set<String> activeUtterances = new HashSet<>();
+    // activeUtterances and hasAudioFocus are touched from the service main thread (speak/stop)
+    // and from the TTS engine's own callback thread (utterance completion). Guard every access
+    // with this lock: an unsynchronized HashSet mutation can throw and take out voice alerts
+    // for the rest of the drive, and a torn hasAudioFocus can strand audio focus.
+    private final Object speechStateLock = new Object();
     private final AudioManager.OnAudioFocusChangeListener focusListener = focusChange -> {};
 
     private TextToSpeech textToSpeech;
@@ -85,7 +90,9 @@ final class DriveSenseSpeechController {
 
     void stop() {
         pending.clear();
-        activeUtterances.clear();
+        synchronized (speechStateLock) {
+            activeUtterances.clear();
+        }
         abandonAudioFocus();
         if (textToSpeech != null) {
             textToSpeech.stop();
@@ -149,10 +156,13 @@ final class DriveSenseSpeechController {
         }
         textToSpeech.setSpeechRate(request.rate);
         textToSpeech.setPitch(request.pitch);
-        String utteranceId = "roadsage_" + System.currentTimeMillis() + "_" + activeUtterances.size();
         int queueMode = request.interrupt ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD;
-        if (request.interrupt) activeUtterances.clear();
-        activeUtterances.add(utteranceId);
+        String utteranceId;
+        synchronized (speechStateLock) {
+            utteranceId = "roadsage_" + System.currentTimeMillis() + "_" + activeUtterances.size();
+            if (request.interrupt) activeUtterances.clear();
+            activeUtterances.add(utteranceId);
+        }
 
         int result;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -171,13 +181,20 @@ final class DriveSenseSpeechController {
         }
     }
 
-    private synchronized void finishUtterance(String utteranceId) {
-        activeUtterances.remove(utteranceId);
-        if (activeUtterances.isEmpty()) abandonAudioFocus();
+    private void finishUtterance(String utteranceId) {
+        boolean releaseFocus;
+        synchronized (speechStateLock) {
+            activeUtterances.remove(utteranceId);
+            releaseFocus = activeUtterances.isEmpty();
+        }
+        // Released outside the lock so a slow AudioManager call cannot stall the next speak().
+        if (releaseFocus) abandonAudioFocus();
     }
 
-    private boolean requestAudioFocus() {
-        if (audioManager == null || hasAudioFocus) return true;
+    private synchronized boolean requestAudioFocus() {
+        synchronized (speechStateLock) {
+            if (audioManager == null || hasAudioFocus) return true;
+        }
         int result;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (audioFocusRequest == null) {
@@ -195,18 +212,23 @@ final class DriveSenseSpeechController {
                 AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
             );
         }
-        hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
-        return hasAudioFocus;
+        boolean granted = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        synchronized (speechStateLock) {
+            hasAudioFocus = granted;
+        }
+        return granted;
     }
 
-    private void abandonAudioFocus() {
-        if (audioManager == null || !hasAudioFocus) return;
+    private synchronized void abandonAudioFocus() {
+        synchronized (speechStateLock) {
+            if (audioManager == null || !hasAudioFocus) return;
+            hasAudioFocus = false;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && audioFocusRequest != null) {
             audioManager.abandonAudioFocusRequest(audioFocusRequest);
         } else {
             audioManager.abandonAudioFocus(focusListener);
         }
-        hasAudioFocus = false;
     }
 
     private void failPending(String message) {

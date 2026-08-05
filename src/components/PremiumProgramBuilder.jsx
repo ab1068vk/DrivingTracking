@@ -103,9 +103,9 @@ export default function PremiumProgramBuilder({
                 data-tone={option.tone}
                 onClick={() => onSelect(option.focusId)}
               >
-                <img className="premium-program-option-art" src={option.artwork} alt="" aria-hidden="true" />
+                <img loading="lazy" className="premium-program-option-art" src={option.artwork} alt="" aria-hidden="true" />
                 <span className="premium-program-option-shade" aria-hidden="true" />
-                <img className="premium-program-option-icon" src={option.iconArtwork} alt="" aria-hidden="true" />
+                <img loading="lazy" className="premium-program-option-icon" src={option.iconArtwork} alt="" aria-hidden="true" />
 
                 <span className="premium-program-option-copy">
                   <span className="premium-program-option-priority">{option.priorityLabel}</span>

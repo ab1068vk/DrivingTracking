@@ -184,7 +184,7 @@ export default function PremiumPracticePlanCard({
       <div className="premium-practice-grid" aria-hidden="true" />
 
       <header className="premium-practice-hero">
-        <img src={model.heroArtwork} alt="" aria-hidden="true" />
+        <img loading="lazy" src={model.heroArtwork} alt="" aria-hidden="true" />
         <div className="premium-practice-hero-shade" aria-hidden="true" />
         <div className="premium-practice-heading">
           <div className="premium-practice-brand">
@@ -238,7 +238,7 @@ export default function PremiumPracticePlanCard({
       )}
 
       <aside className="premium-practice-live" aria-label="Live coaching cue">
-        <img src={model.liveArtwork} alt="" aria-hidden="true" />
+        <img loading="lazy" src={model.liveArtwork} alt="" aria-hidden="true" />
         <div className="premium-practice-live-shade" aria-hidden="true" />
         <span className="premium-practice-pulse" aria-hidden="true">
           <ActivityPulse />

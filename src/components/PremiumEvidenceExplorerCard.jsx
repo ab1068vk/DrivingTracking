@@ -110,7 +110,7 @@ export default function PremiumEvidenceExplorerCard({ patterns = [], units = 'me
             >
               <span className="premium-evidence-rail" aria-hidden="true" />
               <div className="premium-evidence-art" aria-hidden="true">
-                <img src={row.artwork} alt="" />
+                <img loading="lazy" src={row.artwork} alt="" />
               </div>
 
               <div className="premium-evidence-copy">

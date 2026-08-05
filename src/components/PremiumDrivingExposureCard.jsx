@@ -77,7 +77,7 @@ export default function PremiumDrivingExposureCard({ dailyFatigue = {} }) {
 
       <div className="premium-exposure-instrument-row">
         <div className="premium-exposure-wheel" aria-hidden="true">
-          <img src={premiumDrivingExposureWheel} alt="" />
+          <img loading="lazy" src={premiumDrivingExposureWheel} alt="" />
         </div>
 
         <div className="premium-exposure-gauge" role="img" aria-label={gaugeLabel}>
@@ -105,7 +105,7 @@ export default function PremiumDrivingExposureCard({ dailyFatigue = {} }) {
           data-long={String(model.totalDrivingMinutes).length > 5 || String(model.tripCount).length > 5 ? 'true' : undefined}
           aria-label={`${model.totalDrivingMinutes} minutes driven today across ${model.tripLabel}`}
         >
-          <img src={premiumDrivingExposureClock} alt="" aria-hidden="true" />
+          <img loading="lazy" src={premiumDrivingExposureClock} alt="" aria-hidden="true" />
           <div className="premium-exposure-metric-icon" aria-hidden="true"><Clock3 /></div>
           <div className="premium-exposure-metric-copy">
             <strong>{model.totalDrivingMinutes}<small> min</small></strong>
@@ -121,7 +121,7 @@ export default function PremiumDrivingExposureCard({ dailyFatigue = {} }) {
             ? 'Rest time is not available yet'
             : `Resting ${model.restingMinutes} minutes since the latest trip`}
         >
-          <img src={premiumDrivingExposureRest} alt="" aria-hidden="true" />
+          <img loading="lazy" src={premiumDrivingExposureRest} alt="" aria-hidden="true" />
           <div className="premium-exposure-metric-icon" aria-hidden="true"><MoonStar /></div>
           <div className="premium-exposure-metric-copy">
             <strong>{model.restingMinutes == null ? '—' : model.restingMinutes}<small>{model.restingMinutes == null ? '' : ' min'}</small></strong>

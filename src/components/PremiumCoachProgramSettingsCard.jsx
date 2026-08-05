@@ -152,7 +152,7 @@ export default function PremiumCoachProgramSettingsCard({
 
       <div className="premium-program-settings-controls">
         <article className="premium-program-setting-tile" data-tone="difficulty">
-          <img src={premiumProgramDifficulty} alt="" aria-hidden="true" className="premium-program-setting-art" />
+          <img loading="lazy" src={premiumProgramDifficulty} alt="" aria-hidden="true" className="premium-program-setting-art" />
           <div className="premium-program-setting-shade" aria-hidden="true" />
           <div className="premium-program-setting-content">
             <div className="premium-program-setting-label">
@@ -181,7 +181,7 @@ export default function PremiumCoachProgramSettingsCard({
         </article>
 
         <article className="premium-program-setting-tile" data-tone="length">
-          <img src={premiumProgramLength} alt="" aria-hidden="true" className="premium-program-setting-art" />
+          <img loading="lazy" src={premiumProgramLength} alt="" aria-hidden="true" className="premium-program-setting-art" />
           <div className="premium-program-setting-shade" aria-hidden="true" />
           <div className="premium-program-setting-content">
             <div className="premium-program-setting-label">
@@ -209,7 +209,7 @@ export default function PremiumCoachProgramSettingsCard({
         </article>
 
         <article className="premium-program-setting-tile premium-program-setting-context" data-tone="context">
-          <img src={premiumProgramContext} alt="" aria-hidden="true" className="premium-program-setting-art" />
+          <img loading="lazy" src={premiumProgramContext} alt="" aria-hidden="true" className="premium-program-setting-art" />
           <div className="premium-program-setting-shade" aria-hidden="true" />
           <div className="premium-program-setting-content">
             <div className="premium-program-setting-label">
@@ -240,7 +240,7 @@ export default function PremiumCoachProgramSettingsCard({
 
         {selectedContext === 'route' && (
           <article className="premium-program-setting-tile premium-program-setting-route" data-tone="route">
-            <img src={premiumProgramRoute} alt="" aria-hidden="true" className="premium-program-setting-art" />
+            <img loading="lazy" src={premiumProgramRoute} alt="" aria-hidden="true" className="premium-program-setting-art" />
             <div className="premium-program-setting-shade" aria-hidden="true" />
             <div className="premium-program-setting-content">
               <div className="premium-program-setting-label">

@@ -159,7 +159,7 @@ export default function PremiumScoreTipsCard({ tips = [], isLoading = false }) {
           >
             <div className="premium-score-tip-art-shell" aria-hidden="true">
               <span className="premium-score-tip-art-orbit" />
-              <img src={model.artwork} alt="" />
+              <img loading="lazy" src={model.artwork} alt="" />
             </div>
             <div className="premium-score-tip-divider" aria-hidden="true" />
             <div className="premium-score-tip-copy">
@@ -170,7 +170,7 @@ export default function PremiumScoreTipsCard({ tips = [], isLoading = false }) {
           </article>
         )) : (
           <div className="premium-score-tip-empty">
-            <img src={premiumScoreTipEvidence} alt="" aria-hidden="true" />
+            <img loading="lazy" src={premiumScoreTipEvidence} alt="" aria-hidden="true" />
             <div>
               <strong>No coaching priority surfaced</strong>
               <span>Your next eligible trip will refresh these personalized tips.</span>

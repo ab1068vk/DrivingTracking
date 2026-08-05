@@ -497,7 +497,7 @@ export default function SpeedSignEvidenceReview({
       {(imageLoading || reviewImage) && (
         <div className="mt-3 overflow-hidden rounded-xl border border-violet-200 bg-black/90 dark:border-violet-800">
           {reviewImage ? (
-            <img
+            <img loading="lazy"
               src={reviewImage}
               alt={`Temporary camera crop for the proposed ${proposedDisplayLimit} ${speedUnitLabel(units)} sign`}
               draggable={false}

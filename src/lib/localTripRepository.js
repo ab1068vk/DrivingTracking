@@ -743,6 +743,109 @@ export async function inspectStoredTripKeyVersions() {
     : [];
 }
 
+/**
+ * Serializes writes per trip id.
+ *
+ * Trip writes are read-modify-write and always `put()` the whole record, so two writers to the
+ * same trip silently discard each other's changes. The read and write cannot share one
+ * IndexedDB transaction because privacy sanitization and Web Crypto run between them and a
+ * transaction auto-commits at the next event-loop turn — hence an app-level lock.
+ *
+ * Same shape as `activeTripWriteQueue` in trackingStore.js, but partitioned by id so unrelated
+ * trips never block each other, and errors reach the caller instead of being swallowed.
+ * Chaining is forward-only and no lock is acquired while another is held, so it cannot deadlock.
+ */
+/** @type {Map<string, Promise<any>>} */
+const tripWriteQueues = new Map();
+
+/**
+ * @param {string[]} keys
+ * @param {Promise<any>} tail
+ */
+const releaseTripWriteQueue = (keys, tail) => {
+  keys.forEach((key) => {
+    if (tripWriteQueues.get(key) === tail) tripWriteQueues.delete(key);
+  });
+};
+
+/**
+ * @template T
+ * @param {any[]} ids
+ * @param {() => Promise<T>} task
+ * @returns {Promise<T>}
+ */
+const withTripWriteLocks = (ids, task) => {
+  const keys = [...new Set((Array.isArray(ids) ? ids : [ids]).map((id) => String(id)))];
+  if (!keys.length) return Promise.resolve().then(task);
+  const previousTails = keys.map((key) => tripWriteQueues.get(key) || Promise.resolve());
+  // Run whether or not the previous holder succeeded; one failure must not stall the queue.
+  const run = Promise.all(previousTails).then(task, task);
+  const tail = run.catch(() => {});
+  keys.forEach((key) => tripWriteQueues.set(key, tail));
+  tail.then(() => releaseTripWriteQueue(keys, tail));
+  return run;
+};
+
+/**
+ * @template T
+ * @param {any} id
+ * @param {() => Promise<T>} task
+ * @returns {Promise<T>}
+ */
+const withTripWriteLock = (id, task) => withTripWriteLocks([id], task);
+
+/**
+ * Serializes the non-IndexedDB fallback path, where every trip lives in one `TRIPS_KEY` blob.
+ * Per-id locks cannot help there: writers for two *different* trips still collide on the same
+ * read-modify-write of the shared array. Both layers are required.
+ */
+let fallbackTripsWriteQueue = Promise.resolve();
+
+/**
+ * @template T
+ * @param {() => Promise<T>} task
+ * @returns {Promise<T>}
+ */
+const withFallbackTripsQueue = (task) => {
+  const run = fallbackTripsWriteQueue.then(task, task);
+  fallbackTripsWriteQueue = run.catch(() => {});
+  return run;
+};
+
+const sameFieldValue = (left, right) => {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  return JSON.stringify(left) === JSON.stringify(right);
+};
+
+/**
+ * Describes what a writer changed relative to the snapshot it computed from: the fields it set,
+ * and the fields it deliberately removed (migrations drop retired keys, so a set-only diff would
+ * let a merge resurrect them).
+ */
+const diffTripFields = (next, previous) => {
+  const changed = {};
+  const removed = [];
+  if (!next || typeof next !== 'object') return { changed, removed };
+  const before = previous && typeof previous === 'object' ? previous : {};
+  Object.keys(next).forEach((key) => {
+    if (!sameFieldValue(next[key], before[key])) changed[key] = next[key];
+  });
+  Object.keys(before).forEach((key) => {
+    if (!(key in next)) removed.push(key);
+  });
+  return { changed, removed };
+};
+
+/** Applies one writer's field changes on top of the freshest stored record. */
+const mergeTripFieldChanges = (current, original, next) => {
+  const { changed, removed } = diffTripFields(next, original);
+  if (!Object.keys(changed).length && !removed.length) return current;
+  const merged = { ...current, ...changed };
+  removed.forEach((key) => { delete merged[key]; });
+  return merged;
+};
+
 const putTrip = async (trip) => {
   const storageTrip = await sanitizeTripForPrivacyStorageAsync(trip);
   try {
@@ -766,9 +869,11 @@ const putTrip = async (trip) => {
       });
       throw new Error('Road Sage could not safely save this trip. Existing trip data was left unchanged.', { cause: error });
     }
-    const trips = await getEncryptedJson(TRIPS_KEY, []);
-    const next = [storageTrip, ...trips.filter((item) => String(item.id) !== String(storageTrip.id))];
-    await setEncryptedJson(TRIPS_KEY, next);
+    await withFallbackTripsQueue(async () => {
+      const trips = await getEncryptedJson(TRIPS_KEY, []);
+      const next = [storageTrip, ...trips.filter((item) => String(item.id) !== String(storageTrip.id))];
+      await setEncryptedJson(TRIPS_KEY, next);
+    });
   }
 };
 
@@ -800,14 +905,49 @@ const putTrips = async (incomingTrips) => {
       });
       throw new Error('Road Sage could not safely save these trips. Existing trip data was left unchanged.', { cause: error });
     }
-    const trips = await getEncryptedJson(TRIPS_KEY, []);
-    const incomingIds = new Set(storageTrips.map((trip) => String(trip.id)));
-    const next = [
-      ...storageTrips,
-      ...trips.filter((item) => !incomingIds.has(String(item.id))),
-    ];
-    await setEncryptedJson(TRIPS_KEY, next);
+    await withFallbackTripsQueue(async () => {
+      const trips = await getEncryptedJson(TRIPS_KEY, []);
+      const incomingIds = new Set(storageTrips.map((trip) => String(trip.id)));
+      const next = [
+        ...storageTrips,
+        ...trips.filter((item) => !incomingIds.has(String(item.id))),
+      ];
+      await setEncryptedJson(TRIPS_KEY, next);
+    });
   }
+};
+
+/**
+ * Batch-writes derived changes (rescores, migrations, retention) without clobbering fields the
+ * writer does not own.
+ *
+ * These paths read every trip, spend real time computing, then write whole records back — long
+ * enough for a user edit to land in between. Diffing each result against the snapshot it was
+ * computed from yields only the fields this writer actually changed, which are then applied on
+ * top of the freshest stored record.
+ *
+ * @param {any[]} originalTrips Snapshot the next values were computed from.
+ * @param {any[]} nextTrips Computed records to persist.
+ */
+const applyTripFieldChanges = async (originalTrips, nextTrips) => {
+  if (!Array.isArray(nextTrips) || !nextTrips.length) return [];
+  const originalById = new Map(
+    (Array.isArray(originalTrips) ? originalTrips : []).map((trip) => [String(trip?.id), trip])
+  );
+  const ids = nextTrips.map((trip) => trip?.id).filter((id) => id != null);
+  return withTripWriteLocks(ids, async () => {
+    const freshTrips = await getStoredTripsByIds(ids).catch(() => []);
+    const freshById = new Map(freshTrips.map((trip) => [String(trip?.id), trip]));
+    const merged = nextTrips.map((next) => {
+      const key = String(next?.id);
+      const original = originalById.get(key);
+      const current = freshById.get(key);
+      if (!original || !current) return next;
+      return mergeTripFieldChanges(current, original, next);
+    });
+    await putTrips(merged);
+    return merged;
+  });
 };
 
 const invalidateTripDerivedCaches = async () => {
@@ -866,8 +1006,9 @@ const vehicleForTrip = (trip, vehicles = []) => (
 
 const tagExistingTripsWithCurrentScoringVersion = async (trips = []) => {
   const next = trips.map((trip) => tagLegacyScoreProvenance(trip));
+  const changedOriginals = trips.filter((trip, index) => next[index] !== trip);
   const changed = next.filter((trip, index) => trip !== trips[index]);
-  if (changed.length) await putTrips(changed);
+  if (changed.length) await applyTripFieldChanges(changedOriginals, changed);
   return next;
 };
 
@@ -974,9 +1115,10 @@ const migrateRetiredTripEventTypesOnce = async () => {
 
   const trips = await getAllTrips();
   const migratedTrips = trips.map(normalizeRetiredTripEventTypes);
+  const changedOriginals = trips.filter((trip, index) => migratedTrips[index] !== trip);
   const changedTrips = migratedTrips.filter((trip, index) => trip !== trips[index]);
   if (changedTrips.length) {
-    await putTrips(changedTrips);
+    await applyTripFieldChanges(changedOriginals, changedTrips);
     await invalidateTripDerivedCaches();
   }
   await setJson(TRIP_EVENT_MIGRATION_KEY, TRIP_EVENT_MIGRATION_VERSION);
@@ -1289,9 +1431,11 @@ const rescoreTripsIfNeeded = async (trips = []) => {
     total,
     reason: autoProvenanceTripIds.size ? 'auto_provenance' : 'schema_refresh',
   });
+  const rescoredOriginals = [];
   for (const trip of trips) {
     if (needsRescore(trip, thresholds, rescoreOptions)) {
       const rescored = rescoreTrip(trip, vehicles);
+      rescoredOriginals.push(trip);
       rescoredTrips.push(rescored);
       next.push(rescored);
       completed += 1;
@@ -1306,7 +1450,7 @@ const rescoreTripsIfNeeded = async (trips = []) => {
     }
   }
   if (rescoredTrips.length) {
-    await putTrips(rescoredTrips);
+    await applyTripFieldChanges(rescoredOriginals, rescoredTrips);
     emitRescoreProgress({
       status: 'complete',
       completed,
@@ -1346,8 +1490,22 @@ const prepareTripForRead = async (trip) => {
     const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []);
     prepared = rescoreTrip(prepared, vehicles);
   }
-  if (prepared !== trip) await putTrip(prepared);
-  return prepared;
+  if (prepared === trip) return prepared;
+
+  // Reading a trip persists a rescore, so it must merge rather than overwrite: otherwise simply
+  // opening a trip detail page can wipe an edit made concurrently from elsewhere.
+  return withTripWriteLock(trip.id, async () => {
+    const freshCurrent = await getStoredTripById(trip.id).catch(() => null);
+    const merged = freshCurrent ? mergeTripFieldChanges(freshCurrent, trip, prepared) : prepared;
+    await putTrip(merged);
+    return merged;
+  }).catch((error) => {
+    // A read must still return its value when persistence fails; log rather than throw.
+    logSystemFailure('trip_repository_rescore_on_read_write', error, {
+      trip_id_present: trip.id != null,
+    });
+    return prepared;
+  });
 };
 
 const emptyNativeImportResult = () => ({
@@ -1602,13 +1760,15 @@ const deleteTrip = async (id) => {
       });
       throw new Error('Road Sage could not verify this trip deletion. The saved record was left unchanged.', { cause: error });
     }
-    const trips = await getEncryptedJson(TRIPS_KEY, []);
-    const remainingTrips = trips.filter((trip) => String(trip.id) !== String(id));
-    await setEncryptedJson(TRIPS_KEY, remainingTrips);
-    return {
-      recordFound: remainingTrips.length !== trips.length,
-      deletionMethod: 'encrypted_collection_rewrite',
-    };
+    return withFallbackTripsQueue(async () => {
+      const trips = await getEncryptedJson(TRIPS_KEY, []);
+      const remainingTrips = trips.filter((trip) => String(trip.id) !== String(id));
+      await setEncryptedJson(TRIPS_KEY, remainingTrips);
+      return {
+        recordFound: remainingTrips.length !== trips.length,
+        deletionMethod: 'encrypted_collection_rewrite',
+      };
+    });
   }
 };
 
@@ -1767,6 +1927,7 @@ export async function enforceRawGpsRetention({ force = false, now = Date.now() }
     const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
     const trips = await getAllTrips();
     const expiredTrips = [];
+    const expiredOriginals = [];
     let purgedPoints = 0;
 
     for (const trip of trips) {
@@ -1781,11 +1942,12 @@ export async function enforceRawGpsRetention({ force = false, now = Date.now() }
       const expired = expireTripRouteData(trip, retentionDays, now);
       if (expired === trip) continue;
       purgedPoints += Array.isArray(trip.route_points) ? trip.route_points.length : 0;
+      expiredOriginals.push(trip);
       expiredTrips.push(expired);
     }
 
     if (expiredTrips.length) {
-      await putTrips(expiredTrips);
+      await applyTripFieldChanges(expiredOriginals, expiredTrips);
       await invalidateTripDerivedCaches();
       try {
         await appendPrivacyEvent({
@@ -1949,32 +2111,48 @@ export const localTripRepository = {
 
   async create(trip) {
     const saved = /** @type {Record<string, any>} */ (withId({ ...trip, created_at: new Date().toISOString() }));
-    const existing = await getStoredTripById(saved.id).catch(() => null);
-    if (
-      existing?.imported_from_native === true &&
-      existing?.start_source === 'native_manual' &&
-      saved?.native_manual_background === true
-    ) {
-      return existing;
-    }
-    const storageSaved = await sanitizeTripForPrivacyStorageAsync(saved);
-    await putTrip(storageSaved);
+    // The lock also makes the native-manual de-dup check below check-then-act atomic.
+    const storageSaved = await withTripWriteLock(saved.id, async () => {
+      const existing = await getStoredTripById(saved.id).catch(() => null);
+      if (
+        existing?.imported_from_native === true &&
+        existing?.start_source === 'native_manual' &&
+        saved?.native_manual_background === true
+      ) {
+        return existing;
+      }
+      const sanitized = await sanitizeTripForPrivacyStorageAsync(saved);
+      await putTrip(sanitized);
+      return sanitized;
+    });
     if (storageSaved.status === 'completed') await invalidateTripDerivedCaches();
     await enforceTripDataRetention();
     return storageSaved;
   },
 
   async update(id, patch) {
-    const current = await this.getById(id);
-    const updated = /** @type {Record<string, any>} */ (withId({ ...current, ...patch, id: current.id }));
-    const storageUpdated = await sanitizeTripForPrivacyStorageAsync(updated);
-    await putTrip(storageUpdated);
+    // `patch` carries only the fields the caller owns, so re-reading inside the lock and
+    // merging onto the freshest record lets a user edit and a background rescore both survive.
+    let storageUpdated;
+    try {
+      storageUpdated = await withTripWriteLock(id, async () => {
+        const current = await getStoredTripById(id);
+        if (!current) throw new Error('Road Sage could not find this trip to update.');
+        const updated = /** @type {Record<string, any>} */ (withId({ ...current, ...patch, id: current.id }));
+        const sanitized = await sanitizeTripForPrivacyStorageAsync(updated);
+        await putTrip(sanitized);
+        return sanitized;
+      });
+    } catch (error) {
+      logSystemFailure('trip_repository_update', error, { trip_id_present: id != null });
+      throw error;
+    }
     if (storageUpdated.status === 'completed') await invalidateTripDerivedCaches();
     return storageUpdated;
   },
 
   async delete(id) {
-    const result = await deleteTrip(id);
+    const result = await withTripWriteLock(id, () => deleteTrip(id));
     recordSystemEvent('secure_trip_deletion_completed', {
       deletion_method: result.deletionMethod,
       record_found: result.recordFound,
@@ -2005,7 +2183,9 @@ export const localTripRepository = {
       return needsRescore(next, thresholds) ? rescoreTrip(next, vehicles) : next;
     });
     const normalized = await sanitizeTripsForPrivacyStorage(rescoredTrips);
-    await putTrips(normalized);
+    // Native import is the authoritative source for these records, so it keeps whole-object
+    // overwrite semantics; the lock only stops it interleaving with a concurrent edit.
+    await withTripWriteLocks(normalized.map((trip) => trip.id), () => putTrips(normalized));
     if (normalized.some((trip) => trip.status === 'completed')) await invalidateTripDerivedCaches();
     await enforceTripDataRetention();
     return normalized;
@@ -2024,7 +2204,7 @@ export const localTripRepository = {
       if (trip !== trips[index]) count += 1;
       return trip;
     });
-    await putTrips(updated);
+    await applyTripFieldChanges(trips, updated);
     if (count) await invalidateTripDerivedCaches();
     return count;
   },
@@ -2046,6 +2226,7 @@ export const localTripRepository = {
     const eligible = scoped.filter((trip) => !skippedIds.has(String(trip.id)));
     const vehicles = await localVehicleRepository.list({ sort: '-created_date', limit: 500 }).catch(() => []);
     const rescoredTrips = [];
+    const rescoredOriginals = [];
     const changes = [];
     const failures = [];
     let completed = 0;
@@ -2063,6 +2244,7 @@ export const localTripRepository = {
         const before = scoreSnapshot(trip);
         const rescored = rescoreTrip({ ...trip, needs_rescore: true }, vehicles);
         const after = scoreSnapshot(rescored);
+        rescoredOriginals.push(trip);
         rescoredTrips.push(rescored);
         if (scoreSnapshotsDiffer(before, after)) {
           changes.push({
@@ -2091,7 +2273,7 @@ export const localTripRepository = {
     }
 
     if (rescoredTrips.length) {
-      await putTrips(rescoredTrips);
+      await applyTripFieldChanges(rescoredOriginals, rescoredTrips);
       await invalidateTripDerivedCaches();
     }
 
@@ -2144,7 +2326,7 @@ export const localTripRepository = {
     const before = scoreSnapshot(trip);
     const rescored = rescoreTrip({ ...trip, needs_rescore: true }, vehicles);
     const after = scoreSnapshot(rescored);
-    await putTrip(rescored);
+    await applyTripFieldChanges([trip], [rescored]);
     await invalidateTripDerivedCaches();
     recordSystemEvent('trip_targeted_rescore_completed', {
       trip_id_present: true,

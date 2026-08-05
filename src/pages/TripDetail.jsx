@@ -2153,7 +2153,7 @@ export default function TripDetail() {
         >
           {premiumVisuals && (
             <>
-              <img
+              <img loading="lazy"
                 className="premium-phone-use-art"
                 src={premiumPhoneUseArtwork}
                 alt=""
@@ -2423,7 +2423,7 @@ export default function TripDetail() {
               data-road-data-status={contextMutation.isPending ? 'loading' : 'unavailable'}
               aria-label={`Speed limit data unavailable, ${osmCoveragePct}% speed-limit coverage`}
             >
-              <img
+              <img loading="lazy"
                 className="premium-trip-road-data-art"
                 src={premiumTripRoadData}
                 alt=""
@@ -2491,7 +2491,7 @@ export default function TripDetail() {
               data-coverage-tone={speedCoverageTone}
               aria-label={`Speed-limit coverage for this trip: ${speedLimitIntelligence.verifiedCoveragePercent}% verified, ${estimatedCoveragePercent}% estimated, ${missingCoveragePercent}% missing`}
             >
-              <img
+              <img loading="lazy"
                 className="premium-trip-speed-coverage-art"
                 src={premiumTripSpeedCoverage}
                 alt=""

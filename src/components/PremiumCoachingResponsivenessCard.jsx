@@ -112,7 +112,7 @@ export default function PremiumCoachingResponsivenessCard({
                 ? `${metric.label} programs loading`
                 : `${metric.value} ${metric.label.toLowerCase()} ${metric.detail.toLowerCase()}`}
             >
-              <img src={metric.artwork} alt="" aria-hidden="true" />
+              <img loading="lazy" src={metric.artwork} alt="" aria-hidden="true" />
               <div className="premium-coaching-responsiveness-shade" aria-hidden="true" />
 
               <div className="premium-coaching-responsiveness-icon" aria-hidden="true">

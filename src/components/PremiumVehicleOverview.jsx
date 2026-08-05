@@ -106,7 +106,7 @@ export default function PremiumVehicleOverview({
             data-state={card.state}
             aria-label={accessibleLabel}
           >
-            <img className="premium-vehicle-card-art" src={art} alt="" aria-hidden="true" />
+            <img loading="lazy" className="premium-vehicle-card-art" src={art} alt="" aria-hidden="true" />
             <div className="premium-vehicle-card-grid" aria-hidden="true" />
             <div className="premium-vehicle-card-content">
               <div className="premium-vehicle-card-icon" aria-hidden="true">

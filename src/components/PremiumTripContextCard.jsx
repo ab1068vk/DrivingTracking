@@ -146,7 +146,7 @@ export default function PremiumTripContextCard({
       data-context-card={artwork}
       aria-label={ariaLabel}
     >
-      <img
+      <img loading="lazy"
         className="premium-trip-context-art"
         src={ARTWORK[artwork]}
         alt=""

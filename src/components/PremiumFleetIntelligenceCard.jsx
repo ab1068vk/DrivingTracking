@@ -148,7 +148,7 @@ export default function PremiumFleetIntelligenceCard({
           className="premium-fleet-insight premium-fleet-busiest"
           aria-label={`Busiest vehicle: ${model.busiestName}. ${model.busiestDetail}`}
         >
-          <img src={premiumFleetBusiest} alt="" aria-hidden="true" className="premium-fleet-art" />
+          <img loading="lazy" src={premiumFleetBusiest} alt="" aria-hidden="true" className="premium-fleet-art" />
           <div className="premium-fleet-insight-icon" aria-hidden="true"><Route /></div>
           <div className="premium-fleet-copy">
             <span>Busiest vehicle</span>
@@ -162,7 +162,7 @@ export default function PremiumFleetIntelligenceCard({
           data-score-tone={model.scoreTone}
           aria-label={`Best scoring vehicle: ${model.bestName}. ${model.bestDetail}`}
         >
-          <img src={premiumFleetScore} alt="" aria-hidden="true" className="premium-fleet-art" />
+          <img loading="lazy" src={premiumFleetScore} alt="" aria-hidden="true" className="premium-fleet-art" />
           <div className="premium-fleet-insight-icon" aria-hidden="true"><Activity /></div>
           <div className="premium-fleet-copy">
             <span>Best scoring vehicle</span>
@@ -255,7 +255,7 @@ export default function PremiumFleetIntelligenceCard({
           data-action-tone={model.actionTone}
           aria-label={`Next action: ${model.actionTitle}. ${model.actionDetail}`}
         >
-          <img src={premiumFleetAction} alt="" aria-hidden="true" className="premium-fleet-art" />
+          <img loading="lazy" src={premiumFleetAction} alt="" aria-hidden="true" className="premium-fleet-art" />
           <div className="premium-fleet-insight-icon" aria-hidden="true"><CalendarClock /></div>
           <div className="premium-fleet-copy">
             <span>Next action</span>

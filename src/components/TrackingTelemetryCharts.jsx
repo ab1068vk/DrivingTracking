@@ -150,4 +150,19 @@ export default function TrackingTelemetryCharts({ trip, comparisonTrip = null, s
 function Toggle({ active, onClick, children }) { return <button type="button" aria-pressed={active} onClick={onClick} className={`rounded-md border px-2.5 py-1.5 font-semibold ${active ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card text-muted-foreground'}`}>{children}</button>; }
 function Evidence({ label, value }) { return <div className="rounded-md border border-border bg-card px-2.5 py-2"><div className="text-[10px] uppercase text-muted-foreground">{label}</div><div className="mt-1 truncate text-xs font-semibold" title={value}>{value}</div></div>; }
 function Cursor({ label, value }) { return <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">{label}</span><b>{value}</b></div>; }
-function ChartPanel({ icon: Icon, title, detail, children }) { return <div className="min-w-0 rounded-md border border-border bg-background p-3"><div className="mb-2 flex items-start gap-2"><Icon className="mt-0.5 h-4 w-4 text-muted-foreground" /><div><h3 className="text-sm font-semibold">{title}</h3><p className="text-xs text-muted-foreground">{detail}</p></div></div>{children}</div>; }
+// Each panel names its own chart. The parent section's single "Trip telemetry charts" label
+// left all four indistinguishable to a screen reader, and the canvas itself carries no text.
+function ChartPanel({ icon: Icon, title, detail, children }) {
+  return (
+    <div className="min-w-0 rounded-md border border-border bg-background p-3">
+      <div className="mb-2 flex items-start gap-2">
+        <Icon className="mt-0.5 h-4 w-4 text-muted-foreground" />
+        <div>
+          <h3 className="text-sm font-semibold">{title}</h3>
+          <p className="text-xs text-muted-foreground">{detail}</p>
+        </div>
+      </div>
+      <div role="img" aria-label={`${title}. ${detail}`}>{children}</div>
+    </div>
+  );
+}

@@ -163,7 +163,7 @@ export function PremiumHistorySearch({
   return (
     <section className="premium-history-filter" aria-label="Premium trip history search">
       <div className="premium-history-search-field">
-        <img
+        <img loading="lazy"
           className="premium-history-search-art"
           src={premiumHistorySearchBmw}
           alt=""
@@ -187,7 +187,7 @@ export function PremiumHistorySearch({
 
       <div className="premium-history-control-grid" role="group" aria-label="Premium trip history filters">
         <label className="premium-history-control" data-control="date">
-          <img className="premium-history-control-art" src={premiumHistoryDate} alt="" aria-hidden="true" />
+          <img loading="lazy" className="premium-history-control-art" src={premiumHistoryDate} alt="" aria-hidden="true" />
           <span className="premium-history-control-label"><CalendarDays aria-hidden="true" /> Date</span>
           <span className="premium-history-control-field">
             <select aria-label="Filter trips by date" value={dateValue} onChange={(event) => (dateOptions.length > 0 ? onDateFilterChange(event.target.value) : onFilterChange(event.target.value))}>
@@ -199,7 +199,7 @@ export function PremiumHistorySearch({
         </label>
 
         <label className="premium-history-control" data-control="trip-type">
-          <img className="premium-history-control-art" src={premiumHistoryTripType} alt="" aria-hidden="true" />
+          <img loading="lazy" className="premium-history-control-art" src={premiumHistoryTripType} alt="" aria-hidden="true" />
           <span className="premium-history-control-label"><Route aria-hidden="true" /> Trip type</span>
           <span className="premium-history-control-field">
             <select aria-label="Filter trips by type" value={tripValue} onChange={(event) => onFilterChange(event.target.value)}>
@@ -210,7 +210,7 @@ export function PremiumHistorySearch({
         </label>
 
         <label className="premium-history-control" data-control="sort">
-          <img className="premium-history-control-art" src={premiumHistorySort} alt="" aria-hidden="true" />
+          <img loading="lazy" className="premium-history-control-art" src={premiumHistorySort} alt="" aria-hidden="true" />
           <span className="premium-history-control-label"><ArrowDownUp aria-hidden="true" /> Sort</span>
           <span className="premium-history-control-field">
             <select aria-label="Sort trips" value={sortBy} onChange={(event) => onSortChange(event.target.value)}>
@@ -221,7 +221,7 @@ export function PremiumHistorySearch({
         </label>
 
         <div className="premium-history-control premium-history-tags-control" data-control="tags">
-          <img className="premium-history-control-art" src={premiumHistoryTags} alt="" aria-hidden="true" />
+          <img loading="lazy" className="premium-history-control-art" src={premiumHistoryTags} alt="" aria-hidden="true" />
           <span className="premium-history-control-label"><Tag aria-hidden="true" /> Tags &amp; saved</span>
           <button type="button" onClick={onToggleFilters} aria-expanded={showFilters}>
             <span>{showFilters ? 'Hide filters' : 'Tags & saved'}</span>
@@ -280,7 +280,7 @@ export function PremiumFilteredSnapshot({ summary, filterLabel, tagLabel }) {
       className="premium-history-snapshot premium-history-snapshot-v3"
     >
       <div className="premium-history-snapshot-hero">
-        <img
+        <img loading="lazy"
           className="premium-history-snapshot-hero-art"
           src={premiumHistorySnapshotHero}
           alt=""
@@ -308,7 +308,7 @@ export function PremiumFilteredSnapshot({ summary, filterLabel, tagLabel }) {
             data-time-band={key === 'duration' ? timePresentation.band : undefined}
             data-tone={tone}
           >
-            <img
+            <img loading="lazy"
               className="premium-history-metric-art"
               src={art}
               alt=""
@@ -396,7 +396,7 @@ export function PremiumFilteredSnapshot({ summary, filterLabel, tagLabel }) {
 export function PremiumHistoryResultsPager({ start, end, total, page, pageCount, onPrevious, onNext }) {
   return (
     <section className="premium-history-results" aria-label="Matching trip result pages">
-      <img src={premiumHistoryResults} alt="" aria-hidden="true" />
+      <img loading="lazy" src={premiumHistoryResults} alt="" aria-hidden="true" />
       <div className="premium-history-results-copy">
         <span className="premium-history-results-icon"><Gauge aria-hidden="true" /></span>
         <p>

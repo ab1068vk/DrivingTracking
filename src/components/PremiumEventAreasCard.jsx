@@ -142,7 +142,7 @@ function EvidenceAudit({
     >
       <div className="premium-event-areas-audit-metric">
         <span className="premium-event-areas-check premium-event-areas-trip-emblem" aria-hidden="true">
-          <img src={premiumEventAreasTripMap} alt="" />
+          <img loading="lazy" src={premiumEventAreasTripMap} alt="" />
         </span>
         <strong>{completedTripCount}</strong>
         <span>Completed trip{completedTripCount === 1 ? '' : 's'} checked</span>
@@ -198,7 +198,7 @@ function EventTypeSummaryGrid({ loading, summaries }) {
               ? `${summary.pluralLabel}. Checking learned areas.`
               : `${summary.pluralLabel}. ${summary.areaCount} learned area${summary.areaCount === 1 ? '' : 's'}, ${summary.eventCount} qualifying event${summary.eventCount === 1 ? '' : 's'}.`}
           >
-            <img src={summary.asset} alt="" aria-hidden="true" />
+            <img loading="lazy" src={summary.asset} alt="" aria-hidden="true" />
             <div className="premium-event-type-copy">
               <strong>{summary.displayLabel || summary.pluralLabel}</strong>
               <svg
@@ -318,7 +318,7 @@ export default function PremiumEventAreasCard({
         <>
           <header className="premium-event-areas-coach-header">
             <span className="premium-event-areas-coach-emblem" aria-hidden="true">
-              <img src={premiumEventAreasShield} alt="" />
+              <img loading="lazy" src={premiumEventAreasShield} alt="" />
             </span>
             <span className="premium-event-areas-eyebrow">Repeated event areas</span>
           </header>
@@ -348,7 +348,7 @@ export default function PremiumEventAreasCard({
           </div>
 
           <div className="premium-event-areas-hero" aria-hidden="true">
-            <img src={heroAsset} alt="" data-art={heroArt} />
+            <img loading="lazy" src={heroAsset} alt="" data-art={heroArt} />
             <span className="premium-event-areas-scan" />
           </div>
         </>
@@ -356,7 +356,7 @@ export default function PremiumEventAreasCard({
         <>
           <header className="premium-event-areas-header">
             <span className="premium-event-areas-emblem" aria-hidden="true">
-              <img src={premiumEventAreasShieldWheel} alt="" />
+              <img loading="lazy" src={premiumEventAreasShieldWheel} alt="" />
             </span>
             <div className="premium-event-areas-identity">
               <div>
@@ -383,7 +383,7 @@ export default function PremiumEventAreasCard({
           </header>
 
           <div className="premium-event-areas-hero" aria-hidden="true">
-            <img src={heroAsset} alt="" data-art={heroArt} />
+            <img loading="lazy" src={heroAsset} alt="" data-art={heroArt} />
             <span className="premium-event-areas-scan" />
           </div>
         </>
@@ -414,7 +414,7 @@ export default function PremiumEventAreasCard({
                 data-risk={model.riskLevel}
                 aria-label={`${model.label}. ${model.eventLabel}. ${model.riskLabel}. Near ${model.coordLabel}${zone.lastSeen ? `. Last seen ${relativeTimeFormatter(zone.lastSeen)}` : ''}`}
               >
-                <img className="premium-event-area-art" src={model.asset} alt="" aria-hidden="true" />
+                <img loading="lazy" className="premium-event-area-art" src={model.asset} alt="" aria-hidden="true" />
                 <div className="premium-event-area-glass" aria-hidden="true" />
                 <div className="premium-event-area-head">
                   <span className="premium-event-area-icon" aria-hidden="true"><Icon /></span>

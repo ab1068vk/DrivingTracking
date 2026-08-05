@@ -105,9 +105,9 @@ function InsightCard({ card, items, saferWindow }) {
       data-visual-state={visualState || undefined}
     >
       <div className="premium-planner-insight-visual">
-        <img className="premium-planner-insight-art" src={visual.art} alt="" aria-hidden="true" />
+        <img loading="lazy" className="premium-planner-insight-art" src={visual.art} alt="" aria-hidden="true" />
         <span className="premium-planner-insight-icon">
-          <img src={visual.emblem} alt="" aria-hidden="true" />
+          <img loading="lazy" src={visual.emblem} alt="" aria-hidden="true" />
         </span>
       </div>
       <div className="premium-planner-insight-body">
@@ -146,7 +146,7 @@ function LikelyRange({ preTripRisk, score }) {
     >
       <div className="premium-planner-range-copy">
         <span className="premium-planner-range-icon">
-          <img src={premiumPlannerGaugeIcon} alt="" aria-hidden="true" />
+          <img loading="lazy" src={premiumPlannerGaugeIcon} alt="" aria-hidden="true" />
         </span>
         <div>
           <span>Likely range</span>
@@ -280,7 +280,7 @@ export default function PremiumPreTripPlanner({
       aria-labelledby="premium-planner-title"
     >
       <header className="premium-planner-hero">
-        <img className="premium-planner-hero-art" src={premiumPreTripHero} alt="" aria-hidden="true" />
+        <img loading="lazy" className="premium-planner-hero-art" src={premiumPreTripHero} alt="" aria-hidden="true" />
         <div className="premium-planner-hero-shade" aria-hidden="true" />
         <div className="premium-planner-hero-heading">
           <div
@@ -382,7 +382,7 @@ export default function PremiumPreTripPlanner({
               <section className="premium-planner-history" data-state={predictiveRouteRisk.riskLevel} aria-labelledby="premium-planner-history-title">
                 <div className="premium-planner-section-head">
                   <span className="premium-planner-section-icon premium-planner-section-icon-generated">
-                    <img src={premiumPlannerShieldIcon} alt="" aria-hidden="true" />
+                    <img loading="lazy" src={premiumPlannerShieldIcon} alt="" aria-hidden="true" />
                   </span>
                   <div>
                     <div className="premium-planner-history-heading">
@@ -394,7 +394,7 @@ export default function PremiumPreTripPlanner({
                   <span className="premium-planner-history-score">{predictiveRouteRisk.riskScore}<small>/100</small></span>
                 </div>
                 <div className="premium-planner-history-layout">
-                  <img className="premium-planner-history-art" src={premiumPlannerHistory} alt="" aria-hidden="true" />
+                  <img loading="lazy" className="premium-planner-history-art" src={premiumPlannerHistory} alt="" aria-hidden="true" />
                   <div className="premium-planner-history-data">
                     <div className="premium-planner-history-summary">
                       <p>{predictiveRouteRisk.primaryFactor}</p>

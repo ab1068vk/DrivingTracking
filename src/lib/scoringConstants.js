@@ -207,6 +207,17 @@ export const SCORING_CONSTANTS = Object.freeze({
   }), { label: 'Driving event penalty points', domain: 'trip_score', calibration_note: 'Event deductions are product heuristics pending outcome calibration.', affected_metrics: scoreMetrics }),
   OVERALL_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ safety: 0.55, smoothness: 0.30, intersection: 0.15 }), { label: 'Overall score blend weights', domain: 'trip_score', calibration_note: 'Composite driving score weighting policy.', affected_metrics: ['score_overall'] }),
   LANE_CHANGING_SAFETY_WEIGHT: constant(LANE_CHANGING_SAFETY_WEIGHT, { label: 'Lane-changing Safety blend weight', domain: 'trip_score', calibration_note: 'Provisional Safety blend share for lane-changing rate and simultaneous-braking evidence. GPS-only confidence applies a 0.7 weight multiplier.', affected_metrics: ['score_safety', 'score_overall'] }),
+  // KNOWN CALIBRATION DEBT (audit finding, deliberately not fixed in code):
+  //   1. Speeding is counted twice in this blend. SPEEDING events feed `base` via the event
+  //      penalty in tripEngine.calculateTripScores, and `compliance` re-measures the same
+  //      over-limit driving from raw points, so the two are combined as if independent.
+  //   2. `compliance` (and the night-driving ratio) are weighted by GPS point count rather
+  //      than time or distance, so variable sampling density skews the result.
+  // Both need replacement weights derived from real driving data: changing them here would
+  // shift every existing user's historical scores with nothing to validate the new values
+  // against. Resolve during a calibration pass, then bump SCORING_VERSION deliberately.
+  // NOTE: keep this as a comment — `calibration_note` is part of the hashed payload, so
+  // recording it there would bump SCORING_VERSION and force a rescore on its own.
   SAFETY_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ base: 0.52, stopStart: 0.05, braking: 0.15, compliance: 0.10, laneChanging: LANE_CHANGING_SAFETY_WEIGHT }), { label: 'Safety score blend weights', domain: 'trip_score', calibration_note: 'Composite Safety weighting policy; phone-use share is recorded separately.', affected_metrics: ['score_safety', 'score_overall'] }),
   SMOOTHNESS_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ base: 0.45, jerk: 0.25, speedVariability: 0.10, brakeOnset: 0.10, cornering: 0.10 }), { label: 'Smoothness score blend weights', domain: 'trip_score', calibration_note: 'Composite Smoothness weighting policy.', affected_metrics: ['score_smoothness', 'score_overall'] }),
   DEFENSIVE_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ smoothBraking: 0.30, intersection: 0.20, speedVariability: 0.20, stopStart: 0.30 }), { label: 'Defensive-driving blend weights', domain: 'trip_score', calibration_note: 'GPS behavior estimate weighting policy.', affected_metrics: ['defensive_driving_score'] }),

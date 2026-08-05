@@ -127,7 +127,7 @@ export default function PremiumConnectedGoalsCard({ goals = [], units = 'metric'
   return (
     <details className="premium-connected-goals group" data-tone={summary.tone}>
       <summary className="premium-connected-goals-summary">
-        <img
+        <img loading="lazy"
           className="premium-connected-goals-hero"
           src={premiumConnectedGoalsHero}
           alt=""
@@ -162,7 +162,7 @@ export default function PremiumConnectedGoalsCard({ goals = [], units = 'metric'
         {evidence && (
           <div className="premium-connected-evidence" role="status">
             <span className="premium-connected-evidence-art" aria-hidden="true">
-              <img src={premiumConnectedGoalsAtlas} alt="" />
+              <img loading="lazy" src={premiumConnectedGoalsAtlas} alt="" />
             </span>
             <span className="premium-connected-evidence-icon" aria-hidden="true"><Radar /></span>
             <span>
@@ -197,7 +197,7 @@ export default function PremiumConnectedGoalsCard({ goals = [], units = 'metric'
                   aria-label={`${goal.label}: ${goal.valueLabel}. ${goal.statusLabel}`}
                 >
                   <span className="premium-connected-goal-art" data-art={presentation.art} aria-hidden="true">
-                    <img src={presentation.artwork} alt="" />
+                    <img loading="lazy" src={presentation.artwork} alt="" />
                   </span>
                   <span className="premium-connected-goal-shade" aria-hidden="true" />
                   <span className="premium-connected-goal-head">

@@ -85,7 +85,7 @@ export default function PremiumAskCoachCard({
   return (
     <details className="premium-ask-coach group" data-state={answer ? 'answered' : 'ready'}>
       <summary className="premium-ask-coach-summary">
-        <img className="premium-ask-coach-hero" src={premiumAskCoachHero} alt="" aria-hidden="true" />
+        <img loading="lazy" className="premium-ask-coach-hero" src={premiumAskCoachHero} alt="" aria-hidden="true" />
         <span className="premium-ask-coach-hero-veil" aria-hidden="true" />
         <span className="premium-ask-coach-summary-copy">
           <span className="premium-ask-coach-heading-row">
@@ -140,7 +140,7 @@ export default function PremiumAskCoachCard({
               onClick={() => onAsk(suggestedQuestion)}
               aria-label={`${suggestedQuestion} ${detail}`}
             >
-              <img src={artwork} alt="" aria-hidden="true" />
+              <img loading="lazy" src={artwork} alt="" aria-hidden="true" />
               <span className="premium-ask-coach-prompt-veil" aria-hidden="true" />
               <span className="premium-ask-coach-prompt-icon" aria-hidden="true"><Icon /></span>
               <span className="premium-ask-coach-prompt-copy">
@@ -155,7 +155,7 @@ export default function PremiumAskCoachCard({
 
         {answer ? (
           <article className="premium-ask-coach-answer" aria-live="polite">
-            <img src={premiumAskCoachAnswer} alt="" className="premium-ask-coach-answer-art" aria-hidden="true" />
+            <img loading="lazy" src={premiumAskCoachAnswer} alt="" className="premium-ask-coach-answer-art" aria-hidden="true" />
             <span className="premium-ask-coach-answer-veil" aria-hidden="true" />
             <div className="premium-ask-coach-answer-copy">
               <div className="premium-ask-coach-answer-kicker"><Sparkles aria-hidden="true" /> Grounded answer</div>
@@ -172,7 +172,7 @@ export default function PremiumAskCoachCard({
               </section>
 
               <section className="premium-ask-coach-evidence" data-empty={evidenceCount === 0 ? 'true' : 'false'}>
-                <img src={premiumAskCoachEvidence} alt="" aria-hidden="true" />
+                <img loading="lazy" src={premiumAskCoachEvidence} alt="" aria-hidden="true" />
                 <span className="premium-ask-coach-evidence-veil" aria-hidden="true" />
                 <div className="premium-ask-coach-evidence-head">
                   <span className="premium-ask-coach-subcard-icon" aria-hidden="true"><Route /></span>

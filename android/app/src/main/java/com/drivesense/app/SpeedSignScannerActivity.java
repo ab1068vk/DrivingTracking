@@ -72,6 +72,8 @@ public class SpeedSignScannerActivity extends AppCompatActivity {
     static final String EXTRA_ARM_TIMEOUT_MINUTES = "armTimeoutMinutes";
     private static final String LAST_SCAN_SUMMARY_KEY = "speed_sign_last_scan_summary_v1";
     private static final long SAFETY_CHECK_INTERVAL_MS = 2_000L;
+    // Grace period after a camera failure so the message is readable before the screen closes.
+    private static final long CAMERA_FAILURE_AUTO_CLOSE_MS = 15_000L;
     private static final long PREVIEW_START_TIMEOUT_MS = 10_000L;
     private static final long DISTANT_FOCUS_RETRY_MS = 5_000L;
     private static final double MIN_ANALYSIS_SPEED_KMH = 12d;
@@ -105,6 +107,7 @@ public class SpeedSignScannerActivity extends AppCompatActivity {
     private boolean stopping;
     private boolean previewStreaming;
     private boolean cameraFailed;
+    private long cameraFailedAtMs;
     private boolean waitingForAutomaticTrip;
     private boolean waitingForPreparedManualTrip;
     private boolean scanningManualTrip;
@@ -703,8 +706,13 @@ public class SpeedSignScannerActivity extends AppCompatActivity {
 
     private void showCameraError(String message, String reason) {
         cameraFailed = true;
+        if (cameraFailedAtMs == 0L) cameraFailedAtMs = System.currentTimeMillis();
         Log.e(TAG, reason + ": " + message);
         recordScannerDiagnostic("speed_sign_camera_error", reason);
+        // Release the camera immediately. A failure that leaves the camera bound and the
+        // analyzer thread running keeps the screen awake and drains battery for the rest of
+        // the session, with no way out because the close button is hidden while scanning.
+        releaseCameraAfterFailure();
         runOnUiThread(() -> {
             if (isFinishing() || isDestroyed()) return;
             if (cameraStateView != null) {
@@ -715,6 +723,23 @@ public class SpeedSignScannerActivity extends AppCompatActivity {
             if (evidenceView != null) {
                 evidenceView.setText("No picture or sign data was captured. Tap Stop sign scan to return.");
             }
+            // Scanning has stopped, so the user is no longer interacting while the detector
+            // runs and the exit control can safely come back.
+            if (closeButton != null) closeButton.setVisibility(View.VISIBLE);
+        });
+    }
+
+    private void releaseCameraAfterFailure() {
+        try {
+            activeCamera = null;
+            if (cameraProvider != null) cameraProvider.unbindAll();
+            if (cameraExecutor != null) cameraExecutor.shutdown();
+        } catch (Exception error) {
+            Log.w(TAG, "Could not release camera after failure", error);
+        }
+        runOnUiThread(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         });
     }
 
@@ -932,6 +957,12 @@ public class SpeedSignScannerActivity extends AppCompatActivity {
             }
             if (!isSafeToStart(SpeedSignScannerActivity.this)) {
                 stopScanner("Sign scanning stopped to protect battery or temperature.");
+                return;
+            }
+            // The camera is already released by showCameraError; close out once the user has
+            // had a chance to read why, instead of idling until the session limit.
+            if (cameraFailed && now - cameraFailedAtMs >= CAMERA_FAILURE_AUTO_CLOSE_MS) {
+                stopScanner("Sign scanning stopped because the camera was unavailable.");
                 return;
             }
             int battery = batteryPercent(SpeedSignScannerActivity.this);

@@ -76,7 +76,7 @@ function deltaPresentation(delta, scoredTripCount) {
 
 function PerformanceGaugeIcon({ alertAccent = false }) {
   return (
-    <img
+    <img loading="lazy"
       className="premium-telemetry-icon premium-telemetry-icon-gauge"
       src={alertAccent ? premiumTelemetryHeaderGauge : premiumTelemetryPerformanceGauge}
       alt=""
@@ -88,7 +88,7 @@ function PerformanceGaugeIcon({ alertAccent = false }) {
 
 function TrajectoryRouteIcon() {
   return (
-    <img
+    <img loading="lazy"
       className="premium-telemetry-icon premium-telemetry-icon-route"
       src={premiumTelemetryTrajectory}
       alt=""
@@ -100,7 +100,7 @@ function TrajectoryRouteIcon() {
 
 function SummitFlagIcon() {
   return (
-    <img
+    <img loading="lazy"
       className="premium-telemetry-icon premium-telemetry-icon-summit"
       src={premiumTelemetrySummit}
       alt=""
@@ -112,7 +112,7 @@ function SummitFlagIcon() {
 
 function RangeSlidersIcon() {
   return (
-    <img
+    <img loading="lazy"
       className="premium-telemetry-icon premium-telemetry-icon-sliders"
       src={premiumTelemetrySliders}
       alt=""
@@ -231,7 +231,7 @@ export default function PremiumDrivingScoreCard({
 
   return (
     <section className="premium-driving-score" aria-labelledby="premium-driving-score-title">
-      <img className="premium-driving-score-hero-art" src={premiumDrivingScoreHero} alt="" aria-hidden="true" />
+      <img loading="lazy" className="premium-driving-score-hero-art" src={premiumDrivingScoreHero} alt="" aria-hidden="true" />
 
       <header className="premium-driving-score-head">
         <div className="premium-driving-score-brand">
@@ -278,7 +278,7 @@ export default function PremiumDrivingScoreCard({
           </article>
 
           <article className="premium-score-trajectory" aria-labelledby="premium-score-trajectory-title">
-            <img src={premiumDrivingScoreTrend} alt="" aria-hidden="true" />
+            <img loading="lazy" src={premiumDrivingScoreTrend} alt="" aria-hidden="true" />
             <div className="premium-score-trajectory-head">
               <div className="premium-score-trajectory-heading">
                 <span className="premium-score-trajectory-icon" aria-hidden="true">
@@ -344,7 +344,7 @@ export default function PremiumDrivingScoreCard({
 
           <div className="premium-score-metric-grid">
             <article className="premium-score-metric" data-accent="peak" aria-label={`Recent peak: ${scoreText(summary.peak)}`}>
-              <img src={premiumDrivingScorePeak} alt="" aria-hidden="true" />
+              <img loading="lazy" src={premiumDrivingScorePeak} alt="" aria-hidden="true" />
               <div className="premium-score-metric-icon"><SummitFlagIcon /></div>
               <div className="premium-score-metric-copy">
                 <strong>{scoreText(summary.peak)}</strong>
@@ -353,7 +353,7 @@ export default function PremiumDrivingScoreCard({
               </div>
             </article>
             <article className="premium-score-metric" data-accent="range" aria-label={`Observed score range: ${rangeText}`}>
-              <img src={premiumDrivingScoreRange} alt="" aria-hidden="true" />
+              <img loading="lazy" src={premiumDrivingScoreRange} alt="" aria-hidden="true" />
               <div className="premium-score-metric-icon"><RangeSlidersIcon /></div>
               <div className="premium-score-metric-copy">
                 <strong>{rangeText}</strong>

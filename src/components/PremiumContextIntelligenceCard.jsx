@@ -107,7 +107,7 @@ export default function PremiumContextIntelligenceCard({
   return (
     <section className="premium-context-intelligence" aria-labelledby="premium-context-title">
       <div className="premium-context-hero">
-        <img src={premiumContextHero} alt="" aria-hidden="true" />
+        <img loading="lazy" src={premiumContextHero} alt="" aria-hidden="true" />
         <div className="premium-context-hero-copy">
           <div className="premium-context-eyebrow">
             <span className="premium-context-shield" aria-hidden="true">
@@ -138,7 +138,7 @@ export default function PremiumContextIntelligenceCard({
             data-tone={tone}
             data-state={state}
           >
-            <img src={art} alt="" aria-hidden="true" />
+            <img loading="lazy" src={art} alt="" aria-hidden="true" />
             <div className="premium-context-metric-icon" aria-hidden="true">
               {id === 'routes' ? <MapPinned /> : <Icon />}
             </div>

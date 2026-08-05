@@ -75,7 +75,7 @@ export default function PremiumMapControls({
           onClick={actionById[id]}
         >
           <span className="premium-map-control-visual" aria-hidden="true">
-            <img src={art} alt="" />
+            <img loading="lazy" src={art} alt="" />
           </span>
           <span className="premium-map-control-copy">
             <strong>{label}</strong>

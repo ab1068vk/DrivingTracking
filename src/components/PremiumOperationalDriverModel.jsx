@@ -224,10 +224,10 @@ function InsightCard({ art, eyebrow, iconArt, title, detail, tone, state }) {
       data-state={state}
       aria-label={`${eyebrow}. ${title}. ${detail}`}
     >
-      <img src={art} alt="" aria-hidden="true" className="premium-operational-insight-art" />
+      <img loading="lazy" src={art} alt="" aria-hidden="true" className="premium-operational-insight-art" />
       <span className="premium-operational-insight-shade" aria-hidden="true" />
       <div className="premium-operational-insight-rail" aria-hidden="true">
-        <img src={iconArt} alt="" />
+        <img loading="lazy" src={iconArt} alt="" />
       </div>
       <div className="premium-operational-insight-copy">
         <div className="premium-operational-insight-eyebrow">{eyebrow}</div>
@@ -271,12 +271,12 @@ export default function PremiumOperationalDriverModel({
       data-loading={loading}
       aria-labelledby="premium-operational-model-title"
     >
-      <img className="premium-operational-hero" src={premiumOperationalHero} alt="" aria-hidden="true" />
+      <img loading="lazy" className="premium-operational-hero" src={premiumOperationalHero} alt="" aria-hidden="true" />
       <span className="premium-operational-hero-shade" aria-hidden="true" />
 
       <header className="premium-operational-header">
         <div className="premium-operational-kicker">
-          <img src={premiumIconBrain} alt="" aria-hidden="true" />
+          <img loading="lazy" src={premiumIconBrain} alt="" aria-hidden="true" />
           Operational driver model
         </div>
         <h2 id="premium-operational-model-title">{model.archetype}</h2>
@@ -285,7 +285,7 @@ export default function PremiumOperationalDriverModel({
 
       {loading && !model.isReady ? (
         <div className="premium-operational-loading" role="status" aria-live="polite">
-          <img src={premiumIconBrain} alt="" aria-hidden="true" />
+          <img loading="lazy" src={premiumIconBrain} alt="" aria-hidden="true" />
           <div>
             <strong>Refreshing your local driver model</strong>
             <span>Comparing the latest eligible trips and coaching signals.</span>
@@ -303,7 +303,7 @@ export default function PremiumOperationalDriverModel({
                   data-tone={signal.tone}
                   title={`${signal.label}: ${signal.percent == null ? 'Learning' : `${signal.percent}%`}`}
                 >
-                  <img src={signal.art} alt="" aria-hidden="true" />
+                  <img loading="lazy" src={signal.art} alt="" aria-hidden="true" />
                   <strong>{signal.label}</strong>
                 </div>
               );
@@ -342,7 +342,7 @@ export default function PremiumOperationalDriverModel({
         </>
       ) : (
         <div className="premium-operational-empty" role="status">
-          <img src={premiumIconBrain} alt="" aria-hidden="true" />
+          <img loading="lazy" src={premiumIconBrain} alt="" aria-hidden="true" />
           <div>
             <strong>Your driver signature is calibrating</strong>
             <p>Road Sage will reveal the five-signal model after five eligible scored trips. Your existing coaching data remains local.</p>

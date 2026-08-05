@@ -188,8 +188,19 @@ export default function TrackingEvents() {
                   {filteredRows.map((row) => (
                     <tr
                       key={row.id}
+                      // Selecting an event was mouse-only; a row needs a role, focus, and key
+                      // handling to be reachable at all with a keyboard or switch device.
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={selectedRow?.id === row.id}
+                      aria-label={`Event ${row.label} at ${formatTrackingEventTime(row.timestamp)}`}
                       onClick={() => setSelectedRowId(row.id)}
-                      className={`cursor-pointer border-b border-border/70 hover:bg-secondary/70 ${selectedRow?.id === row.id ? 'bg-primary/10' : ''}`}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return;
+                        event.preventDefault();
+                        setSelectedRowId(row.id);
+                      }}
+                      className={`cursor-pointer border-b border-border/70 hover:bg-secondary/70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${selectedRow?.id === row.id ? 'bg-primary/10' : ''}`}
                     >
                       <Td>{formatTrackingEventTime(row.timestamp)}</Td>
                       <Td>

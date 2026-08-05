@@ -216,7 +216,7 @@ const exportDataPortabilityBundleFromSettings = (...args) => import('@/lib/dataR
 const eraseAllLocalDataAndDownloadReceiptFromSettings = (...args) => import('@/lib/dataRights')
   .then(({ eraseAllLocalDataAndDownloadReceipt }) => eraseAllLocalDataAndDownloadReceipt.apply(null, args));
 
-function Toggle({ value, onChange, disabled = false }) {
+function Toggle({ value, onChange, disabled = false, ...ariaProps }) {
   const [optimisticValue, setOptimisticValue] = useState(Boolean(value));
   const latestValueRef = useRef(Boolean(value));
   latestValueRef.current = Boolean(value);
@@ -240,7 +240,10 @@ function Toggle({ value, onChange, disabled = false }) {
       aria-checked={optimisticValue}
       disabled={disabled}
       onClick={change}
-      className={`relative w-12 h-6 rounded-full transition-colors disabled:opacity-50 ${optimisticValue ? 'bg-primary' : 'bg-secondary border border-border'}`}
+      // The after: pseudo-element lifts the touch target to ~44px without changing how the
+      // 24px-tall switch looks.
+      className={`relative w-12 h-6 rounded-full transition-colors disabled:opacity-50 after:absolute after:content-[''] after:inset-x-0 after:-inset-y-[10px] ${optimisticValue ? 'bg-primary' : 'bg-secondary border border-border'}`}
+      {...ariaProps}
     >
       <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${optimisticValue ? 'left-6' : 'left-0.5'}`} />
     </button>

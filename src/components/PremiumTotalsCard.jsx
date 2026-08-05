@@ -108,7 +108,7 @@ export default function PremiumTotalsCard({ trips = [], units = 'metric' }) {
       data-period={period}
       aria-labelledby="premium-totals-title"
     >
-      <img className="premium-totals-hero" src={premiumTotalsHero} alt="" aria-hidden="true" />
+      <img loading="lazy" className="premium-totals-hero" src={premiumTotalsHero} alt="" aria-hidden="true" />
       <div className="premium-totals-hero-shade" aria-hidden="true" />
 
       <div className="premium-totals-heading">
@@ -146,7 +146,7 @@ export default function PremiumTotalsCard({ trips = [], units = 'metric' }) {
             data-accent={accent}
             aria-label={`${label}: ${values[id]}. ${sublabels[id]}`}
           >
-            <img className="premium-metric-art" src={asset} alt="" aria-hidden="true" />
+            <img loading="lazy" className="premium-metric-art" src={asset} alt="" aria-hidden="true" />
             <div className="premium-metric-shade" aria-hidden="true" />
             <div className="premium-metric-icon" aria-hidden="true"><Icon /></div>
             <div className="premium-metric-copy">
@@ -277,7 +277,7 @@ export function PremiumBaselineCard({ baseline, baselineRangeLabel = '', baselin
 
   return (
     <section className="premium-baseline-card" data-tone={model.tone} aria-labelledby="premium-baseline-title">
-      <img className="premium-baseline-hero" src={premiumBaselineHero} alt="" aria-hidden="true" />
+      <img loading="lazy" className="premium-baseline-hero" src={premiumBaselineHero} alt="" aria-hidden="true" />
       <div className="premium-baseline-head">
         <div>
           <div className="premium-baseline-title-row">
@@ -295,7 +295,7 @@ export function PremiumBaselineCard({ baseline, baselineRangeLabel = '', baselin
           data-state={model.score == null ? 'learning' : 'ready'}
           aria-label={`This week score: ${model.scoreLabel}. ${model.deltaLabel}`}
         >
-          <img src={premiumBaselineWeek} alt="" aria-hidden="true" className="premium-baseline-art" />
+          <img loading="lazy" src={premiumBaselineWeek} alt="" aria-hidden="true" className="premium-baseline-art" />
           <div className="premium-baseline-week-copy">
             <span className="premium-baseline-tile-label">This Week</span>
             <strong>{model.scoreLabel}</strong>
@@ -310,7 +310,7 @@ export function PremiumBaselineCard({ baseline, baselineRangeLabel = '', baselin
           className="premium-baseline-tile premium-baseline-reference"
           aria-label={`Approximate personal baseline: ${model.baselineValue}. ${model.baselineMeta}`}
         >
-          <img src={premiumBaselineReference} alt="" aria-hidden="true" className="premium-baseline-art" />
+          <img loading="lazy" src={premiumBaselineReference} alt="" aria-hidden="true" className="premium-baseline-art" />
           <div className="premium-baseline-tile-copy">
             <span className="premium-baseline-tile-label">Approx Baseline</span>
             <strong>{model.baselineScoreLabel}</strong>
@@ -324,7 +324,7 @@ export function PremiumBaselineCard({ baseline, baselineRangeLabel = '', baselin
           data-state={baseline?.percentile == null ? 'learning' : 'ready'}
           aria-label={`Personal percentile: ${model.percentileValue}. ${model.percentileMeta}`}
         >
-          <img src={premiumBaselinePercentile} alt="" aria-hidden="true" className="premium-baseline-art" />
+          <img loading="lazy" src={premiumBaselinePercentile} alt="" aria-hidden="true" className="premium-baseline-art" />
           <div className="premium-baseline-tile-copy">
             <strong>{model.percentileValue}</strong>
             <span>Percentile among<br />your recorded weeks</span>
@@ -347,7 +347,7 @@ export function PremiumBaselineCard({ baseline, baselineRangeLabel = '', baselin
           data-stress={model.stressTone}
           aria-label={`Rush hour behaviour: ${model.stressLabel}. ${model.stressMeta}`}
         >
-          <img
+          <img loading="lazy"
             src={stressState.sceneAsset}
             alt=""
             aria-hidden="true"
@@ -356,7 +356,7 @@ export function PremiumBaselineCard({ baseline, baselineRangeLabel = '', baselin
           />
           <div className="premium-baseline-tile-copy">
             <span className="premium-baseline-stress-icon" data-icon={model.stressTone} aria-hidden="true">
-              <img className="premium-baseline-stress-state-art" src={stressState.iconAsset} alt="" />
+              <img loading="lazy" className="premium-baseline-stress-state-art" src={stressState.iconAsset} alt="" />
             </span>
             <strong>{model.stressLabel}</strong>
             <span>Rush hour<br />behaviour</span>

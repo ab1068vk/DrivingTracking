@@ -116,7 +116,7 @@ export default function PremiumPressureWindowsCard({
 
   return (
     <section className="premium-pressure-windows" aria-labelledby="premium-pressure-windows-title">
-      <img
+      <img loading="lazy"
         className="premium-pressure-windows-hero"
         src={premiumPressureWindowsHero}
         alt=""
@@ -142,7 +142,7 @@ export default function PremiumPressureWindowsCard({
               data-sampled={window.avgScore == null ? 'false' : 'true'}
               aria-label={`${window.label}${window.range ? `, ${window.range}` : ''}: ${window.tripText}, ${window.eventText}, estimated average score ${window.avgScore == null ? 'still learning' : window.scoreText}, ${window.pressureLabel.toLowerCase()} pressure`}
             >
-              <img src={window.art} alt="" aria-hidden="true" />
+              <img loading="lazy" src={window.art} alt="" aria-hidden="true" />
               <div className="premium-pressure-window-veil" aria-hidden="true" />
               <div className="premium-pressure-window-icon" aria-hidden="true"><WindowIcon /></div>
 

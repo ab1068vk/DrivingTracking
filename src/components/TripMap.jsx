@@ -628,6 +628,11 @@ function TripMapContent({
   const lastFitRouteKeyRef = useRef('');
   const tileErrorCountRef = useRef(0);
   const tileFailureReportedRef = useRef(false);
+  // Held in a ref so a moving position does not re-run the full map redraw below; a dedicated
+  // effect moves the marker instead.
+  const currentLocationRef = useRef(currentLocation);
+  currentLocationRef.current = currentLocation;
+  const currentLocationMarkerRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [mapFailed, setMapFailed] = useState(false);
   const [tileStyle, setTileStyle] = useState('standard');
@@ -857,7 +862,7 @@ function TripMapContent({
     const privacySettings = settings;
     const privacyDisplayReferences = [
       ...routeSets.flatMap((route) => route.route_points || []),
-      currentLocation,
+      currentLocationRef.current,
       parkedLocation,
     ];
     const displayPrivacyZones = showPrivacyZones && privacySettings.show_privacy_circles === true
@@ -900,7 +905,7 @@ function TripMapContent({
         : null;
       return [fromPoint, toPoint, midpoint].some((point) => point && isPrivatePoint(point));
     };
-    const normalizedCurrentLocation = validLatLngPoint(currentLocation);
+    const normalizedCurrentLocation = validLatLngPoint(currentLocationRef.current);
     const normalizedParkedLocation = validLatLngPoint(parkedLocation);
     const safeCurrentLocation = normalizedCurrentLocation && !isPrivatePoint(normalizedCurrentLocation) ? normalizedCurrentLocation : null;
     const safeParkedLocation = normalizedParkedLocation && !isPrivatePoint(normalizedParkedLocation) ? normalizedParkedLocation : null;
@@ -1273,17 +1278,8 @@ function TripMapContent({
       });
     }
 
-    if (showCurrentLocation && safeCurrentLocation) {
-      const locIcon = window.L.divIcon({
-        html: '<div style="width:16px;height:16px;background:#3b82f6;border:3px solid white;border-radius:50%;box-shadow:0 0 0 6px rgba(59,130,246,0.2),0 2px 6px rgba(0,0,0,0.2)"></div>',
-        className: '',
-        iconSize: [16, 16],
-        iconAnchor: [8, 8],
-      });
-      window.L.marker([safeCurrentLocation.lat, safeCurrentLocation.lng], { icon: locIcon })
-        .bindPopup('<b>You are here</b>')
-        .addTo(layers);
-    }
+    // The current-location marker lives in its own effect so a new GPS fix moves one marker
+    // instead of clearing and rebuilding every route, event pin and privacy zone on the map.
     if (safeParkedLocation) {
       const parkedIcon = window.L.divIcon({
         html: '<div style="width:22px;height:22px;background:#f97316;border:3px solid white;border-radius:50%;box-shadow:0 0 0 8px rgba(249,115,22,0.24),0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:white;font-size:12px;font-weight:700">P</div>',
@@ -1313,7 +1309,51 @@ function TripMapContent({
     } finally {
       endDraw({ outcome: 'complete' });
     }
-  }, [mapFailed, ready, routePoints, routes, events, showCurrentLocation, currentLocation, parkedLocation, parkedLocationDraggable, showPrivacyZones, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings, units, privacyZonesRevision]);
+    // `currentLocation` is deliberately absent: during a live trip it changes on every GPS fix,
+    // and redrawing the whole map that often caused visible flicker and steady battery drain.
+    // It is read through currentLocationRef, and the two effects below track its movement.
+  }, [mapFailed, ready, routePoints, routes, events, showCurrentLocation, parkedLocation, parkedLocationDraggable, showPrivacyZones, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings, units, privacyZonesRevision]);
+
+  useEffect(() => {
+    const marker = currentLocationMarkerRef.current;
+    const map = leafletMapRef.current;
+    const safeCurrentLocation = validLatLngPoint(currentLocation);
+    const shouldShow = Boolean(
+      map && ready && !mapFailed && showCurrentLocation && safeCurrentLocation &&
+      !isPointInPrivacyZone(safeCurrentLocation, getPrivacyZones(settings))
+    );
+
+    if (!shouldShow) {
+      if (marker) {
+        safeLeafletCall(() => marker.remove());
+        currentLocationMarkerRef.current = null;
+      }
+      return;
+    }
+
+    const position = [safeCurrentLocation.lat, safeCurrentLocation.lng];
+    if (marker) {
+      safeLeafletCall(() => marker.setLatLng(position));
+      return;
+    }
+    safeLeafletCall(() => {
+      const locIcon = window.L.divIcon({
+        html: '<div style="width:16px;height:16px;background:#3b82f6;border:3px solid white;border-radius:50%;box-shadow:0 0 0 6px rgba(59,130,246,0.2),0 2px 6px rgba(0,0,0,0.2)"></div>',
+        className: '',
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+      });
+      currentLocationMarkerRef.current = window.L.marker(position, { icon: locIcon })
+        .bindPopup('<b>You are here</b>')
+        .addTo(map);
+    });
+  }, [currentLocation, showCurrentLocation, settings, ready, mapFailed]);
+
+  useEffect(() => () => {
+    if (!currentLocationMarkerRef.current) return;
+    safeLeafletCall(() => currentLocationMarkerRef.current.remove());
+    currentLocationMarkerRef.current = null;
+  }, []);
 
   useEffect(() => {
     const safeCurrentLocation = validLatLngPoint(currentLocation);
@@ -1368,6 +1408,10 @@ function TripMapContent({
         ref={mapRef}
         className="map-container h-full w-full"
         style={{ height: '100%', width: '100%', zIndex: 0 }}
+        // Without a name the map is an unlabelled interactive region; the route detail is
+        // available as text elsewhere on these pages, so this only needs to identify it.
+        role="application"
+        aria-label="Trip route map"
       />
       <div className="absolute right-3 top-3 z-10 flex flex-col gap-2">
         <button

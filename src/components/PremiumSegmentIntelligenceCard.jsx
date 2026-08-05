@@ -54,7 +54,7 @@ function RouteChoiceIcon({ label = '' }) {
       ? premiumSegmentEveningIcon
       : premiumSegmentRepeatIcon;
 
-  return <img className="premium-segment-icon-art" src={asset} alt="" aria-hidden="true" />;
+  return <img loading="lazy" className="premium-segment-icon-art" src={asset} alt="" aria-hidden="true" />;
 }
 
 /**
@@ -108,7 +108,7 @@ function EvidenceMetric({ asset, tone, value, label }) {
   return (
     <article className="premium-segment-evidence-metric" data-tone={tone} aria-label={`${value} ${label}`}>
       <span className="premium-segment-evidence-icon" aria-hidden="true">
-        <img className="premium-segment-icon-art" src={asset} alt="" />
+        <img loading="lazy" className="premium-segment-icon-art" src={asset} alt="" />
       </span>
       <strong>{value}</strong>
       <span>{label}</span>
@@ -149,11 +149,11 @@ export default function PremiumSegmentIntelligenceCard({
       aria-labelledby="premium-segment-title"
     >
       <div className="premium-segment-hero">
-        <img src={premiumSegmentHero} alt="" aria-hidden="true" />
+        <img loading="lazy" src={premiumSegmentHero} alt="" aria-hidden="true" />
         <div className="premium-segment-hero-shade" aria-hidden="true" />
         <div className="premium-segment-hero-copy">
           <div className="premium-segment-eyebrow">
-            <img
+            <img loading="lazy"
               className="premium-segment-icon-art"
               src={premiumSegmentNetworkIcon}
               alt=""
@@ -166,7 +166,7 @@ export default function PremiumSegmentIntelligenceCard({
           {route?.lastTripId && (
             <button type="button" onClick={onOpenRouteEvidence}>
               Open route evidence
-              <img
+              <img loading="lazy"
                 className="premium-segment-icon-art"
                 src={premiumSegmentArrowIcon}
                 alt=""
@@ -214,9 +214,9 @@ export default function PremiumSegmentIntelligenceCard({
                   aria-label={`${section.label}: ${section.eventCount} events, repeated on ${section.repeatRate}% of detailed drives${section.isStrongest ? ', highest event count section' : ''}`}
                 >
                   <div className="premium-segment-section-art">
-                    <img src={presentation.asset} alt="" aria-hidden="true" />
+                    <img loading="lazy" src={presentation.asset} alt="" aria-hidden="true" />
                     <span aria-hidden="true">
-                      <img
+                      <img loading="lazy"
                         className="premium-segment-icon-art"
                         src={presentation.iconAsset}
                         alt=""
@@ -246,7 +246,7 @@ export default function PremiumSegmentIntelligenceCard({
       ) : (
         <div className="premium-segment-empty">
           <span aria-hidden="true">
-            <img
+            <img loading="lazy"
               className="premium-segment-icon-art"
               src={premiumSegmentPinIcon}
               alt=""

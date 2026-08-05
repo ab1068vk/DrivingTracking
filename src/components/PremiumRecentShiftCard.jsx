@@ -152,13 +152,13 @@ export default function PremiumRecentShiftCard({ anomaly = null }) {
       aria-labelledby="premium-recent-shift-title"
     >
       <div className="premium-recent-shift-grid" aria-hidden="true" />
-      <img
+      <img loading="lazy"
         className="premium-recent-shift-route"
         src={premiumRecentShiftRoute}
         alt=""
         aria-hidden="true"
       />
-      <img
+      <img loading="lazy"
         className="premium-recent-shift-car"
         src={premiumRecentShiftCar}
         alt=""
@@ -180,7 +180,7 @@ export default function PremiumRecentShiftCard({ anomaly = null }) {
       >
         <div className="premium-recent-shift-score-primary">
           <div className="premium-recent-shift-shield" aria-hidden="true">
-            <img src={premiumRecentShiftShield} alt="" />
+            <img loading="lazy" src={premiumRecentShiftShield} alt="" />
           </div>
           <div className="premium-recent-shift-score-copy">
             <div className="premium-recent-shift-value">

@@ -89,14 +89,14 @@ export default function PremiumReadyToDriveCard({
       data-manual-mode={isAndroidManualMode ? 'true' : 'false'}
       aria-labelledby="premium-ready-title"
     >
-      <img
+      <img loading="lazy"
         className="premium-ready-card-background"
         src={premiumReadyHero}
         alt=""
         aria-hidden="true"
       />
       <div className="premium-ready-hero">
-        <img
+        <img loading="lazy"
           className="premium-ready-hero-image"
           src={premiumReadyHero}
           alt=""
@@ -117,7 +117,7 @@ export default function PremiumReadyToDriveCard({
             aria-busy={startingTrip || undefined}
             className="premium-ready-start"
           >
-            <img
+            <img loading="lazy"
               className="premium-ready-start-art"
               src={premiumReadyStartControl}
               alt=""
@@ -161,7 +161,7 @@ export default function PremiumReadyToDriveCard({
 
       {isAndroidManualMode && (
         <div className="premium-ready-manual" data-status={manualReady ? 'ready' : 'attention'}>
-          <img className="premium-ready-manual-image" src={premiumReadyManual} alt="" aria-hidden="true" />
+          <img loading="lazy" className="premium-ready-manual-image" src={premiumReadyManual} alt="" aria-hidden="true" />
           <div className="premium-ready-manual-shade" aria-hidden="true" />
 
           <div className="premium-ready-manual-head">
@@ -217,9 +217,9 @@ export default function PremiumReadyToDriveCard({
         aria-busy={startingTrip || undefined}
         className="premium-ready-private"
       >
-        <img className="premium-ready-private-image" src={premiumReadyPrivate} alt="" aria-hidden="true" />
+        <img loading="lazy" className="premium-ready-private-image" src={premiumReadyPrivate} alt="" aria-hidden="true" />
         <span className="premium-ready-private-shade" aria-hidden="true" />
-        <img
+        <img loading="lazy"
           className="premium-ready-private-shield-art"
           src={premiumReadyPrivateShield}
           alt=""
@@ -232,7 +232,7 @@ export default function PremiumReadyToDriveCard({
             <span>No route, addresses, events, or score.</span>
           </small>
         </span>
-        <img
+        <img loading="lazy"
           className="premium-ready-private-control-art"
           src={premiumReadyPrivateControl}
           alt=""

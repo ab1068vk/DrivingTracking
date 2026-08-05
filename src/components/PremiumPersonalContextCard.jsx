@@ -134,7 +134,7 @@ export default function PremiumPersonalContextCard({
 
   return (
     <section className="premium-personal-context" aria-labelledby="premium-personal-context-title">
-      <img className="premium-personal-context-hero" src={premiumContextHero} alt="" aria-hidden="true" />
+      <img loading="lazy" className="premium-personal-context-hero" src={premiumContextHero} alt="" aria-hidden="true" />
       <div className="premium-personal-context-grid" aria-hidden="true" />
 
       <header className="premium-personal-context-header">
@@ -151,7 +151,7 @@ export default function PremiumPersonalContextCard({
           style={progressStyle}
           aria-label={`Model confidence ${model.confidencePercent} percent. ${model.confidenceDetail}`}
         >
-          <img src={premiumContextConfidence} alt="" aria-hidden="true" />
+          <img loading="lazy" src={premiumContextConfidence} alt="" aria-hidden="true" />
           <div className="premium-personal-context-icon" aria-hidden="true"><ShieldCheck /></div>
           <div className="premium-personal-context-copy">
             <div className="premium-personal-context-value">{model.confidencePercent}%</div>
@@ -172,7 +172,7 @@ export default function PremiumPersonalContextCard({
           className="premium-personal-context-metric premium-personal-context-fatigue"
           aria-label={`Learned fatigue onset ${model.fatigueMinutes == null ? 'unavailable' : `${model.fatigueMinutes} minutes`}. ${model.fatigueDetail}`}
         >
-          <img src={premiumContextFatigue} alt="" aria-hidden="true" />
+          <img loading="lazy" src={premiumContextFatigue} alt="" aria-hidden="true" />
           <div className="premium-personal-context-icon" aria-hidden="true"><Brain /></div>
           <div className="premium-personal-context-copy">
             <div className="premium-personal-context-value">
@@ -189,7 +189,7 @@ export default function PremiumPersonalContextCard({
           data-window={model.bestWindowId}
           aria-label={`Strongest window ${model.bestWindowValue}. ${model.bestWindowDetail}`}
         >
-          <img src={premiumContextWindow} alt="" aria-hidden="true" />
+          <img loading="lazy" src={premiumContextWindow} alt="" aria-hidden="true" />
           <div className="premium-personal-context-icon" aria-hidden="true"><Clock3 /></div>
           <div className="premium-personal-context-copy">
             <div className="premium-personal-context-value premium-personal-context-word">{model.bestWindowValue}</div>
@@ -202,7 +202,7 @@ export default function PremiumPersonalContextCard({
           className="premium-personal-context-metric premium-personal-context-streak"
           aria-label={`${model.streak} day clean-braking streak. ${model.streakDetail}`}
         >
-          <img src={premiumContextStreak} alt="" aria-hidden="true" />
+          <img loading="lazy" src={premiumContextStreak} alt="" aria-hidden="true" />
           <div className="premium-personal-context-icon" aria-hidden="true"><Disc3 /></div>
           <div className="premium-personal-context-copy">
             <div className="premium-personal-context-value">{model.streak}</div>

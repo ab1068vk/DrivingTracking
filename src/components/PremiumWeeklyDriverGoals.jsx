@@ -104,7 +104,7 @@ export function PremiumWeeklyGoalsCard({ goals = [], units = 'metric' }) {
   return (
     <section className="premium-weekly-goals-card" data-tone={cardTone} aria-labelledby="premium-weekly-goals-title">
       <div className="premium-weekly-goals-hero">
-        <img src={premiumWeeklyGoalsHero} alt="" aria-hidden="true" />
+        <img loading="lazy" src={premiumWeeklyGoalsHero} alt="" aria-hidden="true" />
         <div className="premium-weekly-goals-hero-shade" aria-hidden="true" />
         <header className="premium-weekly-goals-head">
           <div className="premium-weekly-goals-status-row">
@@ -135,7 +135,7 @@ export function PremiumWeeklyGoalsCard({ goals = [], units = 'metric' }) {
               >
                 <div className="premium-weekly-goal-art" aria-hidden="true">
                   {presentation.artwork
-                    ? <img src={presentation.artwork} alt="" />
+                    ? <img loading="lazy" src={presentation.artwork} alt="" />
                     : <Target />}
                 </div>
                 <div className="premium-weekly-goal-title">
@@ -198,7 +198,7 @@ export function PremiumWeeklyInsightCards({ fatigueRisk = {}, noHarshBrakeStreak
   return (
     <section className="premium-weekly-insights" aria-label="Weekly driving insights">
       <article className="premium-weekly-insight premium-braking-streak" aria-label={`${streak} days without harsh braking`}>
-        <img src={premiumSmoothBrakingRoad} alt="" aria-hidden="true" />
+        <img loading="lazy" src={premiumSmoothBrakingRoad} alt="" aria-hidden="true" />
         <div className="premium-weekly-insight-shade" aria-hidden="true" />
         <div className="premium-weekly-insight-copy">
           <strong>{streak}</strong>
@@ -212,7 +212,7 @@ export function PremiumWeeklyInsightCards({ fatigueRisk = {}, noHarshBrakeStreak
         data-risk={riskTone}
         aria-label={`${riskLabel} estimated fatigue risk, driving-time proxy. ${longTripLabel}`}
       >
-        <img src={premiumFatigueRiskShield} alt="" aria-hidden="true" />
+        <img loading="lazy" src={premiumFatigueRiskShield} alt="" aria-hidden="true" />
         <div className="premium-weekly-insight-shade" aria-hidden="true" />
         <div className="premium-weekly-insight-copy">
           <strong>{riskLabel}</strong>

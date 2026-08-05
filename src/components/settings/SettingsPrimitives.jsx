@@ -9,7 +9,7 @@
 //     turns every section into eager work on every Settings render.
 //   - SettingRow's `data-setting-label` attribute and the exact label strings
 //     are how e2e/settings-controls.spec.js targets individual controls.
-import { memo } from 'react';
+import { cloneElement, isValidElement, memo, useId } from 'react';
 
 export function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -36,6 +36,13 @@ export const SettingsSection = /** @type {any} */ (memo(function SettingsSection
 
 export function SettingRow({ icon: Icon = null, label, sublabel = '', children = null, onClick = null, danger = false, disabled = false }) {
   const actionable = typeof onClick === 'function';
+  // The row's label is the control's only visible name, but it lives in a sibling element, so
+  // a screen reader announced every toggle here as an unnamed switch. Link them by id, once,
+  // rather than repeating an aria-label at each of the many call sites.
+  const labelId = `setting-label-${useId()}`;
+  const labelledChildren = isValidElement(children) && !children.props['aria-label'] && !children.props['aria-labelledby']
+    ? cloneElement(children, /** @type {any} */ ({ 'aria-labelledby': labelId }))
+    : children;
   const activate = (event) => {
     if (!actionable || disabled) return;
     onClick(event);
@@ -62,11 +69,11 @@ export function SettingRow({ icon: Icon = null, label, sublabel = '', children =
           </div>
         )}
         <div className="min-w-0">
-          <div className={`break-words text-sm font-medium ${danger ? 'text-red-600 dark:text-red-400' : ''}`}>{label}</div>
+          <div id={labelId} className={`break-words text-sm font-medium ${danger ? 'text-red-600 dark:text-red-400' : ''}`}>{label}</div>
           {sublabel && <div className="mt-0.5 break-words text-xs text-muted-foreground">{sublabel}</div>}
         </div>
       </div>
-      <div className="flex-shrink-0 max-w-[46%]">{children}</div>
+      <div className="flex-shrink-0 max-w-[46%]">{labelledChildren}</div>
     </div>
   );
 }

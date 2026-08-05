@@ -1,6 +1,7 @@
 // @ts-check
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
+import { MotionConfig } from 'framer-motion';
 import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { useLocation } from 'react-router-dom';
@@ -789,17 +790,22 @@ function RouteLogger() {
 
 function App() {
   return (
-    <AuthProvider>
-      <QueryClientProvider client={queryClientInstance}>
-        <Router>
-          <RouteLogger />
-          <AppInteractionFeedback />
-          <AuthenticatedApp />
-        </Router>
-        <AppDialogHost />
-        <Toaster />
-      </QueryClientProvider>
-    </AuthProvider>
+    // reducedMotion="user" honours the OS "reduce motion" setting for every framer-motion
+    // animation in the app. It previously only applied inside Achievements, so the other
+    // pages animated regardless of the user's accessibility preference.
+    <MotionConfig reducedMotion="user">
+      <AuthProvider>
+        <QueryClientProvider client={queryClientInstance}>
+          <Router>
+            <RouteLogger />
+            <AppInteractionFeedback />
+            <AuthenticatedApp />
+          </Router>
+          <AppDialogHost />
+          <Toaster />
+        </QueryClientProvider>
+      </AuthProvider>
+    </MotionConfig>
   );
 }
 

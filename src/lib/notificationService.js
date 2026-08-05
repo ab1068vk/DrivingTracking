@@ -112,10 +112,22 @@ const readNotifiedAchievementIds = () => {
   }
 };
 
-const writeNotifiedAchievementIds = (ids) => {
+// Dedupe and cooldown state decides whether a user sees a notification twice or not at all,
+// so a silent storage failure here is a real defect: log it rather than swallowing it.
+const writeNotificationState = (key, value, failureContext) => {
   try {
-    localStorage.setItem(NOTIFIED_ACHIEVEMENTS_KEY, JSON.stringify([...ids]));
-  } catch {}
+    localStorage.setItem(key, value);
+  } catch (error) {
+    logSystemFailure(failureContext, error, { storage_key: key });
+  }
+};
+
+const writeNotifiedAchievementIds = (ids) => {
+  writeNotificationState(
+    NOTIFIED_ACHIEVEMENTS_KEY,
+    JSON.stringify([...ids]),
+    'notification_notified_achievements_persist'
+  );
 };
 
 const readNumber = (key, fallback = 0) => {
@@ -128,9 +140,7 @@ const readNumber = (key, fallback = 0) => {
 };
 
 const writeNumber = (key, value) => {
-  try {
-    localStorage.setItem(key, String(value));
-  } catch {}
+  writeNotificationState(key, String(value), 'notification_counter_persist');
 };
 
 const readDedupeState = () => {
@@ -147,9 +157,11 @@ const readDedupeState = () => {
 };
 
 const writeDedupeState = (state) => {
-  try {
-    localStorage.setItem(NOTIFICATION_DEDUPE_KEY, JSON.stringify(state));
-  } catch {}
+  writeNotificationState(
+    NOTIFICATION_DEDUPE_KEY,
+    JSON.stringify(state),
+    'notification_dedupe_persist'
+  );
 };
 
 const wasRecentlySent = (key, cooldownMs) => {
@@ -246,9 +258,11 @@ const readAchievementNotificationIds = () => {
 
 const writeAchievementNotificationIds = (ids) => {
   fallbackAchievementNotificationIds = { ...ids };
-  try {
-    localStorage.setItem(ACHIEVEMENT_NOTIFICATION_IDS_KEY, JSON.stringify(ids));
-  } catch {}
+  writeNotificationState(
+    ACHIEVEMENT_NOTIFICATION_IDS_KEY,
+    JSON.stringify(ids),
+    'notification_achievement_ids_persist'
+  );
 };
 
 const nextAchievementNotificationId = (assignedIds) => {

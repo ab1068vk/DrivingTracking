@@ -90,7 +90,7 @@ export default function PremiumModelTransparencyCard({
 
   return (
     <section className="premium-model-transparency" aria-labelledby="premium-model-transparency-title">
-      <img
+      <img loading="lazy"
         className="premium-model-transparency-hero"
         src={premiumModelTransparencyHero}
         alt=""
@@ -113,7 +113,7 @@ export default function PremiumModelTransparencyCard({
             data-tone={tone}
             aria-label={`${label}: ${values[id]}`}
           >
-            <img
+            <img loading="lazy"
               className="premium-model-transparency-art"
               src={asset}
               alt=""

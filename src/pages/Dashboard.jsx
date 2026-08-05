@@ -743,7 +743,9 @@ export default function Dashboard() {
     return () => {
       stopTimer();
       locationService.current?.stop();
-      activityStopRef.current?.();
+      // The stop function is async and rethrows after logging, so an unattached rejection
+      // here surfaces as an unhandled promise rejection at unmount.
+      Promise.resolve(activityStopRef.current?.()).catch(() => {});
     };
     // Crash recovery must run exactly once per mount. startTimer/startGPS are
     // re-created every render, so depending on them would restart recovery (and

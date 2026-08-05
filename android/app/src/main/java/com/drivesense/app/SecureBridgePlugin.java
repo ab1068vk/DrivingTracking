@@ -21,6 +21,7 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.spec.ECGenParameterSpec;
 import java.security.spec.X509EncodedKeySpec;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -38,8 +39,39 @@ public class SecureBridgePlugin extends Plugin {
     private static final String BRIDGE_CONTEXT = "drivesense-secure-bridge-v1";
     private static final String CAPACITOR_PREFS = "CapacitorStorage";
 
+    // Every WebView reload or app resume re-handshakes, and the tracking foreground service
+    // keeps this process alive for days, so sessions must expire or they accumulate forever.
+    private static final long SESSION_MAX_AGE_MS = 12 * 60 * 60_000L;
+    private static final int MAX_SESSIONS = 32;
+
     private final Map<String, BridgeSession> sessions = new ConcurrentHashMap<>();
     private final SecureRandom secureRandom = new SecureRandom();
+
+    private void pruneExpiredSessions() {
+        long now = System.currentTimeMillis();
+        Iterator<Map.Entry<String, BridgeSession>> entries = sessions.entrySet().iterator();
+        while (entries.hasNext()) {
+            Map.Entry<String, BridgeSession> entry = entries.next();
+            BridgeSession session = entry.getValue();
+            if (session == null || now - session.createdAtMs > SESSION_MAX_AGE_MS) entries.remove();
+        }
+
+        // Hard ceiling in case a client re-handshakes faster than sessions age out.
+        while (sessions.size() >= MAX_SESSIONS) {
+            String oldestId = null;
+            long oldestCreatedAtMs = Long.MAX_VALUE;
+            for (Map.Entry<String, BridgeSession> entry : sessions.entrySet()) {
+                BridgeSession session = entry.getValue();
+                long createdAtMs = session == null ? 0L : session.createdAtMs;
+                if (createdAtMs < oldestCreatedAtMs) {
+                    oldestCreatedAtMs = createdAtMs;
+                    oldestId = entry.getKey();
+                }
+            }
+            if (oldestId == null) break;
+            sessions.remove(oldestId);
+        }
+    }
 
     @PluginMethod
     public void initSession(PluginCall call) {
@@ -65,6 +97,7 @@ public class SecureBridgePlugin extends Plugin {
             String sessionId = randomSessionId();
             byte[] sharedSecret = agreement.generateSecret();
             SecretKey bridgeKey = deriveBridgeKey(sharedSecret, sessionId);
+            pruneExpiredSessions();
             sessions.put(sessionId, new BridgeSession(bridgeKey));
 
             JSObject payload = new JSObject();
@@ -296,6 +329,7 @@ public class SecureBridgePlugin extends Plugin {
 
     private static final class BridgeSession {
         final SecretKey key;
+        final long createdAtMs = System.currentTimeMillis();
         long lastNonce = 0L;
         long lastResponseNonce = 0L;
 

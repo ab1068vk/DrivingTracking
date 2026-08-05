@@ -59,6 +59,14 @@ public class RoadDataJobService extends JobService {
         return true;
     }
 
+    @Override
+    public void onDestroy() {
+        // The system re-instantiates this JobService; without this each instance orphans its
+        // worker thread for the lifetime of the process.
+        executor.shutdownNow();
+        super.onDestroy();
+    }
+
     private JSONObject executeRequest(JSONObject request) throws Exception {
         URL url = new URL(request.getString("url"));
         if (!"https".equalsIgnoreCase(url.getProtocol())) {

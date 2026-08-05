@@ -96,7 +96,7 @@ export default function PremiumRecommendedProgramCard({ recommendation = null, o
       aria-labelledby="premium-coach-recommendation-title"
     >
       <div className="premium-coach-grid" aria-hidden="true" />
-      <img className="premium-coach-hero-art" src={model.artwork} alt="" aria-hidden="true" />
+      <img loading="lazy" className="premium-coach-hero-art" src={model.artwork} alt="" aria-hidden="true" />
 
       <div className="premium-coach-badge">
         <span className="premium-coach-badge-icon" aria-hidden="true"><Sparkles /></span>
@@ -120,7 +120,7 @@ export default function PremiumRecommendedProgramCard({ recommendation = null, o
           <span>{model.shortLabel}</span>
           <p>{model.cue}</p>
         </div>
-        <img className="premium-coach-cue-art" src={model.cueArtwork} alt="" aria-hidden="true" />
+        <img loading="lazy" className="premium-coach-cue-art" src={model.cueArtwork} alt="" aria-hidden="true" />
       </div>
 
       <button type="button" onClick={onConfigure} className="premium-coach-action">

@@ -1,5 +1,7 @@
 export const API_BASE_URL = (import.meta.env.VITE_API_URL || "").trim();
 
+export const REQUEST_TIMEOUT_MS = 20_000;
+
 export class ApiError extends Error {
   /**
    * @param {string} message
@@ -57,21 +59,43 @@ const parseJsonSafely = async (response) => {
  * @param {string} path
  * @param {{method?:string,body?:any,headers?:Record<string,string>,query?:Record<string,any>} & RequestInit} options
  */
-async function request(path, { method = "GET", body, headers, query, ...options } = {}) {
+async function request(path, { method = "GET", body, headers, query, signal, ...options } = {}) {
   const token = getAuthToken();
   const hasBody = body !== undefined && body !== null;
 
-  const response = await fetch(buildUrl(path, query), {
-    method,
-    ...options,
-    headers: {
-      Accept: "application/json",
-      ...(hasBody ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-    body: hasBody ? JSON.stringify(body) : undefined,
-  });
+  // Without a timeout a stalled backend never settles, and callers that gate UI on the result
+  // (AuthContext gates the whole app shell) leave the user on a loading screen forever.
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS);
+  timeoutId?.unref?.();
+  const abortCallerRequest = () => timeoutController.abort();
+  signal?.addEventListener?.("abort", abortCallerRequest);
+
+  let response;
+  try {
+    response = await fetch(buildUrl(path, query), {
+      method,
+      ...options,
+      signal: timeoutController.signal,
+      headers: {
+        Accept: "application/json",
+        ...(hasBody ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
+      },
+      body: hasBody ? JSON.stringify(body) : undefined,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError" && !signal?.aborted) {
+      throw new ApiError(`The server did not respond within ${Math.round(REQUEST_TIMEOUT_MS / 1000)} seconds.`, {
+        status: 0,
+      });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener?.("abort", abortCallerRequest);
+  }
 
   const data = await parseJsonSafely(response);
 

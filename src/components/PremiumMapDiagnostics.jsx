@@ -149,7 +149,7 @@ export default function PremiumMapDiagnostics({
           title="Hide route diagnostics"
         />
       )}
-      {premium && <img className="premium-map-diagnostics-art" src={premiumMapRouteIntelligence} alt="" aria-hidden="true" />}
+      {premium && <img loading="lazy" className="premium-map-diagnostics-art" src={premiumMapRouteIntelligence} alt="" aria-hidden="true" />}
       <div className="premium-map-diagnostics-head">
         <div className="premium-map-diagnostics-title">
           <span className="premium-map-radar" aria-hidden="true"><Activity /></span>

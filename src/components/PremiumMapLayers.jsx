@@ -125,7 +125,7 @@ export default function PremiumMapLayers({
           disabled={speedLayerDisabled}
           onClick={onSpeedLayer}
         >
-          <img className="premium-map-layer-art" src={premiumSpeedLayerArt} alt="" aria-hidden="true" />
+          <img loading="lazy" className="premium-map-layer-art" src={premiumSpeedLayerArt} alt="" aria-hidden="true" />
           <span className="premium-map-layer-glass" aria-hidden="true" />
           <span className="premium-map-layer-icon" aria-hidden="true"><Gauge /></span>
           <span className="premium-map-layer-copy">
@@ -152,7 +152,7 @@ export default function PremiumMapLayers({
           disabled={routeDisabled}
           onClick={onRouteRiskLayer}
         >
-          <img className="premium-map-layer-art" src={premiumRepeatedRouteArt} alt="" aria-hidden="true" />
+          <img loading="lazy" className="premium-map-layer-art" src={premiumRepeatedRouteArt} alt="" aria-hidden="true" />
           <span className="premium-map-layer-glass" aria-hidden="true" />
           <span className="premium-map-layer-icon" aria-hidden="true"><Route /></span>
           <span className="premium-map-layer-copy">
@@ -173,7 +173,7 @@ export default function PremiumMapLayers({
           aria-label={`Repeated event areas. ${eventAreaStatus}`}
           onClick={onDangerZoneLayer}
         >
-          <img className="premium-map-layer-art" src={premiumEventAreasArt} alt="" aria-hidden="true" />
+          <img loading="lazy" className="premium-map-layer-art" src={premiumEventAreasArt} alt="" aria-hidden="true" />
           <span className="premium-map-layer-glass" aria-hidden="true" />
           <span className="premium-map-layer-icon" aria-hidden="true"><Radar /></span>
           <span className="premium-map-layer-copy">

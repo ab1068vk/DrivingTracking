@@ -1701,7 +1701,7 @@ export default function Parking() {
             <div className="mt-4">
               <div className="text-xs font-semibold text-muted-foreground">Parking photo</div>
               {detailsLocation.photo_data_url && (
-                <img
+                <img loading="lazy"
                   src={detailsLocation.photo_data_url}
                   alt="Saved parking reference"
                   className="mt-2 max-h-56 rounded-xl border border-border object-cover"
@@ -1925,7 +1925,7 @@ export default function Parking() {
           )}
           {photoDataUrl && (
             <>
-              <img
+              <img loading="lazy"
                 src={photoDataUrl}
                 alt="Local parking reference"
                 className="mt-3 max-h-40 rounded-xl border border-border object-cover"
@@ -1965,7 +1965,7 @@ export default function Parking() {
             >
               <X className="h-5 w-5" />
             </button>
-            <img src={photoViewerUrl} alt="Full parking reference" className="max-h-[85vh] rounded-2xl object-contain" />
+            <img loading="lazy" src={photoViewerUrl} alt="Full parking reference" className="max-h-[85vh] rounded-2xl object-contain" />
           </div>
         </div>
       )}

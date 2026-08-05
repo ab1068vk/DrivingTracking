@@ -1294,3 +1294,112 @@ describe('localTripRepository IndexedDB migrations', () => {
     });
   });
 });
+
+describe('localTripRepository concurrent writes', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const stubStorage = () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    const values = new Map([[
+      'drivesense_settings',
+      JSON.stringify({ settings_defaults_version: 11, privacy_zones: [] }),
+    ]]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+    return { fakeIndexedDb, values };
+  };
+
+  const seedTrip = (id) => localTripRepository.create({
+    id,
+    status: 'completed',
+    nickname: 'original',
+    start_time: '2026-07-18T10:00:00.000Z',
+    end_time: '2026-07-18T10:30:00.000Z',
+    distance_km: 12,
+    route_points: [{ lat: 43.65, lng: -79.38 }],
+  });
+
+  it('keeps both changes when two edits to different fields overlap', async () => {
+    stubStorage();
+    await seedTrip('concurrent-fields');
+
+    // Issued without awaiting the first, so both read before either writes.
+    const [first, second] = await Promise.all([
+      localTripRepository.update('concurrent-fields', { nickname: 'renamed' }),
+      localTripRepository.update('concurrent-fields', { is_favorite: true }),
+    ]);
+
+    expect(first).toBeTruthy();
+    expect(second).toBeTruthy();
+    const stored = await localTripRepository.getById('concurrent-fields');
+    expect(stored.nickname).toBe('renamed');
+    expect(stored.is_favorite).toBe(true);
+  });
+
+  it('keeps both changes regardless of which edit is issued first', async () => {
+    stubStorage();
+    await seedTrip('concurrent-order');
+
+    const [second, first] = await Promise.all([
+      localTripRepository.update('concurrent-order', { is_favorite: true }),
+      localTripRepository.update('concurrent-order', { nickname: 'renamed-late' }),
+    ]);
+
+    expect(first).toBeTruthy();
+    expect(second).toBeTruthy();
+    const stored = await localTripRepository.getById('concurrent-order');
+    expect(stored.nickname).toBe('renamed-late');
+    expect(stored.is_favorite).toBe(true);
+  });
+
+  it('preserves a user edit made while a rescore of the same trip is in flight', async () => {
+    stubStorage();
+    await seedTrip('concurrent-rescore');
+    // Mark stale so the rescore path has work to do for this trip.
+    await localTripRepository.markCompletedForRescore();
+
+    const [, updated] = await Promise.all([
+      localTripRepository.rescoreCompletedTrips({ reason: 'test' }),
+      localTripRepository.update('concurrent-rescore', { nickname: 'edited-during-rescore' }),
+    ]);
+
+    expect(updated).toBeTruthy();
+    const stored = await localTripRepository.getById('concurrent-rescore');
+    expect(stored.nickname).toBe('edited-during-rescore');
+    expect(stored.needs_rescore).not.toBe(true);
+  });
+
+  it('rejects and logs when a trip to update no longer exists', async () => {
+    stubStorage();
+    await expect(localTripRepository.update('missing-trip', { nickname: 'x' })).rejects.toThrow();
+  });
+
+  it('keeps both trips when the fallback blob path writes two ids at once', async () => {
+    // No IndexedDB: every trip shares one encrypted blob, so unrelated ids collide too.
+    vi.stubGlobal('indexedDB', undefined);
+    const values = new Map([[
+      'drivesense_settings',
+      JSON.stringify({ settings_defaults_version: 11, privacy_zones: [] }),
+    ]]);
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key) => values.get(key) ?? null),
+      setItem: vi.fn((key, value) => values.set(key, value)),
+      removeItem: vi.fn((key) => values.delete(key)),
+    });
+
+    await Promise.all([
+      seedTrip('fallback-a'),
+      seedTrip('fallback-b'),
+    ]);
+
+    const trips = await localTripRepository.listAll();
+    expect(trips.map((trip) => trip.id).sort()).toEqual(['fallback-a', 'fallback-b']);
+  });
+});

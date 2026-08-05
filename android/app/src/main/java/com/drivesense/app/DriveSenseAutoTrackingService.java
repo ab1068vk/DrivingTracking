@@ -24,7 +24,9 @@ import android.hardware.TriggerEventListener;
 import android.location.Location;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -57,6 +59,9 @@ import java.util.Deque;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import android.util.Log;
 
 public class DriveSenseAutoTrackingService extends Service implements SensorEventListener {
@@ -224,6 +229,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final int POSSIBLE_INCIDENT_RECENT_POINTS = 8;
     private static final long POSSIBLE_INCIDENT_SAMPLE_WINDOW_MS = 12_000L;
     private static final long POSSIBLE_INCIDENT_ALERT_COOLDOWN_MS = 5 * 60_000L;
+    // Keeps the stored trip payload bounded; the 5-minute cooldown already limits the rate.
+    private static final int MAX_INCIDENT_EVENTS_PER_TRIP = 20;
     private static final double POSSIBLE_INCIDENT_MIN_SPEED_KMH = 20.0d;
     private static final double POSSIBLE_INCIDENT_LINEAR_MS2 = 18.0d;
     private static final double POSSIBLE_INCIDENT_HIGH_LINEAR_MS2 = 28.0d;
@@ -252,6 +259,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private long stillSinceMs = 0L;
     private long nonVehicleSinceMs = 0L;
     private Location previousLocation;
+    // Single thread so checkpoint writes stay ordered; the newest state always wins.
+    private ExecutorService checkpointExecutor;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private ArmedTier armedTier = ArmedTier.HIGH_ACCURACY;
     private long armedStillSinceMs = 0L;
     private Sensor significantMotionSensor;
@@ -341,6 +351,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         serviceRunning = true;
         explicitStopRequested = false;
         dataErasureInProgress = false;
+        checkpointExecutor = Executors.newSingleThreadExecutor();
         updateForegroundNotification("Ready when you start moving");
         ensureSafetyAlertsChannel();
         speechController = new DriveSenseSpeechController(this);
@@ -507,6 +518,12 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         }
         if (speechController != null) speechController.shutdown();
         removeTrackingNotification();
+        mainHandler.removeCallbacksAndMessages(null);
+        // Teardown checkpoint writes above are synchronous, so nothing durable is lost here.
+        if (checkpointExecutor != null) {
+            checkpointExecutor.shutdownNow();
+            checkpointExecutor = null;
+        }
         serviceRunning = false;
         super.onDestroy();
     }
@@ -2280,8 +2297,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     private void evaluatePossibleIncident() {
         if (activeIncidentEvents == null) activeIncidentEvents = new JSONArray();
-        if (activeIncidentEvents.length() > 0) return;
         long now = System.currentTimeMillis();
+        // Only the cooldown suppresses repeat alerts. A previous incident must NOT disable
+        // detection for the rest of the trip: one false positive from a pothole would then
+        // hide a real crash later in the same drive. The cap only bounds the stored payload.
+        if (activeIncidentEvents.length() >= MAX_INCIDENT_EVENTS_PER_TRIP) return;
         if (now - lastPossibleIncidentAlertMs < POSSIBLE_INCIDENT_ALERT_COOLDOWN_MS) return;
 
         JSONObject incident = detectNativePossibleIncident(
@@ -4570,18 +4590,46 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             return;
         }
 
-        if (DriveSenseActiveTripCheckpointStore.save(this, checkpoint)) {
-            lastActiveCheckpointMs = nowMs;
-        } else {
-            recordDiagnostic(
-                "checkpoint_save_failed",
-                "Active trip recovery checkpoint could not be saved.",
-                "checkpoint_storage_error",
-                lastKnownSpeedKmh,
-                0L,
-                0d
-            );
+        // Teardown paths must finish the write before the process dies, so they stay
+        // synchronous. The periodic save runs on every location fix and does encryption plus a
+        // hard fsync, which can stall the service main thread for hundreds of milliseconds on
+        // a busy device, so it goes to a background thread instead.
+        if (force) {
+            recordCheckpointSaveResult(DriveSenseActiveTripCheckpointStore.save(this, checkpoint), nowMs);
+            return;
         }
+
+        lastActiveCheckpointMs = nowMs;
+        final JSONObject pendingCheckpoint = checkpoint;
+        final ExecutorService executor = checkpointExecutor;
+        if (executor == null || executor.isShutdown()) {
+            recordCheckpointSaveResult(DriveSenseActiveTripCheckpointStore.save(this, pendingCheckpoint), nowMs);
+            return;
+        }
+        try {
+            executor.execute(() -> {
+                boolean saved = DriveSenseActiveTripCheckpointStore.save(this, pendingCheckpoint);
+                if (saved) return;
+                mainHandler.post(() -> recordCheckpointSaveResult(false, nowMs));
+            });
+        } catch (RejectedExecutionException error) {
+            recordCheckpointSaveResult(DriveSenseActiveTripCheckpointStore.save(this, pendingCheckpoint), nowMs);
+        }
+    }
+
+    private void recordCheckpointSaveResult(boolean saved, long nowMs) {
+        if (saved) {
+            lastActiveCheckpointMs = nowMs;
+            return;
+        }
+        recordDiagnostic(
+            "checkpoint_save_failed",
+            "Active trip recovery checkpoint could not be saved.",
+            "checkpoint_storage_error",
+            lastKnownSpeedKmh,
+            0L,
+            0d
+        );
     }
 
     private void persistActiveTripStatus(long nowMs) {
@@ -4672,7 +4720,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private void updateNotification(String text) {
         persistActiveTripStatus(System.currentTimeMillis());
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        manager.notify(NOTIF_ID_TRACKING_START, buildNotification(text));
+        // Guarded like every other call site in this file: this runs on every notification
+        // refresh, so an NPE here would take down the whole tracking service.
+        if (manager != null) manager.notify(NOTIF_ID_TRACKING_START, buildNotification(text));
     }
 
     private boolean isParkedStopReason(String reason) {
@@ -4929,7 +4979,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         );
         channel.setDescription("Keeps Road Sage ready to detect and record driving trips.");
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        manager.createNotificationChannel(channel);
+        if (manager != null) manager.createNotificationChannel(channel);
     }
 
     static String iso(long timeMs) {

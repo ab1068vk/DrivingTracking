@@ -125,7 +125,7 @@ export default function PremiumMapTripCard({ trip, units = 'metric', selected = 
         '--premium-map-trip-confidence': `${model.confidence}%`,
       })}
     >
-      <img className="premium-map-trip-art" src={model.asset} alt="" aria-hidden="true" />
+      <img loading="lazy" className="premium-map-trip-art" src={model.asset} alt="" aria-hidden="true" />
       <div className="premium-map-trip-grid" aria-hidden="true" />
       <button
         type="button"
@@ -137,7 +137,7 @@ export default function PremiumMapTripCard({ trip, units = 'metric', selected = 
 
       <div className="premium-map-trip-content">
         <div className="premium-map-trip-emblem" aria-hidden="true">
-          <img src={model.emblem} alt="" />
+          <img loading="lazy" src={model.emblem} alt="" />
         </div>
 
         <div className="premium-map-trip-copy">

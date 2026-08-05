@@ -115,7 +115,7 @@ export default function PremiumPostDriveReviewCard({
       aria-labelledby="premium-post-drive-title"
     >
       <div className="premium-post-drive-grid" aria-hidden="true" />
-      <img className="premium-post-drive-hero" src={model.artwork} alt="" aria-hidden="true" />
+      <img loading="lazy" className="premium-post-drive-hero" src={model.artwork} alt="" aria-hidden="true" />
 
       <header className="premium-post-drive-header">
         <div className="premium-post-drive-kicker">
@@ -133,7 +133,7 @@ export default function PremiumPostDriveReviewCard({
             <strong>Measured after your next eligible drive</strong>
             <p>The coach will show the exact trip metric, whether it met the target, and a direct link to review detected events.</p>
           </div>
-          <img src={premiumPostDriveEvidence} alt="" aria-hidden="true" />
+          <img loading="lazy" src={premiumPostDriveEvidence} alt="" aria-hidden="true" />
         </div>
       ) : (
         <div className="premium-post-drive-content">
@@ -173,7 +173,7 @@ export default function PremiumPostDriveReviewCard({
             disabled={!model.review?.tripId}
             className="premium-post-drive-evidence"
           >
-            <img src={premiumPostDriveEvidence} alt="" aria-hidden="true" />
+            <img loading="lazy" src={premiumPostDriveEvidence} alt="" aria-hidden="true" />
             <span className="premium-post-drive-action-icon" aria-hidden="true"><ShieldCheck /></span>
             <span>
               <small>Detected events and route context</small>
@@ -183,7 +183,7 @@ export default function PremiumPostDriveReviewCard({
           </button>
 
           <div className="premium-post-drive-feedback">
-            <img src={premiumPostDriveFeedback} alt="" aria-hidden="true" />
+            <img loading="lazy" src={premiumPostDriveFeedback} alt="" aria-hidden="true" />
             <div className="premium-post-drive-feedback-title">
               <span aria-hidden="true"><MessageCircleMore /></span>
               <div>

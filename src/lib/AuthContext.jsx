@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useMemo } from 'react';
 import { authService } from '@/api/auth';
 import { getAuthToken } from '@/api/client';
 
@@ -74,20 +74,26 @@ export const AuthProvider = ({ children }) => {
     authService.redirectToLogin(window.location.href);
   };
 
+  // Memoized because this sits at the app root: a fresh object literal here re-renders every
+  // consumer on any parent render, not just when auth state actually changes. The callbacks
+  // are re-created each render by design, so they are intentionally excluded from the deps.
+  const contextValue = useMemo(() => ({
+    user,
+    isAuthenticated,
+    isLoadingAuth,
+    isLoadingPublicSettings,
+    authError,
+    appPublicSettings,
+    authChecked,
+    logout,
+    navigateToLogin,
+    checkUserAuth,
+    checkAppState,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [user, isAuthenticated, isLoadingAuth, isLoadingPublicSettings, authError, appPublicSettings, authChecked]);
+
   return (
-    <AuthContext.Provider value={{ 
-      user, 
-      isAuthenticated, 
-      isLoadingAuth,
-      isLoadingPublicSettings,
-      authError,
-      appPublicSettings,
-      authChecked,
-      logout,
-      navigateToLogin,
-      checkUserAuth,
-      checkAppState
-    }}>
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );
