@@ -44,6 +44,7 @@ import {
   sweepExpiredPrivacyZones,
   syncZonesToNative,
   upsertPrivacyZone,
+  ZONE_EVENT_GUARD_M,
   ZONE_STATS_KEY,
 } from '@/lib/privacyZones';
 import { getEncryptedJson, setEncryptedJson } from '@/lib/securePayloadCrypto';
@@ -98,6 +99,11 @@ vi.mock('@/lib/secureBridge', () => ({
 }));
 
 const zone = { id: 'home', label: 'Home', lat: 43.65, lng: -79.38, radius_m: 100 };
+// The native sync also writes the cell key, so the zone payload is located by
+// key rather than by call order.
+const nativeZonePayload = () => secureSetPreference.mock.calls
+  .map(([payload]) => payload)
+  .find((payload) => payload?.key === NATIVE_PRIVACY_ZONES_KEY);
 const point = (lat, lng, seconds = 0, speedKmh = 30) => ({
   lat,
   lng,
@@ -776,6 +782,53 @@ describe('privacyZones', () => {
     expect(masked.at(-1)).toBe(route[1]);
   });
 
+  it('applies the guard buffer to cell-only zones instead of dropping it', () => {
+    const cellOnlyZone = {
+      id: 'home-cell-guard',
+      label: 'Home',
+      radius_m: 100,
+      privacy_cell_schema: 'global_grid_v1',
+      privacy_cell_size_m: 50,
+      privacy_cell_hashes: createPrivacyCellHashes(zone),
+      masked_for_privacy: true,
+    };
+    // ~145 m north of the zone center: outside the 100 m radius and outside the
+    // unguarded cell coverage, but inside the 50 m event/road-data guard.
+    const insideGuard = point(43.6513025, -79.38);
+    const distanceM = haversineDistance(insideGuard.lat, insideGuard.lng, zone.lat, zone.lng) * 1000;
+    expect(distanceM).toBeGreaterThan(Number(zone.radius_m));
+    expect(distanceM).toBeLessThan(Number(zone.radius_m) + ZONE_EVENT_GUARD_M);
+
+    // Exact geometry has always honoured the guard; the cell-only form must too.
+    expect(isPointInPrivacyZone(insideGuard, [zone], ZONE_EVENT_GUARD_M)).toMatchObject({ id: zone.id });
+    expect(isPointInPrivacyZone(insideGuard, [cellOnlyZone], ZONE_EVENT_GUARD_M))
+      .toMatchObject({ id: 'home-cell-guard' });
+    expect(isPointInPrivacyZone(insideGuard, [cellOnlyZone], 0)).toBeNull();
+  });
+
+  it('masks a driving event just outside a cell-only zone using the event guard', () => {
+    const cellOnlyZone = {
+      id: 'home-cell-event',
+      label: 'Home',
+      radius_m: 100,
+      privacy_cell_schema: 'global_grid_v1',
+      privacy_cell_size_m: 50,
+      privacy_cell_hashes: createPrivacyCellHashes(zone),
+      masked_for_privacy: true,
+    };
+    const event = { type: 'harsh_brake', lat: 43.6513025, lng: -79.38, speed_kmh: 44 };
+
+    expect(maskEventCoordinatesForPrivacy(event, [cellOnlyZone])).toMatchObject({
+      lat: null,
+      lng: null,
+      speed_kmh: null,
+      privacy_event_redacted: true,
+      masked_for_privacy: true,
+      privacy_zone_id: 'home-cell-event',
+    });
+    expect(maskEventsForPrivacy([event], { privacy_zones: [cellOnlyZone] })).toEqual([]);
+  });
+
   it('keeps newly generated cell guards close to the configured privacy radius', () => {
     const generatedZone = {
       id: 'tight-home-cell',
@@ -898,8 +951,7 @@ describe('privacyZones', () => {
     await syncZonesToNative([zone, { id: 'bad', label: 'Bad', lat: null, lng: -79.38, radius_m: 100 }]);
 
     expect(Preferences.set).not.toHaveBeenCalled();
-    expect(secureSetPreference).toHaveBeenCalledTimes(1);
-    const payload = secureSetPreference.mock.calls[0][0];
+    const payload = nativeZonePayload();
     expect(payload.key).toBe(NATIVE_PRIVACY_ZONES_KEY);
     expect(payload.context).toBe('native:privacy_zones_v1');
     expect(payload.encryptAtRest).toBe(true);
@@ -921,7 +973,7 @@ describe('privacyZones', () => {
 
     await syncZonesToNative([{ ...zone, sensitivity: 'high', expiresAt }]);
 
-    const payload = secureSetPreference.mock.calls[0][0];
+    const payload = nativeZonePayload();
     expect(JSON.parse(payload.value)[0]).toMatchObject({
       id: 'home',
       sensitivity: 'high',
@@ -1088,11 +1140,18 @@ describe('privacyZones', () => {
         { lat: 43.6532, lng: -79.3820 },
       ],
     };
-    const hashes = createPrivacyCellHashes(corridor);
+    // Asserted through the matcher rather than against literal hash strings:
+    // the strings depend on whether a device cell key is loaded, the coverage
+    // the Android checker relies on does not.
+    const cellOnly = {
+      ...corridor,
+      privacy_cell_size_m: 50,
+      privacy_cell_hashes: createPrivacyCellHashes(corridor),
+    };
 
-    expect(hashes).toContain('pzc_1d8k9eb');
-    expect(hashes).toContain('pzc_712ohe');
-    expect(hashes).not.toContain('pzc_hajz95');
+    expect(cellOnly.privacy_cell_hashes.length).toBeGreaterThan(0);
+    expect(isPointInPrivacyZone({ lat: 43.6532, lng: -79.384 }, [cellOnly])?.id).toBe('commute-corridor');
+    expect(isPointInPrivacyZone({ lat: 43.6532, lng: -79.376 }, [cellOnly])).toBeNull();
   });
 
   it('does not let synthetic self-test zones replace hydrated display zones', async () => {

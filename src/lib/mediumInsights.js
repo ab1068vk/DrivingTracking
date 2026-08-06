@@ -1,4 +1,5 @@
 import { buildDangerZones } from '@/lib/dangerZoneEngine';
+import { COACHING_CONTENT } from '@/lib/coachingContent';
 import { routeKeyForTrip } from '@/lib/commuteMatching';
 import { buildVehicleMaintenancePlan } from '@/lib/vehicleMaintenance';
 export { COMMUTE_MATCH_RADIUS_M, routeKeyForTrip } from '@/lib/commuteMatching';
@@ -34,30 +35,32 @@ const distanceWeightedScore = (trips = [], field = 'score_overall') => {
     : null;
 };
 
+// Coaching copy comes from the shared catalog so it cannot drift from the
+// Coach page, score tips, or post-drive review wording.
 const eventRiskDefinitions = [
   {
     id: 'harsh_brakes',
     label: 'Harsh braking',
     field: 'harsh_brakes_count',
-    coaching: 'Brake earlier for the next five stops and leave one extra car length before intersections.',
+    coaching: COACHING_CONTENT.harsh_brakes.riskCoaching,
   },
   {
     id: 'rapid_accel',
     label: 'Rapid acceleration',
     field: 'rapid_accel_count',
-    coaching: 'Use a three-second throttle ramp after stops so launches stay smoother.',
+    coaching: COACHING_CONTENT.rapid_accel.riskCoaching,
   },
   {
     id: 'sharp_turns',
     label: 'Sharp turns',
     field: 'sharp_turns_count',
-    coaching: 'Set corner speed before turning, then accelerate only as the wheel straightens.',
+    coaching: COACHING_CONTENT.sharp_turns.riskCoaching,
   },
   {
     id: 'speeding',
     label: 'Speeding',
     field: 'speeding_events_count',
-    coaching: 'Pick a cruise target 5 km/h below your alert threshold on repeated routes.',
+    coaching: COACHING_CONTENT.speeding.riskCoaching,
   },
 ];
 

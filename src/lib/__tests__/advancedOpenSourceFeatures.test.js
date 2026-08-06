@@ -3,7 +3,6 @@ import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly'
 import { annotateRoutePointWithObd, buildObdRoutePointPatch, parseObdPidResponse } from '@/lib/obdBluetooth';
 import { buildMotionSensorDiagnostics, buildSensorFusionSummary, calibratePhoneOrientation, detectCrashIncident, enrichEventsWithSensorContext, getMotionSensorSupport, normalizeMotionSample } from '@/lib/sensorFusionModel';
 import { estimatePredictiveRouteRisk, ROUTE_RISK_CONSTANTS } from '@/lib/predictiveRouteRisk';
-import { buildWeeklyCoachSummary } from '@/lib/weeklyCoaching';
 import { buildHabitProfile } from '@/lib/habitProfile';
 
 const trip = (score, index = 0, patch = {}) => ({
@@ -411,28 +410,6 @@ describe('advanced open-source features', () => {
 
     expect(ROUTE_RISK_CONSTANTS.MIN_PERSONAL_WINDOW_TRIP_COUNT).toBe(3);
     expect(risk.safestWindow).toBe('Lower-risk hours vary; see your trip history for patterns.');
-  });
-
-  it('builds a local weekly coaching sentence without AI services', () => {
-    const summary = buildWeeklyCoachSummary([
-      trip(75, 1, { harsh_brakes_count: 2, road_type: 'urban', duration_seconds: 1200 }),
-      trip(78, 2, { harsh_brakes_count: 1, road_type: 'urban', duration_seconds: 1100 }),
-      trip(85, 3),
-    ]);
-    expect(summary.headline.toLowerCase()).toContain('late braking');
-    expect(summary.insight).toContain('No AI service');
-  });
-
-  it('withholds weekly coaching when completed trips have no valid scored distance', () => {
-    const summary = buildWeeklyCoachSummary([
-      trip(null, 1, { distance_km: 10, score_overall: null }),
-      trip(null, 2, { distance_km: 10, score_overall: null }),
-      trip(null, 3, { distance_km: 10, score_overall: null }),
-    ]);
-
-    expect(summary.confidence).toBe('unavailable');
-    expect(summary.headline).toContain('waiting for scored driving distance');
-    expect(summary.insight).toContain('No AI service was used');
   });
 });
 

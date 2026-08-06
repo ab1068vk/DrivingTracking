@@ -207,6 +207,8 @@ export function summarizeTripSpeedLimitIntelligence(trip = {}, localKnowledgeRes
   const sourceCounts = new Map();
   let coveredPointCount = 0;
   let confirmedPointCount = 0;
+  let userConfirmedPointCount = 0;
+  let mappedPointCount = 0;
   let estimatedPointCount = 0;
   let lowConfidencePointCount = 0;
   let overLimitPointCount = 0;
@@ -227,8 +229,17 @@ export function summarizeTripSpeedLimitIntelligence(trip = {}, localKnowledgeRes
       verifiedAt: point.speed_limit_verified_at,
     });
     sourceCounts.set(source, (sourceCounts.get(source) || 0) + 1);
-    if (evidence.authority === 'confirmed' || evidence.authority === 'mapped') confirmedPointCount += 1;
-    else estimatedPointCount += 1;
+    // 'confirmed' means the driver confirmed it; 'mapped' means OpenStreetMap
+    // carries a maxspeed tag. Both are trustworthy, but only the first is
+    // something the driver actually verified, so they are counted separately
+    // and only summed where the distinction does not matter.
+    if (evidence.authority === 'confirmed') {
+      userConfirmedPointCount += 1;
+      confirmedPointCount += 1;
+    } else if (evidence.authority === 'mapped') {
+      mappedPointCount += 1;
+      confirmedPointCount += 1;
+    } else estimatedPointCount += 1;
     if (evidence.level === 'low' || evidence.level === 'unavailable') lowConfidencePointCount += 1;
     const speed = pointSpeed(point);
     if (speed != null && speed > limit + 5) {
@@ -237,8 +248,16 @@ export function summarizeTripSpeedLimitIntelligence(trip = {}, localKnowledgeRes
     }
   }
 
-  const coveragePercent = points.length ? Math.round((coveredPointCount / points.length) * 100) : 0;
-  const verifiedCoveragePercent = points.length ? Math.round((confirmedPointCount / points.length) * 100) : 0;
+  // Round once, from the raw counts, and derive the remainder by subtraction.
+  // Rounding each share independently made the verified/estimated/missing
+  // tiles sum to 99% or 101%.
+  const pct = (count) => (points.length ? Math.round((count / points.length) * 100) : 0);
+  const coveragePercent = pct(coveredPointCount);
+  const verifiedCoveragePercent = pct(confirmedPointCount);
+  const userConfirmedCoveragePercent = pct(userConfirmedPointCount);
+  const mappedCoveragePercent = Math.max(0, verifiedCoveragePercent - userConfirmedCoveragePercent);
+  const estimatedCoveragePercent = Math.max(0, coveragePercent - verifiedCoveragePercent);
+  const missingCoveragePercent = Math.max(0, 100 - coveragePercent);
   const recommendations = [];
   if (coveragePercent < 80) recommendations.push('Add or fetch road speeds for uncovered sections.');
   if (lowConfidencePointCount > 0) recommendations.push('Review low-confidence estimated limits before treating events as confirmed speeding.');
@@ -249,12 +268,18 @@ export function summarizeTripSpeedLimitIntelligence(trip = {}, localKnowledgeRes
     pointCount: points.length,
     coveredPointCount,
     confirmedPointCount,
+    userConfirmedPointCount,
+    mappedPointCount,
     estimatedPointCount,
     lowConfidencePointCount,
     overLimitPointCount,
     maxOverKmh: Math.round(maxOverKmh),
     coveragePercent,
     verifiedCoveragePercent,
+    userConfirmedCoveragePercent,
+    mappedCoveragePercent,
+    estimatedCoveragePercent,
+    missingCoveragePercent,
     sources: [...sourceCounts.entries()]
       .map(([source, count]) => ({ source, count }))
       .sort((a, b) => b.count - a.count),

@@ -19244,6 +19244,48 @@ html[data-mobile-navigation-open="true"] .app-interaction-feedback__bar {
   transition: width 280ms ease;
 }
 
+.premium-coaching-responsiveness-focuses {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  min-width: 0;
+  margin: clamp(0.9rem, 3.2vw, 1.3rem) 0 0;
+  padding: 0;
+  gap: 0.1rem;
+  list-style: none;
+}
+
+.premium-coaching-responsiveness-focuses li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.45rem 0;
+  border-top: 1px solid hsl(var(--responsiveness-blue) / 0.16);
+}
+
+.premium-coaching-responsiveness-focuses li > span {
+  overflow: hidden;
+  color: hsl(219 26% 26%);
+  font-weight: 600;
+  font-size: clamp(0.72rem, 2.7vw, 0.86rem);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.premium-coaching-responsiveness-focuses li > small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: hsl(219 20% 46%);
+  font-size: clamp(0.63rem, 2.4vw, 0.75rem);
+  text-align: right;
+}
+
+.dark .premium-coaching-responsiveness-focuses li { border-top-color: #d8f5ff14; }
+.dark .premium-coaching-responsiveness-focuses li > span { color: #e6eefb; }
+.dark .premium-coaching-responsiveness-focuses li > small { color: #98a7bc; }
+
 .premium-coaching-responsiveness-footer {
   position: relative;
   z-index: 2;

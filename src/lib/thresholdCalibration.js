@@ -2,6 +2,7 @@ import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clamp } from '@/lib/mathUtils';
 import { calculateAcceleration, calculateSegmentMetrics } from '@/lib/tripEngine';
 import { scoringValue } from '@/lib/scoringConstants';
+import { settingRange } from '@/lib/trackingStore';
 
 export const CALIBRATION_PROFILE_KEY = 'drivesense_calibration_profile';
 
@@ -42,6 +43,27 @@ const roundThreshold = (key, value) => (
   key.includes('_g_') ? round2(value) : round1(value)
 );
 
+/**
+ * Auto-calibration is deliberately more conservative than what a user may set by
+ * hand: it should nudge a threshold, not push it to the edge of the saveable band.
+ * The conservative bounds below are intersected with settingRange(key) so a
+ * suggestion can never fall outside what validateSettingsPatch will accept, and so
+ * widening a range in trackingStore cannot silently desync from this file.
+ */
+const calibrationBounds = (key, conservativeMin, conservativeMax) => {
+  const allowed = settingRange(key);
+  if (!allowed) return [conservativeMin, conservativeMax];
+  return [
+    Math.max(conservativeMin, allowed[0]),
+    Math.min(conservativeMax, allowed[1]),
+  ];
+};
+
+const clampToCalibrationBounds = (key, value, conservativeMin, conservativeMax) => {
+  const [min, max] = calibrationBounds(key, conservativeMin, conservativeMax);
+  return clamp(value, min, max);
+};
+
 const feedbackThresholdMap = {
   harsh_brake: { key: 'threshold_harsh_brake_ms2', margin: 0.3, min: 3.0, max: 7.0 },
   rapid_acceleration: { key: 'threshold_rapid_accel_ms2', margin: 0.3, min: 2.0, max: 6.0 },
@@ -54,23 +76,53 @@ const surveyThresholdMap = {
   sharp_turn: { key: 'threshold_sharp_turn_g_medium', baseNudge: 0.03, step: 0.01, maxNudge: 0.09, min: 0.25, max: 0.70 },
 };
 
+/**
+ * Labels from a single trip are correlated - one unusual drive, one phone
+ * mount, one road. Capping each trip's contribution and tracking how many
+ * distinct trips voted stops two taps on one trip from moving a global
+ * threshold. Feedback recorded with `affects_score: false` is a detection note
+ * and must not vote at all.
+ */
+const MAX_FEEDBACK_LABELS_PER_TRIP_PER_TYPE = 3;
+const MIN_FEEDBACK_TRIPS_FOR_THRESHOLD_SHIFT = 3;
+
 const summarizeEventFeedback = (trips = []) => {
   const byType = {};
   for (const trip of trips) {
+    const perTripCounts = {};
     for (const item of Object.values(trip?.event_feedback || {})) {
       const type = item?.type;
       const config = feedbackThresholdMap[type];
       if (!config) continue;
-      byType[type] ??= { accurate: 0, wrong: 0, wrongValues: [], accurateValues: [] };
+      if (item.affects_score === false) continue;
+      perTripCounts[type] = (perTripCounts[type] || 0) + 1;
+      if (perTripCounts[type] > MAX_FEEDBACK_LABELS_PER_TRIP_PER_TYPE) continue;
+      byType[type] ??= {
+        accurate: 0,
+        wrong: 0,
+        wrongValues: [],
+        accurateValues: [],
+        wrongTripIds: new Set(),
+        accurateTripIds: new Set(),
+      };
+      const tripId = String(trip?.id ?? '');
       if (item.verdict === 'wrong') {
         byType[type].wrong += 1;
+        byType[type].wrongTripIds.add(tripId);
         if (Number.isFinite(Number(item.value))) byType[type].wrongValues.push(Math.abs(Number(item.value)));
       }
       if (item.verdict === 'accurate') {
         byType[type].accurate += 1;
+        byType[type].accurateTripIds.add(tripId);
         if (Number.isFinite(Number(item.value))) byType[type].accurateValues.push(Math.abs(Number(item.value)));
       }
     }
+  }
+  for (const item of Object.values(byType)) {
+    item.wrongTripCount = item.wrongTripIds.size;
+    item.accurateTripCount = item.accurateTripIds.size;
+    delete item.wrongTripIds;
+    delete item.accurateTripIds;
   }
   const total = Object.values(byType).reduce((sum, item) => sum + item.accurate + item.wrong, 0);
   return { total, byType };
@@ -272,17 +324,17 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
   }
 
   const suggested = {
-    threshold_harsh_brake_ms2: round1(clamp(percentile(decelValues, 0.90) ?? currentValue(currentThresholds, 'threshold_harsh_brake_ms2', 'HARSH_BRAKE_MS2'), 3.0, 7.0)),
-    threshold_rapid_accel_ms2: round1(clamp(percentile(accelValues, 0.88) ?? currentValue(currentThresholds, 'threshold_rapid_accel_ms2', 'RAPID_ACCEL_MS2'), 2.0, 6.0)),
+    threshold_harsh_brake_ms2: round1(clampToCalibrationBounds('threshold_harsh_brake_ms2', percentile(decelValues, 0.90) ?? currentValue(currentThresholds, 'threshold_harsh_brake_ms2', 'HARSH_BRAKE_MS2'), 3.0, 7.0)),
+    threshold_rapid_accel_ms2: round1(clampToCalibrationBounds('threshold_rapid_accel_ms2', percentile(accelValues, 0.88) ?? currentValue(currentThresholds, 'threshold_rapid_accel_ms2', 'RAPID_ACCEL_MS2'), 2.0, 6.0)),
     threshold_sharp_turn_g_low: null,
     threshold_sharp_turn_g_medium: null,
     threshold_sharp_turn_g_high: null,
   };
 
   if (lateralGValues.length >= 20) {
-    suggested.threshold_sharp_turn_g_low = round2(clamp(percentile(lateralGValues, 0.70), 0.20, 0.50));
-    suggested.threshold_sharp_turn_g_medium = round2(clamp(percentile(lateralGValues, 0.85), 0.25, 0.70));
-    suggested.threshold_sharp_turn_g_high = round2(clamp(percentile(lateralGValues, 0.95), 0.35, 0.90));
+    suggested.threshold_sharp_turn_g_low = round2(clampToCalibrationBounds('threshold_sharp_turn_g_low', percentile(lateralGValues, 0.70), 0.20, 0.50));
+    suggested.threshold_sharp_turn_g_medium = round2(clampToCalibrationBounds('threshold_sharp_turn_g_medium', percentile(lateralGValues, 0.85), 0.25, 0.70));
+    suggested.threshold_sharp_turn_g_high = round2(clampToCalibrationBounds('threshold_sharp_turn_g_high', percentile(lateralGValues, 0.95), 0.35, 0.90));
   }
 
   const current = {
@@ -295,13 +347,39 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
 
   for (const [type, feedback] of Object.entries(feedbackSummary.byType)) {
     const config = feedbackThresholdMap[type];
-    if (!config || feedback.wrong < 2 || feedback.wrongValues.length === 0) continue;
-    const wrongTarget = (percentile(feedback.wrongValues, 0.75) || current[config.key]) + config.margin;
-    const accurateCeiling = feedback.accurateValues.length >= 3
-      ? (percentile(feedback.accurateValues, 0.95) || wrongTarget) + config.margin
-      : wrongTarget;
-    const feedbackTarget = roundThreshold(config.key, clamp(Math.min(wrongTarget, accurateCeiling), config.min, config.max));
-    suggested[config.key] = Math.max(Number(suggested[config.key] || current[config.key]), feedbackTarget);
+    if (!config) continue;
+
+    // Loosen: events the driver said were not real. Requires labels spread
+    // across several trips, not several taps on one.
+    const canLoosen = feedback.wrong >= 2 &&
+      feedback.wrongValues.length > 0 &&
+      (feedback.wrongTripCount || 0) >= MIN_FEEDBACK_TRIPS_FOR_THRESHOLD_SHIFT;
+    if (canLoosen) {
+      const wrongTarget = (percentile(feedback.wrongValues, 0.75) || current[config.key]) + config.margin;
+      const accurateCeiling = feedback.accurateValues.length >= 3
+        ? (percentile(feedback.accurateValues, 0.95) || wrongTarget) + config.margin
+        : wrongTarget;
+      const feedbackTarget = roundThreshold(config.key, clampToCalibrationBounds(config.key, Math.min(wrongTarget, accurateCeiling), config.min, config.max));
+      suggested[config.key] = Math.max(Number(suggested[config.key] || current[config.key]), feedbackTarget);
+      continue;
+    }
+
+    // Tighten: "Accurate" used to be a pure no-op - it only ever acted as a
+    // ceiling, and only once two "wrong" labels already existed. Confirming
+    // that detections are correct now counts symmetrically, so a driver who
+    // agrees with borderline events can bring the threshold down toward them.
+    const canTighten = feedback.wrong === 0 &&
+      feedback.accurateValues.length >= 5 &&
+      (feedback.accurateTripCount || 0) >= MIN_FEEDBACK_TRIPS_FOR_THRESHOLD_SHIFT;
+    if (canTighten) {
+      const accurateFloor = percentile(feedback.accurateValues, 0.10);
+      if (accurateFloor == null) continue;
+      const tightenTarget = roundThreshold(
+        config.key,
+        clampToCalibrationBounds(config.key, accurateFloor - config.margin, config.min, config.max)
+      );
+      suggested[config.key] = Math.min(Number(suggested[config.key] || current[config.key]), tightenTarget);
+    }
   }
 
   const surveyThresholdSignals = [];
@@ -312,7 +390,8 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
       const nudge = Math.min(config.maxNudge, config.baseNudge + Math.max(0, count - 3) * config.step);
       const target = roundThreshold(
         config.key,
-        clamp(
+        clampToCalibrationBounds(
+          config.key,
           Number(current[config.key]) + (direction === 'loosen' ? nudge : -nudge),
           config.min,
           config.max

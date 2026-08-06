@@ -33,6 +33,7 @@ import {
   routeDistanceAtPlaybackPosition,
 } from '@/lib/mapPlaybackInsights';
 import { formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
+import { STANDARD_GRAVITY_MS2 } from '@/lib/mathUtils';
 import { HEIGHTENED_PRIVACY_MODE_KEY } from '@/lib/privacyMode';
 import { maskEventsForPrivacy, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
@@ -646,7 +647,7 @@ function telemetryForPlayback(dynamics = {}, speedKmh = 0) {
   const duration = Math.max(0.25, Number(dynamics.segment?.durationSeconds) || 1);
   const longitudinalG = (Number(dynamics.accelerationKmhPerSecond) || 0) / 35.30394;
   const yawRadiansPerSecond = THREE.MathUtils.degToRad(Number(dynamics.turnDeltaDegrees) || 0) / duration;
-  const lateralG = ((Math.max(0, speedKmh) / 3.6) * yawRadiansPerSecond) / 9.80665;
+  const lateralG = ((Math.max(0, speedKmh) / 3.6) * yawRadiansPerSecond) / STANDARD_GRAVITY_MS2;
   return {
     longitudinalG: clampNumber(longitudinalG, -2, 2),
     lateralG: clampNumber(lateralG, -2, 2),

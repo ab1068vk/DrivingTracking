@@ -181,10 +181,21 @@ function buildTripSpeedLimitCells(trip = {}, {
     const hasPostedSource = sources.some((source) => POSTED_SPEED_LIMIT_SOURCES.has(source));
     const hasEstimatedSource = sources.some((source) => REVIEWABLE_SPEED_LIMIT_SOURCES.has(source));
     const hasMissingLimit = group.limits.length === 0 || sources.length === 0;
-    const nativeDeferred = trip.speed_limit_review_required === true ||
-      trip.start_source === 'native_auto' ||
-      trip.imported_from_native === true;
-    const requiresDecision = nativeDeferred || hasMissingLimit || !hasPostedSource;
+    // A resolved review (`speed_limit_review_required === false`) must win over
+    // the origin heuristic. Previously `start_source === 'native_auto'` kept
+    // every cell of a background-recorded trip flagged forever, so the "N
+    // sections need your decision" count could never fall no matter how many
+    // limits the driver confirmed.
+    const reviewResolved = trip.speed_limit_review_required === false;
+    const nativeDeferred = trip.speed_limit_review_required === true || (
+      !reviewResolved && (
+        trip.start_source === 'native_auto' ||
+        trip.imported_from_native === true
+      )
+    );
+    const requiresDecision = nativeDeferred || (
+      !reviewResolved && (hasMissingLimit || !hasPostedSource)
+    );
     if (reviewOnly && !requiresDecision) continue;
 
     const identity = buildRoadSectionIdentity(trip, group.geohash);

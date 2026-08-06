@@ -8,7 +8,42 @@ import {
 import { buildTripSummary } from "@/lib/tripSummary";
 import { measureAsync } from "@/lib/performanceTriage";
 import { synchronizeLocalRoadMemory } from "@/lib/roadMemoryCoordinator";
+import { logSystemFailure } from "@/lib/systemLog";
 import { keepPreviousData } from '@tanstack/react-query';
+
+/**
+ * Notify for every milestone system the moment a completed trip is saved,
+ * rather than the next time the app is opened.
+ *
+ * Covers both the Milestones page (achievements and driver progression) and
+ * the separate personal detection-calibration progress. A trip recorded in the
+ * app never passes through the native import path, so without this hook both
+ * systems waited for the next boot or resume.
+ *
+ * The coordinator is imported lazily because it imports `tripService` from
+ * this module; a static import would be a cycle. Failures are logged and never
+ * allowed to fail the save.
+ */
+const notifyMilestonesAfterSave = async (savedTrips = []) => {
+  const completed = (Array.isArray(savedTrips) ? savedTrips : [savedTrips])
+    .filter((trip) => trip?.status === 'completed');
+  if (!completed.length) return;
+  try {
+    const { reconcileMilestonesAfterTripSave } = await import("@/lib/milestoneNotificationCoordinator");
+    // Attribute progression unlocks to the newest completed trip in this save.
+    const latest = completed
+      .slice()
+      .sort((a, b) => (
+        new Date(b.end_time || b.start_time || 0).getTime() -
+        new Date(a.end_time || a.start_time || 0).getTime()
+      ))[0];
+    await reconcileMilestonesAfterTripSave({ tripId: latest?.id ?? null });
+  } catch (error) {
+    logSystemFailure('milestone_notify_after_trip_save', error, {
+      completed_trip_count: completed.length,
+    });
+  }
+};
 
 // Trip records can contain precise GPS traces. Keep them local-only even when a
 // backend API URL is configured for non-trip resources.
@@ -100,6 +135,7 @@ export const tripService = {
     const saved = await repository().create(withSuggestion);
     if (saved?.status === 'completed') {
       await synchronizeLocalRoadMemory([saved], { rescore: true });
+      await notifyMilestonesAfterSave([saved]);
     }
     return saved;
   },
@@ -123,6 +159,7 @@ export const tripService = {
   upsertMany: async (trips) => {
     const saved = await repository().upsertMany(trips);
     await synchronizeLocalRoadMemory(saved, { rescore: true });
+    await notifyMilestonesAfterSave(saved);
     return saved;
   },
 

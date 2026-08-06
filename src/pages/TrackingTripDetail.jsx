@@ -5,6 +5,7 @@ import { Activity, ArrowLeft, Clock, Database, Gauge, Map, Route, ShieldCheck } 
 import { tripDetailQueryOptions, tripSummaryQueryOptions } from '@/api/trips';
 import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
 import TrackingTelemetryCharts from '@/components/TrackingTelemetryCharts';
+import SessionForensicsPane from '@/components/tracking/SessionForensicsPane';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { buildSourceEvidenceRows } from '@/lib/trackingEvidence';
@@ -118,6 +119,8 @@ export default function TrackingTripDetail() {
         </div>)}</div>
       </section>
     </div>
+
+    <div className="mt-3"><SessionForensicsPane trip={trip} /></div>
 
     <section className="mt-3 overflow-hidden rounded-lg border border-border bg-card/60">
       <Pane icon={Activity} title="Observation timeline" detail={`${trackingTripObservationLabel(trip)}. Diagnostic records are identified and are not presented as driver grades.`} />

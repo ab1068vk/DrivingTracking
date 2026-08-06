@@ -247,6 +247,57 @@ test('renders tracking replay pro compare workflow without horizontal overflow',
   expect(metrics.mainMaxWidth).toBe('none');
 });
 
+test('renders the live cockpit map and score tabs without horizontal overflow', async ({ page }) => {
+  await page.addInitScript((settings) => {
+    localStorage.setItem('drivesense_settings', JSON.stringify({
+      ...settings,
+      experience_mode: 'tracking',
+    }));
+    const startMs = Date.now() - 15 * 60 * 1000;
+    const routePoints = Array.from({ length: 60 }, (_, index) => ({
+      lat: 43.65 + index * 0.0002,
+      lng: -79.38 + index * 0.0002,
+      speed_kmh: 42,
+      accuracy: 6,
+      timestamp: new Date(startMs + index * 2000).toISOString(),
+    }));
+    localStorage.setItem('drivesense_active_trip', JSON.stringify({
+      id: 'e2e-live-trip',
+      status: 'active',
+      trip_state: 'recording',
+      start_time: new Date(startMs).toISOString(),
+      updated_at: new Date().toISOString(),
+      last_location_at: new Date().toISOString(),
+      gps_fix_ready: true,
+      gps_accuracy_m: 6,
+      speed_kmh: 42,
+      distance_km: 3.2,
+      route_points: routePoints,
+    }));
+  }, onboardedSettings);
+
+  await page.goto('/tracking');
+
+  const tabs = page.getByRole('tablist', { name: 'Live telemetry views' });
+  await expect(tabs).toBeVisible();
+
+  // Drive tab hosts the provisional score panel; Map tab hosts the Leaflet view.
+  // The SVG route plot stays available as the tile-free fallback.
+  for (const tab of ['Drive', 'Map', 'Route', 'Signals']) {
+    await tabs.getByRole('tab', { name: tab, exact: true }).click();
+    const metrics = await page.evaluate(() => ({
+      innerWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(metrics.scrollWidth, `${tab} tab overflows`).toBeLessThanOrEqual(metrics.innerWidth + 1);
+  }
+
+  await tabs.getByRole('tab', { name: 'Drive', exact: true }).click();
+  await expect(page.getByText('Provisional drive score', { exact: true })).toBeVisible();
+  // The score must never be presented as comparable to a completed trip score.
+  await expect(page.getByText(/will not match the completed trip score/i)).toBeVisible();
+});
+
 test('renders tracking events workspace without horizontal overflow', async ({ page }) => {
   await page.addInitScript((settings) => {
     localStorage.setItem('drivesense_settings', JSON.stringify({

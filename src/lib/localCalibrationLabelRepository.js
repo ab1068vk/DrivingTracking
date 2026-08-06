@@ -86,6 +86,46 @@ export const localCalibrationLabelRepository = {
     return next;
   },
 
+  /**
+   * Merge imported labels into the existing set, keyed by id. Restoring a
+   * backup used to call replaceAll, which silently destroyed every survey
+   * label created since that backup was taken.
+   *
+   * On an id collision the newer `created_at` wins; labels with no id are
+   * appended, since they cannot be matched.
+   */
+  async mergeAll(labels = []) {
+    const incoming = Array.isArray(labels) ? labels : [];
+    if (!incoming.length) return this.list();
+    const existing = await this.list();
+    const byId = new Map();
+    const unkeyed = [];
+
+    const absorb = (label) => {
+      if (label?.id == null) {
+        unkeyed.push(label);
+        return;
+      }
+      const key = String(label.id);
+      const current = byId.get(key);
+      if (!current) {
+        byId.set(key, label);
+        return;
+      }
+      const currentAt = new Date(current.created_at || 0).getTime();
+      const incomingAt = new Date(label.created_at || 0).getTime();
+      if (Number.isFinite(incomingAt) && incomingAt > (Number.isFinite(currentAt) ? currentAt : 0)) {
+        byId.set(key, label);
+      }
+    };
+
+    existing.forEach(absorb);
+    incoming.forEach(absorb);
+    const next = [...byId.values(), ...unkeyed];
+    await setJson(CALIBRATION_LABELS_KEY, next);
+    return next;
+  },
+
   async count() {
     return (await this.list()).length;
   },
@@ -117,6 +157,16 @@ export const localCalibrationLabelRepository = {
 
   async replaceTripSurveyMarkers(markers = {}) {
     const next = markers && typeof markers === 'object' && !Array.isArray(markers) ? markers : {};
+    await setJson(CALIBRATION_SURVEY_MARKERS_KEY, next);
+    return next;
+  },
+
+  /** Merge imported survey markers over the existing ones (see mergeAll). */
+  async mergeTripSurveyMarkers(markers = {}) {
+    const incoming = markers && typeof markers === 'object' && !Array.isArray(markers) ? markers : {};
+    if (!Object.keys(incoming).length) return getJson(CALIBRATION_SURVEY_MARKERS_KEY, {});
+    const existing = await getJson(CALIBRATION_SURVEY_MARKERS_KEY, {});
+    const next = { ...(existing && typeof existing === 'object' ? existing : {}), ...incoming };
     await setJson(CALIBRATION_SURVEY_MARKERS_KEY, next);
     return next;
   },

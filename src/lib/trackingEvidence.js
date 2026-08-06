@@ -4,6 +4,10 @@ import {
   formatDataSourceLabel,
 } from '@/lib/metricRegistry';
 import { SCORING_VERSION } from '@/lib/tripEngine';
+import { scoringValue } from '@/lib/scoringConstants';
+
+/** Shared with tripEngine, liveTrackingTelemetry and the native service. */
+const MAX_SAMPLE_GAP_MS = scoringValue('MAX_SAMPLE_GAP_SECONDS') * 1000;
 
 const UNAVAILABLE = 'unavailable';
 const APPROXIMATE_NOTE_PATTERN = /provisional|proxy|estimate|estimated|approximate|not calibrated|depends/i;
@@ -73,7 +77,7 @@ const gpsGapCount = (trip = {}) => {
   for (let index = 1; index < points.length; index += 1) {
     const previous = new Date(points[index - 1]?.timestamp || 0).getTime();
     const current = new Date(points[index]?.timestamp || 0).getTime();
-    if (Number.isFinite(previous) && Number.isFinite(current) && current - previous > 120_000) {
+    if (Number.isFinite(previous) && Number.isFinite(current) && current - previous > MAX_SAMPLE_GAP_MS) {
       timeGaps += 1;
     }
   }
@@ -218,9 +222,17 @@ export function buildSourceEvidenceRows(trip = {}, settings = {}) {
     phoneSummary.source === 'android_usage_access' ||
     (trip.phone_use_events || []).some((event) => event?.source === 'android_usage_access');
   const gpsProxy = (trip.phone_use_events || []).some((event) => event?.source === 'gps_proxy' || event?.diagnostic_only);
+  const fusionSummary = trip.sensor_fusion_summary || {};
+  const fusionSampleCount = fusionSummary.sample_count ?? trip.motion_sample_count ?? trip.native_motion_sample_count;
+  const fusionPeakLinear = finiteNumber(fusionSummary.peak_linear_ms2);
+  const fusionPeakRotation = finiteNumber(fusionSummary.peak_rotation_deg_s);
+  const fusionHarshCount = finiteNumber(fusionSummary.harsh_motion_count);
+  const fusionImpactCount = finiteNumber(fusionSummary.impact_like_count);
+  const fusionMovementScore = finiteNumber(fusionSummary.phone_movement_score);
+  const phoneOrientation = fusionSummary.phone_orientation || null;
   const sensorFusion = settings.sensor_fusion_enabled === false
     ? 'disabled'
-    : trip.sensor_fusion_summary?.available === true || trip.motion_sample_count > 0
+    : fusionSummary.available === true || Number(fusionSampleCount) > 0
       ? 'available'
       : UNAVAILABLE;
 
@@ -316,12 +328,70 @@ export function buildSourceEvidenceRows(trip = {}, settings = {}) {
       kind: 'source',
       label: 'Sensor fusion availability',
       value: sensorFusion,
-      confidence: sensorFusion === UNAVAILABLE ? UNAVAILABLE : 'recorded',
-      sampleCount: formatCount(trip.motion_sample_count ?? trip.sensor_fusion_summary?.sampleCount),
+      confidence: sensorFusion === UNAVAILABLE ? UNAVAILABLE : fusionSummary.quality || 'recorded',
+      // The summary field is snake_case (sensorFusionModel.buildSensorFusionSummary);
+      // the previous camelCase read never resolved.
+      sampleCount: formatCount(fusionSampleCount),
       dataSourceLabel: formatDataSourceLabel('device_motion_imu'),
       detail: settings.sensor_fusion_enabled === false
         ? 'Sensor fusion disabled in settings.'
-        : trip.sensor_fusion_summary?.evidenceSource || 'Sensor fusion evidence unavailable.',
+        : fusionSummary.evidence_source || fusionSummary.evidenceSource || 'Sensor fusion evidence unavailable.',
+    },
+    {
+      id: 'sensor-fusion-peaks',
+      kind: 'source',
+      label: 'Peak motion recorded',
+      value: fusionPeakLinear == null && fusionPeakRotation == null
+        ? UNAVAILABLE
+        : `${fusionPeakLinear == null ? '—' : `${fusionPeakLinear.toFixed(2)} m/s²`} · ${fusionPeakRotation == null ? '—' : `${fusionPeakRotation.toFixed(1)}°/s`}`,
+      confidence: fusionPeakLinear == null && fusionPeakRotation == null ? UNAVAILABLE : 'recorded',
+      sampleCount: formatCount(fusionSampleCount),
+      dataSourceLabel: formatDataSourceLabel('device_motion_imu'),
+      detail: 'Largest linear acceleration and rotation rate in the retained IMU samples.',
+    },
+    {
+      id: 'sensor-fusion-motion-counts',
+      kind: 'source',
+      label: 'Harsh / impact-like samples',
+      value: fusionHarshCount == null && fusionImpactCount == null
+        ? UNAVAILABLE
+        : `${fusionHarshCount ?? 0} harsh · ${fusionImpactCount ?? 0} impact-like`,
+      confidence: fusionHarshCount == null && fusionImpactCount == null ? UNAVAILABLE : 'recorded',
+      sampleCount: formatCount(fusionSampleCount),
+      dataSourceLabel: formatDataSourceLabel('device_motion_imu'),
+      detail: 'Device-motion sample counts, not scored driving events. Handling the phone produces the same pattern.',
+    },
+    {
+      id: 'sensor-fusion-phone-movement',
+      kind: 'source',
+      label: 'Phone movement score',
+      value: fusionMovementScore == null ? UNAVAILABLE : String(Math.round(fusionMovementScore)),
+      confidence: fusionMovementScore == null ? UNAVAILABLE : 'recorded',
+      sampleCount: formatCount(fusionSampleCount),
+      dataSourceLabel: formatDataSourceLabel('device_motion_imu'),
+      detail: 'Higher values mean the device moved relative to the vehicle, lowering confidence in IMU-derived measures.',
+    },
+    {
+      id: 'sensor-fusion-calibration',
+      kind: 'source',
+      label: 'Phone orientation calibration',
+      value: phoneOrientation == null
+        ? UNAVAILABLE
+        : phoneOrientation.calibrated === true
+          ? `calibrated (${phoneOrientation.confidence || 'unrated'})`
+          : 'not calibrated',
+      confidence: phoneOrientation == null
+        ? UNAVAILABLE
+        : phoneOrientation.calibrated === true
+          ? phoneOrientation.confidence || 'recorded'
+          : 'diagnostic',
+      sampleCount: formatCount(phoneOrientation?.sample_count),
+      dataSourceLabel: formatDataSourceLabel('device_motion_imu'),
+      detail: phoneOrientation == null
+        ? 'No calibration attempt was recorded for this trip.'
+        : phoneOrientation.calibrated === true
+          ? `Longitudinal axis resolved as ${phoneOrientation.longitudinal_axis || 'unknown'}; IMU-fused lane-change detection was available.`
+          : 'Calibration did not succeed, so lane-change detection used the GPS-only fallback, which carries a much higher false-positive rate.',
     },
   ];
 }

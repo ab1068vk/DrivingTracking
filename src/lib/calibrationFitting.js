@@ -1,3 +1,14 @@
+/**
+ * Label count required to fit the global provisional penalty scale.
+ *
+ * This target belongs to the OFFLINE fitting script
+ * (`scripts/fit-calibration-labels.mjs`), not to anything running on a user's
+ * device. Label upload is hard-disabled (`canUploadCalibrationLabels()` returns
+ * false), so survey labels stay `local_only` and a single device can never
+ * reach this count. Nothing in the app should present it as user-facing
+ * progress; on-device surveys feed personal detection thresholds via
+ * `thresholdCalibration.js` instead.
+ */
 export const MIN_CALIBRATION_LABEL_COUNT = 2000;
 export const CALIBRATION_PENDING_MESSAGE = 'Calibration pending: not enough labeled trips yet.';
 

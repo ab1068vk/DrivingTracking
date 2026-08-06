@@ -46,18 +46,45 @@ const representativeTripCoordinate = (trip = {}) => {
   return point ? { lat: Number(point.lat), lng: Number(point.lng) } : null;
 };
 
-const dayOfYear = (date) => {
-  const start = Date.UTC(date.getFullYear(), 0, 0);
-  const current = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+/**
+ * The trip's own UTC offset, in minutes east of UTC, or null when the trip did
+ * not record one. Reviewing an old trip must not be interpreted in whatever
+ * timezone (or DST phase) the device happens to be in today.
+ * @param {Record<string, any>|null} trip
+ * @returns {number|null}
+ */
+const tripUtcOffsetMinutes = (trip) => {
+  const offset = Number(
+    trip?.trip_utc_offset_minutes ?? trip?.night_classification?.utc_offset_minutes
+  );
+  return Number.isFinite(offset) ? offset : null;
+};
+
+/** Local wall-clock parts for a trip, in the trip's own timezone when known. */
+const localClockParts = (date, offsetMinutes) => {
+  if (offsetMinutes == null) {
+    return { hours: date.getHours(), minutes: date.getMinutes(), date };
+  }
+  const shifted = new Date(date.getTime() + offsetMinutes * 60000);
+  return { hours: shifted.getUTCHours(), minutes: shifted.getUTCMinutes(), date: shifted };
+};
+
+const dayOfYear = (date, offsetMinutes = null) => {
+  const local = offsetMinutes == null ? date : new Date(date.getTime() + offsetMinutes * 60000);
+  const [year, month, day] = offsetMinutes == null
+    ? [local.getFullYear(), local.getMonth(), local.getDate()]
+    : [local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()];
+  const start = Date.UTC(year, 0, 0);
+  const current = Date.UTC(year, month, day);
   return Math.floor((current - start) / 86400000);
 };
 
 const toRad = (degrees) => degrees * Math.PI / 180;
 
-function sunEventMinutes(date, lat, lng, isSunrise, zenith = 90.833) {
+function sunEventMinutes(date, lat, lng, isSunrise, zenith = 90.833, offsetMinutes = null) {
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 89.8) return null;
 
-  const n = dayOfYear(date);
+  const n = dayOfYear(date, offsetMinutes);
   const lngHour = lng / 15;
   const t = n + (((isSunrise ? 6 : 18) - lngHour) / 24);
   const meanAnomaly = (0.9856 * t) - 3.289;
@@ -83,7 +110,11 @@ function sunEventMinutes(date, lat, lng, isSunrise, zenith = 90.833) {
     : Math.acos(cosHour) * 180 / Math.PI;
   const localMeanTime = (hourAngle / 15) + rightAscension - (0.06571 * t) - 6.622;
   const utcMinutes = ((localMeanTime - lngHour) * 60) % (24 * 60);
-  return ((utcMinutes - date.getTimezoneOffset()) % (24 * 60) + (24 * 60)) % (24 * 60);
+  // getTimezoneOffset() is minutes *behind* UTC and reflects the device right
+  // now, so it mis-shifts historic trips across a DST boundary or after the
+  // user travels. Prefer the offset the trip itself recorded.
+  const shiftMinutes = offsetMinutes == null ? -date.getTimezoneOffset() : offsetMinutes;
+  return ((utcMinutes + shiftMinutes) % (24 * 60) + (24 * 60)) % (24 * 60);
 }
 
 function isWithinClockWindow(minutes, startMinutes, endMinutes) {
@@ -122,16 +153,17 @@ function finiteOffset(value) {
   return Number.isFinite(offset) ? offset : 0;
 }
 
-function getConfiguredTimePeriod(date, coordinate, settings = {}) {
-  const minutes = date.getHours() * 60 + date.getMinutes();
+function getConfiguredTimePeriod(date, coordinate, settings = {}, offsetMinutes = null) {
+  const clock = localClockParts(date, offsetMinutes);
+  const minutes = clock.hours * 60 + clock.minutes;
   const fallbackStart = parseClockMinutes(settings.night_start_time, DEFAULT_NIGHT_START_MINUTES);
   const fallbackEnd = parseClockMinutes(settings.night_end_time, DEFAULT_NIGHT_END_MINUTES);
   const customMode = settings.night_detection_mode === 'custom';
   const civilTwilightMode = settings.night_detection_mode === 'civil_twilight';
   const zenith = civilTwilightMode ? 96 : 90.833;
   const tolerance = Math.max(0, Math.min(30, Number(settings.night_boundary_tolerance_minutes) || 0));
-  const sunrise = coordinate ? sunEventMinutes(date, coordinate.lat, coordinate.lng, true, zenith) : null;
-  const sunset = coordinate ? sunEventMinutes(date, coordinate.lat, coordinate.lng, false, zenith) : null;
+  const sunrise = coordinate ? sunEventMinutes(date, coordinate.lat, coordinate.lng, true, zenith, offsetMinutes) : null;
+  const sunset = coordinate ? sunEventMinutes(date, coordinate.lat, coordinate.lng, false, zenith, offsetMinutes) : null;
   const solarAvailable = sunrise != null && sunset != null;
   const sunriseBoundary = solarAvailable
     ? sunrise + finiteOffset(settings.night_sunrise_offset_minutes) - tolerance
@@ -145,9 +177,9 @@ function getConfiguredTimePeriod(date, coordinate, settings = {}) {
 
   if (night) return PREMIUM_TRIP_TIME_PERIODS.NIGHT;
   if (!solarAvailable) {
-    const clockPeriod = getClockTimePeriod(date.getHours());
+    const clockPeriod = getClockTimePeriod(clock.hours);
     return clockPeriod === PREMIUM_TRIP_TIME_PERIODS.NIGHT
-      ? date.getHours() < 12
+      ? clock.hours < 12
         ? PREMIUM_TRIP_TIME_PERIODS.DAWN
         : PREMIUM_TRIP_TIME_PERIODS.DUSK
       : clockPeriod;
@@ -159,7 +191,7 @@ function getConfiguredTimePeriod(date, coordinate, settings = {}) {
     return PREMIUM_TRIP_TIME_PERIODS.DUSK;
   }
   if (isWithinClockWindow(minutes, sunset, sunrise)) {
-    return date.getHours() < 12
+    return clock.hours < 12
       ? PREMIUM_TRIP_TIME_PERIODS.DAWN
       : PREMIUM_TRIP_TIME_PERIODS.DUSK;
   }
@@ -178,14 +210,17 @@ export function getPremiumTripTimePresentation(tripOrStartTime, nightSettings = 
     : null;
   const startTime = trip ? trip.start_time : tripOrStartTime;
   const date = startTime instanceof Date ? startTime : new Date(startTime || 0);
-  const hour = Number.isFinite(date.getTime()) ? date.getHours() : 12;
+  const offsetMinutes = tripUtcOffsetMinutes(trip);
+  const hour = Number.isFinite(date.getTime())
+    ? localClockParts(date, offsetMinutes).hours
+    : 12;
   let period = getClockTimePeriod(hour);
 
   if (trip && Number.isFinite(date.getTime())) {
     if (trip.night_driving === true) {
       period = PREMIUM_TRIP_TIME_PERIODS.NIGHT;
     } else {
-      period = getConfiguredTimePeriod(date, representativeTripCoordinate(trip), nightSettings);
+      period = getConfiguredTimePeriod(date, representativeTripCoordinate(trip), nightSettings, offsetMinutes);
       if (trip.night_driving === false && period === PREMIUM_TRIP_TIME_PERIODS.NIGHT) {
         period = hour < 12 ? PREMIUM_TRIP_TIME_PERIODS.DAWN : PREMIUM_TRIP_TIME_PERIODS.DUSK;
       }

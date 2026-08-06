@@ -1,4 +1,14 @@
 /**
+ * Standard gravity, used to express measured accelerations in g.
+ *
+ * Single source of truth for JS, mirrored by DriveSenseAutoTrackingService.STANDARD_GRAVITY_MS2
+ * on the native side. Lateral-g maths was previously split between 9.81 and 9.80665 in
+ * different modules — including two places inside tripEngine.js — which made the map overlay
+ * and the scored value disagree in the third decimal for the same corner.
+ */
+export const STANDARD_GRAVITY_MS2 = 9.80665;
+
+/**
  * Clamp a numeric value to an inclusive range.
  * Invalid numeric input returns the inclusive minimum so callers never receive NaN.
  * @param {number} value - Value to constrain.

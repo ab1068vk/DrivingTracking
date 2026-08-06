@@ -21,6 +21,7 @@ import android.provider.MediaStore;
 import android.provider.Settings;
 import android.util.Base64;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
@@ -38,6 +39,7 @@ import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
 import androidx.activity.result.ActivityResult;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -778,6 +780,29 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         payload.put("reminderAt", reminderAt);
         payload.put("stateRevision", stateRevision == null ? 0L : stateRevision);
         call.resolve(payload);
+    }
+
+    /**
+     * Mirror the calibration-progress counters JavaScript computed so the
+     * native notifier can detect a milestone crossing while the app is closed.
+     * JavaScript stays the authority for targets and delivered milestone IDs.
+     */
+    @PluginMethod
+    public void setCalibrationMilestoneState(PluginCall call) {
+        JSONObject state = new JSONObject();
+        try {
+            state.put("tripsAnalyzed", call.getInt("tripsAnalyzed", 0));
+            state.put("kmAnalyzed", call.getDouble("kmAnalyzed", 0d));
+            state.put("tripsTarget", call.getInt("tripsTarget", 0));
+            state.put("kmTarget", call.getDouble("kmTarget", 0d));
+            JSArray notified = call.getArray("notified", new JSArray());
+            state.put("notified", notified == null ? new JSONArray() : new JSONArray(notified.toList()));
+        } catch (Exception error) {
+            call.reject("Could not store calibration milestone state.", error);
+            return;
+        }
+        CalibrationMilestoneNotifier.syncStateFromJs(getContext(), state);
+        call.resolve();
     }
 
     @PluginMethod

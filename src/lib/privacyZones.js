@@ -7,6 +7,14 @@ import { appendPrivacyEvent } from '@/lib/hashChainLog';
 import { SecureGpsBuffer } from '@/lib/SecureGpsBuffer';
 import { applyDifferentialPrivacyToAggregates } from '@/lib/differentialPrivacy';
 import { effectivePrivacyZones } from '@/lib/privacyMode';
+import {
+  ensurePrivacyCellKey,
+  hasPrivacyCellKey,
+  isKeyedCellHash,
+  keyedPrivacyCellHash,
+  loadPrivacyCellKey,
+  privacyCellKeyBase64,
+} from '@/lib/privacyCellKey';
 
 const EARTH_RADIUS_M = 6371000;
 const DISPLAY_CIRCLE_OFFSET_M = 35;
@@ -14,9 +22,14 @@ const EXPORT_NOISE_MIN_M = 10;
 const EXPORT_NOISE_MAX_M = 35;
 const TIMESTAMP_FUZZ_RANGE_MS = 3 * 60 * 1000;
 const PRIVACY_CELL_SIZE_M = 50;
+// global_grid_v1 hashes are unkeyed and reversible by brute force; keyed_grid_v2
+// is HMAC-SHA-256 under the device cell key. Both are matched, because a zone
+// created before the key existed must keep protecting its area until migration.
 const PRIVACY_CELL_SCHEMA = 'global_grid_v1';
-// The encrypted recovery region is deliberately coarse (about 6.4 km wide)
-// so maps can rediscover one-way cell hashes without storing the private center.
+const PRIVACY_CELL_SCHEMA_KEYED = 'keyed_grid_v2';
+// The encrypted recovery region is deliberately coarse (about 6.4 km wide) so
+// maps can rediscover cell hashes. It only narrows a search that still needs the
+// cell key, so on its own it does not locate a keyed zone.
 const PRIVACY_DISPLAY_REGION_CELLS = 128;
 const PRIVACY_DISPLAY_REGION_SCHEMA = 'coarse_grid_v1';
 const EXPORT_PRIVACY_ZONE_ID = 'private_area';
@@ -70,6 +83,8 @@ export const KINEMATIC_FIELDS = Object.freeze([
 export const PRIVACY_ZONES_SECURE_KEY = 'drivesense_privacy_zones_config_v1';
 export const NATIVE_PRIVACY_ZONES_KEY = 'privacy_zones_v1';
 export const NATIVE_PRIVACY_ZONES_CONTEXT = 'native:privacy_zones_v1';
+export const NATIVE_PRIVACY_CELL_KEY_KEY = 'privacy_cell_key_v1';
+export const NATIVE_PRIVACY_CELL_KEY_CONTEXT = 'native:privacy_cell_key_v1';
 export const NATIVE_PRIVACY_SYNC_FAILED_EVENT = 'drivesense:privacy-native-sync-failed';
 export const PRIVACY_ZONES_CHANGED_EVENT = 'drivesense:privacy-zones-changed';
 export const NATIVE_PRIVACY_SYNC_STATUS_OK = 'ok';
@@ -555,11 +570,11 @@ const privacyDisplayRegionForPoint = (point = {}, cellSizeM = PRIVACY_CELL_SIZE_
   return { privacy_display_region_schema: PRIVACY_DISPLAY_REGION_SCHEMA, privacy_display_region_y: Math.floor(y / PRIVACY_DISPLAY_REGION_CELLS), privacy_display_region_x: Math.floor(x / PRIVACY_DISPLAY_REGION_CELLS), privacy_display_region_span: PRIVACY_DISPLAY_REGION_CELLS };
 };
 
+const isCellHash = (cell) => typeof cell === 'string' && (cell.startsWith('pzc_') || isKeyedCellHash(cell));
+
 const normalizePrivacyCellHashes = (zone = {}) => (
   Array.isArray(zone.privacy_cell_hashes)
-    ? Array.from(new Set(zone.privacy_cell_hashes
-      .filter((cell) => typeof cell === 'string' && cell.startsWith('pzc_'))))
-      .slice(0, 50000)
+    ? Array.from(new Set(zone.privacy_cell_hashes.filter(isCellHash))).slice(0, 50000)
     : []
 );
 
@@ -613,7 +628,7 @@ const normalizePrivacyZones = (zones = []) => (
           };
           return {
             ...withGeometry,
-            privacy_cell_schema: PRIVACY_CELL_SCHEMA,
+            privacy_cell_schema: currentPrivacyCellSchema(),
             privacy_cell_size_m: PRIVACY_CELL_SIZE_M,
             privacy_cell_hashes: createPrivacyCellHashes(withGeometry),
             ...(type === 'circle' ? privacyDisplayRegionForPoint(withGeometry) : {}),
@@ -670,10 +685,17 @@ export function getPrivacyZones(settings = localSettings.get()) {
 }
 
 export async function getHydratedPrivacyZones(settings = localSettings.get()) {
+  // Keyed zones are unreadable without the key, so a failure here has to reach
+  // resolvePrivacyZonesForLookup and stop the lookup rather than be swallowed.
+  await loadPrivacyCellKey();
   const zones = getPrivacyZones(settings);
   if (zones.length) return zones;
-  if (!Array.isArray(settings?.privacy_zones) || settings.privacy_zones.length === 0) return [];
-
+  // The encrypted store is the only source that carries zone geometry:
+  // settings.privacy_zones holds the redacted mirror, which has neither
+  // coordinates nor cell hashes. Gating hydration on that mirror fails open
+  // whenever local settings are cleared or lag behind the store, so an empty
+  // in-memory list is never taken as proof that no zones exist — the store is
+  // read before concluding that.
   if (!privacyZonesHydrationPromise) {
     privacyZonesHydrationPromise = getEncryptedJson(PRIVACY_ZONES_SECURE_KEY, [])
       .then((storedZones) => {
@@ -688,10 +710,98 @@ export async function getHydratedPrivacyZones(settings = localSettings.get()) {
         privacyZonesHydrationPromise = null;
       });
   }
-  return privacyZonesHydrationPromise;
+  return effectivePrivacyZones(await privacyZonesHydrationPromise, settings);
+}
+
+/**
+ * True when this device is expected to have privacy zones, judged from every
+ * mirror that survives a cleared secure store. Used to decide whether a failed
+ * hydration must fail closed.
+ * @param {Record<string, any>} settings
+ */
+export function hasConfiguredPrivacyZones(settings = localSettings.get()) {
+  if (Array.isArray(privacyZonesMemory) && privacyZonesMemory.length > 0) return true;
+  if (Array.isArray(settings?.privacy_zones) && settings.privacy_zones.length > 0) return true;
+  return Number(settings?.privacy_zones_native_sync_zone_count) > 0;
+}
+
+/**
+ * Resolve privacy zones for an outbound lookup. Callers must skip the lookup
+ * when `failed` is true: zones are configured but could not be read, so
+ * proceeding would send coordinates that should have been filtered.
+ * @param {Record<string, any>} settings
+ * @returns {Promise<{ zones: Array<Record<string, any>>, failed: boolean }>}
+ */
+export async function resolvePrivacyZonesForLookup(settings = localSettings.get()) {
+  try {
+    return { zones: await getHydratedPrivacyZones(settings), failed: false };
+  } catch (error) {
+    const configured = hasConfiguredPrivacyZones(settings);
+    logSystemFailure('privacy_zones_lookup_hydration', error, { zones_configured: configured });
+    return { zones: [], failed: configured };
+  }
+}
+
+/**
+ * Re-hash zones that still carry unkeyed cells. The cell set is recovered from
+ * the legacy hashes and re-emitted under the key, so the protected area is
+ * preserved exactly - including corridor shapes, which a center-only recovery
+ * would lose. A zone whose cells cannot be recovered (no display region and no
+ * nearby reference point) keeps its legacy hashes and stays protected; it is
+ * re-keyed the next time its geometry is saved.
+ */
+async function rekeyLegacyCellZones(zones = []) {
+  if (!zones.some((zone) => privacyCellIndex(zone)?.legacy)) return zones;
+  try {
+    await ensurePrivacyCellKey();
+  } catch (error) {
+    logSystemFailure('privacy_cell_key_create', error, { zone_count: zones.length });
+    return zones;
+  }
+  if (!hasPrivacyCellKey()) return zones;
+
+  let rekeyed = 0;
+  let unrecoverable = 0;
+  const migrated = zones.map((zone) => {
+    if (!privacyCellIndex(zone)?.legacy) return zone;
+    const recovered = recoverPrivacyZoneCells(zone);
+    const hashes = recovered
+      ? recovered.cells.map((cell) => keyedPrivacyCellHash(cell.y, cell.x, recovered.cellSizeM))
+      : [];
+    if (!hashes.length || hashes.some((hash) => !hash)) {
+      unrecoverable += 1;
+      return zone;
+    }
+    rekeyed += 1;
+    return {
+      ...zone,
+      privacy_cell_schema: PRIVACY_CELL_SCHEMA_KEYED,
+      privacy_cell_hashes: [...new Set(hashes)].sort(),
+    };
+  });
+
+  recordSystemEvent('privacy_zones_cell_key_migration', {
+    rekeyed_zone_count: rekeyed,
+    unrecoverable_zone_count: unrecoverable,
+  }, {
+    category: 'privacy',
+    severity: unrecoverable ? 'warn' : 'info',
+    title: 'Privacy zone cell hashes re-keyed',
+    message: unrecoverable
+      ? 'Some zones kept their older cell hashes; saving the zone again will re-key it.'
+      : 'Privacy zone cell hashes now use the device key.',
+  });
+  return migrated;
 }
 
 async function persistPrivacyZones(zones = []) {
+  // Best effort: a device that cannot create a key still gets working zones,
+  // they just keep the older unkeyed hashes.
+  try {
+    await ensurePrivacyCellKey();
+  } catch (error) {
+    logSystemFailure('privacy_cell_key_create', error, {});
+  }
   const normalized = normalizePrivacyZones(zones);
   privacyZonesMemory = normalized;
   await setEncryptedJson(PRIVACY_ZONES_SECURE_KEY, cellOnlyPrivacyZones(normalized));
@@ -711,12 +821,16 @@ export async function savePrivacyZonesToStorage(zones = [], settings = localSett
 }
 
 export async function loadPrivacyZonesFromStorage(settings = localSettings.get()) {
+  await loadPrivacyCellKey();
   const secureZones = normalizePrivacyZones(await getEncryptedJson(PRIVACY_ZONES_SECURE_KEY, []));
   const legacyPlaintextZones = normalizePrivacyZones(settings?.privacy_zones);
-  const zones = secureZones.length ? secureZones : legacyPlaintextZones;
+  const loaded = secureZones.length ? secureZones : legacyPlaintextZones;
 
-  if (zones.length) {
-    await persistPrivacyZones(zones);
+  // Persisting can rewrite the zones (re-keyed cells), so callers get what was
+  // stored, not the pre-migration copy.
+  let zones = loaded;
+  if (loaded.length) {
+    zones = await persistPrivacyZones(await rekeyLegacyCellZones(loaded));
   } else {
     privacyZonesMemory = [];
     notifyPrivacyZonesChanged('loaded_empty', []);
@@ -761,6 +875,23 @@ export async function syncZonesToNative(zones = getPrivacyZones()) {
 
     if (zoneCount > 0 && nativeZones.length === 0) {
       throw new Error('No privacy-zone cell guard is available for native sync.');
+    }
+
+    // The key has to land before the zones it unlocks: a native build that sees
+    // keyed hashes without a key treats every fix as private, which stops
+    // tracking rather than leaking, but is still a bad state to sync into.
+    const cellKey = privacyCellKeyBase64();
+    const needsCellKey = nativeZones.some((zone) => zone.privacy_cell_hashes.some(isKeyedCellHash));
+    if (needsCellKey && !cellKey) {
+      throw new Error('Keyed privacy-zone cells cannot be synced without the cell key.');
+    }
+    if (cellKey && Capacitor.getPlatform() === 'android') {
+      await secureSetPreference({
+        key: NATIVE_PRIVACY_CELL_KEY_KEY,
+        value: cellKey,
+        context: NATIVE_PRIVACY_CELL_KEY_CONTEXT,
+        encryptAtRest: true,
+      });
     }
 
     const serializedNativeZones = JSON.stringify(nativeZones);
@@ -875,14 +1006,30 @@ const privacyCellHash = (y, x, cellSizeM = PRIVACY_CELL_SIZE_M) => (
   `pzc_${hashCode(`${Math.round(cellSizeM)}:${y}:${x}`).toString(36)}`
 );
 
+// New zones are keyed whenever a key is loaded; the legacy hash stays reachable
+// so a device that has not yet created a key still gets a working zone.
+const privacyCellHashForWrite = (y, x, cellSizeM = PRIVACY_CELL_SIZE_M) => (
+  keyedPrivacyCellHash(y, x, cellSizeM) || privacyCellHash(y, x, cellSizeM)
+);
+
+const currentPrivacyCellSchema = () => (
+  hasPrivacyCellKey() ? PRIVACY_CELL_SCHEMA_KEYED : PRIVACY_CELL_SCHEMA
+);
+
 const cellCenterPoint = (y, x, latStep, lngStep) => ({
   lat: ((y + 0.5) * latStep) - 90,
   lng: ((x + 0.5) * lngStep) - 180,
 });
 
-function recoverPrivacyZoneCenter(zone = {}, referencePoints = []) {
-  const hashes = new Set(normalizePrivacyCellHashes(zone));
-  if (!hashes.size) return null;
+/**
+ * Walk the stored hashes back to the grid cells they came from. Only the device
+ * that holds the cell key can do this for a keyed zone, which is the point.
+ */
+function recoverPrivacyZoneCells(zone = {}, referencePoints = []) {
+  const index = privacyCellIndex(zone);
+  if (!index) return null;
+  if (index.keyed && !hasPrivacyCellKey()) return null;
+  const hashes = index.hashes;
 
   const cellSizeM = Number(zone.privacy_cell_size_m) || PRIVACY_CELL_SIZE_M;
   const savedMapCenter = localSettings.get()?.last_map_center;
@@ -901,7 +1048,7 @@ function recoverPrivacyZoneCenter(zone = {}, referencePoints = []) {
         const key = `${y}:${x}`;
         if (visited.has(key)) continue;
         visited.add(key);
-        if (hashes.has(privacyCellHash(y, x, cell.cellSizeM))) {
+        if (cellMatchesIndex(index, y, x, cell.cellSizeM)) {
           seed = { ...cell, y, x };
           break;
         }
@@ -913,7 +1060,7 @@ function recoverPrivacyZoneCenter(zone = {}, referencePoints = []) {
   const savedRegion = normalizePrivacyDisplayRegion(zone);
   if (!seed && savedRegion) {
     const span = savedRegion.privacy_display_region_span; const startY = savedRegion.privacy_display_region_y * span; const startX = savedRegion.privacy_display_region_x * span;
-    for (let y = startY; y < startY + span && !seed; y++) for (let x = startX; x < startX + span; x++) if (hashes.has(privacyCellHash(y, x, cellSizeM))) { const latStep = cellSizeM / 111320; seed = { y, x, latStep, lngStep: latStep, cellSizeM }; break; }
+    for (let y = startY; y < startY + span && !seed; y++) for (let x = startX; x < startX + span; x++) if (cellMatchesIndex(index, y, x, cellSizeM)) { const latStep = cellSizeM / 111320; seed = { y, x, latStep, lngStep: latStep, cellSizeM }; break; }
   }
   if (!seed) return null;
   if (!savedRegion) {
@@ -929,9 +1076,9 @@ function recoverPrivacyZoneCenter(zone = {}, referencePoints = []) {
     const key = `${current.y}:${current.x}`;
     if (explored.has(key)) continue;
     explored.add(key);
-    if (!hashes.has(privacyCellHash(current.y, current.x, seed.cellSizeM))) continue;
+    if (!cellMatchesIndex(index, current.y, current.x, seed.cellSizeM)) continue;
 
-    matched.push(cellCenterPoint(current.y, current.x, seed.latStep, seed.lngStep));
+    matched.push({ y: current.y, x: current.x });
     for (let y = current.y - 1; y <= current.y + 1; y++) {
       for (let x = current.x - 1; x <= current.x + 1; x++) {
         if (y !== current.y || x !== current.x) queue.push({ y, x });
@@ -940,10 +1087,30 @@ function recoverPrivacyZoneCenter(zone = {}, referencePoints = []) {
   }
 
   if (!matched.length) return null;
-  return {
-    lat: matched.reduce((sum, point) => sum + point.lat, 0) / matched.length,
-    lng: matched.reduce((sum, point) => sum + point.lng, 0) / matched.length,
-  };
+  return { cells: matched, latStep: seed.latStep, lngStep: seed.lngStep, cellSizeM: seed.cellSizeM };
+}
+
+// Recovery can fall back to scanning the whole display region, which is 16k
+// keyed hashes. Map components ask for the display circle on every render, so
+// the answer is cached per zone rather than recomputed.
+const recoveredCenters = new Map();
+
+function recoverPrivacyZoneCenter(zone = {}, referencePoints = []) {
+  const hashes = normalizePrivacyCellHashes(zone);
+  if (!hashes.length) return null;
+
+  const cacheKey = `${zone?.id || ''}:${hashes.length}:${hashes[0]}`;
+  if (recoveredCenters.has(cacheKey)) return recoveredCenters.get(cacheKey);
+
+  const recovered = recoverPrivacyZoneCells(zone, referencePoints);
+  const center = recovered ? {
+    lat: recovered.cells.reduce((sum, cell) => sum + cellCenterPoint(cell.y, cell.x, recovered.latStep, recovered.lngStep).lat, 0) / recovered.cells.length,
+    lng: recovered.cells.reduce((sum, cell) => sum + cellCenterPoint(cell.y, cell.x, recovered.latStep, recovered.lngStep).lng, 0) / recovered.cells.length,
+  } : null;
+  // A miss with reference points in hand may just mean those points were far
+  // from the zone, so only a successful recovery is worth remembering.
+  if (center) recoveredCenters.set(cacheKey, center);
+  return center;
 }
 
 export function createPrivacyCellHashes(zone = {}, cellSizeM = PRIVACY_CELL_SIZE_M) {
@@ -976,7 +1143,7 @@ export function createPrivacyCellHashes(zone = {}, cellSizeM = PRIVACY_CELL_SIZE
       for (let x = Math.min(southWest.x, northEast.x); x <= Math.max(southWest.x, northEast.x); x++) {
         const cellCenter = cellCenterPoint(y, x, southWest.latStep, southWest.lngStep);
         if (privacyZoneGeometryDistanceM(cellCenter, zone) <= widthM + (cellDiagonalM / 2)) {
-          hashes.add(privacyCellHash(y, x, southWest.cellSizeM));
+          hashes.add(privacyCellHashForWrite(y, x, southWest.cellSizeM));
         }
       }
     }
@@ -1002,7 +1169,7 @@ export function createPrivacyCellHashes(zone = {}, cellSizeM = PRIVACY_CELL_SIZE
     for (let x = center.x - lngCells; x <= center.x + lngCells; x++) {
       const cellCenter = cellCenterPoint(y, x, center.latStep, center.lngStep);
       if (distanceM({ lat, lng }, cellCenter) <= protectedRadiusM + (cellDiagonalM / 2)) {
-        hashes.add(privacyCellHash(y, x, center.cellSizeM));
+        hashes.add(privacyCellHashForWrite(y, x, center.cellSizeM));
       }
     }
   }
@@ -1010,18 +1177,78 @@ export function createPrivacyCellHashes(zone = {}, cellSizeM = PRIVACY_CELL_SIZE
   return [...hashes].sort();
 }
 
-function findCellPrivacyZoneForPoint(point, zones = []) {
+// Normalizing and re-hashing a zone's cell list per point is the hot path when
+// masking a full route, so keep one index per zone object.
+const cellHashSets = new WeakMap();
+
+const privacyCellIndex = (zone) => {
+  if (!zone || typeof zone !== 'object') return null;
+  const cached = cellHashSets.get(zone);
+  if (cached) return cached.hashes.size ? cached : null;
+
+  const hashes = new Set(normalizePrivacyCellHashes(zone));
+  const index = {
+    hashes,
+    keyed: [...hashes].some(isKeyedCellHash),
+    legacy: [...hashes].some((hash) => !isKeyedCellHash(hash)),
+  };
+  cellHashSets.set(zone, index);
+  return hashes.size ? index : null;
+};
+
+// A cell can be stored under either scheme, so both candidates are tested. The
+// keyed one is null when no key is loaded, which is handled by the caller as
+// "cannot decide" rather than "not private".
+const cellMatchesIndex = (index, y, x, cellSizeM) => (
+  (index.legacy && index.hashes.has(privacyCellHash(y, x, cellSizeM))) ||
+  (index.keyed && index.hashes.has(keyedPrivacyCellHash(y, x, cellSizeM)))
+);
+
+let missingCellKeyLogged = false;
+
+function findCellPrivacyZoneForPoint(point, zones = [], guardM = 0) {
   const lat = finiteNumber(point?.lat);
   const lng = finiteNumber(point?.lng);
   if (lat == null || lng == null) return null;
+  const guard = Math.max(0, finiteNumber(guardM) ?? 0);
 
   for (const zone of Array.isArray(zones) ? zones : []) {
-    const hashes = normalizePrivacyCellHashes(zone);
-    if (!hashes.length) continue;
+    const index = privacyCellIndex(zone);
+    if (!index) continue;
+
+    // Without the key a keyed zone cannot be evaluated at all. Answering "not
+    // private" there would silently disable the zone, so the point is treated as
+    // protected instead. The key loads with the zones, so this is a broken
+    // invariant rather than an expected state - say so once.
+    if (index.keyed && !hasPrivacyCellKey()) {
+      if (!missingCellKeyLogged) {
+        missingCellKeyLogged = true;
+        logSystemFailure('privacy_cell_key_missing', new Error('Privacy cell key unavailable for a keyed zone.'), {
+          zone_id: zone?.id,
+        });
+      }
+      return zone;
+    }
 
     const cell = cellCoordinate(lat, lng, zone.privacy_cell_size_m || PRIVACY_CELL_SIZE_M);
     if (!cell) continue;
-    if (new Set(hashes).has(privacyCellHash(cell.y, cell.x, cell.cellSizeM))) return zone;
+    if (cellMatchesIndex(index, cell.y, cell.x, cell.cellSizeM)) return zone;
+    if (guard <= 0) continue;
+
+    // A cell-only zone has no stored center to measure a buffer from, so the
+    // guard is applied by walking outward to the protected cells that fall
+    // inside it. The half-diagonal slack keeps this fail-closed: a point within
+    // guardM of the true zone edge always lands within reach of a hashed cell.
+    const reachM = guard + (Math.SQRT2 * cell.cellSizeM) / 2;
+    const ring = Math.ceil(reachM / cell.cellSizeM) + 1;
+    for (let y = cell.y - ring; y <= cell.y + ring; y++) {
+      for (let x = cell.x - ring; x <= cell.x + ring; x++) {
+        if (y === cell.y && x === cell.x) continue;
+        if (!cellMatchesIndex(index, y, x, cell.cellSizeM)) continue;
+        const center = cellCenterPoint(y, x, cell.latStep, cell.lngStep);
+        if (distanceM({ lat, lng }, center) <= reachM) return zone;
+      }
+    }
   }
 
   return null;
@@ -1105,7 +1332,6 @@ export function isPointInPrivacyZone(point, zones = getPrivacyZones(), guardM = 
 
   for (const zone of Array.isArray(zones) ? zones : []) {
     if (isPrivacyZoneExpired(zone)) continue;
-    if (isPrivacyZoneExpired(zone)) continue;
     if (!hasExactZoneGeometry(zone)) {
       if (hasCellZoneGeometry(zone)) cellOnlyZones.push(zone);
       continue;
@@ -1118,7 +1344,7 @@ export function isPointInPrivacyZone(point, zones = getPrivacyZones(), guardM = 
     }
   }
 
-  return bestZone || findCellPrivacyZoneForPoint(point, cellOnlyZones);
+  return bestZone || findCellPrivacyZoneForPoint(point, cellOnlyZones, guardM);
 }
 
 function clampNumber(value, min, max) {
@@ -1858,14 +2084,49 @@ export function maskRoutePointsForPrivacyExport(routePoints = [], settings = loc
   return replacePrivacyBoundariesWithExportGaps(maskRoutePointsForPrivacy(routePoints, settings), exportSalt);
 }
 
+/**
+ * Drop feedback entries whose event was masked out. `event_feedback` keys embed
+ * the event type, timestamp, and magnitude, and each entry stores the same
+ * fields again - so an in-zone event the driver happened to review survived
+ * masking in full, defeating the point of removing the event itself.
+ *
+ * @param {Record<string, any>} feedback
+ * @param {any[]} visibleEvents events that survived masking
+ */
+function maskEventFeedbackForPrivacy(feedback, visibleEvents = []) {
+  if (!feedback || typeof feedback !== 'object' || Array.isArray(feedback)) return feedback;
+  const visible = new Set(
+    (Array.isArray(visibleEvents) ? visibleEvents : [])
+      .map((event) => `${event?.type || 'event'}|${event?.timestamp ?? ''}`)
+  );
+  const next = {};
+  Object.entries(feedback).forEach(([key, value]) => {
+    // Entries with no timestamp cannot be tied to a masked location, so they
+    // carry no in-zone detail and are safe to keep.
+    if (value?.timestamp == null) {
+      next[key] = value;
+      return;
+    }
+    if (visible.has(`${value?.type || 'event'}|${value.timestamp}`)) next[key] = value;
+  });
+  return next;
+}
+
 export function maskTripForPrivacy(trip = {}, settings = localSettings.get()) {
   const zones = getPrivacyZones(settings);
   const rawRoutePoints = Array.isArray(trip.route_points) ? trip.route_points : [];
+  const maskedEvents = maskEventsForPrivacy(
+    Array.isArray(trip.driving_events) ? trip.driving_events : [],
+    settings
+  );
   return {
     ...trip,
     ...publicSpeedSummaryForTrip(trip, zones),
     route_points: maskRoutePointsForPrivacy(rawRoutePoints, settings),
-    driving_events: maskEventsForPrivacy(Array.isArray(trip.driving_events) ? trip.driving_events : [], settings),
+    driving_events: maskedEvents,
+    ...(trip.event_feedback
+      ? { event_feedback: maskEventFeedbackForPrivacy(trip.event_feedback, maskedEvents) }
+      : {}),
     start_address: trip.start_address && privacyZoneForExportEndpoint(rawRoutePoints[0], zones) ? null : trip.start_address,
     end_address: trip.end_address && privacyZoneForExportEndpoint(rawRoutePoints.at?.(-1), zones) ? null : trip.end_address,
   };

@@ -2,6 +2,21 @@ import { scoringValue } from '@/lib/scoringConstants';
 
 const round2 = (value) => Math.round(value * 100) / 100;
 
+/**
+ * Percentage of the trip spent on the phone, or null when the trip duration is
+ * unknown. A previous `Math.max(1, duration)` floor divided by one second when
+ * duration was missing, producing percentages in the thousands.
+ *
+ * @param {number} totalSeconds
+ * @param {any} tripDurationSeconds
+ * @returns {number|null}
+ */
+const phoneUsePctOfTrip = (totalSeconds, tripDurationSeconds) => {
+  const duration = Number(tripDurationSeconds);
+  if (!Number.isFinite(duration) || duration <= 0) return null;
+  return round2(Math.min(100, (totalSeconds / duration) * 100));
+};
+
 const timestampMs = (value) => {
   const ms = value ? new Date(value).getTime() : NaN;
   return Number.isFinite(ms) ? ms : null;
@@ -269,7 +284,6 @@ export function buildPhoneUseFromAndroidUsage(summary = {}, routePoints = [], tr
         ? 'medium'
         : 'low';
   const penalty = events.reduce((sum, event) => sum + phoneUsePenalty(event), 0);
-  const duration = Math.max(1, Number(tripDurationSeconds) || 1);
 
   return {
     phone_use_events: events,
@@ -280,7 +294,7 @@ export function buildPhoneUseFromAndroidUsage(summary = {}, routePoints = [], tr
     phone_use_score: Math.max(0, Math.round(100 - penalty)),
     phone_use_score_available: summary?.usage_access_granted === true,
     phone_use_score_status: summary?.usage_access_granted === true ? 'android_usage_access' : 'usage_access_required',
-    phone_use_pct_of_trip: round2((totalSeconds / duration) * 100),
+    phone_use_pct_of_trip: phoneUsePctOfTrip(totalSeconds, tripDurationSeconds),
     data_sources: summary?.usage_access_granted === true ? ['android_usage_access'] : [],
   };
 }
@@ -326,7 +340,6 @@ export function buildPhoneUseFromEvents(events = [], tripDurationSeconds = 0, fa
   const highConfidenceCount = confirmedEvents.filter((event) => (
     event.confidence_level === 'high' || Number(event.confidence) >= 0.75
   )).length;
-  const duration = Math.max(1, Number(tripDurationSeconds) || 1);
   const calculatedRisk = totalSeconds >= 60 || highConfidenceCount >= 2
     ? 'high'
     : totalSeconds >= 10 || highConfidenceCount >= 1
@@ -345,7 +358,7 @@ export function buildPhoneUseFromEvents(events = [], tripDurationSeconds = 0, fa
     phone_use_score: Math.max(0, Math.round(100 - penalty)),
     phone_use_score_available: true,
     phone_use_score_status: 'android_usage_access',
-    phone_use_pct_of_trip: round2((totalSeconds / duration) * 100),
+    phone_use_pct_of_trip: phoneUsePctOfTrip(totalSeconds, tripDurationSeconds),
     phone_proxy_events: proxyEvents,
     phone_proxy_count: proxyEvents.length,
     phone_proxy_risk: proxyEvents.length > 0 ? 'possible' : 'none',
@@ -397,7 +410,6 @@ export function mergePhoneUseSignals(gpsPhoneUse = {}, usagePhoneUse = {}, tripD
   const highConfidenceCount = confirmedEvents.filter((event) => (
     event.confidence_level === 'high' || Number(event.confidence) >= 0.75
   )).length;
-  const duration = Math.max(1, Number(tripDurationSeconds) || 1);
   const dataSources = [
     ...dataSourcesForSignal(gpsPhoneUse, 'gps_proxy'),
     ...dataSourcesForSignal(usagePhoneUse, 'android_usage_access'),
@@ -428,7 +440,7 @@ export function mergePhoneUseSignals(gpsPhoneUse = {}, usagePhoneUse = {}, tripD
     phone_use_score: hasUsageAccess ? Math.max(0, Math.round(100 - penalty)) : null,
     phone_use_score_available: hasUsageAccess,
     phone_use_score_status: hasUsageAccess ? 'android_usage_access' : 'usage_access_required',
-    phone_use_pct_of_trip: round2((totalSeconds / duration) * 100),
+    phone_use_pct_of_trip: phoneUsePctOfTrip(totalSeconds, tripDurationSeconds),
     phone_proxy_events: proxyEvents,
     phone_proxy_count: proxyEvents.length,
     phone_proxy_risk: proxyRisk,
@@ -464,7 +476,9 @@ export function buildPhoneUseFromTripEvidence(trip = {}, routePoints = [], tripD
       phone_use_score: null,
       phone_use_score_available: false,
       phone_use_score_status: 'usage_access_required',
-      phone_use_pct_of_trip: Number(trip.phone_use_pct_of_trip) || 0,
+      phone_use_pct_of_trip: Number.isFinite(Number(trip.phone_use_pct_of_trip))
+        ? Number(trip.phone_use_pct_of_trip)
+        : null,
       phone_proxy_count: Number(trip.phone_use_window_count) || 0,
       phone_proxy_risk: 'possible',
       data_sources: ['legacy_unverified'],

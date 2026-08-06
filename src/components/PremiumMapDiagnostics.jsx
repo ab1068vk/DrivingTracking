@@ -91,7 +91,11 @@ export function buildPremiumMapDiagnosticsModel(trip, units = 'metric') {
   return {
     distance: formatDistance(Number(trip?.distance_km) || 0, units),
     maximumSpeed: formatSpeed(Number(trip?.max_speed_kmh) || 0, units),
+    // `avg_speed_kmh` includes stopped time; `avg_running_speed_kmh` excludes
+    // it. Falling back between them under one label meant the same caption
+    // described two different quantities, so the label follows the value used.
     averageSpeed: formatSpeed(Number(trip?.avg_speed_kmh ?? trip?.avg_running_speed_kmh) || 0, units),
+    averageSpeedIncludesStops: Number.isFinite(Number(trip?.avg_speed_kmh)),
     duration: formatDuration(Number(trip?.duration_seconds) || 0),
     gpsPoints: gpsPoints.toLocaleString(),
     satellites: satelliteCount == null ? '\u2014' : satelliteCount.toLocaleString(),
@@ -182,7 +186,9 @@ export default function PremiumMapDiagnostics({
           <div><Clock3 aria-hidden="true" /><span><strong>{model.duration}</strong><small>Recorded time</small></span></div>
           <div><Radio aria-hidden="true" /><span><strong>{model.gpsPoints} GPS</strong><small>Raw readings</small></span></div>
         </div>
-        <div><Activity aria-hidden="true" /><span><strong>{model.averageSpeed}</strong><small>{overlay ? 'average including stops' : 'Average including stops'}</small></span></div>
+        <div><Activity aria-hidden="true" /><span><strong>{model.averageSpeed}</strong><small>{model.averageSpeedIncludesStops
+          ? (overlay ? 'average including stops' : 'Average including stops')
+          : (overlay ? 'average while moving' : 'Average while moving')}</small></span></div>
         <div title={model.satellitesAvailable ? 'Satellites used for the recorded GPS fix' : 'Satellite count was not recorded for this trip'}>
           <Satellite aria-hidden="true" /><span><strong>{model.satellites}</strong><small>Satellites</small></span>
         </div>

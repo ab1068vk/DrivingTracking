@@ -1,3 +1,8 @@
+import { scoringValue } from '@/lib/scoringConstants';
+
+/** Shared with tripEngine, trackingEvidence and the native service. */
+const MAX_SAMPLE_GAP_MS = scoringValue('MAX_SAMPLE_GAP_SECONDS') * 1000;
+
 const finite = (value) => {
   if (value == null || value === '') return null;
   const number = Number(value);
@@ -48,7 +53,7 @@ const routeDistanceKm = (points = []) => points.reduce((total, point, index) => 
   if (!previous || !validCoordinate(previous) || !validCoordinate(point)) return total;
   const previousTime = pointTimestamp(previous);
   const currentTime = pointTimestamp(point);
-  if (previousTime != null && currentTime != null && currentTime - previousTime > 120_000) return total;
+  if (previousTime != null && currentTime != null && currentTime - previousTime > MAX_SAMPLE_GAP_MS) return total;
   return total + haversineKm(previous, point);
 }, 0);
 
@@ -87,6 +92,23 @@ export function formatLiveDuration(seconds) {
   return hours > 0
     ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remaining).padStart(2, '0')}`
     : `${minutes}:${String(remaining).padStart(2, '0')}`;
+}
+
+export const LIVE_ROUTE_BUCKET_POINT_STEP = 5;
+
+/**
+ * Stable identity key for a live route array.
+ *
+ * TripMap refits its bounds whenever the route array identity changes, and the
+ * live cockpit re-renders once a second. Handing it a fresh array on every tick
+ * would refit the map every second. Bucketing on point count means the map
+ * refits at most once per `pointStep` new fixes (~10s at the 2s GPS cadence);
+ * the moving marker keeps up because TripMap holds `currentLocation` in a ref.
+ */
+export function liveRouteBucketKey(points, { pointStep = LIVE_ROUTE_BUCKET_POINT_STEP } = {}) {
+  const list = Array.isArray(points) ? points : [];
+  const step = Math.max(1, Math.round(finite(pointStep) || LIVE_ROUTE_BUCKET_POINT_STEP));
+  return `${step}:${Math.floor(list.length / step)}`;
 }
 
 export function buildLiveTrackingSnapshot(trip = {}, nowMs = Date.now()) {

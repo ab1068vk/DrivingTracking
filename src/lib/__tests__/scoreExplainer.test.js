@@ -22,14 +22,18 @@ describe('read-only trip score explanations', () => {
   });
 
   it('falls back to existing headline scores and recorded events for legacy trips', () => {
+    // Measured score deficits are listed before raw event counts. An event's `deficit` is a
+    // count scaled by a placeholder, not a score deficit, so ranking the two in one list
+    // would put "2 harsh brakes" (deficit 20) above a real smoothness score of 88
+    // (deficit 12) and imply the count was the larger problem.
     expect(explainTripScoreDrivers({
       score_safety: 72,
       score_smoothness: 88,
       harsh_brakes_count: 2,
     })).toEqual([
       expect.objectContaining({ factor: 'safety', score: 72 }),
-      expect.objectContaining({ factor: 'harsh_brakes_count', count: 2 }),
       expect.objectContaining({ factor: 'smoothness', score: 88 }),
+      expect.objectContaining({ factor: 'harsh_brakes_count', count: 2 }),
     ]);
   });
 

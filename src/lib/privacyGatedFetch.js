@@ -8,7 +8,9 @@ export const PRIVACY_GATEWAY_DOWNGRADE_WARNING =
 
 const SERVICE_PRECISION_LIMITS = Object.freeze({
   'open-meteo': Object.freeze({ rounded: 4 }),
-  overpass: Object.freeze({ bounding_box: 6 }),
+  // Overpass boxes are snapped onto the BBOX_GRID_DEG grid in speedLimitSource,
+  // so anything finer than the grid is route precision that should not be there.
+  overpass: Object.freeze({ bounding_box: 3 }),
   osrm: Object.freeze({ raw: Infinity }),
 });
 
@@ -205,7 +207,7 @@ export async function privacyGatedFetch(service, request, options = {}) {
     ...(Array.isArray(options.privacyVerificationEvidence) ? options.privacyVerificationEvidence : []),
   ];
 
-  await logTransmission({
+  const logRecord = await logTransmission({
     service,
     type: options.type || 'Outbound request',
     coordinateDisclosure,
@@ -223,6 +225,13 @@ export async function privacyGatedFetch(service, request, options = {}) {
     tripId: options.tripId ?? null,
     zonesSuppressed: options.zonesSuppressed || [],
   });
+
+  // A request that a different transport will actually send still has to pass
+  // the same inspection and land in the transmission log, or the privacy console
+  // under-reports what left the device.
+  if (options.logOnly === true) {
+    return { blocked: false, logged: true, privacyTransformVerified, coordinateDisclosure, logRecord };
+  }
 
   try {
     return await (options.fetchImpl || pinnedFetch)(url, init);

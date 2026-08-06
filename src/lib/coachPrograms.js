@@ -1,6 +1,7 @@
-import { routeKeyForTrip } from '@/lib/commuteMatching';
+﻿import { routeKeyForTrip } from '@/lib/commuteMatching';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { tripTouchesPrivacyZoneForTrend } from '@/lib/privateTripMode';
+import { coachingCopyFor } from '@/lib/coachingContent';
 
 export const COACH_PROGRAM_STORAGE_KEY = 'drivesense_coach_programs_v1';
 export const COACH_PROGRAM_CHANGED_EVENT = 'drivesense:coach-program-changed';
@@ -23,109 +24,53 @@ const DIFFICULTY_TARGETS = {
 export const COACH_FOCUS_CATALOG = {
   harsh_brakes: {
     id: 'harsh_brakes',
-    label: 'Progressive Braking',
-    shortLabel: 'Brake earlier',
     metricLabel: 'harsh brakes / 100 km',
     field: 'harsh_brakes_count',
     direction: 'lower',
-    cue: 'Lift early, create space, then build brake pressure gradually.',
-    liveCue: 'Today\'s focus is progressive braking. Lift early and build pressure smoothly.',
-    drill: [
-      'Choose the stop point earlier than usual.',
-      'Lift off before applying the brake.',
-      'Begin with light pressure and add force smoothly.',
-    ],
+    ...coachingCopyFor('harsh_brakes'),
   },
   rapid_accel: {
     id: 'rapid_accel',
-    label: 'Smoother Starts',
-    shortLabel: 'Smooth acceleration',
     metricLabel: 'rapid starts / 100 km',
     field: 'rapid_accel_count',
     direction: 'lower',
-    cue: 'Use a three-second throttle ramp after every full stop.',
-    liveCue: 'Today\'s focus is smooth acceleration. Build throttle over three seconds.',
-    drill: [
-      'Settle the car fully at the stop.',
-      'Add throttle progressively over three seconds.',
-      'Reach cruise speed without a second surge.',
-    ],
+    ...coachingCopyFor('rapid_accel'),
   },
   sharp_turns: {
     id: 'sharp_turns',
-    label: 'Cleaner Turns',
-    shortLabel: 'Set corner speed',
     metricLabel: 'sharp turns / 100 km',
     field: 'sharp_turns_count',
     direction: 'lower',
-    cue: 'Set speed before the turn and accelerate only as the wheel straightens.',
-    liveCue: 'Today\'s focus is cleaner turns. Set speed before steering.',
-    drill: [
-      'Finish braking before meaningful steering input.',
-      'Hold a calm, constant speed through the corner.',
-      'Accelerate only as steering unwinds.',
-    ],
+    ...coachingCopyFor('sharp_turns'),
   },
   speeding: {
     id: 'speeding',
-    label: 'Speed Discipline',
-    shortLabel: 'Control speed creep',
     metricLabel: 'speed events / 100 km',
     field: 'speeding_events_count',
     direction: 'lower',
-    cue: 'Choose a cruise target below the alert threshold and check after transitions.',
-    liveCue: 'Today\'s focus is speed discipline. Settle below the alert threshold.',
-    drill: [
-      'Pick a target speed before joining the main road.',
-      'Recheck speed after hills and road transitions.',
-      'Use cruise control only when conditions make it appropriate.',
-    ],
+    ...coachingCopyFor('speeding'),
   },
   phone_use: {
     id: 'phone_use',
-    label: 'Phone-Clear Driving',
-    shortLabel: 'Remove phone exposure',
     metricLabel: 'phone-use windows / 100 km',
     field: 'phone_use_window_count',
     direction: 'lower',
-    cue: 'Set navigation and audio before moving, then keep the phone out of reach.',
-    liveCue: 'Today\'s focus is a phone-clear drive. Keep the phone out of reach.',
-    drill: [
-      'Enable Do Not Disturb before moving.',
-      'Set navigation and audio while parked.',
-      'Keep the device mounted or out of reach for the full trip.',
-    ],
+    ...coachingCopyFor('phone_use'),
   },
   fatigue: {
     id: 'fatigue',
-    label: 'Fatigue-Aware Driving',
-    shortLabel: 'Protect alertness',
     metricLabel: 'fatigue risk score',
     field: 'fatigue_risk_score',
     metricKind: 'score',
     direction: 'lower',
-    cue: 'Plan a break before your learned fatigue window and stop if alertness drops.',
-    liveCue: 'Today\'s focus is alertness. Take a break before fatigue builds.',
-    drill: [
-      'Check your alertness honestly before moving.',
-      'Plan the break before the learned fatigue window.',
-      'Stop somewhere safe if concentration or comfort drops.',
-    ],
+    ...coachingCopyFor('fatigue'),
   },
   consistency: {
     id: 'consistency',
-    label: 'Repeat Your Best Drive',
-    shortLabel: 'Reuse your strongest setup',
     metricLabel: 'overall score',
     field: 'score_overall',
     direction: 'higher',
-    cue: 'Recreate the route, timing, and calm first five minutes from your strongest comparable drive.',
-    liveCue: 'Today\'s focus is repeating your strongest measured drive setup.',
-    drill: [
-      'Use a route and time window from a strong previous drive.',
-      'Repeat its calm first five minutes.',
-      'Compare the overall score only after another comparable drive.',
-    ],
+    ...coachingCopyFor('consistency'),
   },
 };
 
@@ -290,7 +235,6 @@ export function buildCoachEvidenceAudit(allTrips = [], eligibleTrips = allTrips)
     excludedPrivacy: 0,
     privacyProtected,
     missingCoachMeasurements: trendEligible.filter((trip) => !coachReadyIds.has(trip.id)).length,
-    hasMinimumEvidence: scoreReady.length >= 2 || eventReady.length >= 2,
   };
 }
 
@@ -375,6 +319,40 @@ export function buildCoachingEffectiveness(store = {}) {
     };
     return result;
   }, {});
+}
+
+/**
+ * Presentation model for the Coaching Responsiveness surfaces.
+ *
+ * buildCoachingEffectiveness already computed real per-focus outcomes but was
+ * only ever consumed internally for ranking; the card named after it showed
+ * three raw counts. This joins the two so both renderers report the same thing.
+ *
+ * The comparison is uncontrolled pre/post, and createCoachProgram silently falls
+ * back to an all-trips baseline when fewer than two context-matched trips exist,
+ * so `fallbackBaselineCount` is surfaced rather than hidden.
+ */
+export function buildCoachingResponsivenessSummary(store = {}) {
+  const history = Array.isArray(store?.history) ? store.history : [];
+  const effectiveness = buildCoachingEffectiveness(store);
+  const focuses = Object.entries(effectiveness)
+    .filter(([, value]) => value.programCount > 0)
+    .map(([focusId, value]) => ({
+      focusId,
+      label: COACH_FOCUS_CATALOG[focusId]?.label || focusId,
+      ...value,
+    }))
+    .sort((a, b) => b.programCount - a.programCount || (b.graduationRate || 0) - (a.graduationRate || 0));
+
+  const measuredPrograms = history.filter((program) => Number.isFinite(Number(program?.result?.improvement)));
+  return {
+    completed: history.length,
+    graduated: history.filter((program) => program?.result?.graduated).length,
+    improved: history.filter((program) => Number(program?.result?.improvement) > 0).length,
+    measuredCount: measuredPrograms.length,
+    fallbackBaselineCount: history.filter((program) => program?.context?.usedFallbackBaseline === true).length,
+    focuses,
+  };
 }
 
 const adaptivePromptDelta = (store, focusId) => {
@@ -596,13 +574,13 @@ export function buildCoachProgramProgress(program, trips = []) {
     readyToGraduate,
     remainingTrips: Math.max(0, goalCount - completedCount),
     confidence: measured.length >= 5 ? 'strong' : measured.length >= 2 ? 'developing' : 'early',
+    needsExtension: measured.length >= goalCount && !readyToGraduate,
+    nextReviewIn: measured.length >= goalCount ? 1 : Math.max(1, goalCount - measured.length),
+    trend: improvement == null ? 'learning' : improvement > 0 ? 'improving' : improvement < 0 ? 'declining' : 'steady',
     latestReview: latest ? {
       tripId: latest.id,
       startTime: latest.start_time,
       metric: latestMetric,
-    needsExtension: measured.length >= goalCount && !readyToGraduate,
-    nextReviewIn: measured.length >= goalCount ? 1 : Math.max(1, goalCount - measured.length),
-    trend: improvement == null ? 'learning' : improvement > 0 ? 'improving' : improvement < 0 ? 'declining' : 'steady',
       metTarget: latestMetTarget,
       score: Number.isFinite(Number(latest.score_overall)) ? Number(latest.score_overall) : null,
       eventCount: focus.direction === 'lower' ? measuredEventCount(latest, focus.id) : null,

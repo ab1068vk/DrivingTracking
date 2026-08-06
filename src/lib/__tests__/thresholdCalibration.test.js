@@ -74,33 +74,65 @@ describe('thresholdCalibration', () => {
   });
 
   it('uses repeated wrong event feedback even before the mileage baseline is met', () => {
+    // Labels must come from distinct trips: one drive's worth of taps is
+    // correlated evidence and no longer moves a global threshold.
+    const profile = computeCalibrationProfile([
+      {
+        ...trip(1, 10, [30, 35, 32]),
+        event_feedback: { e1: { type: 'harsh_brake', verdict: 'wrong', value: 4.9 } },
+      },
+      {
+        ...trip(2, 10, [30, 35, 32]),
+        event_feedback: { e2: { type: 'harsh_brake', verdict: 'wrong', value: 5.2 } },
+      },
+      {
+        ...trip(3, 10, [30, 35, 32]),
+        event_feedback: {
+          e3: { type: 'harsh_brake', verdict: 'wrong', value: 5.0 },
+          e4: { type: 'rapid_acceleration', verdict: 'accurate', value: 3.3 },
+        },
+      },
+    ], thresholds);
+
+    expect(profile.insufficient).toBe(false);
+    expect(profile.feedbackSummary.total).toBe(4);
+    expect(profile.suggested.threshold_harsh_brake_ms2).toBeGreaterThan(thresholds.HARSH_BRAKE_MS2);
+  });
+
+  it('ignores repeated feedback that all came from a single trip', () => {
     const profile = computeCalibrationProfile([
       {
         ...trip(1, 10, [30, 35, 32]),
         event_feedback: {
           e1: { type: 'harsh_brake', verdict: 'wrong', value: 4.9 },
           e2: { type: 'harsh_brake', verdict: 'wrong', value: 5.2 },
-          e3: { type: 'rapid_acceleration', verdict: 'accurate', value: 3.3 },
+          e3: { type: 'harsh_brake', verdict: 'wrong', value: 5.1 },
         },
       },
     ], thresholds);
 
     expect(profile.insufficient).toBe(false);
-    expect(profile.feedbackSummary.total).toBe(3);
-    expect(profile.suggested.threshold_harsh_brake_ms2).toBeGreaterThan(thresholds.HARSH_BRAKE_MS2);
+    expect(profile.suggested.threshold_harsh_brake_ms2).not.toBeGreaterThan(thresholds.HARSH_BRAKE_MS2);
+  });
+
+  it('ignores feedback recorded as a detection note that does not affect the score', () => {
+    const profile = computeCalibrationProfile([1, 2, 3].map((index) => ({
+      ...trip(index, 10, [30, 35, 32]),
+      event_feedback: {
+        [`e${index}`]: { type: 'harsh_brake', verdict: 'wrong', value: 5.2, affects_score: false },
+      },
+    })), thresholds);
+
+    expect(profile.feedbackSummary.total).toBe(0);
   });
 
   it('keeps turn feedback calibration at two-decimal g precision', () => {
-    const profile = computeCalibrationProfile([
-      {
-        ...trip(1, 10, [30, 35, 32]),
-        event_feedback: {
-          e1: { type: 'sharp_turn', verdict: 'wrong', value: 0.51 },
-          e2: { type: 'sharp_turn', verdict: 'wrong', value: 0.52 },
-          e3: { type: 'sharp_turn', verdict: 'wrong', value: 0.53 },
-        },
+    const profile = computeCalibrationProfile([0.51, 0.52, 0.53].map((value, index) => ({
+      ...trip(index + 1, 10, [30, 35, 32]),
+      event_feedback: {
+        [`e${index}`]: { type: 'sharp_turn', verdict: 'wrong', value },
       },
-    ], thresholds);
+    })), thresholds);
 
     expect(profile.suggested.threshold_sharp_turn_g_medium).toBe(0.58);
     expect(profile.delta.threshold_sharp_turn_g_medium).toBe(0.13);

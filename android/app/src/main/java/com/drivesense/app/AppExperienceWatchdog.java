@@ -52,7 +52,9 @@ final class AppExperienceWatchdog {
     private static final long PERSIST_HEARTBEAT_INTERVAL_MS = 15_000L;
     private static final long MEMORY_EVENT_RATE_LIMIT_MS = 60_000L;
     private static final long RESOURCE_PRESSURE_RATE_LIMIT_MS = 15 * 60_000L;
-    private static final long LOW_STORAGE_USABLE_BYTES = 512L * 1024L * 1024L;
+    // Package-visible so the tracking service's capture-fidelity downgrade uses the
+    // same threshold that fires the low-storage pressure event, rather than a copy.
+    static final long LOW_STORAGE_USABLE_BYTES = 512L * 1024L * 1024L;
     private static final int MAX_EXIT_RECORDS_TO_INSPECT = 5;
 
     private static final Object LOCK = new Object();

@@ -24,21 +24,31 @@ const AUTO_APPLY_SOURCES = new Set([
 const EXCLUSIVE_TAG_CATEGORIES = new Set(['purpose', 'route']);
 const WEATHER_TAGS = new Set(['rain', 'snow']);
 
+/**
+ * Tag "confidence" is rule-based, not learned. Every value fed in below is a
+ * fixed constant chosen per heuristic (plus a small ramp for repeated
+ * user-confirmed routes) - it is not an observed accuracy rate for this user.
+ */
 const confidenceLabel = (confidence) => {
   if (confidence >= 0.85) return 'high';
   if (confidence >= 0.65) return 'medium';
   return 'low';
 };
 
-const tripHour = (trip = {}) => {
-  const date = new Date(trip.start_time || trip.created_at || Date.now());
-  return Number.isFinite(date.getTime()) ? date.getHours() : 12;
+// A trip with no recorded start time has no known hour or weekday. Falling
+// back to `Date.now()` tagged such a trip "night" or "commute" from whenever
+// the page happened to be open, which is a fabricated fact about the drive.
+// Return null instead so time-based suggestions are simply skipped.
+const tripStartDate = (trip = {}) => {
+  const raw = trip.start_time || trip.created_at;
+  if (!raw) return null;
+  const date = new Date(raw);
+  return Number.isFinite(date.getTime()) ? date : null;
 };
 
-const tripDay = (trip = {}) => {
-  const date = new Date(trip.start_time || trip.created_at || Date.now());
-  return Number.isFinite(date.getTime()) ? date.getDay() : 0;
-};
+const tripHour = (trip = {}) => tripStartDate(trip)?.getHours() ?? null;
+
+const tripDay = (trip = {}) => tripStartDate(trip)?.getDay() ?? null;
 
 const weatherCondition = (trip = {}) => String(
   trip.weather_context?.condition ||
@@ -89,16 +99,25 @@ export function inferTripTags(trip = {}, history = []) {
 
   const hour = tripHour(trip);
   const day = tripDay(trip);
-  const weekday = day >= 1 && day <= 5;
-  const weekend = day === 0 || day === 6;
+  const hasClock = hour != null && day != null;
+  const weekday = hasClock && day >= 1 && day <= 5;
+  const weekend = hasClock && (day === 0 || day === 6);
   const durationMinutes = (Number(trip.duration_seconds) || 0) / 60;
   const distanceKm = Number(trip.distance_km) || 0;
-  const rushHour = isMorningRushHour(hour) || isEveningRushHour(hour);
+  const rushHour = hasClock && (isMorningRushHour(hour) || isEveningRushHour(hour));
 
+  // The Night card on Trip Detail reports the recorded solar/twilight
+  // classification. Suggesting a `night` tag from the fixed clock window while
+  // that card says "Day" put two contradictory answers on one screen, so the
+  // recorded classification wins whenever it exists.
+  const solarClassified = trip.night_classification?.method != null &&
+    trip.night_classification.method !== 'unavailable';
   if (trip.night_driving === true) {
     add('night', 0.99, 'The trip was classified as night driving.', 'trip_fact', true);
-  } else if (isNightRiskHour(hour)) {
-    add('night', 0.78, 'The trip started during night-risk hours.', 'time_pattern');
+  } else if (solarClassified) {
+    // Recorded as daylight - no night suggestion.
+  } else if (hasClock && isNightRiskHour(hour)) {
+    add('night', 0.78, 'The trip started during night-risk hours (22:00-04:59); no sunrise/sunset classification was recorded.', 'time_pattern');
   }
 
   const weather = weatherCondition(trip);

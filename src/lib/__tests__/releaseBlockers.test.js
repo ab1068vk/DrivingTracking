@@ -276,12 +276,17 @@ describe('release blocker regressions', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('returns finite sensor fusion peaks for empty samples', () => {
+  it('reports sensor fusion peaks as unmeasured, never NaN, for empty samples', () => {
     const result = buildSensorFusionSummary([], []);
 
-    expect(result.peak_linear_ms2).toBe(0);
-    expect(result.peak_rotation_deg_s).toBe(0);
-    expect(Number.isFinite(result.phone_movement_score)).toBe(true);
+    // Null means "no IMU sample was taken". Zero would render as a measured
+    // calm trip; NaN would leak into the UI. Neither is acceptable.
+    expect(result.peak_linear_ms2).toBeNull();
+    expect(result.peak_rotation_deg_s).toBeNull();
+    expect(result.phone_movement_score).toBeNull();
+    expect(result.sample_count).toBe(0);
+    expect(result.quality).toBe('unavailable');
+    expect(Number.isNaN(result.peak_linear_ms2)).toBe(false);
   });
 
   it('documents IMU as the sensor source for possible incident detection', () => {

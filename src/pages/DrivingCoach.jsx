@@ -50,6 +50,7 @@ import {
   buildCoachSegmentInsights,
   buildCoachProgramProgress,
   buildCoachRecommendations,
+  buildCoachingResponsivenessSummary,
   buildGroundedCoachAnswer,
   buildPreTripBriefing,
   createCoachProgram,
@@ -279,20 +280,48 @@ export function ProgramHistory({ programs = [], premium = false }) {
   );
 }
 
-export function CoachingResponsiveness({ programs = [], premium = false, loading = false }) {
+export function CoachingResponsiveness({ store = {}, premium = false, loading = false }) {
+  const summary = buildCoachingResponsivenessSummary(store);
+
   if (premium) {
-    return <PremiumCoachingResponsivenessCard programs={programs} loading={loading} />;
+    return <PremiumCoachingResponsivenessCard summary={summary} loading={loading} />;
   }
 
   return (
     <section className={CARD}>
-      <SectionHeading icon={Trophy} eyebrow="Coaching responsiveness" title={programs.length ? 'Your completed programs' : 'Complete a program to measure what works'} />
+      <SectionHeading icon={Trophy} eyebrow="Coaching responsiveness" title={summary.completed ? 'Your completed programs' : 'Complete a program to measure what works'} />
       <div className="mt-4 grid grid-cols-3 gap-2">
-        <Stat value={programs.length} label="programs" />
-        <Stat value={programs.filter((item) => item.result?.graduated).length} label="graduated" />
-        <Stat value={programs.filter((item) => Number(item.result?.improvement) > 0).length} label="improved" />
+        <Stat value={summary.completed} label="programs" />
+        <Stat value={summary.graduated} label="graduated" />
+        <Stat value={summary.improved} label="improved" />
       </div>
-      <p className="mt-3 text-xs text-muted-foreground">Road Sage can use this history to show which drills and difficulty levels produce measurable changes for you.</p>
+
+      {summary.focuses.length > 0 && (
+        <div className="mt-4 divide-y divide-border/70 border-y border-border/70">
+          {summary.focuses.map((focus) => (
+            <div key={focus.focusId} className="flex items-baseline justify-between gap-3 py-2 text-sm">
+              <span className="min-w-0 truncate font-medium">{focus.label}</span>
+              <span className="shrink-0 text-right text-xs text-muted-foreground">
+                {focus.programCount} program{focus.programCount === 1 ? '' : 's'}
+                {focus.graduationRate == null ? '' : ` · ${focus.graduationRate}% graduated`}
+                {focus.averageImprovement == null ? '' : ` · ${focus.averageImprovement > 0 ? '+' : ''}${focus.averageImprovement} avg change`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="mt-3 text-xs text-muted-foreground">
+        {summary.measuredCount
+          ? `Measured from ${summary.measuredCount} completed program${summary.measuredCount === 1 ? '' : 's'}. This compares your drives before and after each program with no control group, so treat it as a direction, not proof.`
+          : 'Complete a program and this will show which drills and difficulty levels produce measurable changes for you.'}
+      </p>
+      {summary.fallbackBaselineCount > 0 && (
+        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+          {summary.fallbackBaselineCount} program{summary.fallbackBaselineCount === 1 ? '' : 's'} started without enough comparable drives, so
+          {summary.fallbackBaselineCount === 1 ? ' its' : ' their'} baseline came from all drives instead. Those comparisons are weaker.
+        </p>
+      )}
     </section>
   );
 }
@@ -1413,7 +1442,7 @@ export default function DrivingCoach() {
               />
 
               <CoachingResponsiveness
-                programs={programStore.history}
+                store={programStore}
                 premium={settings.premium_visual_experience === true}
                 loading={!programsLoaded}
               />

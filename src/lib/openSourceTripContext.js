@@ -17,8 +17,10 @@ import {
   resolveWeatherContextAfterLookup,
 } from '@/lib/weatherContext';
 import { buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
+import { applyEventFeedbackToEvents } from '@/lib/eventFeedbackKeys';
+import { applyEventFeedbackToPhoneUse } from '@/lib/localTripRepository';
 import { PUBLIC_OSRM_DEMO_URL, isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
-import { getPrivacyZones, maskRoutePointsForPrivacy } from '@/lib/privacyZones';
+import { getPrivacyZones, maskRoutePointsForPrivacy, resolvePrivacyZonesForLookup } from '@/lib/privacyZones';
 import { prepareScoreInputsForPrivacy } from '@/lib/scoreInputPrivacy';
 import { isAndroid } from '@/lib/nativePlatform';
 import { effectivePrivacySettings, isHeightenedPrivacyMode } from '@/lib/privacyMode';
@@ -36,6 +38,32 @@ const MANUAL_WEATHER_LOOKUP_TIMEOUT_MS = 20000;
 export const ROAD_CONTEXT_QUEUED_STATUS = isAndroid()
   ? 'Queued privately with a randomized delay; continues after swipe-away'
   : 'Queued privately with a randomized delay';
+
+/**
+ * Write the local speed knowledge that scoring just used back onto the route
+ * points. Without this the stored points keep their original source, so the
+ * "N sections need your decision" count never drops after the driver confirms
+ * a posted sign - even though the score already changed.
+ *
+ * @param {any[]} points
+ * @param {any[]} localKnowledgeResults index-aligned with `points`
+ */
+const annotateRoutePointsWithLocalKnowledge = (points = [], localKnowledgeResults = []) => {
+  const list = Array.isArray(points) ? points : [];
+  const knowledge = Array.isArray(localKnowledgeResults) ? localKnowledgeResults : [];
+  if (knowledge.length !== list.length) return list;
+  return list.map((point, index) => {
+    const record = knowledge[index];
+    const limitKmh = Number(record?.limitKmh);
+    if (!record?.source || !Number.isFinite(limitKmh) || limitKmh <= 0) return point;
+    return {
+      ...point,
+      speed_limit_kmh: Math.round(limitKmh),
+      speed_limit_source: record.source,
+      ...(record.roadName ? { speed_limit_road_name: record.roadName } : {}),
+    };
+  });
+};
 
 const timeout = (promise, ms, message) => new Promise((resolve, reject) => {
   const id = setTimeout(() => reject(new Error(message)), ms);
@@ -235,10 +263,17 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   }
 
   const thresholds = buildDrivingThresholds(effectiveSettings);
-  const privacyZones = getPrivacyZones(effectiveSettings);
+  // Read zones from the encrypted store, not the redacted settings mirror, and
+  // abort rather than fall through with zero zones: this function both sends
+  // coordinates outward and writes route points back to the trip.
+  const { zones: privacyZones, failed: privacyZonesUnavailable } = await resolvePrivacyZonesForLookup(effectiveSettings);
+  if (privacyZonesUnavailable) {
+    throw new Error('Privacy zones are configured but could not be read, so road data was not requested.');
+  }
+  const zoneScopedSettings = { ...effectiveSettings, privacy_zones: privacyZones };
   stage(onProgress, lookupStatus);
   const osrmConfigured = isOsrmMapMatchingConfigured(effectiveSettings);
-  const osrmRoutePoints = buildPrivacySafeOsrmRoute(originalPoints, effectiveSettings);
+  const osrmRoutePoints = buildPrivacySafeOsrmRoute(originalPoints, zoneScopedSettings);
   const osrmValidPointCount = osrmRoutePoints.filter((point) => (
     Number.isFinite(Number(point?.lat)) && Number.isFinite(Number(point?.lng))
   )).length;
@@ -255,7 +290,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       osrm_exposed_privacy_zone_count: 0,
     }
     : await timeout(
-      mapMatchRoute(osrmRoutePoints, effectiveSettings),
+      mapMatchRoute(osrmRoutePoints, zoneScopedSettings),
       16000,
       'OSRM route snapping timed out'
     ).catch((error) => ({
@@ -344,10 +379,22 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       console.warn('Trip speed summary storage skipped.', error);
     });
   }
+  // Re-detection throws away the driver's "wrong" verdicts unless we reapply
+  // them here; without this, confirming a road speed limit resurrects events
+  // the driver already rejected.
+  const feedbackAdjusted = applyEventFeedbackToEvents(
+    scores.driving_events || detectedEvents,
+    trip.event_feedback
+  );
+  const phoneFeedbackAdjusted = applyEventFeedbackToPhoneUse(
+    phoneUse,
+    trip.event_feedback,
+    stats.duration_seconds
+  );
   const events = prepareScoreInputsForPrivacy({
     routePoints: [],
     events:
-    mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || detectedEvents, phoneUse),
+    mergePhoneUseEventsIntoDrivingEvents(feedbackAdjusted.events, phoneFeedbackAdjusted.phoneUse),
     settings: effectiveSettings,
     zones: privacyZones,
   }).events;
@@ -355,6 +402,8 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
   return {
     ...stats,
     ...scores,
+    ...phoneFeedbackAdjusted.phoneUse,
+    feedback_adjusted_events_count: feedbackAdjusted.removed + phoneFeedbackAdjusted.removed,
     route_points: scoringRoutePoints,
     route_points_raw_count: recordedPointCount,
     route_points_map_count: scoringRoutePoints.length,
@@ -383,7 +432,12 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
       error: mapMatchingContext.error,
       isOsrmDemoUrl: mapMatchingContext.isOsrmDemoUrl === true || isPublicOsrmDemoUrl(effectiveSettings.osrm_map_matching_url),
     },
-    weather_context: weatherContext?.weather_skipped_reason ? null : weatherContext,
+    // `weather_context` is deliberately not re-spread from `weatherContext`:
+    // `...scores` already carries the context produced by
+    // applyWeatherRiskToScores, including the GPS-inferred low-grip reading.
+    // Overriding it here erased that inference on every "Get Road Data" press.
+    // Only a privacy skip clears it outright.
+    ...(weatherContext?.weather_skipped_reason ? { weather_context: null } : {}),
     weather_skipped_reason: weatherContext?.weather_skipped_reason || null,
     speed_knowledge_schema_version: Number(speedKnowledgeMetadata.schemaVersion) || null,
     speed_knowledge_revision: Number(speedKnowledgeMetadata.knowledgeRevision) || 0,
@@ -458,17 +512,30 @@ export async function buildWeatherOnlyTripContextPatch(trip, settings = localSet
     weatherContextOverride: appliedWeatherContext,
   });
 
-  // Preserve existing route, OSM and OSRM evidence. The isolated settings above
-  // exist only to guarantee that the weather-only action cannot contact them.
-  delete patch.route_points;
-  delete patch.route_points_raw_count;
-  delete patch.route_points_map_count;
-  delete patch.speed_limit_context;
-  delete patch.map_matching_context;
+  // "Get Weather" must change only what weather actually affects. The patch
+  // above is a full rescore, so returning it wholesale silently rewrote every
+  // component score, the event list, and the trip stats - none of which a
+  // weather lookup has any business touching. applyWeatherRiskToScores only
+  // adjusts Safety and the Overall blend, so only those fields are kept.
+  const weatherOnlyKeys = [
+    'weather_context',
+    'weather_skipped_reason',
+    'weather_risk_score',
+    'weather_score_adjustment',
+    'score_safety',
+    'score_overall',
+    'component_scores',
+    'safety_condition_bonus',
+  ];
+  const weatherPatch = {};
+  weatherOnlyKeys.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(patch, key)) weatherPatch[key] = patch[key];
+  });
   return {
-    ...patch,
+    ...weatherPatch,
     weather_lookup_status: lookupStatus,
     weather_lookup_kept_confirmed: keptConfirmedWeather,
+    updated_at: new Date().toISOString(),
   };
 }
 
@@ -483,7 +550,10 @@ export async function buildLocalSpeedKnowledgeScorePatch(trip, settings = localS
   }
 
   const thresholds = buildDrivingThresholds(settings);
-  const privacyZones = getPrivacyZones(settings);
+  const { zones: privacyZones, failed: privacyZonesUnavailable } = await resolvePrivacyZonesForLookup(settings);
+  if (privacyZonesUnavailable) {
+    throw new Error('Privacy zones are configured but could not be read, so this trip was not rescored.');
+  }
   const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
   const scoreInputPrivacy = prepareScoreInputsForPrivacy({
     routePoints,
@@ -531,10 +601,21 @@ export async function buildLocalSpeedKnowledgeScorePatch(trip, settings = localS
       console.warn('Trip speed summary storage skipped.', error);
     });
   }
+  // Confirming a speed limit re-detects events, so the driver's own verdicts
+  // must be reapplied or a rejected event silently returns.
+  const feedbackAdjusted = applyEventFeedbackToEvents(
+    scores.driving_events || detectedEvents,
+    trip.event_feedback
+  );
+  const phoneFeedbackAdjusted = applyEventFeedbackToPhoneUse(
+    phoneUse,
+    trip.event_feedback,
+    stats.duration_seconds
+  );
   const events = prepareScoreInputsForPrivacy({
     routePoints: [],
     events:
-    mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || detectedEvents, phoneUse),
+    mergePhoneUseEventsIntoDrivingEvents(feedbackAdjusted.events, phoneFeedbackAdjusted.phoneUse),
     settings,
     zones: privacyZones,
   }).events;
@@ -542,7 +623,10 @@ export async function buildLocalSpeedKnowledgeScorePatch(trip, settings = localS
   return {
     ...stats,
     ...scores,
+    ...phoneFeedbackAdjusted.phoneUse,
+    feedback_adjusted_events_count: feedbackAdjusted.removed + phoneFeedbackAdjusted.removed,
     driving_events: events,
+    route_points: annotateRoutePointsWithLocalKnowledge(scoringRoutePoints, localKnowledgeResults),
     score_input_masking_applied: true,
     privacy_zone_touched: scoreInputPrivacy.touchesPrivacyZone,
     privacy_trend_excluded: scoreInputPrivacy.trendExcluded,
@@ -562,6 +646,9 @@ export function describeOsmSpeedLimitStatus(context = {}) {
   if (context.status === 'disabled') return 'OpenStreetMap speed-limit lookup is disabled in Settings.';
   if (context.status === 'empty_route' && context.skipped_reason === 'all_points_private') {
     return 'OpenStreetMap posted speed lookup was skipped because every usable route point is inside a privacy-zone guard. No protected coordinates were sent; regional or GPS estimates are used where available.';
+  }
+  if (context.status === 'empty_route' && context.skipped_reason === 'privacy_zones_unavailable') {
+    return 'OpenStreetMap posted speed lookup was skipped because your privacy zones are configured but could not be read. No coordinates were sent. Reopen the app so the privacy-zone guard can load, then try again.';
   }
   if (context.status === 'empty_route' && context.skipped_reason === 'privacy_bounds_overlap') {
     return 'OpenStreetMap posted speed lookup was skipped because the safe route query area would overlap a privacy-zone guard. No protected coordinates were sent; regional or GPS estimates are used where available.';
@@ -604,6 +691,9 @@ export function describeMapMatchingStatus(context = {}) {
   }
   if (context.status === 'not_enough_points') {
     return 'OSRM road matching needs at least three GPS points.';
+  }
+  if (context.status === 'privacy_zones_unavailable') {
+    return context.error || 'Route snapping was skipped because your privacy zones are configured but could not be read. No coordinates were sent.';
   }
   if (context.status === 'privacy_zones_excluded') {
     return context.error || 'OSRM was skipped because the route is entirely inside privacy zones.';

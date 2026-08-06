@@ -33,10 +33,16 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/components/ui/use-toast';
 import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
-import { EXPERIENCE_MODES, applyThemeMode, getLastParkedLocation, localSettings, validateSettingsPatch } from '@/lib/trackingStore';
-import { NIGHT_END_TIME, NIGHT_START_TIME, SAVED_FILTERS_KEY } from '@/lib/appConstants';
+import { EXPERIENCE_MODES, applyThemeMode, getLastParkedLocation, localSettings, settingRange, validateSettingsPatch } from '@/lib/trackingStore';
+import {
+  MOTION_SAMPLE_RETENTION_DAYS_DEFAULT,
+  NIGHT_END_TIME,
+  NIGHT_START_TIME,
+  SAVED_FILTERS_KEY,
+} from '@/lib/appConstants';
+import { CAPTURE_FIDELITY_OPTIONS, DEFAULT_CAPTURE_FIDELITY } from '@/lib/captureFidelity';
 import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
-import { buildDrivingThresholds, SCORING_VERSION } from '@/lib/tripEngine';
+import { buildDrivingThresholds, phoneSensitivityPresetThreshold, SCORING_VERSION } from '@/lib/tripEngine';
 import {
   AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO,
   AUTO_RESCORE_RECENT_WINDOW_DAYS,
@@ -93,6 +99,7 @@ import {
   summarizeCalibrationSurveyLabels,
   summarizeSurveyCoverage,
 } from '@/lib/thresholdCalibration';
+import { CALIBRATION_KM_TARGET, CALIBRATION_TRIPS_TARGET } from '@/lib/calibrationMilestones';
 import { getCurrentLocation } from '@/lib/trackingService';
 import {
   countTripsAffectedByPrivacyZone,
@@ -142,7 +149,6 @@ import {
   SCORING_CONSTANTS,
   calibrationEntryForSetting,
   getProvisionalScoringConstants,
-  scoringValue,
 } from '@/lib/scoringConstants';
 import { SCORE_ESTIMATE_NOTICE } from '@/lib/scoreDisplay';
 import { LEGAL_DISCLAIMER_SHORT, LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
@@ -3404,6 +3410,88 @@ export default function Settings() {
             </div>
           </div>
 
+          <div className="pt-2">
+            <div className="text-sm font-medium mb-2 px-1">Voice Alert Wording</div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {[
+                { id: 'mode_default', label: 'Match mode', sub: 'Coaching wording in Coaching Mode, technical wording in Advanced Tracking Mode.' },
+                { id: 'coaching', label: 'Coaching', sub: 'Spoken alerts explain what to do next.' },
+                { id: 'technical', label: 'Technical', sub: 'Spoken alerts state the recorded event only.' },
+              ].map(opt => (
+                <button
+                  key={opt.id}
+                  onClick={() => updateCfg({ voice_alert_style: opt.id })}
+                  className={`flex min-h-[5rem] flex-col rounded-xl border p-3 text-left transition-all ${
+                    (cfg.voice_alert_style || 'mode_default') === opt.id ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted-foreground hover:border-primary/40'
+                  }`}
+                >
+                  <span className="text-sm font-semibold">{opt.label}</span>
+                  <span className="mt-1 text-xs leading-relaxed">{opt.sub}</span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 px-1 text-xs leading-relaxed text-muted-foreground">
+              Applies to both in-app and Android background voice alerts.
+            </p>
+          </div>
+
+          <div className="pt-2">
+            <div className="text-sm font-medium mb-2 px-1">Motion Capture Fidelity</div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {CAPTURE_FIDELITY_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => updateCfg({ capture_fidelity: opt.value })}
+                  className={`flex min-h-[5rem] flex-col rounded-xl border p-3 text-left transition-all ${
+                    (cfg.capture_fidelity || DEFAULT_CAPTURE_FIDELITY) === opt.value ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted-foreground hover:border-primary/40'
+                  }`}
+                >
+                  <span className="text-sm font-semibold">{opt.label}</span>
+                  <span className="mt-1 text-xs leading-relaxed">{opt.detail}</span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 px-1 text-xs leading-relaxed text-muted-foreground">
+              This is separate from Experience Mode on purpose: it changes what is recorded, not how it
+              is shown, so trips stay comparable when you switch modes. GPS rate and battery use are the
+              same either way. High-fidelity motion data is kept for{' '}
+              {Number(cfg.motion_sample_retention_days) || MOTION_SAMPLE_RETENTION_DAYS_DEFAULT} days.
+            </p>
+          </div>
+
+          <div className="pt-2">
+            <div className="text-sm font-medium mb-2 px-1">Low-Power Capture Guard</div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {[
+                {
+                  id: 'guard',
+                  label: 'Protect the trip',
+                  sub: 'Below 15% battery or when the phone runs hot, recording continues at a lower rate instead of risking a lost drive. Every change is recorded on the trip timeline and flagged on the trip.',
+                },
+                {
+                  id: 'off',
+                  label: 'Never reduce capture',
+                  sub: 'Always record at the full rate. If the battery runs out or the phone overheats, the drive can be cut short or lost.',
+                },
+              ].map(opt => (
+                <button
+                  key={opt.id}
+                  onClick={() => updateCfg({ adaptive_capture_mode: opt.id })}
+                  className={`flex min-h-[5rem] flex-col rounded-xl border p-3 text-left transition-all ${
+                    (cfg.adaptive_capture_mode || 'guard') === opt.id ? 'border-primary bg-primary/5 text-primary' : 'border-border text-muted-foreground hover:border-primary/40'
+                  }`}
+                >
+                  <span className="text-sm font-semibold">{opt.label}</span>
+                  <span className="mt-1 text-xs leading-relaxed">{opt.sub}</span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 px-1 text-xs leading-relaxed text-muted-foreground">
+              The guard never reduces capture above 15% battery or below moderate heat, so an ordinary
+              drive records exactly as it does today.
+            </p>
+          </div>
+
         </div>
 
         </>)}</SettingsSection>
@@ -3901,6 +3989,7 @@ export default function Settings() {
               {[
                 { key: 'notif_coaching_enabled', label: 'Coaching notifications', sub: 'Driving improvement tips and pattern changes' },
                 { key: 'achievement_notifications', label: 'Milestones', sub: 'Notify when a milestone unlocks' },
+                { key: 'calibration_notifications', label: 'Detection calibration', sub: 'Notify when personal calibration progress reaches a step' },
                 { key: 'notif_streak_enabled', label: 'Streak milestones', sub: 'Smooth-driving streak notifications' },
                 { key: 'notif_weekly_pattern_enabled', label: 'Weekly driving summary', sub: 'Monday at 8:30am' },
                 { key: 'weekly_report_notification', label: 'Classic weekly report', sub: 'Legacy Tuesday report' },
@@ -4200,11 +4289,22 @@ export default function Settings() {
           {calibProfile?.insufficient && (
             <div className="mt-3 rounded-xl bg-card p-3 text-xs text-muted-foreground">
               Needs {calibProfile.tripsNeeded} more trips or {calibProfile.kmNeeded} more km before calibration is reliable.
+              {/* Progress is the better of the two tracks, matching how
+                  computeCalibrationProfile actually gates - the bar used to
+                  read from trips alone, so distance progress was invisible. */}
               <div className="mt-2 h-2 rounded-full bg-secondary">
                 <div
                   className="h-full rounded-full bg-primary"
-                  style={{ width: `${Math.min(100, ((15 - calibProfile.tripsNeeded) / 15) * 100)}%` }}
+                  style={{
+                    width: `${Math.min(100, Math.round(Math.max(
+                      (CALIBRATION_TRIPS_TARGET - calibProfile.tripsNeeded) / CALIBRATION_TRIPS_TARGET,
+                      (CALIBRATION_KM_TARGET - calibProfile.kmNeeded) / CALIBRATION_KM_TARGET
+                    ) * 100))}%`,
+                  }}
                 />
+              </div>
+              <div className="mt-2">
+                You are notified as soon as each calibration step is reached - you do not need to open this page.
               </div>
             </div>
           )}
@@ -4396,18 +4496,22 @@ export default function Settings() {
           </details>
         </div>
         <div className="space-y-4">
+          {/* Slider bounds come from settingRange() so a control can never offer a value
+              that validateSettingsPatch would then refuse to save. */}
           {[
-            { key: 'threshold_harsh_brake_ms2', label: 'Harsh Braking', unit: 'm/s²', min: 2, max: 8, step: 0.5 },
-            { key: 'threshold_rapid_accel_ms2', label: 'Rapid Acceleration', unit: 'm/s²', min: 1.5, max: 6, step: 0.5 },
-            { key: 'threshold_stop_start_decel_ms2', label: 'Stop-Start Decel', unit: 'm/s²', min: 1.5, max: 5, step: 0.25 },
-            { key: 'threshold_sharp_turn_g_low', label: 'Sharp Turn Low', unit: 'g', min: 0.2, max: 0.6, step: 0.05 },
-            { key: 'threshold_sharp_turn_g_medium', label: 'Sharp Turn Medium', unit: 'g', min: 0.25, max: 0.8, step: 0.05 },
-            { key: 'threshold_sharp_turn_g_high', label: 'Sharp Turn High', unit: 'g', min: 0.35, max: 1.0, step: 0.05 },
-            { key: 'threshold_speeding_kmh', label: 'Speeding (fallback)', unit: 'km/h', min: 80, max: 160, step: 5 },
-            { key: 'threshold_idle_seconds', label: 'Idle Event', unit: 's', min: 90, max: 300, step: 30 },
-            { key: 'min_speed_harsh_brake_kmh', label: 'Harsh Brake Min Speed', unit: 'km/h', min: 5, max: 60, step: 5 },
-            { key: 'min_speed_rapid_accel_kmh', label: 'Rapid Accel Min Speed', unit: 'km/h', min: 0, max: 40, step: 5 },
-          ].map(({ key, label, unit, min, max, step }) => (
+            { key: 'threshold_harsh_brake_ms2', label: 'Harsh Braking', unit: 'm/s²', step: 0.5 },
+            { key: 'threshold_rapid_accel_ms2', label: 'Rapid Acceleration', unit: 'm/s²', step: 0.5 },
+            { key: 'threshold_stop_start_decel_ms2', label: 'Stop-Start Decel', unit: 'm/s²', step: 0.25 },
+            { key: 'threshold_sharp_turn_g_low', label: 'Sharp Turn Low', unit: 'g', step: 0.05 },
+            { key: 'threshold_sharp_turn_g_medium', label: 'Sharp Turn Medium', unit: 'g', step: 0.05 },
+            { key: 'threshold_sharp_turn_g_high', label: 'Sharp Turn High', unit: 'g', step: 0.05 },
+            { key: 'threshold_speeding_kmh', label: 'Speeding (fallback)', unit: 'km/h', step: 5 },
+            { key: 'threshold_idle_seconds', label: 'Idle Event', unit: 's', step: 30 },
+            { key: 'min_speed_harsh_brake_kmh', label: 'Harsh Brake Min Speed', unit: 'km/h', step: 5 },
+            { key: 'min_speed_rapid_accel_kmh', label: 'Rapid Accel Min Speed', unit: 'km/h', step: 5 },
+          ].map(({ key, label, unit, step }) => {
+            const [min, max] = settingRange(key);
+            return (
             <div key={key} className="px-1">
               <div className="flex justify-between text-xs mb-1.5">
                 <span className="font-medium">{label}</span>
@@ -4430,7 +4534,8 @@ export default function Settings() {
                 className="w-full accent-primary disabled:opacity-45"
               />
             </div>
-          ))}
+            );
+          })}
           <div className="pt-3 border-t border-border/70">
             <SettingRow
               icon={SlidersHorizontal}
@@ -4444,13 +4549,15 @@ export default function Settings() {
             </SettingRow>
             <div className="space-y-4">
               {[
-                { key: 'threshold_manoeuvre_alert_brake_ms2', label: 'Brake-Turn Alert Braking', unit: 'm/s²', min: 2.5, max: 5.0, step: 0.5, help: 'Braking threshold for a low-confidence combined brake-and-turn manoeuvre alert; it cannot detect object proximity.' },
-                { key: 'threshold_manoeuvre_alert_turn_degs', label: 'Brake-Turn Alert Heading Rate', unit: 'deg/s', min: 15, max: 60, step: 5, help: 'Heading-change threshold for a low-confidence combined brake-and-turn manoeuvre alert.' },
-                { key: 'threshold_heading_drift_std_degs', label: 'Attention Pattern Beta Threshold', unit: 'degrees', min: 5, max: 15, step: 1, help: 'GPS-only heading-drift sensitivity. Heading events are visible as diagnostic-only when Advanced Safety is off; enabling it allows eligible advanced safety context to affect scoring.' },
-                { key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', min: 6, max: 8, step: 1, help: 'Diagnostic only: GPS micro-steering patterns are not phone-use evidence and do not affect scores.' },
-                { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', min: 5, max: 25, step: 5, help: 'How much speed can rise on straight highway sections before Road Sage logs speed creep.' },
-                { key: 'threshold_overtake_accel_ms2', label: 'Overtake Detection Sensitivity (Beta)', unit: 'm/s²', min: 3.0, max: 5.0, step: 0.5, help: 'Diagnostic only: requires prior straight highway travel and an out-and-back heading pattern; it does not affect scores or coaching.' },
-              ].map(({ key, label, unit, min, max, step, help }) => (
+                { key: 'threshold_manoeuvre_alert_brake_ms2', label: 'Brake-Turn Alert Braking', unit: 'm/s²', step: 0.5, help: 'Braking threshold for a low-confidence combined brake-and-turn manoeuvre alert; it cannot detect object proximity.' },
+                { key: 'threshold_manoeuvre_alert_turn_degs', label: 'Brake-Turn Alert Heading Rate', unit: 'deg/s', step: 5, help: 'Heading-change threshold for a low-confidence combined brake-and-turn manoeuvre alert.' },
+                { key: 'threshold_heading_drift_std_degs', label: 'Attention Pattern Beta Threshold', unit: 'degrees', step: 1, help: 'GPS-only heading-drift sensitivity. Heading events are visible as diagnostic-only when Advanced Safety is off; enabling it allows eligible advanced safety context to affect scoring.' },
+                { key: 'threshold_phone_proxy_oscillations', label: 'Phone Proxy Sensitivity', unit: 'oscillations', step: 1, help: 'Diagnostic only: GPS micro-steering patterns are not phone-use evidence and do not affect scores.' },
+                { key: 'threshold_speed_creep_kmh', label: 'Speed Creep Alert', unit: 'km/h', step: 5, help: 'How much speed can rise on straight highway sections before Road Sage logs speed creep.' },
+                { key: 'threshold_overtake_accel_ms2', label: 'Overtake Detection Sensitivity (Beta)', unit: 'm/s²', step: 0.5, help: 'Diagnostic only: requires prior straight highway travel and an out-and-back heading pattern; it does not affect scores or coaching.' },
+              ].map(({ key, label, unit, step, help }) => {
+                const [min, max] = settingRange(key);
+                return (
                 <div key={key} className={`px-1 ${cfg.advanced_safety_detection_enabled === false ? 'opacity-60' : ''}`}>
                   <div className="flex justify-between text-xs mb-1.5">
                     <span className="font-medium">{label}</span>
@@ -4474,10 +4581,49 @@ export default function Settings() {
                   />
                   <p className="text-xs text-muted-foreground mt-1">{help}</p>
                 </div>
-              ))}
+                );
+              })}
               <p className="px-1 text-xs text-muted-foreground">
                 Commute route matching groups start/end locations within approximately {COMMUTE_MATCH_RADIUS_M} m.
               </p>
+            </div>
+          </div>
+          <div className="pt-3 border-t border-border/70">
+            <SettingsSubheading>Efficiency &amp; fatigue thresholds</SettingsSubheading>
+            <p className="px-1 pb-3 text-xs text-muted-foreground">
+              These feed the eco driving and fatigue risk scores rather than driving-event detection.
+            </p>
+            <div className="space-y-4">
+              {[
+                { key: 'threshold_eco_cruise_min_kmh', label: 'Efficient Cruise Min', unit: 'km/h', step: 5 },
+                { key: 'threshold_eco_cruise_max_kmh', label: 'Efficient Cruise Max', unit: 'km/h', step: 5 },
+                { key: 'eco_cruise_score_multiplier', label: 'Efficient Cruise Credit', unit: '', step: 5 },
+                { key: 'eco_idle_penalty_multiplier', label: 'Avoidable Idle Weight', unit: '', step: 5 },
+                { key: 'eco_idle_max_penalty', label: 'Avoidable Idle Cap', unit: 'pts', step: 1 },
+                { key: 'eco_min_moving_kmh', label: 'Efficiency Moving Floor', unit: 'km/h', step: 1 },
+                { key: 'threshold_long_drive_minutes', label: 'Long Drive Duration', unit: 'min', step: 15 },
+              ].map(({ key, label, unit, step }) => {
+                const [min, max] = settingRange(key);
+                return (
+                <div key={key} className="px-1">
+                  <div className="flex justify-between text-xs mb-1.5">
+                    <span className="font-medium">{label}</span>
+                    <span className="flex items-center gap-2 text-primary font-semibold">
+                      {calibrationEntryForSetting(key)?.calibration_status === CALIBRATION_STATUSES.PROVISIONAL && (
+                        <CalibrationStatusTag />
+                      )}
+                      {cfg[key]} {unit}
+                    </span>
+                  </div>
+                  <input
+                    type="range" min={min} max={max} step={step} value={cfg[key]}
+                    disabled={!thresholdEditingEnabled}
+                    onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })}
+                    className="w-full accent-primary disabled:opacity-45"
+                  />
+                </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -4710,7 +4856,12 @@ export default function Settings() {
                   <button
                     key={option.id}
                     type="button"
-                    onClick={() => updateCfg({ phone_use_sensitivity: option.id })}
+                    onClick={() => updateCfg({
+                      phone_use_sensitivity: option.id,
+                      // The preset is a shortcut that writes the real threshold, so the
+                      // expert slider below always reflects what detection actually uses.
+                      phone_confidence_threshold: phoneSensitivityPresetThreshold(option.id),
+                    })}
                     disabled={cfg.phone_use_detection_enabled === false}
                     className={`min-w-0 rounded-xl border p-2 text-left transition-all disabled:opacity-50 ${
                       (cfg.phone_use_sensitivity || 'medium') === option.id
@@ -4724,11 +4875,9 @@ export default function Settings() {
                 ))}
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                Diagnostic proxy threshold: {(cfg.phone_use_sensitivity || 'medium') === 'low'
-                  ? scoringValue('PHONE_LOW_SENSITIVITY_CONFIDENCE_THRESHOLD').toFixed(2)
-                  : (cfg.phone_use_sensitivity || 'medium') === 'high'
-                    ? scoringValue('PHONE_HIGH_SENSITIVITY_CONFIDENCE_THRESHOLD').toFixed(2)
-                    : scoringValue('PHONE_CONFIDENCE_THRESHOLD').toFixed(2)} confidence. This does not change Android Usage Access scoring.
+                Diagnostic proxy threshold: {Number(
+                  cfg.phone_confidence_threshold ?? phoneSensitivityPresetThreshold(cfg.phone_use_sensitivity)
+                ).toFixed(2)} confidence. This does not change Android Usage Access scoring.
               </p>
             </div>
             <SettingRow label="Show on trip map" sublabel="Mark scored foreground-activity windows on route maps">
@@ -4761,13 +4910,17 @@ export default function Settings() {
               </div>
               <div className="space-y-3">
                 {[
-                  { key: 'phone_micro_steer_count', label: 'Micro-steer count', min: 6, max: 8, step: 1, unit: 'turns' },
-                  { key: 'phone_creep_rate_kmh_s', label: 'Speed creep rate', min: 0.5, max: 4, step: 0.25, unit: 'km/h/s' },
-                  { key: 'phone_lane_drift_deg', label: 'Lane drift angle', min: 3, max: 18, step: 1, unit: 'deg' },
-                  { key: 'phone_coupling_threshold', label: 'Coupling threshold', min: 0.05, max: 0.4, step: 0.05, unit: '' },
-                  { key: 'phone_confidence_threshold', label: 'Confidence threshold', min: 0.15, max: 0.8, step: 0.05, unit: '' },
-                  { key: 'phone_min_window_s', label: 'Minimum window', min: 2, max: 12, step: 1, unit: 's' },
-                ].map(({ key, label, min, max, step, unit }) => (
+                  { key: 'phone_micro_steer_count', label: 'Micro-steer count', step: 1, unit: 'turns' },
+                  { key: 'phone_micro_steer_window_s', label: 'Micro-steer window', step: 1, unit: 's' },
+                  { key: 'phone_proxy_max_accuracy_m', label: 'GPS accuracy gate', step: 1, unit: 'm' },
+                  { key: 'phone_creep_rate_kmh_s', label: 'Speed creep rate', step: 0.25, unit: 'km/h/s' },
+                  { key: 'phone_lane_drift_deg', label: 'Lane drift angle', step: 1, unit: 'deg' },
+                  { key: 'phone_coupling_threshold', label: 'Coupling threshold', step: 0.05, unit: '' },
+                  { key: 'phone_confidence_threshold', label: 'Confidence threshold', step: 0.05, unit: '' },
+                  { key: 'phone_min_window_s', label: 'Minimum window', step: 1, unit: 's' },
+                ].map(({ key, label, step, unit }) => {
+                  const [min, max] = settingRange(key);
+                  return (
                   <div key={key}>
                     <div className="mb-1 flex justify-between text-xs">
                       <span className="flex items-center gap-2 font-medium">
@@ -4787,7 +4940,8 @@ export default function Settings() {
                       className="w-full accent-primary disabled:opacity-45"
                     />
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>

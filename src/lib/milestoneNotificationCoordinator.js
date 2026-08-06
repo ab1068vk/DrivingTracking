@@ -2,7 +2,17 @@ import { tripService } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import { processDriverProgressionAfterTrip } from '@/lib/driverProgression';
 import { syncNativeCompletedTrips } from '@/lib/localTripRepository';
-import { syncAchievementNotifications } from '@/lib/notificationService';
+import {
+  mirrorCalibrationStateToNative,
+  syncAchievementNotifications,
+  syncCalibrationMilestoneNotifications,
+} from '@/lib/notificationService';
+import {
+  CALIBRATION_KM_TARGET,
+  CALIBRATION_TRIPS_TARGET,
+  evaluateCalibrationMilestones,
+  summarizeCalibrationProgress,
+} from '@/lib/calibrationMilestones';
 import { logSystemFailure } from '@/lib/systemLog';
 import { calculateAchievementBadges } from '@/lib/tripInsights';
 import { localSettings } from '@/lib/trackingStore';
@@ -41,10 +51,56 @@ export async function reconcileMilestoneNotifications({ tripId = null } = {}) {
     requestPermission: false,
   });
 
+  // Personal detection calibration is its own system, not part of the
+  // Milestones page. It is evaluated here only because the completed-trip list
+  // is already loaded; a failure must not suppress achievement notifications.
+  const calibrationProgress = summarizeCalibrationProgress(completedTrips);
+  const notifiedCalibrationMilestones = await syncCalibrationMilestoneNotifications(
+    evaluateCalibrationMilestones(calibrationProgress),
+    { requestPermission: false }
+  ).catch((error) => {
+    logSystemFailure('calibration_milestone_notification_sync', error, {
+      trips_analyzed: calibrationProgress.tripsAnalyzed,
+      km_analyzed: calibrationProgress.kmAnalyzed,
+    });
+    return [];
+  });
+  // Push the refreshed counters down so Android can notify for a milestone
+  // crossed by a background trip without the app being opened.
+  await mirrorCalibrationStateToNative(calibrationProgress, {
+    tripsTarget: CALIBRATION_TRIPS_TARGET,
+    kmTarget: CALIBRATION_KM_TARGET,
+  });
+
   return {
     ...progressionUpdate,
     notifiedMilestones,
+    calibrationProgress,
+    notifiedCalibrationMilestones,
   };
+}
+
+/**
+ * Reconcile every milestone system immediately after a completed trip is
+ * saved in-app.
+ *
+ * A trip recorded in the app is written straight through `tripService.create`
+ * and never appears in the native import list, so without this hook its
+ * milestones waited until the next app boot or resume - the same "only
+ * notifies when I open the app" problem, one system over.
+ *
+ * Serialized through the same queue as the native import path so a trip save
+ * landing alongside an app-resume cannot double-notify.
+ *
+ * @param {{tripId?: string|null}} [options]
+ */
+export function reconcileMilestonesAfterTripSave({ tripId = null } = {}) {
+  return queueMilestoneSync(() => reconcileMilestoneNotifications({ tripId }).catch((error) => {
+    logSystemFailure('trip_save_milestone_notification_sync', error, {
+      trip_id: tripId,
+    });
+    return null;
+  }));
 }
 
 /**
@@ -56,6 +112,9 @@ export function syncNativeCompletedTripsAndMilestones({ reconcileExisting = fals
   return queueMilestoneSync(async () => {
     const result = await syncNativeCompletedTrips();
     const importedTrips = Array.isArray(result?.importedTrips) ? result.importedTrips : [];
+    // Reconcile even when nothing was imported: a trip recorded and saved
+    // locally never appears in `importedTrips`, so gating on it meant crossing
+    // a milestone in-app produced no notification at all.
     const shouldReconcile = reconcileExisting || importedTrips.length > 0;
     const latestImportedTrip = importedTrips
       .filter((trip) => trip?.status === 'completed')

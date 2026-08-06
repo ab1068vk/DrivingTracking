@@ -4,6 +4,12 @@ import { isAndroid } from '@/lib/nativePlatform';
 import { eventRatePerDistance } from '@/lib/mathUtils';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
 import {
+  applyEventFeedbackToEvents,
+  applyEventFeedbackToPhoneUseWith,
+  eventFeedbackKey,
+  reconcileEventFeedbackKeys,
+} from '@/lib/eventFeedbackKeys';
+import {
   buildDrivingThresholds,
   calculateTripScores,
   calculateTripStats,
@@ -1033,12 +1039,6 @@ const mergedPhoneUseForTrip = (trip, routePoints, stats, detectionPhoneUse) => {
   return buildPhoneUseFromTripEvidence(trip, routePoints, stats.duration_seconds, detectionPhoneUse);
 };
 
-const eventFeedbackKey = (event, index) => [
-  event?.type || 'event',
-  event?.timestamp || index,
-  Number.isFinite(Number(event?.value)) ? Number(event.value).toFixed(2) : '',
-].join('|');
-
 const retiredEventTypeMap = Object.freeze({
   lane_change: 'heading_deviation_legacy',
 });
@@ -1220,43 +1220,11 @@ export const preserveRecordedNightClassification = (trip = {}, calculatedStats =
   };
 };
 
-export const applyEventFeedbackToEvents = (events = [], feedback = {}) => {
-  const reviewed = feedback && typeof feedback === 'object' ? feedback : {};
-  let removed = 0;
-  const filtered = events.filter((event, index) => {
-    const verdict = reviewed[eventFeedbackKey(event, index)]?.verdict;
-    if (verdict === 'wrong') {
-      removed += 1;
-      return false;
-    }
-    return true;
-  });
-  return { events: filtered, removed };
-};
+export { applyEventFeedbackToEvents };
 
-export const applyEventFeedbackToPhoneUse = (phoneUse = {}, feedback = {}, durationSeconds = 0) => {
-  const confirmedEvents = Array.isArray(phoneUse?.phone_use_events) ? phoneUse.phone_use_events : [];
-  const proxyEvents = Array.isArray(phoneUse?.phone_proxy_events) ? phoneUse.phone_proxy_events : [];
-  const adjusted = applyEventFeedbackToEvents([...confirmedEvents, ...proxyEvents], feedback);
-  const rebuilt = buildPhoneUseFromEvents(adjusted.events, durationSeconds, 'none');
-  const hadConfirmedScore = phoneUse?.phone_use_score_available === true;
-  const hasConfirmedEvents = rebuilt.phone_use_events?.length > 0;
-
-  return {
-    phoneUse: hadConfirmedScore && !hasConfirmedEvents
-      ? {
-        ...rebuilt,
-        phone_use_score: 100,
-        phone_use_score_available: true,
-        phone_use_score_status: phoneUse.phone_use_score_status || 'android_usage_access',
-        data_sources: Array.isArray(phoneUse.data_sources) && phoneUse.data_sources.length
-          ? phoneUse.data_sources
-          : ['android_usage_access'],
-      }
-      : rebuilt,
-    removed: adjusted.removed,
-  };
-};
+export const applyEventFeedbackToPhoneUse = (phoneUse = {}, feedback = {}, durationSeconds = 0) => (
+  applyEventFeedbackToPhoneUseWith(phoneUse, feedback, durationSeconds, buildPhoneUseFromEvents)
+);
 
 const rescoreTrip = (trip, vehicles = []) => {
   if (!trip || trip.status !== 'completed') return trip;
@@ -1286,11 +1254,19 @@ const rescoreTrip = (trip, vehicles = []) => {
     )
   );
   const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(scoringRoutePoints, thresholds, trip.end_time, privacyZones);
-  const feedbackAdjusted = applyEventFeedbackToEvents(events, trip.event_feedback);
   const mergedPhoneUse = mergedPhoneUseForTrip(trip, scoringRoutePoints, stats, detectedPhoneUse);
+  // Feedback keys embed the event magnitude, which moves when detection inputs
+  // change (a confirmed speed limit rewrites every speeding event's peak).
+  // Follow the event instead of orphaning the driver's verdict.
+  const reconciledFeedback = reconcileEventFeedbackKeys(trip.event_feedback, [
+    ...events,
+    ...(Array.isArray(mergedPhoneUse?.phone_use_events) ? mergedPhoneUse.phone_use_events : []),
+    ...(Array.isArray(mergedPhoneUse?.phone_proxy_events) ? mergedPhoneUse.phone_proxy_events : []),
+  ]).feedback;
+  const feedbackAdjusted = applyEventFeedbackToEvents(events, reconciledFeedback);
   const phoneFeedbackAdjusted = applyEventFeedbackToPhoneUse(
     mergedPhoneUse,
-    trip.event_feedback,
+    reconciledFeedback,
     stats.duration_seconds
   );
   const phoneUse = phoneFeedbackAdjusted.phoneUse;
@@ -1344,7 +1320,9 @@ const rescoreTrip = (trip, vehicles = []) => {
     driving_events: drivingEvents,
     phone_usage_access_provenance: phoneUsageAccessProvenance.changed ? phoneUsageAccessProvenance : null,
     ...(scoreProvenanceChange ? { score_provenance_change: scoreProvenanceChange } : {}),
+    event_feedback: reconciledFeedback,
     feedback_adjusted_events_count: feedbackAdjusted.removed + phoneFeedbackAdjusted.removed,
+    feedback_flagged_events_count: feedbackAdjusted.flagged + phoneFeedbackAdjusted.flagged,
     needs_rescore: false,
     schema_version: TRIP_SCHEMA_VERSION,
     updated_at: new Date().toISOString(),
@@ -1625,17 +1603,26 @@ const importNativeCompletedTrips = async () => {
         );
         const { events, phoneUse: detectedPhoneUse } = detectDrivingEvents(scoringRoutePoints, thresholds, trip.end_time, privacyZones);
         const mergedPhoneUse = mergedPhoneUseForTrip(trip, scoringRoutePoints, stats, detectedPhoneUse);
+        // Import re-detects events, so the driver's verdicts must be reapplied
+        // here too - phone-use evidence alone used to be filtered, which let a
+        // rejected driving event reappear after a native re-import.
+        const reconciledFeedback = reconcileEventFeedbackKeys(trip.event_feedback, [
+          ...events,
+          ...(Array.isArray(mergedPhoneUse?.phone_use_events) ? mergedPhoneUse.phone_use_events : []),
+          ...(Array.isArray(mergedPhoneUse?.phone_proxy_events) ? mergedPhoneUse.phone_proxy_events : []),
+        ]).feedback;
+        const feedbackAdjusted = applyEventFeedbackToEvents(events, reconciledFeedback);
         const phoneFeedbackAdjusted = applyEventFeedbackToPhoneUse(
           mergedPhoneUse,
-          trip.event_feedback,
+          reconciledFeedback,
           stats.duration_seconds
         );
         const phoneUse = phoneFeedbackAdjusted.phoneUse;
         const motionSamples = Array.isArray(trip.motion_samples) ? trip.motion_samples : [];
         const sensorFusionSummary = motionSamples.length
-          ? buildSensorFusionSummary(motionSamples, scoringRoutePoints, null, events)
+          ? buildSensorFusionSummary(motionSamples, scoringRoutePoints, null, feedbackAdjusted.events)
           : trip.sensor_fusion_summary;
-        const scores = calculateTripScores(events, stats, scoringRoutePoints, thresholds, stats.duration_seconds, phoneUse, {
+        const scores = calculateTripScores(feedbackAdjusted.events, stats, scoringRoutePoints, thresholds, stats.duration_seconds, phoneUse, {
           endTime: trip.end_time,
           privacyZones,
           motionSamples,
@@ -1644,7 +1631,7 @@ const importNativeCompletedTrips = async () => {
         const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, vehicleForTrip(trip, vehicles), settings);
         const drivingEvents = prepareScoreInputsForPrivacy({
           routePoints: [],
-          events: mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse),
+          events: mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || feedbackAdjusted.events, phoneUse),
           settings,
           zones: privacyZones,
         }).events;
@@ -1662,6 +1649,9 @@ const importNativeCompletedTrips = async () => {
           privacy_trend_excluded: scoreInputPrivacy.trendExcluded,
           ...(sensorFusionSummary ? { sensor_fusion_summary: sensorFusionSummary } : {}),
           driving_events: drivingEvents,
+          event_feedback: reconciledFeedback,
+          feedback_adjusted_events_count: feedbackAdjusted.removed + phoneFeedbackAdjusted.removed,
+          feedback_flagged_events_count: feedbackAdjusted.flagged + phoneFeedbackAdjusted.flagged,
           imported_from_native: true,
           schema_version: TRIP_SCHEMA_VERSION,
           updated_at: trip.updated_at || new Date().toISOString(),
@@ -1898,6 +1888,28 @@ export function expireTripRouteData(trip, retentionDays, expiredAt = Date.now())
   };
 }
 
+/**
+ * Drops stored IMU samples while keeping every derived summary.
+ *
+ * High-fidelity capture is the biggest storage line a trip carries, and unlike
+ * route points it has no display use once `sensor_fusion_summary` exists — so it
+ * ages out on its own, shorter clock than raw GPS.
+ */
+export function expireTripMotionSamples(trip, retentionDays, expiredAt = Date.now()) {
+  if (!trip || typeof trip !== 'object' || trip.motion_samples_expired_at) return trip;
+  const samples = Array.isArray(trip.motion_samples) ? trip.motion_samples : [];
+  if (!samples.length) return trip;
+
+  return {
+    ...trip,
+    motion_samples: [],
+    motion_samples_expired_count: Number(trip.motion_samples_expired_count) || samples.length,
+    motion_samples_expired_at: new Date(expiredAt).toISOString(),
+    motion_samples_retention_days: retentionDays,
+    updated_at: new Date(expiredAt).toISOString(),
+  };
+}
+
 export async function getRawGpsLifecycleStatus() {
   const state = await getJson(RAW_GPS_LIFECYCLE_STATE_KEY, {});
   return state && typeof state === 'object' ? state : {};
@@ -1909,10 +1921,14 @@ export async function enforceRawGpsRetention({ force = false, now = Date.now() }
   if (rawGpsEnforcementPromise) return rawGpsEnforcementPromise;
 
   rawGpsEnforcementPromise = (async () => {
-    const retentionDays = Number(localSettings.get().raw_gps_retention_days || 0);
+    const settings = localSettings.get();
+    const retentionDays = Number(settings.raw_gps_retention_days || 0);
+    // Motion samples ride the same sweep on their own, shorter clock so
+    // high-fidelity capture ages out before route data does.
+    const motionRetentionDays = Number(settings.motion_sample_retention_days || 0);
     const previous = await getRawGpsLifecycleStatus();
-    if (!retentionDays) {
-      return { enabled: false, purgedTrips: 0, purgedPoints: 0, lastRunAt: previous.lastRunAt || null };
+    if (!retentionDays && !motionRetentionDays) {
+      return { enabled: false, purgedTrips: 0, purgedPoints: 0, purgedMotionSamples: 0, lastRunAt: previous.lastRunAt || null };
     }
     if (!force && Number(previous.lastRunAt) > 0 && now - Number(previous.lastRunAt) < RAW_GPS_LIFECYCLE_INTERVAL_MS) {
       return {
@@ -1920,28 +1936,40 @@ export async function enforceRawGpsRetention({ force = false, now = Date.now() }
         skipped: true,
         purgedTrips: 0,
         purgedPoints: 0,
+        purgedMotionSamples: 0,
         lastRunAt: Number(previous.lastRunAt),
       };
     }
 
-    const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
+    const dayMs = 24 * 60 * 60 * 1000;
+    const cutoff = now - retentionDays * dayMs;
+    const motionCutoff = now - motionRetentionDays * dayMs;
     const trips = await getAllTrips();
     const expiredTrips = [];
     const expiredOriginals = [];
     let purgedPoints = 0;
+    let purgedMotionSamples = 0;
 
     for (const trip of trips) {
       const when = new Date(trip.end_time || trip.start_time || trip.created_at || 0).getTime();
-      if (
-        trip.status !== 'completed' ||
-        !Number.isFinite(when) ||
-        when <= 0 ||
-        when >= cutoff ||
-        trip.route_data_expired_at
-      ) continue;
-      const expired = expireTripRouteData(trip, retentionDays, now);
+      if (trip.status !== 'completed' || !Number.isFinite(when) || when <= 0) continue;
+
+      let expired = trip;
+      if (motionRetentionDays && when < motionCutoff) {
+        const motionExpired = expireTripMotionSamples(expired, motionRetentionDays, now);
+        if (motionExpired !== expired) {
+          purgedMotionSamples += Array.isArray(expired.motion_samples) ? expired.motion_samples.length : 0;
+          expired = motionExpired;
+        }
+      }
+      if (retentionDays && when < cutoff && !trip.route_data_expired_at) {
+        const routeExpired = expireTripRouteData(expired, retentionDays, now);
+        if (routeExpired !== expired) {
+          purgedPoints += Array.isArray(expired.route_points) ? expired.route_points.length : 0;
+          expired = routeExpired;
+        }
+      }
       if (expired === trip) continue;
-      purgedPoints += Array.isArray(trip.route_points) ? trip.route_points.length : 0;
       expiredOriginals.push(trip);
       expiredTrips.push(expired);
     }
@@ -1955,7 +1983,8 @@ export async function enforceRawGpsRetention({ force = false, now = Date.now() }
           details: {
             purged_trip_count: expiredTrips.length,
             purged_point_count: purgedPoints,
-            reason: `raw_gps_retention_${retentionDays}d`,
+            purged_motion_sample_count: purgedMotionSamples,
+            reason: `raw_gps_retention_${retentionDays}d_motion_${motionRetentionDays}d`,
           },
         });
       } catch (error) {
@@ -1965,8 +1994,10 @@ export async function enforceRawGpsRetention({ force = false, now = Date.now() }
       }
       recordSystemEvent('raw_gps_retention_enforced', {
         retention_days: retentionDays,
+        motion_retention_days: motionRetentionDays,
         purged_trip_count: expiredTrips.length,
         purged_point_count: purgedPoints,
+        purged_motion_sample_count: purgedMotionSamples,
       }, {
         category: 'privacy',
         title: 'Expired route data removed',
@@ -1977,8 +2008,10 @@ export async function enforceRawGpsRetention({ force = false, now = Date.now() }
     const state = {
       lastRunAt: now,
       retentionDays,
+      motionRetentionDays,
       purgedTrips: expiredTrips.length,
       purgedPoints,
+      purgedMotionSamples,
     };
     await setJson(RAW_GPS_LIFECYCLE_STATE_KEY, state);
     return { enabled: true, ...state };

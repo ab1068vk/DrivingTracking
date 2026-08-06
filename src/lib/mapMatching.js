@@ -8,7 +8,7 @@ import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { appendPrivacyEvent } from '@/lib/hashChainLog';
 import { privacyGatedFetch } from '@/lib/privacyGatedFetch';
-import { getPrivacyZones, isPointInPrivacyZone, routeTouchesPrivacyZone } from '@/lib/privacyZones';
+import { isPointInPrivacyZone, resolvePrivacyZonesForLookup, routeTouchesPrivacyZone } from '@/lib/privacyZones';
 import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 import { describeEndpointValidationError, normalizeHttpsEndpoint } from '@/lib/urlSecurity';
 
@@ -17,7 +17,9 @@ const MAX_MATCH_POINTS = 100;
 export const DEFAULT_OSRM_TIMEOUT_MS = 12000;
 export const OSRM_TIMEOUT_MS = Number(import.meta.env.VITE_OSRM_TIMEOUT_MS) || DEFAULT_OSRM_TIMEOUT_MS;
 const OSRM_HEALTH_TIMEOUT_MS = 5000;
-const OSRM_PRIVACY_ENDPOINT_GUARD_M = 100;
+// Applied to every point sent to OSRM, not just the endpoints: a point that sits
+// just outside a zone still pins the zone to within one buffer width.
+const OSRM_PRIVACY_ZONE_GUARD_M = 100;
 
 const round = (value, places = 5) => +Number(value).toFixed(places);
 const isValidRoutePoint = (point) => (
@@ -117,14 +119,13 @@ function privacyZoneGapPoint(point = {}, zone = null) {
   });
 }
 
-function enforcePrivacyZonesForOsrm(routePoints = [], settings = {}) {
-  const zones = getPrivacyZones(settings);
+function enforcePrivacyZonesForOsrm(routePoints = [], zones = []) {
   if (!zones.length) return { routePoints, zones };
 
   const safe = [];
   let gapOpen = false;
   for (const point of Array.isArray(routePoints) ? routePoints : []) {
-    const zone = isPointInPrivacyZone(point, zones);
+    const zone = isPointInPrivacyZone(point, zones, OSRM_PRIVACY_ZONE_GUARD_M);
     const shouldHidePoint = Boolean(zone) ||
       point?.masked_for_privacy === true ||
       point?.privacy_boundary === true ||
@@ -409,7 +410,33 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       isOsrmDemoUrl,
     };
   }
-  const configuredZones = getPrivacyZones(settings);
+  const { zones: configuredZones, failed: privacyZonesUnavailable } = await resolvePrivacyZonesForLookup(settings);
+  if (privacyZonesUnavailable) {
+    await privacyGatedFetch('osrm', { url: settings.osrm_map_matching_url }, {
+      type: 'Route matching',
+      coordinateDisclosure: 'blocked',
+      block: {
+        reason: 'privacy_zones_unavailable',
+        privacyVerificationEvidence: ['privacy zones are configured but could not be read before send'],
+        protections: ['privacy-zone guard unavailable - request blocked'],
+      },
+    });
+    recordSystemEvent('osrm_map_matching_failed', {
+      status: 'privacy_zones_unavailable',
+      reason: 'Privacy zones are configured but could not be read.',
+    }, { category: 'osrm', severity: 'warn', title: 'Operation failed: osrm_map_matching' });
+    appendOsrmAuditEvent({
+      op: 'OSRM_SKIPPED_PRIVACY_ENDPOINT',
+      details: { status: 'privacy_zones_unavailable' },
+    });
+    return {
+      routePoints,
+      status: 'privacy_zones_unavailable',
+      provider: 'osrm',
+      error: 'Route snapping was skipped because the privacy-zone guard could not be read.',
+      isOsrmDemoUrl,
+    };
+  }
   const highSensitivityZone = configuredZones.find((zone) => (
     zone?.sensitivity === 'high' &&
     routeTouchesPrivacyZone(routePoints, zone)
@@ -461,14 +488,14 @@ export async function mapMatchRoute(routePoints = [], settings = {}) {
       isOsrmDemoUrl,
     };
   }
-  const privacyFiltered = enforcePrivacyZonesForOsrm(routePoints, settings);
+  const privacyFiltered = enforcePrivacyZonesForOsrm(routePoints, configuredZones);
   const osrmRoutePoints = privacyFiltered.routePoints;
   const zones = privacyFiltered.zones;
   const endpoints = [osrmRoutePoints[0], osrmRoutePoints.at?.(-1)].filter(Boolean);
   const nearPrivateEndpoint = endpoints.some((point) => (
     point?.masked_for_privacy === true ||
     point?.privacy_gap === true ||
-    Boolean(isPointInPrivacyZone(point, zones, OSRM_PRIVACY_ENDPOINT_GUARD_M))
+    Boolean(isPointInPrivacyZone(point, zones, OSRM_PRIVACY_ZONE_GUARD_M))
   ));
   if (nearPrivateEndpoint) {
     await privacyGatedFetch('osrm', { url: settings.osrm_map_matching_url }, {

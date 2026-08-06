@@ -128,6 +128,11 @@ export function buildRouteRiskIndex(trips = [], privacyZones = []) {
     const points = cleanRoutePointsWithPrivacyMetadata(trip.route_points || []);
     if (points.length < 2) continue;
     const midpoints = [];
+    // One trip can contribute many consecutive segments to the same ~110 m
+    // cell. Counting each of those as a separate pass inflated "you have
+    // driven through this area N times" and deflated every per-trip rate
+    // derived from it, so each cell is counted once per trip.
+    const cellsVisitedThisTrip = new Set();
 
     for (let i = 1; i < points.length; i++) {
       const prev = points[i - 1];
@@ -151,14 +156,19 @@ export function buildRouteRiskIndex(trips = [], privacyZones = []) {
         eventTypes: {},
         avgSpeed: 0,
         speedSum: 0,
+        speedSampleCount: 0,
         harshCount: 0,
         riskScore: 0,
         riskLevel: 'low',
         lat: midpoint.lat,
         lng: midpoint.lng,
       };
-      item.tripCount += 1;
+      if (!cellsVisitedThisTrip.has(key)) {
+        cellsVisitedThisTrip.add(key);
+        item.tripCount += 1;
+      }
       item.speedSum += Number(segment.reliableSpeedKmh) || 0;
+      item.speedSampleCount += 1;
       index.set(key, item);
       midpoints.push({ key, lat: item.lat, lng: item.lng });
     }
@@ -178,7 +188,8 @@ export function buildRouteRiskIndex(trips = [], privacyZones = []) {
   }
 
   for (const item of index.values()) {
-    item.avgSpeed = item.tripCount ? item.speedSum / item.tripCount : 0;
+    // Average over the segments actually sampled, not over trips.
+    item.avgSpeed = item.speedSampleCount ? item.speedSum / item.speedSampleCount : 0;
     const eventRate = item.totalEvents / Math.max(1, item.tripCount);
     const harshRate = item.harshCount / Math.max(1, item.tripCount);
     item.riskScore = Math.min(100, Math.round(

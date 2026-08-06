@@ -1,4 +1,5 @@
-import { clamp } from '@/lib/mathUtils';
+﻿import { clamp } from '@/lib/mathUtils';
+import { COACHING_CONTENT, coachingEventDetailFor } from '@/lib/coachingContent';
 import { NIGHT_END_HOUR, NIGHT_START_HOUR } from '@/lib/appConstants';
 import { routeKeyForTrip as commuteRouteKeyForTrip } from '@/lib/commuteMatching';
 import { inferTripTags } from '@/lib/tripTagIntelligence';
@@ -527,7 +528,12 @@ export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
     co2_baseline_source: baselineSource,
     co2_saved_available: canClaimCo2Savings,
     estimate_error_pct: estimateErrorPct,
-    estimate_label: `This is an estimate (+/-${estimateErrorPct}%).`,
+    // Without a vehicle assigned this is computed from a built-in default
+    // consumption figure, not from anything about the user's car. The
+    // percentage alone did not convey that.
+    estimate_label: vehicleProfileAvailable
+      ? `This is an estimate (+/-${estimateErrorPct}%).`
+      : `Estimated from a default vehicle profile, not your car (+/-${estimateErrorPct}%). Assign a vehicle for a figure based on its consumption.`,
     co2_saved_label: canClaimCo2Savings
       ? `vs. ${baselineSource} (+/-${estimateErrorPct}%)`
       : isElectric
@@ -586,10 +592,10 @@ export function buildScoreTips(trips = []) {
 
   if (worst?.[1] > 0) {
     const messages = {
-      harsh_brake: 'Most score loss is coming from harsh braking. Leave a larger following gap and lift off earlier before stops.',
-      rapid_acceleration: 'Rapid acceleration is your biggest pattern. Try smoother throttle starts to improve smoothness and fuel cost.',
-      sharp_turn: 'Sharp turns are showing up most often. Slow before corners, then accelerate after the car is straight.',
-      speeding: 'Speeding is your main risk event. Lowering cruise speed is the fastest way to improve safety score.',
+      harsh_brake: COACHING_CONTENT.harsh_brakes.scoreTip,
+      rapid_acceleration: COACHING_CONTENT.rapid_accel.scoreTip,
+      sharp_turn: COACHING_CONTENT.sharp_turns.scoreTip,
+      speeding: COACHING_CONTENT.speeding.scoreTip,
     };
     tips.push(messages[worst[0]]);
   }
@@ -603,7 +609,7 @@ export function buildScoreTips(trips = []) {
   if (avgScore >= 85) {
     tips.push('Your recent average is excellent. Keep the streak going by protecting smooth starts and early braking.');
   } else if (avgScore < 70) {
-    tips.push('Focus on one behavior this week instead of all of them. Cutting the top event type will move the score fastest.');
+    tips.push(COACHING_CONTENT.consistency.scoreTip);
   }
 
   return tips.slice(0, 3);
@@ -770,7 +776,12 @@ export function analyzeDayOfWeek(trips = []) {
 }
 
 export function calculateFatigueRisk(trips = [], settings = {}) {
-  const thresholdMinutes = Number(settings.threshold_long_drive_minutes || 120);
+  // `|| 120` silently discarded a user-configured 0. Only fall back when the
+  // setting is genuinely absent or not a number.
+  const configuredMinutes = Number(settings.threshold_long_drive_minutes);
+  const thresholdMinutes = Number.isFinite(configuredMinutes) && configuredMinutes >= 0
+    ? configuredMinutes
+    : 120;
   const longTrips = trips.filter((trip) => (trip.duration_seconds || 0) / 60 >= thresholdMinutes);
   const totalLongMinutes = longTrips.reduce((sum, trip) => sum + (trip.duration_seconds || 0) / 60, 0);
   const longestTripMinutes = trips.reduce((max, trip) => Math.max(max, (trip.duration_seconds || 0) / 60), 0);
@@ -1245,58 +1256,16 @@ export function calculateDrivingConsistency(trips = []) {
 }
 
 const COACH_EVENT_DETAILS = {
-  harsh_brakes: {
-    label: 'Late braking',
-    focus: 'braking',
-    why: 'Hard braking is the clearest sign that stops are being handled late or with too little following room.',
-    cue: 'Scan farther ahead and lift earlier before the brake pedal does the heavy work.',
-    drillTitle: 'Five-stop anticipation drill',
-    drillSteps: [
-      'Pick five normal stops on the next trip.',
-      'Lift off the accelerator before the lead vehicle starts braking.',
-      'Aim for one smooth brake squeeze instead of a late hard press.',
-    ],
-    target: 'Reduce harsh-brake events on the next three normal trips.',
-  },
-  rapid_accel: {
-    label: 'Hard acceleration',
-    focus: 'acceleration',
-    why: 'Hard launches usually cost smoothness and fuel without saving much useful time.',
-    cue: 'Let speed build in stages after stops and lane changes.',
-    drillTitle: 'Three-second throttle ramp',
-    drillSteps: [
-      'After each stop, count three seconds while adding throttle.',
-      'Reach cruising speed progressively instead of jumping to it.',
-      'Use the same ramp after slow turns and merges when traffic allows.',
-    ],
-    target: 'Keep rapid-acceleration events below your current weekly count.',
-  },
-  sharp_turns: {
-    label: 'Sharp cornering',
-    focus: 'cornering',
-    why: 'Sharp turns often mean speed is being adjusted during the turn instead of before it.',
-    cue: 'Set entry speed before steering, then accelerate only as the wheel unwinds.',
-    drillTitle: 'Brake-before-turn drill',
-    drillSteps: [
-      'Before each turn, finish most braking while the wheel is still straight.',
-      'Hold steady speed through the middle of the turn.',
-      'Accelerate only after the car starts straightening.',
-    ],
-    target: 'Complete the next city trip with fewer sharp-turn events.',
-  },
-  speeding: {
-    label: 'Speed control',
-    focus: 'speed control',
-    why: 'Speed creep can build gradually, especially on familiar roads and highways.',
-    cue: 'Pick a target slightly below the alert threshold before the road opens up.',
-    drillTitle: 'Cruise-target reset',
-    drillSteps: [
-      'Choose a target speed before entering faster roads.',
-      'Check speed after every major road change.',
-      'Use cruise control where it is safe and appropriate.',
-    ],
-    target: 'Lower the percentage of samples above the configured threshold.',
-  },
+  // The five program behaviours compose their copy from the shared catalog in
+  // coachingContent.js so wording cannot drift between the Coach page, score
+  // tips, and risk summaries.
+  harsh_brakes: coachingEventDetailFor('harsh_brakes', 'braking'),
+  rapid_accel: coachingEventDetailFor('rapid_accel', 'acceleration'),
+  sharp_turns: coachingEventDetailFor('sharp_turns', 'cornering'),
+  speeding: coachingEventDetailFor('speeding', 'speed control'),
+  phone_use: coachingEventDetailFor('phone_use', 'phone_distraction'),
+  // The entries below are review-only observation types with no coach program,
+  // so they keep their own copy here.
   heading_deviations: {
     label: 'Heading events (Beta)',
     focus: 'heading events',

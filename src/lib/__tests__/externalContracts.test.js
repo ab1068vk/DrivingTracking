@@ -82,7 +82,7 @@ describe('external service contracts', () => {
       privacyTransformVerified: true,
       privacyTransformSource: 'privacyGatedFetch:overpass',
       privacyVerificationEvidence: expect.arrayContaining([
-        'privacy gateway verified overpass payload precision <= 6 decimals',
+        'privacy gateway verified overpass payload precision <= 3 decimals',
         'request body contains only the computed bounding box',
         'query does not request individual node coordinates',
       ]),
@@ -275,11 +275,10 @@ describe('external service contracts', () => {
     const [, options] = fetch.mock.calls[0];
     const query = new URLSearchParams(String(options.body)).get('data');
     const [, rawBbox] = query.match(/\]\(([^)]+)\);/) || [];
+    // Snapped onto the shared bbox grid, and still clear of the zone guard.
     const [south, west, north, east] = rawBbox.split(',').map(Number);
-    expect(south).toBeGreaterThan(43.01);
-    expect(north).toBeLessThan(43.03);
-    expect(west).toBeGreaterThan(-79.01);
-    expect(east).toBeLessThan(-78.99);
+    expect([south, west, north, east]).toEqual([43.01, -79.01, 43.03, -78.99]);
+    expect(south).toBeGreaterThan(43.0014);
     expect(query).not.toContain('Home');
     expect(query).not.toContain('43,-79');
   });
@@ -302,10 +301,11 @@ describe('external service contracts', () => {
     const query = new URLSearchParams(String(options.body)).get('data');
     const [, rawBbox] = query.match(/\]\(([^)]+)\);/) || [];
     const [south, west, north, east] = rawBbox.split(',').map(Number);
-    expect(south).toBeGreaterThan(43.01);
-    expect(west).toBeCloseTo(-79.006, 6);
-    expect(north).toBeCloseTo(43.026, 6);
-    expect(east).toBeCloseTo(-78.994, 6);
+    expect([south, west, north, east]).toEqual([43.01, -79.01, 43.03, -78.99]);
+    // Every edge lands on the grid, so nothing below the grid leaks out.
+    for (const edge of [south, west, north, east]) {
+      expect(Math.abs((edge / 0.005) - Math.round(edge / 0.005))).toBeLessThan(1e-6);
+    }
   });
 
   it('skips Overpass when every route point is inside a privacy-zone guard', async () => {

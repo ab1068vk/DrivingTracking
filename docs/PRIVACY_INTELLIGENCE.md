@@ -153,6 +153,32 @@ Trips that touch a privacy zone are marked with `privacy_zone_touched` and `priv
 
 Audited but not changed: single-trip display fields, live safety alerts, daily fatigue state, and the latest-trip pre-trip-risk hint. Those features are either already tied to an individual trip/day the user is viewing or are active safety context rather than a cross-trip trend or streak.
 
+### Motion samples now influence a stored score
+
+`SCORING_ALGORITHM_REVISION = 3` added an IMU refinement pass (see
+[DETECTION_PIPELINE.md](DETECTION_PIPELINE.md) §5). Motion samples were already personal
+data — a ~50 Hz accelerometer and gyroscope stream is a behavioural fingerprint, and its
+retention is governed by `MOTION_SAMPLE_RETENTION_DAYS_DEFAULT` (14 days) with the capture
+budgets in [CAPTURE_FIDELITY.md](CAPTURE_FIDELITY.md). What changed is that a stored score
+can now depend on them, which has two consequences worth stating explicitly.
+
+**Expiry must not silently revise history.** The refinement verdict is persisted on the
+event as `imu_evidence` at first scoring, and a re-score reuses it rather than re-deriving
+it. So deleting or expiring motion samples removes the raw stream without rewriting the
+scores already derived from it. A user who clears motion data does not get a different score
+for an old trip as a side effect.
+
+**Refinement never reintroduces location detail.** It is invoked inside
+`calculateTripScores`, downstream of the `scoreInputPrivacy.js` masking described above, and
+it reads only sample timestamps and acceleration magnitudes — never coordinates. It adjusts
+an existing event's severity and adds the evidence fields below; it cannot create an event,
+so it cannot surface a masked one.
+
+`imu_evidence`, `imu_peak`, `imu_gps_ratio` and `severity_before_imu` are stored per event.
+They describe device motion magnitude at an already-recorded event time and carry no
+additional location information, but they are trip data and are covered by the same export,
+backup, and deletion paths as the rest of a trip record.
+
 ## Data Rights And Build Identity
 
 Phase 10 adds two user-owned data actions in Settings > Privacy & Data:
@@ -911,6 +937,7 @@ const EXPORT_NOISE_MAX_M = 35;
 const TIMESTAMP_FUZZ_RANGE_MS = 3 * 60 * 1000;
 const PRIVACY_CELL_SIZE_M = 50;
 const PRIVACY_CELL_SCHEMA = 'global_grid_v1';
+const PRIVACY_CELL_SCHEMA_KEYED = 'keyed_grid_v2';
 const EXPORT_PRIVACY_ZONE_ID = 'private_area';
 const EXPORT_PRIVACY_ZONE_LABEL = 'Private area';
 export const PRIVACY_RADIUS_MIN_M = 50;
@@ -925,7 +952,47 @@ export const ZONE_EVENT_GUARD_M = 50;
 export const PRIVACY_ZONES_SECURE_KEY = 'drivesense_privacy_zones_config_v1';
 export const NATIVE_PRIVACY_ZONES_KEY = 'privacy_zones_v1';
 export const NATIVE_PRIVACY_ZONES_CONTEXT = 'native:privacy_zones_v1';
+export const NATIVE_PRIVACY_CELL_KEY_KEY = 'privacy_cell_key_v1';
+export const NATIVE_PRIVACY_CELL_KEY_CONTEXT = 'native:privacy_cell_key_v1';
 ```
+
+### Cell hashes are keyed
+
+A zone is persisted as a list of grid-cell hashes, never as coordinates. The
+first scheme (`global_grid_v1`) hashed `cellSize:y:x` with an unsalted 32-bit
+string hash, which is the same on every device. That made the stored list
+reversible by brute force: the grid is public and the coarse
+`privacy_display_region_*` narrows the search to roughly 16k candidate cells, so
+recovering the center cost 16k cheap hash evaluations.
+
+`keyed_grid_v2` replaces that with HMAC-SHA-256 over the same label under a
+32-byte device key (`drivesense_privacy_cell_key_v1` in the encrypted store,
+mirrored to Android under `privacy_cell_key_v1`). Without the key the hash list
+locates nothing.
+
+- `src/lib/sha256.js` provides the synchronous primitive. `crypto.subtle` is
+  async, and `isPointInPrivacyZone` is called per route point on the masking and
+  outbound-filter paths, so it cannot await. Android uses `javax.crypto.Mac`;
+  `PrivacyZoneCheckerTest` pins the two implementations to the same fixtures.
+- Both schemes are matched, chosen per hash prefix (`pzc_` vs `pzc2_`), so a zone
+  created before the key existed keeps protecting its area.
+- Migration runs in `loadPrivacyZonesFromStorage`: the legacy cell set is
+  recovered and re-emitted under the key, which preserves corridor shapes that a
+  center-only recovery would lose. A zone that cannot be recovered keeps its
+  legacy hashes and is re-keyed the next time its geometry is saved.
+- A keyed zone with no key loaded is treated as **private**, on both JS and
+  Android. An unreadable guard must not read as "nothing is private".
+
+### Outbound geometry buffers
+
+- OSRM: `OSRM_PRIVACY_ZONE_GUARD_M` (100 m) applies to every point sent, not only
+  the route endpoints — a point just outside a zone still pins it.
+- Overpass: bounding boxes are snapped outward onto a fixed 0.005° grid
+  (`BBOX_GRID_DEG`) *before* the privacy-overlap check, so the box that is tested
+  is the box that is sent. Edges carry 3 decimals, which is also the declared
+  limit in `privacyGatedFetch`, so an over-precise payload now trips the
+  downgrade check. Because the boxes are grid-aligned, the hole left where a zone
+  was excluded is a property of the grid rather than of the zone.
 
 Kinematic fields removed/nullified around private boundaries:
 

@@ -2183,8 +2183,10 @@ export async function importDriveSenseBackup(
   let calibrationLabelsRestored = false;
   if (backup.calibration.labels.length > 0 || Object.keys(backup.calibration.survey_markers).length > 0) {
     try {
-      await localCalibrationLabelRepository.replaceAll(backup.calibration.labels);
-      await localCalibrationLabelRepository.replaceTripSurveyMarkers(backup.calibration.survey_markers);
+      // Merge rather than replace: an import must not destroy survey labels
+      // the user created after the backup was taken.
+      await localCalibrationLabelRepository.mergeAll(backup.calibration.labels);
+      await localCalibrationLabelRepository.mergeTripSurveyMarkers(backup.calibration.survey_markers);
       calibrationLabelsRestored = true;
     } catch (error) {
       logSystemFailure('backup_import_calibration_labels_restore', error, {

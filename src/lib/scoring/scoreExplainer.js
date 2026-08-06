@@ -14,12 +14,15 @@ const HEADLINE_FACTORS = [
   { key: 'smoothness', label: 'Smoothness', category: 'Overall', legacyKeys: ['score_smoothness'] },
 ];
 
+// `coveredBy` names the component factor that already measures the same behaviour. When
+// that component is shown, its event row is suppressed so one behaviour is not reported to
+// the driver twice under two different headings.
 const EVENT_FACTORS = [
-  { key: 'harsh_brakes_count', singular: 'harsh brake', category: 'Safety' },
-  { key: 'speeding_events_count', singular: 'speeding event', category: 'Safety' },
-  { key: 'rapid_accel_count', singular: 'rapid acceleration', category: 'Smoothness' },
-  { key: 'sharp_turns_count', singular: 'sharp turn', category: 'Smoothness' },
-  { key: 'phone_use_window_count', singular: 'moving foreground-app window', category: 'Safety' },
+  { key: 'harsh_brakes_count', singular: 'harsh brake', category: 'Safety', coveredBy: 'braking_efficiency' },
+  { key: 'speeding_events_count', singular: 'speeding event', category: 'Safety', coveredBy: 'speed_limit_compliance' },
+  { key: 'rapid_accel_count', singular: 'rapid acceleration', category: 'Smoothness', coveredBy: 'smoothness_index' },
+  { key: 'sharp_turns_count', singular: 'sharp turn', category: 'Smoothness', coveredBy: 'cornering_consistency' },
+  { key: 'phone_use_window_count', singular: 'moving foreground-app window', category: 'Safety', coveredBy: 'phone_use' },
 ];
 
 const finiteScore = (value) => {
@@ -56,6 +59,8 @@ const eventFactor = (trip, definition) => {
     category: definition.category,
     kind: 'event',
     count,
+    // An event count is not a score deficit and the two are not on a common scale, so this
+    // only orders events against each other - never against a component. See `ordered`.
     deficit: count * 10,
     evidence: null,
     note: null,
@@ -67,20 +72,26 @@ const ranked = (factors, limit) => factors
   .sort((a, b) => b.deficit - a.deficit || a.label.localeCompare(b.label))
   .slice(0, limit);
 
+// Components are measured score deficits; events are raw counts scaled by a placeholder.
+// Sorting them in one list let "5 sharp turns" (deficit 50) outrank a cornering component
+// of 55 (deficit 45), implying the count mattered more when the two units are not
+// comparable at all. Rank each kind among its own, then show components first.
+const ordered = (components, events, limit) => [
+  ...ranked(components, limit),
+  ...ranked(events, limit),
+].slice(0, limit);
+
 export function explainTripScoreDrivers(trip = {}, { limit = 3 } = {}) {
   const detailed = ranked(COMPONENT_FACTORS.map((definition) => componentFactor(trip, definition)), limit);
   const events = ranked(EVENT_FACTORS.map((definition) => eventFactor(trip, definition)), limit);
 
   if (detailed.length > 0) {
     const detailedKeys = new Set(detailed.map(({ factor }) => factor));
-    const nonDuplicateEvents = events.filter(({ factor }) => (
-      !(factor === 'harsh_brakes_count' && detailedKeys.has('braking_efficiency')) &&
-      !(factor === 'speeding_events_count' && detailedKeys.has('speed_limit_compliance')) &&
-      !(factor === 'phone_use_window_count' && detailedKeys.has('phone_use'))
-    ));
-    return ranked([...detailed, ...nonDuplicateEvents], limit);
+    const eventCoverage = new Map(EVENT_FACTORS.map(({ key, coveredBy }) => [key, coveredBy]));
+    const nonDuplicateEvents = events.filter(({ factor }) => !detailedKeys.has(eventCoverage.get(factor)));
+    return ordered(detailed, nonDuplicateEvents, limit);
   }
 
-  const headlines = ranked(HEADLINE_FACTORS.map((definition) => componentFactor(trip, definition)), limit);
-  return ranked([...headlines, ...events], limit);
+  const headlines = HEADLINE_FACTORS.map((definition) => componentFactor(trip, definition));
+  return ordered(headlines, events, limit);
 }

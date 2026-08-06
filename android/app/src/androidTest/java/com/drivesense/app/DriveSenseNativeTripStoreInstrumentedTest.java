@@ -869,6 +869,49 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
         }
     }
 
+    /**
+     * Sub-second sample gaps must still contribute distance. Integer-truncating the sample
+     * delta to whole seconds turned every gap under 1000 ms into dt = 0, which dropped the
+     * segment from distance entirely, and rounded longer gaps down hard enough to inflate
+     * implied speed past MAX_SPEED_KMH and drop those segments too. The JS engine has always
+     * kept fractional seconds, so the native distance_km silently under-reported against the
+     * JS recompute, and distance_km is the denominator of every per-km score.
+     */
+    @Test
+    public void subSecondSamplesStillAccumulateDistance() throws Exception {
+        DriveSenseAutoTrackingService service = new DriveSenseAutoTrackingService();
+        Method calculateStats = DriveSenseAutoTrackingService.class.getDeclaredMethod(
+            "calculateStats",
+            JSONArray.class,
+            long.class,
+            long.class
+        );
+        calculateStats.setAccessible(true);
+
+        // 40 fixes at 400 ms apart, each ~11.1 m north: about 100 km/h, well inside limits.
+        long startMs = Instant.parse("2026-05-24T10:00:00.000Z").toEpochMilli();
+        JSONArray points = new JSONArray();
+        for (int i = 0; i < 40; i++) {
+            JSONObject point = new JSONObject();
+            point.put("lat", 43.65d + i * 0.0001d);
+            point.put("lng", -79.38d);
+            point.put("speed_kmh", 100d);
+            point.put("accuracy", 5d);
+            point.put("timestamp", Instant.ofEpochMilli(startMs + i * 400L).toString());
+            points.put(point);
+        }
+        long endMs = startMs + 39L * 400L;
+
+        Object stats = calculateStats.invoke(service, points, startMs, endMs);
+        double distanceKm = doubleField(stats, "distanceKm");
+
+        // 39 segments of ~11.1 m is ~0.434 km. Truncating dt to whole seconds produced 0.
+        assertTrue("sub-second samples were dropped from distance", distanceKm > 0.4d);
+        assertTrue("distance overshot the synthetic route", distanceKm < 0.5d);
+        assertEquals(0L, longField(stats, "gapSeconds"));
+        assertTrue(longField(stats, "movingSeconds") > 0L);
+    }
+
     private void assertGoldenScoringAsset(String name) throws Exception {
         JSONObject fixture = loadInstrumentationAsset(name);
         String scoringVersion = fixture.getString("scoring_version");

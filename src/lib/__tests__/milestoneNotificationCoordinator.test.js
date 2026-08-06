@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   processProgression: vi.fn(),
   syncNativeTrips: vi.fn(),
   syncNotifications: vi.fn(),
+  syncCalibrationNotifications: vi.fn(),
+  mirrorCalibrationState: vi.fn(),
   calculateBadges: vi.fn(),
   getSettings: vi.fn(),
   logFailure: vi.fn(),
@@ -25,6 +27,8 @@ vi.mock('@/lib/localTripRepository', () => ({
 }));
 vi.mock('@/lib/notificationService', () => ({
   syncAchievementNotifications: mocks.syncNotifications,
+  syncCalibrationMilestoneNotifications: mocks.syncCalibrationNotifications,
+  mirrorCalibrationStateToNative: mocks.mirrorCalibrationState,
 }));
 vi.mock('@/lib/tripInsights', () => ({
   calculateAchievementBadges: mocks.calculateBadges,
@@ -38,6 +42,7 @@ vi.mock('@/lib/systemLog', () => ({
 
 import {
   reconcileMilestoneNotifications,
+  reconcileMilestonesAfterTripSave,
   syncNativeCompletedTripsAndMilestones,
 } from '@/lib/milestoneNotificationCoordinator';
 
@@ -52,6 +57,8 @@ describe('milestone notification coordinator', () => {
       notificationBadges: [{ id: 'progression_mastery:braking', earned: true }],
     });
     mocks.syncNotifications.mockResolvedValue([{ id: 'first_drive' }]);
+    mocks.syncCalibrationNotifications.mockResolvedValue([]);
+    mocks.mirrorCalibrationState.mockResolvedValue(true);
   });
 
   it('evaluates persisted trip history and sends both badge and progression notifications', async () => {
@@ -119,6 +126,37 @@ describe('milestone notification coordinator', () => {
       { tripId: null },
     );
     expect(mocks.syncNotifications).toHaveBeenCalledOnce();
+  });
+
+  it('notifies for a trip saved in-app without waiting for an app restart', async () => {
+    // An in-app trip goes straight through tripService.create and never
+    // appears in the native import list, so it must not depend on the
+    // native-import path to have its milestones evaluated.
+    const savedTrip = { id: 'in-app-trip', status: 'completed' };
+    mocks.listTrips.mockResolvedValue([savedTrip]);
+
+    await reconcileMilestonesAfterTripSave({ tripId: savedTrip.id });
+
+    expect(mocks.syncNativeTrips).not.toHaveBeenCalled();
+    expect(mocks.processProgression).toHaveBeenCalledWith(
+      [savedTrip],
+      { achievement_notifications: true },
+      { tripId: savedTrip.id },
+    );
+    expect(mocks.syncNotifications).toHaveBeenCalledOnce();
+    // The separate calibration system is evaluated in the same pass.
+    expect(mocks.syncCalibrationNotifications).toHaveBeenCalledOnce();
+  });
+
+  it('never lets a milestone failure propagate out of a trip save', async () => {
+    mocks.listTrips.mockRejectedValue(new Error('history unavailable'));
+
+    await expect(reconcileMilestonesAfterTripSave({ tripId: 't1' })).resolves.toBeNull();
+    expect(mocks.logFailure).toHaveBeenCalledWith(
+      'trip_save_milestone_notification_sync',
+      expect.any(Error),
+      { trip_id: 't1' },
+    );
   });
 
   it('does not hide a successfully imported trip when milestone scheduling fails', async () => {

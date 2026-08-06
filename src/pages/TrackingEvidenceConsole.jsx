@@ -12,6 +12,7 @@ import { limitedTripSummaryQueryOptions, tripDetailQueryOptions } from '@/api/tr
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDistance } from '@/lib/tripEngine';
 import { buildTrackingEvidenceConsoleData } from '@/lib/trackingEvidence';
+import { buildSessionEvidenceRows } from '@/lib/trackingSessionForensics';
 
 const SUMMARY_LIMIT = 50;
 
@@ -52,9 +53,15 @@ export default function TrackingEvidenceConsole() {
     () => buildTrackingEvidenceConsoleData({ trip: selectedTrip, settings }),
     [selectedTrip, settings]
   );
+  const sessionRows = useMemo(
+    () => selectedTrip ? buildSessionEvidenceRows(selectedTrip) : [],
+    [selectedTrip]
+  );
   const activeRows = deferredTab === 'sources'
     ? data.sourceRows
-    : deferredTab === 'provenance'
+    : deferredTab === 'session'
+      ? sessionRows
+      : deferredTab === 'provenance'
       ? data.provenanceRows.map((row) => ({
         ...row,
         kind: 'provenance',
@@ -117,6 +124,7 @@ export default function TrackingEvidenceConsole() {
                 {[
                   ['metrics', 'Metrics'],
                   ['sources', 'Sources'],
+                  ['session', 'Session'],
                   ['provenance', 'Provenance'],
                 ].map(([value, label]) => (
                   <button

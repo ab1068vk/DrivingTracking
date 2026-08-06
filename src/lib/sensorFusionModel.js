@@ -1,7 +1,7 @@
-import { EVENT_TYPES } from '@/lib/tripEngine';
-import { clamp, pearsonCorrelation } from '@/lib/mathUtils';
+import { EVENT_TYPES } from '@/lib/scoring/eventTypes';
+import { clamp, pearsonCorrelation, STANDARD_GRAVITY_MS2 } from '@/lib/mathUtils';
 
-const MS2_PER_G = 9.80665;
+const MS2_PER_G = STANDARD_GRAVITY_MS2;
 const MAX_SAMPLE_AGE_MS = 2 * 60 * 60 * 1000;
 const RAD_TO_DEG = 180 / Math.PI;
 
@@ -66,10 +66,17 @@ export function normalizeMotionSample(input = {}) {
   const linearMagnitudeMs2 = providedLinearMagnitude ?? inferredLinearMagnitudeMs2;
   const gzDegS = finiteNumberOrNull(input.gz_deg_s) ?? (gz != null ? gz * RAD_TO_DEG : null);
   const hasGyroAxes = gx != null && gy != null && gz != null;
+  // gx/gy/gz are gyroscope rad/s and need converting; DeviceMotion
+  // `rotationRate` alpha/beta/gamma are already deg/s per spec. With neither
+  // present there is no rotation reading at all - report null rather than a
+  // 0 deg/s that renders as a measured "no rotation".
+  const hasBrowserRotation = alpha != null || beta != null || gamma != null;
   const rotationMagnitudeDegS = finiteNumberOrNull(input.rotation_magnitude_deg_s) ?? (
     hasGyroAxes
       ? Math.sqrt(gx * gx + gy * gy + gz * gz) * RAD_TO_DEG
-      : Math.sqrt((alpha ?? 0) * (alpha ?? 0) + (beta ?? 0) * (beta ?? 0) + (gamma ?? 0) * (gamma ?? 0))
+      : hasBrowserRotation
+        ? Math.sqrt((alpha ?? 0) * (alpha ?? 0) + (beta ?? 0) * (beta ?? 0) + (gamma ?? 0) * (gamma ?? 0))
+        : null
   );
 
   return {
@@ -87,7 +94,7 @@ export function normalizeMotionSample(input = {}) {
     gamma: gamma ?? 0,
     magnitude_ms2: round2(magnitudeMs2),
     linear_magnitude_ms2: round2(linearMagnitudeMs2),
-    rotation_magnitude_deg_s: round2(rotationMagnitudeDegS),
+    rotation_magnitude_deg_s: rotationMagnitudeDegS != null ? round2(rotationMagnitudeDegS) : null,
   };
 }
 
@@ -165,11 +172,14 @@ export function buildSensorFusionSummary(samples = [], routePoints = [], activit
     .filter((sample) => new Date(sample.timestamp).getTime() >= cutoff);
   const phoneOrientation = calibratePhoneOrientation(valid, events);
   if (!valid.length) {
+    // Nothing was sampled, so nothing was measured. Reporting 0 here rendered
+    // as "peak 0 m/s2 - phone movement 0/100", which reads as a calm trip
+    // rather than as an absent sensor.
     return {
       sample_count: 0,
-      peak_linear_ms2: 0,
-      peak_rotation_deg_s: 0,
-      phone_movement_score: 0,
+      peak_linear_ms2: null,
+      peak_rotation_deg_s: null,
+      phone_movement_score: null,
       harsh_motion_count: 0,
       impact_like_count: 0,
       activity_type: activity?.type || 'unknown',
@@ -179,29 +189,40 @@ export function buildSensorFusionSummary(samples = [], routePoints = [], activit
     };
   }
 
-  const linear = valid.map((sample) => sample.linear_magnitude_ms2);
-  const rotation = valid.map((sample) => sample.rotation_magnitude_deg_s);
-  const peakLinear = safeMax(linear);
-  const peakRotation = safeMax(rotation);
+  const linear = valid.map((sample) => sample.linear_magnitude_ms2).filter(Number.isFinite);
+  // Samples with no rotation source carry null; they must not be averaged in
+  // as zeros, and a trip with no rotation reading at all reports null.
+  const rotation = valid.map((sample) => sample.rotation_magnitude_deg_s).filter(Number.isFinite);
+  const peakLinear = linear.length ? safeMax(linear) : null;
+  const peakRotation = rotation.length ? safeMax(rotation) : null;
   const harshMotionCount = valid.filter((sample) => sample.linear_magnitude_ms2 >= 5.5).length;
-  const impactLikeCount = valid.filter((sample) => sample.linear_magnitude_ms2 >= 14 && sample.rotation_magnitude_deg_s >= 120).length;
+  const impactLikeCount = valid.filter((sample) => (
+    sample.linear_magnitude_ms2 >= 14 && Number(sample.rotation_magnitude_deg_s) >= 120
+  )).length;
+  // `harshMotionCount` is an absolute count, so feeding it in directly made a
+  // long drive accumulate "phone movement" from duration alone. Use the share
+  // of samples that were harsh instead, which is duration-independent.
+  const harshMotionRatio = valid.length ? harshMotionCount / valid.length : 0;
   const phoneMovementScore = clamp(Math.round(
     avg(linear) * 5 +
     avg(rotation) * 0.08 +
-    harshMotionCount * 2
+    harshMotionRatio * 100 * 0.4
   ), 0, 100);
   const routePointCount = Array.isArray(routePoints) ? routePoints.length : 0;
 
   return {
     sample_count: valid.length,
-    peak_linear_ms2: round2(peakLinear),
-    peak_rotation_deg_s: round2(peakRotation),
+    peak_linear_ms2: peakLinear != null ? round2(peakLinear) : null,
+    peak_rotation_deg_s: peakRotation != null ? round2(peakRotation) : null,
     phone_movement_score: phoneMovementScore,
     harsh_motion_count: harshMotionCount,
     impact_like_count: impactLikeCount,
     activity_type: activity?.type || 'unknown',
     activity_confidence: activity?.confidence || 0,
+    // 'quality' is a raw sample-count threshold, not an assessment of how good
+    // the readings were.
     quality: valid.length >= Math.min(120, Math.max(20, routePointCount * 2)) ? 'good' : 'partial',
+    quality_basis: 'sample_count',
     phone_orientation: phoneOrientation,
   };
 }

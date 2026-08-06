@@ -4,6 +4,7 @@ import {
   buildCoachRouteOptions,
   buildCoachSegmentInsights,
   buildCoachingEffectiveness,
+  buildCoachingResponsivenessSummary,
   buildCoachProgramProgress,
   buildCoachRecommendations,
   buildGroundedCoachAnswer,
@@ -87,6 +88,59 @@ describe('coach programs', () => {
     expect(progress.improvement).toBe(50);
     expect(progress.latestReview.tripId).toBe('n2');
     expect(progress.latestReview.metTarget).toBe(true);
+  });
+
+  // Regression: trend, needsExtension, and nextReviewIn were once nested inside the
+  // latestReview literal, so progress.trend was permanently undefined and the
+  // "am I improving?" answer always took the pessimistic branch.
+  it('reports trend, needsExtension, and nextReviewIn on the progress object itself', () => {
+    const program = createCoachProgram({
+      focusId: 'harsh_brakes',
+      difficulty: 'standard',
+      contextMode: 'comparable',
+      targetTripCount: 3,
+      trips: baselineTrips,
+      now: new Date('2026-06-03T12:00:00.000Z'),
+    });
+    const after = [
+      trip({ id: 'n1', start: '2026-06-04T08:00:00.000Z', harsh: 1 }),
+      trip({ id: 'n2', start: '2026-06-05T08:00:00.000Z', harsh: 1 }),
+    ];
+    const trips = [...after, ...baselineTrips];
+
+    const progress = buildCoachProgramProgress(program, trips);
+
+    expect(progress.improvement).toBeGreaterThan(0);
+    expect(progress.trend).toBe('improving');
+    expect(progress.needsExtension).toBe(false);
+    expect(progress.nextReviewIn).toBe(1);
+    expect(progress.latestReview.trend).toBeUndefined();
+
+    const answer = buildGroundedCoachAnswer('Am I improving?', {
+      trips,
+      program,
+      progress,
+    });
+    expect(answer.inference).toContain('intended direction');
+  });
+
+  it('reports a declining trend when the cohort gets worse', () => {
+    const program = createCoachProgram({
+      focusId: 'harsh_brakes',
+      difficulty: 'standard',
+      contextMode: 'comparable',
+      targetTripCount: 3,
+      trips: baselineTrips,
+      now: new Date('2026-06-03T12:00:00.000Z'),
+    });
+    const worse = [
+      trip({ id: 'n1', start: '2026-06-04T08:00:00.000Z', harsh: 5 }),
+      trip({ id: 'n2', start: '2026-06-05T08:00:00.000Z', harsh: 5 }),
+    ];
+
+    const progress = buildCoachProgramProgress(program, [...worse, ...baselineTrips]);
+
+    expect(progress.trend).toBe('declining');
   });
 
   it('supports higher-is-better consistency programs and graduation', () => {
@@ -183,6 +237,51 @@ describe('coach programs', () => {
     expect(adaptive.difficulty).toBe('gentle');
     expect(adaptive.promptBudget).toBe(1);
     expect(recommendation.whyNow).toContain('feedback');
+  });
+
+  it('summarizes per-focus responsiveness and discloses fallback baselines', () => {
+    const summary = buildCoachingResponsivenessSummary({
+      history: [
+        {
+          focusId: 'harsh_brakes',
+          context: { usedFallbackBaseline: true },
+          result: { graduated: true, improvement: 40 },
+        },
+        {
+          focusId: 'harsh_brakes',
+          context: { usedFallbackBaseline: false },
+          result: { graduated: false, improvement: -10 },
+        },
+        {
+          focusId: 'speeding',
+          context: { usedFallbackBaseline: false },
+          result: { graduated: true, improvement: 20 },
+        },
+      ],
+      feedback: [],
+    });
+
+    expect(summary.completed).toBe(3);
+    expect(summary.graduated).toBe(2);
+    expect(summary.improved).toBe(2);
+    expect(summary.measuredCount).toBe(3);
+    expect(summary.fallbackBaselineCount).toBe(1);
+    expect(summary.focuses.map((item) => item.focusId)).toEqual(['harsh_brakes', 'speeding']);
+    expect(summary.focuses[0]).toMatchObject({
+      label: 'Progressive Braking',
+      programCount: 2,
+      graduatedCount: 1,
+      graduationRate: 50,
+      averageImprovement: 15,
+    });
+  });
+
+  it('returns an empty responsiveness summary for a store with no history', () => {
+    const summary = buildCoachingResponsivenessSummary({});
+
+    expect(summary.completed).toBe(0);
+    expect(summary.fallbackBaselineCount).toBe(0);
+    expect(summary.focuses).toEqual([]);
   });
 
   it('automatically graduates a completed target into history and preserves the result moment', () => {

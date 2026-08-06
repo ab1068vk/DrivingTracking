@@ -27,6 +27,8 @@ Run during the 2026-07-09 hardening pass:
 ## Known Limitations
 
 - Advanced Tracking Mode does not create a new tracking engine, storage backend, score engine, map engine, or voice engine. Any limitations in the shared local tracking pipeline remain shared by Coaching Mode and Tracking Mode.
+- The tracking cockpit now embeds the shared Leaflet `TripMap` (Map tab) and a provisional in-drive score panel. Both reuse the shared engines; the SVG `LiveRoutePlot` stays as the tile-free/offline path and as the map-failure fallback. The provisional score is rendered through `scoreDisplay`'s approximate (`~`) path, is never persisted, and must not be compared with completed-trip scores.
+- Capture fidelity is **not** governed by `experience_mode`. `capture_fidelity` is a separate setting (`docs/CAPTURE_FIDELITY.md`) precisely so that switching presentation mode never changes what lands on disk — trips recorded in either mode stay comparable.
 - Technical export quality depends on retained local trip detail. Summary-only private trips and expired route data intentionally block raw replay and coordinate export workflows.
 - Optional road-data integrations remain governed by existing local settings and consent/privacy gates; the tracking consoles report unavailable or blocked evidence rather than calling third-party services directly.
 - The 3D compare/replay workflow uses the existing 3D availability and retained-route checks. It does not synthesize route geometry for trips with expired or summary-only route data.

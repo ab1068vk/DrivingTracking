@@ -7,7 +7,7 @@ import {
 import { withRetry } from '@/lib/retry';
 import { weightedBlend } from '@/lib/tripEngine';
 import { scoringValue } from '@/lib/scoringConstants';
-import { getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
+import { isPointInPrivacyZone, resolvePrivacyZonesForLookup } from '@/lib/privacyZones';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { privacyGatedFetch } from '@/lib/privacyGatedFetch';
 import { enqueueLocationRequest } from '@/lib/requestObfuscator';
@@ -251,6 +251,7 @@ const sourceForWeatherContext = (weatherContext = null) => {
     'empty_route',
     'manual_required',
     'no_hourly_match',
+    'privacy_zones_unavailable',
     'skipped_privacy',
     'unavailable',
   ]);
@@ -500,7 +501,8 @@ export async function resolveCachedWeatherContextForTrip(routePoints = [], start
   if (isHeightenedPrivacyMode(settings)) return unavailableWeatherContext('disabled_heightened_privacy');
   if (settings.weather_context_enabled === false) return unavailableWeatherContext('disabled');
 
-  const privacyZones = getPrivacyZones(settings);
+  const { zones: privacyZones, failed: privacyZonesUnavailable } = await resolvePrivacyZonesForLookup(settings);
+  if (privacyZonesUnavailable) return unavailableWeatherContext('privacy_zones_unavailable');
   const center = privacyZones.length ? safeWeatherPoint(routePoints, privacyZones) : midpoint(routePoints);
   if (!center) {
     const hasRoutePoints = Array.isArray(routePoints) && routePoints.length > 0;
@@ -542,7 +544,24 @@ export async function fetchWeatherContextForTrip(routePoints = [], startTime, en
     recordSystemEvent('weather_context_skipped', { status: 'disabled' }, { category: 'weather' });
     return unavailableWeatherContext('disabled');
   }
-  const privacyZones = getPrivacyZones(settings);
+  const { zones: privacyZones, failed: privacyZonesUnavailable } = await resolvePrivacyZonesForLookup(settings);
+  throwIfWeatherRequestAborted(signal);
+  if (privacyZonesUnavailable) {
+    recordSystemEvent('weather_context_unavailable', {
+      status: 'privacy_zones_unavailable',
+      reason: 'Privacy zones are configured but could not be read, so the weather lookup was skipped.',
+    }, { category: 'weather', severity: 'warn', title: 'Operation failed: weather_context' });
+    await privacyGatedFetch('open-meteo', { url: 'https://api.open-meteo.com/v1/forecast' }, {
+      type: 'Weather lookup',
+      coordinateDisclosure: 'blocked',
+      block: {
+        reason: 'privacy_zones_unavailable',
+        privacyVerificationEvidence: ['privacy zones are configured but could not be read before send'],
+        protections: ['privacy-zone guard unavailable - request blocked'],
+      },
+    });
+    return unavailableWeatherContext('privacy_zones_unavailable');
+  }
   const center = privacyZones.length ? safeWeatherPoint(routePoints, privacyZones) : midpoint(routePoints);
   if (!center) {
     const hasRoutePoints = Array.isArray(routePoints) && routePoints.length > 0;

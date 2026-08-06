@@ -71,6 +71,12 @@ const ACHIEVEMENT_BASE_ID = 3000;
 export const MAX_ACHIEVEMENT_NOTIF_IDS = 999;
 const ACHIEVEMENT_GROUP_ID = ACHIEVEMENT_BASE_ID + MAX_ACHIEVEMENT_NOTIF_IDS;
 const NOTIFIED_ACHIEVEMENTS_KEY = 'drivesense_notified_achievements';
+// Personal detection calibration is a separate system from the Milestones
+// page, so it gets its own dedupe store, ID range, and settings toggle.
+const NOTIFIED_CALIBRATION_KEY = 'drivesense_notified_calibration_milestones_v1';
+// Achievements occupy 3000-3999 (ACHIEVEMENT_BASE_ID + MAX_ACHIEVEMENT_NOTIF_IDS)
+// and per-trip alerts occupy the 4000s, so calibration sits above both.
+const CALIBRATION_MILESTONE_BASE_ID = 5000;
 const ACHIEVEMENT_NOTIFICATION_IDS_KEY = 'drivesense_achievement_notification_ids_v1';
 const NOTIFICATION_DEDUPE_KEY = 'drivesense_notification_dedupe_v1';
 const PHONE_NOTIF_LAST_KEY = 'drivesense_phone_notif_last_ms';
@@ -1273,4 +1279,121 @@ export async function syncAchievementNotifications(achievements = [], { requestP
 
 export function getNotifiedAchievementIds() {
   return [...readNotifiedAchievementIds()];
+}
+
+const readNotifiedCalibrationIds = () => {
+  try {
+    const raw = localStorage.getItem(NOTIFIED_CALIBRATION_KEY);
+    const ids = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(ids) ? ids : []);
+  } catch {
+    return new Set();
+  }
+};
+
+/** Stable per-milestone notification id so a repeat cannot stack duplicates. */
+const calibrationNotificationId = (milestoneId) => {
+  let hash = 0;
+  for (let index = 0; index < milestoneId.length; index += 1) {
+    hash = (hash * 31 + milestoneId.charCodeAt(index)) % 500;
+  }
+  return CALIBRATION_MILESTONE_BASE_ID + hash;
+};
+
+/**
+ * Notify for newly reached personal detection-calibration milestones.
+ *
+ * Separate from syncAchievementNotifications: different system, different
+ * dedupe store, and gated by its own `calibration_notifications` setting so
+ * turning off Milestones-page notifications does not silence calibration
+ * progress (and vice versa).
+ *
+ * @param {Array<{id:string,title:string,body:string}>} milestones
+ * @returns {Promise<Array<{id:string,title:string,body:string}>>} newly notified
+ */
+export async function syncCalibrationMilestoneNotifications(milestones = [], { requestPermission = false } = {}) {
+  const list = Array.isArray(milestones) ? milestones.filter((item) => item?.id) : [];
+  if (!list.length) return [];
+
+  const notifiedIds = readNotifiedCalibrationIds();
+  const fresh = list.filter((item) => !notifiedIds.has(item.id));
+  if (!fresh.length) return [];
+
+  if (!isNativePlatform() || !notificationsEnabled('calibration_notifications')) {
+    // Still record them so the user is not notified for old progress the
+    // first time they enable the toggle or install on a new device.
+    fresh.forEach((item) => notifiedIds.add(item.id));
+    writeNotificationState(
+      NOTIFIED_CALIBRATION_KEY,
+      JSON.stringify([...notifiedIds]),
+      'notification_notified_calibration_persist'
+    );
+    return fresh;
+  }
+
+  const permission = await LocalNotifications.checkPermissions();
+  const granted = permission.display === 'granted' || (requestPermission && await requestNotificationPermission());
+  if (!granted) return [];
+
+  const notifications = fresh.map((item) => ({
+    id: calibrationNotificationId(item.id),
+    title: item.title,
+    body: item.body,
+    channelId: COACHING_CHANNEL_ID,
+    extra: { type: 'calibration_milestone', milestoneId: item.id },
+  }));
+
+  try {
+    await LocalNotifications.schedule({ notifications });
+    recordSystemEvent('calibration_milestone_notifications_scheduled', {
+      notification_count: notifications.length,
+      milestone_ids: fresh.map((item) => item.id),
+    }, { category: 'notification', source: 'native', title: 'Calibration milestone notifications scheduled' });
+  } catch (error) {
+    logSystemFailure('calibration_milestone_notification_schedule', error, {
+      notification_count: notifications.length,
+      milestone_ids: fresh.map((item) => item.id),
+    });
+    throw error;
+  }
+
+  fresh.forEach((item) => notifiedIds.add(item.id));
+  writeNotificationState(
+    NOTIFIED_CALIBRATION_KEY,
+    JSON.stringify([...notifiedIds]),
+    'notification_notified_calibration_persist'
+  );
+  return fresh;
+}
+
+export function getNotifiedCalibrationMilestoneIds() {
+  return [...readNotifiedCalibrationIds()];
+}
+
+/**
+ * Mirror calibration progress into native storage so a milestone crossed by a
+ * background-recorded trip is reported while the app is closed. JavaScript
+ * remains the authority: native only adds the trip that just finished and
+ * compares the counters against the targets sent here.
+ *
+ * @param {{tripsAnalyzed:number, kmAnalyzed:number}} progress
+ * @param {{tripsTarget:number, kmTarget:number}} targets
+ */
+export async function mirrorCalibrationStateToNative(progress, targets) {
+  if (!isNativePlatform()) return false;
+  try {
+    await ActivityRecognition.setCalibrationMilestoneState({
+      tripsAnalyzed: Math.max(0, Math.round(Number(progress?.tripsAnalyzed) || 0)),
+      kmAnalyzed: Math.max(0, Number(progress?.kmAnalyzed) || 0),
+      tripsTarget: Math.max(0, Math.round(Number(targets?.tripsTarget) || 0)),
+      kmTarget: Math.max(0, Number(targets?.kmTarget) || 0),
+      notified: [...readNotifiedCalibrationIds()],
+    });
+    return true;
+  } catch (error) {
+    logSystemFailure('calibration_milestone_native_mirror', error, {
+      trips_analyzed: progress?.tripsAnalyzed ?? null,
+    });
+    return false;
+  }
 }

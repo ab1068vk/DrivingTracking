@@ -114,11 +114,18 @@ import {
   WAS_DRIVER_OPTIONS,
 } from '@/lib/calibrationLabeling';
 import { formatEstimatedScore, formatScoreWithProvenance } from '@/lib/scoreDisplay';
+import {
+  formatConfidence,
+  formatEventValue,
+  formatMeasured,
+  formatSpeedMeasured,
+} from '@/lib/measurementDisplay';
+import { eventFeedbackKey } from '@/lib/eventFeedbackKeys';
 import { formatDataSourceLabel } from '@/lib/metricRegistry';
 import { tripScoreDeltaSummary } from '@/lib/speedLimitDisplay';
 import { summarizeTripSpeedLimitIntelligence } from '@/lib/speedLimitIntelligence';
 import { getNightClassificationExplanation, getPremiumTripDetailPresentation } from '@/lib/premiumTripPresentation';
-import { recordSystemEvent } from '@/lib/systemLog';
+import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import premiumTripPhoneRisk from '@/assets/premium-trip-phone-risk.webp';
 import premiumTripPhoneSafe from '@/assets/premium-trip-phone-safe.webp';
@@ -136,7 +143,21 @@ const roadTypeConfig = {
   urban: { label: 'Urban', icon: Building, className: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800/50' },
   mixed: { label: 'Mixed', icon: Shuffle, className: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700' },
   residential: { label: 'Residential', icon: Home, className: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800/50' },
+  // Rural trips previously rendered no chip at all even though the tag
+  // suggester still offered a `rural` tag for them.
+  rural: { label: 'Rural', icon: Milestone, className: 'bg-lime-50 text-lime-700 border-lime-200 dark:bg-lime-950/30 dark:text-lime-300 dark:border-lime-800/50' },
 };
+
+/**
+ * `classifyRoadType` returns 'urban' as its terminal default and also when a
+ * trip produced no usable speed samples at all, flagging the latter with
+ * `road_type_source === 'insufficient_data'`. Rendering that as a confident
+ * "Urban" chip states a road class that was never observed.
+ */
+const roadTypeWasMeasured = (trip = {}) => (
+  trip.road_type_source !== 'insufficient_data' &&
+  Number(trip.road_type_confidence) > 0
+);
 
 const roadTypeSourceLabel = {
   user_confirmed: 'Your confirmed road type',
@@ -393,6 +414,28 @@ export default function TripDetail() {
   const metadataSectionRef = useRef(null);
   const speedLimitReviewSectionRef = useRef(null);
   const trip3dAvailabilityLogRef = useRef('');
+  // One owned timer for the transient feedback banner. Previously each action
+  // called a bare setTimeout that was never cleared, so reviewing event A then
+  // event B nine seconds later destroyed B's undo after one second, and a
+  // pending timer kept firing after the page unmounted.
+  const feedbackStatusTimerRef = useRef(null);
+  const feedbackInFlightRef = useRef(false);
+  const clearFeedbackStatusTimer = useCallback(() => {
+    if (feedbackStatusTimerRef.current) {
+      clearTimeout(feedbackStatusTimerRef.current);
+      feedbackStatusTimerRef.current = null;
+    }
+  }, []);
+  const showFeedbackStatus = useCallback((message, { durationMs = 6000, clearUndo = false } = {}) => {
+    clearFeedbackStatusTimer();
+    setFeedbackStatus(message);
+    feedbackStatusTimerRef.current = setTimeout(() => {
+      feedbackStatusTimerRef.current = null;
+      setFeedbackStatus('');
+      if (clearUndo) setLastFeedbackUndo(null);
+    }, durationMs);
+  }, [clearFeedbackStatusTimer]);
+  useEffect(() => clearFeedbackStatusTimer, [clearFeedbackStatusTimer]);
   const invalidateTripLists = () => {
     qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
   };
@@ -537,6 +580,17 @@ export default function TripDetail() {
     },
   });
   const feedbackMutation = useMutation({
+    // `disabled={feedbackMutation.isPending}` only takes effect after a
+    // re-render, so two fast taps both entered mutationFn and both read the
+    // same pre-write feedback - leaving Undo holding a stale verdict. This ref
+    // flips synchronously, before the second tap can start.
+    onMutate: () => {
+      if (feedbackInFlightRef.current) throw new Error('A review is already being saved.');
+      feedbackInFlightRef.current = true;
+    },
+    onSettled: () => {
+      feedbackInFlightRef.current = false;
+    },
     mutationFn: async (/** @type {{eventKey:string, event:any, verdict:string|null, scoreAffecting?:boolean, isUndo?:boolean}} */ vars) => {
       const latestTrip = await tripService.getById(id);
       const existing = { ...(latestTrip?.event_feedback || {}) };
@@ -560,7 +614,11 @@ export default function TripDetail() {
       ));
       const savedTrip = await tripService.update(id, {
         event_feedback: existing,
-        needs_rescore: vars.scoreAffecting !== false,
+        // A detection note never triggers a rescore, but it must not clear a
+        // rescore that was already pending for some other reason either.
+        ...(vars.scoreAffecting === false
+          ? (latestTrip?.needs_rescore ? { needs_rescore: true } : {})
+          : { needs_rescore: true }),
         feedback_reviewed_at: new Date().toISOString(),
         ...(shouldRestorePhoneEvidence && !phoneEventAlreadyPresent
           ? { phone_use_events: [...currentPhoneEvents, vars.event] }
@@ -592,15 +650,20 @@ export default function TripDetail() {
         setLastFeedbackUndo(null);
       }
 
-      if (vars.verdict == null) {
-        setFeedbackStatus(vars.scoreAffecting === false ? 'Detection note removed.' : 'Event review removed and the trip was re-scored.');
-      } else if (vars.scoreAffecting === false) {
-        setFeedbackStatus(vars.verdict === 'wrong'
-          ? 'Detection flagged for review. This event type does not change the score.'
-          : 'Detection note saved. This event type does not change the score.');
-      } else if (result?.rescoreResult?.skipped) {
-        setFeedbackStatus('Review saved, but this trip could not be re-scored (' + String(result.rescoreResult.skippedReason || 'route data unavailable').replace(/_/g, ' ') + ').');
-      } else {
+      const statusMessage = (() => {
+        if (vars.verdict == null) {
+          return vars.scoreAffecting === false
+            ? 'Detection note removed.'
+            : 'Event review removed and the trip was re-scored.';
+        }
+        if (vars.scoreAffecting === false) {
+          return vars.verdict === 'wrong'
+            ? 'Detection flagged for review. This event type does not change the score.'
+            : 'Detection note saved. This event type does not change the score.';
+        }
+        if (result?.rescoreResult?.skipped) {
+          return 'Review saved, but this trip could not be re-scored (' + String(result.rescoreResult.skippedReason || 'route data unavailable').replace(/_/g, ' ') + ').';
+        }
         const before = result?.rescoreResult?.before?.overall;
         const after = result?.rescoreResult?.after?.overall;
         const scoreChange = before == null || after == null
@@ -608,17 +671,22 @@ export default function TripDetail() {
           : before === after
             ? 'Score stayed ' + after + '.'
             : 'Score ' + before + ' → ' + after + '.';
-        setFeedbackStatus(vars.verdict === 'wrong'
+        return vars.verdict === 'wrong'
           ? 'Marked wrong and removed from scoring. ' + scoreChange
-          : 'Marked accurate and kept in scoring. ' + scoreChange);
-      }
-      setTimeout(() => {
-        setFeedbackStatus('');
-        setLastFeedbackUndo(null);
-      }, 10000);
+          : 'Marked accurate and kept in scoring. ' + scoreChange;
+      })();
+      showFeedbackStatus(statusMessage, { durationMs: 10000, clearUndo: true });
     },
-    onError: (error) => {
-      setFeedbackStatus(error?.message || 'Could not save and apply this event review.');
+    onError: (error, vars) => {
+      // Surface AND record it. This used to set local state only, so a failed
+      // review left no trace anywhere for diagnosis.
+      logSystemFailure('trip_event_feedback_save', error, {
+        trip_id: id,
+        event_type: vars?.event?.type || null,
+        verdict: vars?.verdict ?? null,
+        is_undo: vars?.isUndo === true,
+      });
+      showFeedbackStatus(error?.message || 'Could not save and apply this event review.', { durationMs: 8000 });
       setLastFeedbackUndo(null);
     },
   });
@@ -682,12 +750,14 @@ export default function TripDetail() {
       invalidateTripLists();
       qc.invalidateQueries({ queryKey: ['map-trips'] });
       const affectedCount = Array.isArray(result?.affectedTrips) ? result.affectedTrips.length : 0;
-      setFeedbackStatus(`Saved road speed. Re-scored ${Math.max(1, affectedCount)} matching trip${Math.max(1, affectedCount) === 1 ? '' : 's'} locally. ${tripScoreDeltaSummary(result?.beforeTrip, updatedTrip)}`);
-      setTimeout(() => setFeedbackStatus(''), 6000);
+      // Do not floor this at 1 - claiming "Re-scored 1 matching trip" when
+      // nothing was re-scored is a false report about the user's own data.
+      showFeedbackStatus(affectedCount === 0
+        ? `Saved road speed. No other trips were affected. ${tripScoreDeltaSummary(result?.beforeTrip, updatedTrip)}`
+        : `Saved road speed. Re-scored ${affectedCount} matching trip${affectedCount === 1 ? '' : 's'} locally. ${tripScoreDeltaSummary(result?.beforeTrip, updatedTrip)}`);
     },
     onError: () => {
-      setFeedbackStatus('The speed was saved, but this trip could not be re-scored right now.');
-      setTimeout(() => setFeedbackStatus(''), 6000);
+      showFeedbackStatus('The speed was saved, but this trip could not be re-scored right now.');
     },
   });
   const handleSpeedLimitReviewResolved = useCallback((result = {}) => {
@@ -711,16 +781,14 @@ export default function TripDetail() {
       if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
       qc.invalidateQueries({ queryKey: ['trip', id] });
       invalidateTripLists();
-      setFeedbackStatus(result?.skipped
+      showFeedbackStatus(result?.skipped
         ? 'Could not re-score this trip (' + String(result.skippedReason || 'route data unavailable').replace(/_/g, ' ') + ').'
         : result?.before?.overall === result?.after?.overall
           ? 'Trip re-scored. Score stayed ' + (result?.after?.overall ?? 'unavailable') + '.'
           : 'Trip re-scored. Score ' + (result?.before?.overall ?? 'unavailable') + ' → ' + (result?.after?.overall ?? 'unavailable') + '.');
-      setTimeout(() => setFeedbackStatus(''), 7000);
     },
     onError: () => {
-      setFeedbackStatus('Could not re-score this trip right now.');
-      setTimeout(() => setFeedbackStatus(''), 5000);
+      showFeedbackStatus('Could not re-score this trip right now.');
     },
   });
   const contextMutation = useMutation({
@@ -757,20 +825,18 @@ export default function TripDetail() {
       qc.invalidateQueries({ queryKey: ['map-trips'] });
       const weather = updatedTrip?.weather_context;
       if (updatedTrip?.weather_lookup_kept_confirmed) {
-        setFeedbackStatus('Open-Meteo had no usable observation, so the condition you confirmed locally was kept.');
+        showFeedbackStatus('Open-Meteo had no usable observation, so the condition you confirmed locally was kept.');
       } else if (['open_meteo', 'user_confirmed'].includes(weather?.source) && weather?.condition) {
-        setFeedbackStatus(`Weather updated to ${String(weather.condition).replace(/_/g, ' ')}.`);
+        showFeedbackStatus(`Weather updated to ${String(weather.condition).replace(/_/g, ' ')}.`);
       } else if (weather?.status === 'skipped_privacy') {
-        setFeedbackStatus('No weather request was sent because every route point is inside a privacy-zone buffer.');
+        showFeedbackStatus('No weather request was sent because every route point is inside a privacy-zone buffer.');
       } else {
-        setFeedbackStatus('Weather lookup finished, but no matching weather observation was available.');
+        showFeedbackStatus('Weather lookup finished, but no matching weather observation was available.');
       }
-      setTimeout(() => setFeedbackStatus(''), 6000);
     },
     onError: (error) => {
       setOsmFetchStatus(error?.message || 'Could not get weather');
-      setFeedbackStatus(error?.message || 'Could not get weather. Check your connection and try again.');
-      setTimeout(() => setFeedbackStatus(''), 7000);
+      showFeedbackStatus(error?.message || 'Could not get weather. Check your connection and try again.');
     },
     onSettled: () => {
       setTimeout(() => setOsmFetchStatus(''), 2500);
@@ -797,12 +863,10 @@ export default function TripDetail() {
       invalidateTripLists();
       qc.invalidateQueries({ queryKey: ['map-trips'] });
       setManualWeatherCondition(String(updatedTrip?.weather_context?.condition || ''));
-      setFeedbackStatus('Local weather condition saved and the trip was re-scored on this device.');
-      setTimeout(() => setFeedbackStatus(''), 6000);
+      showFeedbackStatus('Local weather condition saved and the trip was re-scored on this device.');
     },
     onError: (error) => {
-      setFeedbackStatus(error?.message || 'Could not save the local weather condition.');
-      setTimeout(() => setFeedbackStatus(''), 6000);
+      showFeedbackStatus(error?.message || 'Could not save the local weather condition.');
     },
   });
   const calibrationSurveyMutation = useMutation({
@@ -895,7 +959,9 @@ export default function TripDetail() {
     if (!trip) return [];
 
     const points = trip.route_points || [];
-    const zones = inferSpeedZones(points);
+    // Must use the same thresholds as buildSpeedLimitSourceBreakdown, or the
+    // two halves of the speed-zone card describe different zone boundaries.
+    const zones = inferSpeedZones(points, buildDrivingThresholds(settings));
     const zoneForIndex = createZoneLookup(zones);
     const byZone = new Map();
     for (let i = 1; i < points.length; i++) {
@@ -916,7 +982,7 @@ export default function TripDetail() {
       byZone.set(key, current);
     }
     return [...byZone.values()].sort((a, b) => a.inferredZoneKmh - b.inferredZoneKmh);
-  }, [trip]);
+  }, [trip, settings]);
   const fatigueHeatmapData = useMemo(() => (
     trip ? buildFatigueHeatmapData(trip) : []
   ), [trip]);
@@ -1067,6 +1133,10 @@ export default function TripDetail() {
 
   const tripVehicle = vehicles.find((vehicle) => String(vehicle.id) === String(trip.vehicle_id));
   const economics = estimateTripEconomics(trip, tripVehicle, settings);
+  // calculateFatigueRisk is a multi-trip aggregate. Given a single trip it
+  // reduces to a duration threshold and reads neither `segment_scores` nor
+  // `fatigue_progression` - the very fields charted below it - so it is
+  // labelled as the duration flag it actually is.
   const fatigueRisk = calculateFatigueRisk([trip], settings);
   const tripTags = normalizeTripTags(trip);
   const occupiedExclusiveTagCategories = new Set(tripTags
@@ -1140,8 +1210,11 @@ export default function TripDetail() {
     }));
     setCustomTagDraft('');
   };
-  const roadCfg = roadTypeConfig[trip.road_type];
-  const dominantRoadCfg = roadTypeConfig[trip.dominant_road_type] || roadCfg;
+  const roadTypeMeasured = roadTypeWasMeasured(trip);
+  const roadCfg = roadTypeMeasured ? roadTypeConfig[trip.road_type] : null;
+  const dominantRoadCfg = roadTypeMeasured
+    ? (roadTypeConfig[trip.dominant_road_type] || roadCfg)
+    : null;
   const RoadIcon = roadCfg?.icon;
   const DominantRoadIcon = dominantRoadCfg?.icon;
   const roadTypeScores = [
@@ -1195,9 +1268,11 @@ export default function TripDetail() {
   const mapMatchingContext = trip.map_matching_context || null;
   const mapMatchedViaPublicOsrmDemo = mapMatchingContext?.isOsrmDemoUrl === true &&
     ['matched', 'partial_matched', 'cache_hit'].includes(mapMatchingContext?.status);
+  // The overlay renders from any point carrying a finite limit, so gating the
+  // button on two specific sources greyed it out for trips whose limits came
+  // from a regional default or learned local knowledge.
   const rawSpeedLimitPoints = (trip.route_points || []).filter((point) => (
-    ['openstreetmap', 'osm_highway_default'].includes(point.speed_limit_source) &&
-    Number.isFinite(Number(point.speed_limit_kmh))
+    Number.isFinite(Number(point.speed_limit_kmh)) && Number(point.speed_limit_kmh) > 0
   ));
   const hasLocalSpeedLimitKnowledge = speedLimitLocalKnowledgeResults.some((item) => Number(item?.limitKmh) > 0);
   const hasSpeedLimitLayerData = rawSpeedLimitPoints.length > 0 || hasLocalSpeedLimitKnowledge;
@@ -1265,11 +1340,11 @@ export default function TripDetail() {
     speedLimitLocalKnowledgeResults
   );
   const speedLimitReviewCount = buildTripSpeedLimitReviewCells(trip, { maxCells: Infinity }).length;
-  const estimatedCoveragePercent = Math.max(
-    0,
-    speedLimitIntelligence.coveragePercent - speedLimitIntelligence.verifiedCoveragePercent
-  );
-  const missingCoveragePercent = Math.max(0, 100 - speedLimitIntelligence.coveragePercent);
+  // Derived once, from raw point counts, inside summarizeTripSpeedLimitIntelligence -
+  // recomputing them here from already-rounded integers made the three tiles
+  // sum to 99% or 101%.
+  const estimatedCoveragePercent = speedLimitIntelligence.estimatedCoveragePercent;
+  const missingCoveragePercent = speedLimitIntelligence.missingCoveragePercent;
   const verifiedCoverageForChart = Math.max(
     0,
     Math.min(100, Number(speedLimitIntelligence.verifiedCoveragePercent) || 0)
@@ -1411,11 +1486,6 @@ export default function TripDetail() {
   ];
   const showDrivingEventsPanel = Boolean(trip);
   const eventFeedback = trip.event_feedback || {};
-  const eventFeedbackKey = (event, index) => [
-    event.type || 'event',
-    event.timestamp || index,
-    Number.isFinite(Number(event.value)) ? Number(event.value).toFixed(2) : '',
-  ].join('|');
   const feedbackCounts = Object.values(eventFeedback).reduce((counts, item) => {
     if (item?.verdict === 'accurate') counts.accurate += 1;
     if (item?.verdict === 'wrong') counts.wrong += 1;
@@ -1487,9 +1557,14 @@ export default function TripDetail() {
       : 'Before getting road data, this map shows GPS speed bands and event markers only.';
   const speedReviewRows = [
     {
+      // "Trusted" here counts plain OpenStreetMap maxspeed tags as well as
+      // limits the driver confirmed. Say which is which rather than implying
+      // the driver verified all of it.
       label: 'Trusted coverage',
       value: `${speedLimitIntelligence.verifiedCoveragePercent}%`,
-      detail: 'Confirmed road-speed evidence',
+      detail: speedLimitIntelligence.userConfirmedCoveragePercent > 0
+        ? `${speedLimitIntelligence.userConfirmedCoveragePercent}% confirmed by you, ${speedLimitIntelligence.mappedCoveragePercent}% mapped in OpenStreetMap`
+        : 'Mapped in OpenStreetMap; none confirmed by you yet',
     },
     {
       label: 'Estimated coverage',
@@ -1549,15 +1624,20 @@ export default function TripDetail() {
             type="button"
             disabled={feedbackMutation.isPending}
             aria-pressed={feedback === option.id}
-            title={scoreAffecting
-              ? evt?.type === 'phone_use'
-                ? 'Confirm whether this foreground activity represented driver phone use. Rejected windows are removed when the trip is re-scored.'
-                : 'Apply this review and re-score the trip now.'
-              : 'Save a detection note without changing the score.'}
+            title={feedback === option.id
+              ? 'Tap again to clear this review.'
+              : scoreAffecting
+                ? evt?.type === 'phone_use'
+                  ? 'Confirm whether this foreground activity represented driver phone use. Rejected windows are removed when the trip is re-scored.'
+                  : 'Apply this review and re-score the trip now.'
+                : 'Save a detection note without changing the score.'}
             onClick={() => feedbackMutation.mutate({
               eventKey: key,
               event: evt,
-              verdict: option.id,
+              // Re-tapping the active verdict clears it. Previously it always
+              // re-sent the same verdict, firing a second full rescore with no
+              // way to undo a review at all.
+              verdict: feedback === option.id ? null : option.id,
               scoreAffecting,
             })}
             className={'rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors disabled:opacity-50 ' + (
@@ -1580,13 +1660,16 @@ export default function TripDetail() {
     const timeText = evt.timestamp || evt.startTime
       ? new Date(evt.timestamp || evt.startTime).toLocaleTimeString()
       : 'Time unknown';
+    // Every non-special event used to be suffixed "m/s²", including sharp
+    // turns (lateral g), heading deviations (°/s) and stop-start patterns
+    // (a speed drop). formatEventValue keys the unit off the event type.
     const eventValueText = evt.type === 'possible_crash'
-      ? `${formatSpeed(evt.speed_before_kmh || 0, units)} before - ${evt.peak_linear_ms2 || 0} m/s² peak`
+      ? `${formatSpeedMeasured(evt.speed_before_kmh, units)} before - ${formatMeasured(evt.peak_linear_ms2, (value) => `${value.toFixed(1)} m/s²`)} peak`
       : evt.type === 'phone_use'
-        ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${formatSpeed(evt.speed_kmh || 0, units)}`
+        ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${formatSpeedMeasured(evt.speed_kmh, units)}`
         : evt.type === 'lane_change_detected'
-          ? `${formatSpeed(evt.speed_kmh || 0, units)}${Number.isFinite(Number(evt.lateral_g)) ? ` - ${Number(evt.lateral_g).toFixed(2)} g lateral` : ''}`
-        : evt.type === 'speeding' ? formatSpeed(evt.value || 0, units) : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : 'm/s²'}`;
+          ? `${formatSpeedMeasured(evt.speed_kmh, units)}${Number.isFinite(Number(evt.lateral_g)) ? ` - ${Number(evt.lateral_g).toFixed(2)} g lateral` : ''}`
+          : formatEventValue(evt, units) ?? 'No magnitude recorded';
     const inferredTypes = ['lane_change_detected', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use'];
     const confidenceText = evt.source === 'android_usage_access'
       ? 'Measured phone activity'
@@ -1601,10 +1684,18 @@ export default function TripDetail() {
         : diagnostic
           ? 'Diagnostic GPS inference - not scored'
           : inferredTypes.includes(evt.type)
-            ? `${evt.confidence || evt.confidence_level || evt.zone_confidence || 'medium'} confidence GPS inference`
+            // Never invent 'medium'. A numeric confidence (phone-use writes
+            // 0.92) is mapped to a word; an absent one says so.
+            ? (() => {
+              const level = formatConfidence(evt.confidence ?? evt.confidence_level ?? evt.zone_confidence);
+              return level
+                ? `${level} confidence GPS inference`
+                : 'GPS inference - confidence not recorded';
+            })()
             : 'Measured from GPS motion';
     const diagnosticExplanation = diagnostic ? diagnosticExplanationForEvent(evt) : null;
-    const severityLabel = evt.severity || evt.confidence_level || 'diagnostic';
+    const severityLabel = evt.severity || evt.confidence_level ||
+      (diagnostic ? 'diagnostic' : 'unrated');
     return (
       <div key={`${evt.type}-${evt.timestamp || evt.startTime || originalIndex}`} className="flex flex-col gap-2 py-2 border-b border-border/50 last:border-0 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2.5">
@@ -1928,21 +2019,6 @@ export default function TripDetail() {
         </div>
       )}
 
-      {false && (
-        <div
-          title="Weather context is sourced from Open-Meteo when available, otherwise from GPS stopping-distance patterns when enough evidence exists."
-          className="flex items-center gap-2 rounded-2xl border border-border bg-card p-3 text-sm font-medium"
-        >
-          <Droplets className={`h-4 w-4 ${trip.slippery_proxy === 'appears_dry' ? 'text-emerald-500' : 'text-sky-500'}`} />
-          <span>Weather Context: {weatherContextDisplayValue}</span>
-          {(trip.safety_condition_bonus || 0) > 0 && (
-            <span className="ml-auto rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-              +{trip.safety_condition_bonus} safety context
-            </span>
-          )}
-        </div>
-      )}
-
       {(weatherContext || speedLimitContext || mapMatchingContext || sensorFusionSummary || driverAnomaly) && (
         <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2${premiumVisuals ? ' premium-trip-context-grid' : ''}`}>
           {weatherContext && (
@@ -1969,6 +2045,7 @@ export default function TripDetail() {
                 {trip.weather_score_adjustment < 0 && (
                   <p className="premium-trip-context-alert">
                     Score adjusted {trip.weather_score_adjustment} for harsh events in poor conditions.
+                    This is a fixed provisional penalty applied after scoring, not a measured effect of the weather.
                   </p>
                 )}
               </PremiumTripContextCard>
@@ -1991,6 +2068,7 @@ export default function TripDetail() {
                 {trip.weather_score_adjustment < 0 && (
                   <div className="mt-2 text-xs font-semibold text-orange-600 dark:text-orange-300">
                     Score adjusted {trip.weather_score_adjustment} for harsh events in poor conditions.
+                    This is a fixed provisional penalty applied after scoring, not a measured effect of the weather.
                   </div>
                 )}
               </div>
@@ -2095,11 +2173,11 @@ export default function TripDetail() {
                     Motion samples
                   </span>
                   <span>
-                    <strong>{sensorFusionSummary.peak_linear_ms2 || 0} m/s²</strong>
+                    <strong>{formatMeasured(sensorFusionSummary.peak_linear_ms2, (value) => `${value.toFixed(1)} m/s²`)}</strong>
                     Peak motion
                   </span>
                   <span>
-                    <strong>{sensorFusionSummary.phone_movement_score || 0}/100</strong>
+                    <strong>{formatMeasured(sensorFusionSummary.phone_movement_score, (value) => `${Math.round(value)}/100`)}</strong>
                     Phone movement
                   </span>
                 </div>
@@ -2116,7 +2194,9 @@ export default function TripDetail() {
                   </span>
                 </div>
                 <div className="mt-2 text-xs text-muted-foreground">
-                  {sensorFusionSummary.sample_count || 0} motion samples · peak {sensorFusionSummary.peak_linear_ms2 || 0} m/s² · phone movement {sensorFusionSummary.phone_movement_score || 0}/100.
+                  {sensorFusionSummary.sample_count > 0
+                    ? `${sensorFusionSummary.sample_count} motion samples · peak ${formatMeasured(sensorFusionSummary.peak_linear_ms2, (value) => `${value.toFixed(1)} m/s²`)} · phone movement ${formatMeasured(sensorFusionSummary.phone_movement_score, (value) => `${Math.round(value)}/100`)}.`
+                    : 'No motion samples were recorded for this trip, so phone movement was not measured.'}
                 </div>
               </div>
             )
@@ -2247,13 +2327,15 @@ export default function TripDetail() {
                 </div>
                 <div className="rounded-2xl bg-secondary/50 p-3">
                   <Gauge className="mb-2 h-4 w-4 text-blue-500" />
-                  <div className="font-grotesk text-2xl font-bold">{phoneUseInsights.avgSpeedKmh || avgPhoneUseSpeed || '-'}</div>
+                  {/* Printed as a bare number before: no unit label, and no
+                      conversion, so imperial users read a metric value. */}
+                  <div className="font-grotesk text-2xl font-bold">{formatSpeedMeasured(phoneUseInsights.avgSpeedKmh || avgPhoneUseSpeed, units, '-')}</div>
                   <div className="text-xs text-muted-foreground">average speed during detection</div>
                 </div>
                 <div className="rounded-2xl bg-secondary/50 p-3">
                   <Focus className="mb-2 h-4 w-4 text-violet-500" />
-                  <div className="font-grotesk text-2xl font-bold">{Math.round(phoneUseInsights.pctOfTrip * 10) / 10}%</div>
-                  <div className="text-xs text-muted-foreground">of trip time</div>
+                  <div className="font-grotesk text-2xl font-bold">{formatMeasured(phoneUseInsights.pctOfTrip, (value) => `${Math.round(value * 10) / 10}%`, { fallback: '-' })}</div>
+                  <div className="text-xs text-muted-foreground">{phoneUseInsights.pctOfTrip == null ? 'of trip time (duration unknown)' : 'of trip time'}</div>
                 </div>
               </div>
 
@@ -2521,9 +2603,12 @@ export default function TripDetail() {
                     </span>
                   </div>
                   <div className="premium-trip-speed-coverage-metrics">
-                    <div data-coverage-kind="verified">
+                    <div
+                      data-coverage-kind="verified"
+                      title={`${speedLimitIntelligence.userConfirmedCoveragePercent}% confirmed by you, ${speedLimitIntelligence.mappedCoveragePercent}% mapped in OpenStreetMap`}
+                    >
                       <strong>{speedLimitIntelligence.verifiedCoveragePercent}%</strong>
-                      <span>Verified</span>
+                      <span>Mapped or confirmed</span>
                     </div>
                     <div data-coverage-kind="estimated">
                       <strong>{estimatedCoveragePercent}%</strong>
@@ -2556,9 +2641,12 @@ export default function TripDetail() {
                     <div className="font-semibold">Speed-limit coverage for this trip</div>
                   </div>
                   <div className="mt-2 grid grid-cols-3 gap-2 text-center">
-                    <div className="rounded-xl bg-emerald-50 px-2 py-2 dark:bg-emerald-950/30">
+                    <div
+                      className="rounded-xl bg-emerald-50 px-2 py-2 dark:bg-emerald-950/30"
+                      title={`${speedLimitIntelligence.userConfirmedCoveragePercent}% confirmed by you, ${speedLimitIntelligence.mappedCoveragePercent}% mapped in OpenStreetMap`}
+                    >
                       <div className="text-lg font-bold text-emerald-700 dark:text-emerald-300">{speedLimitIntelligence.verifiedCoveragePercent}%</div>
-                      <div className="text-[10px] font-semibold text-emerald-800/80 dark:text-emerald-200/80">Verified</div>
+                      <div className="text-[10px] font-semibold text-emerald-800/80 dark:text-emerald-200/80">Mapped or confirmed</div>
                     </div>
                     <div className="rounded-xl bg-amber-50 px-2 py-2 dark:bg-amber-950/30">
                       <div className="text-lg font-bold text-amber-700 dark:text-amber-300">{estimatedCoveragePercent}%</div>
@@ -3071,7 +3159,12 @@ export default function TripDetail() {
                   <div className="text-xs text-muted-foreground">
                     {formatDistance(data.distance_km || 0, units)} analyzed, {data.event_count || 0} event{(data.event_count || 0) === 1 ? '' : 's'}
                     {data.road_type_source && (
-                      <> · {roadTypeSourceLabel[data.road_type_source] || 'Estimated road type'} ({Math.round((Number(data.road_type_confidence) || 0) * 100)}% confidence)</>
+                      <> · {roadTypeSourceLabel[data.road_type_source] || 'Estimated road type'}
+                        {/* A missing confidence rendered as a definite "0% confidence". */}
+                        {Number(data.road_type_confidence) > 0
+                          ? ` (${Math.round(Number(data.road_type_confidence) * 100)}% confidence)`
+                          : ' (confidence not recorded)'}
+                      </>
                     )}
                   </div>
                 </div>
@@ -3162,10 +3255,15 @@ export default function TripDetail() {
               </div>
             </div>
           )}
-          {roadCfg && (
+          {roadCfg ? (
             <div className={`inline-flex w-fit items-center gap-2 text-sm border rounded-full px-3 py-1 ${roadCfg.className}`}>
               <RoadIcon className="w-4 h-4" />
               <span>{roadCfg.label} route</span>
+            </div>
+          ) : (
+            <div className="inline-flex w-fit items-center gap-2 text-sm border rounded-full px-3 py-1 bg-muted text-muted-foreground border-border">
+              <Shuffle className="w-4 h-4" />
+              <span>Road type not measured</span>
             </div>
           )}
           {dominantRoadCfg && trip.dominant_road_type && (
@@ -3237,7 +3335,9 @@ export default function TripDetail() {
               <div key={zone.inferredZone} className="flex items-center justify-between rounded-xl bg-secondary/50 p-3">
                 <div>
                   <div className="text-sm font-semibold">{formatSpeed(zone.inferredZoneKmh, units)} inferred</div>
-                  <div className="text-xs text-muted-foreground capitalize">{zone.confidence} confidence</div>
+                  {/* This is speed consistency within the window, not
+                      confidence that the inferred limit is right. */}
+                  <div className="text-xs text-muted-foreground capitalize">{zone.confidence} speed consistency</div>
                 </div>
                 <div className="text-sm font-semibold">{formatDistance(zone.distanceKm, units)}</div>
               </div>
@@ -3255,7 +3355,7 @@ export default function TripDetail() {
                   />
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  {data.limit_source === 'openstreetmap' ? 'OSM maxspeed' : data.limit_source === 'osm_highway_default' ? `OSM road-type estimate${speedLimitDefaultCountryText ? ` (${speedLimitDefaultCountries.join(', ')} profile)` : ''} - not proof of the posted speed limit` : data.limit_source === 'region_default_estimate' ? 'Regional default estimate - not proof of the posted speed limit; check posted signs' : 'Inferred - may not reflect actual limit'} {formatSpeed(data.inferred_limit_kmh, units)}, max excess {formatSpeed(data.max_excess_kmh, units)}, score {formatScoreWithProvenance(data.score, trip.score_provenance)}{data.limit_source === 'inferred' ? ' (half-weight penalty)' : ''}
+                  {data.limit_source === 'openstreetmap' ? 'OSM maxspeed' : data.limit_source === 'osm_highway_default' ? `OSM road-type estimate${speedLimitDefaultCountryText ? ` (${speedLimitDefaultCountries.join(', ')} profile)` : ''} - not proof of the posted speed limit` : data.limit_source === 'region_default_estimate' ? 'Regional default estimate - not proof of the posted speed limit; check posted signs' : 'Inferred - may not reflect actual limit'} {formatSpeedMeasured(data.inferred_limit_kmh, units)}, max excess {formatSpeedMeasured(data.max_excess_kmh, units)}, score {formatScoreWithProvenance(data.score, trip.score_provenance)}{data.limit_source === 'inferred' ? ' (half-weight penalty)' : ''}
                 </div>
               </div>
             ))}
@@ -3276,7 +3376,7 @@ export default function TripDetail() {
         <div className="grid grid-cols-2 gap-3 mb-4">
           {[
             { icon: MapPin, label: 'traffic stops', value: trip.traffic_stop_count ?? trip.stop_count ?? 0, color: 'text-primary' },
-            { icon: AlertTriangle, label: 'estimated fatigue risk (driving-time proxy)', value: fatigueRisk.level, color: fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
+            { icon: AlertTriangle, label: 'long-drive flag (from trip duration only)', value: fatigueRisk.level, color: fatigueRisk.level === 'high' ? 'text-red-500' : fatigueRisk.level === 'medium' ? 'text-orange-500' : 'text-emerald-500', capitalize: true },
             { icon: Waves, label: 'smoothness index', componentKey: 'smoothness_index', color: 'text-sky-500' },
             { icon: GitBranch, label: 'brake onset smoothness', componentKey: 'brake_onset_smoothness', value: brakeOnsetCollectingDataText, show: Boolean(brakeOnsetCollectingDataText), color: ['abrupt', 'very_abrupt'].includes(trip.brake_onset_smoothness_grade) ? 'text-red-500' : brakeOnsetCollectingDataText ? 'text-amber-500' : 'text-emerald-500' },
             { icon: Shuffle, label: 'lane changing', componentKey: 'lane_changing', value: trip.lane_changing_grade ?? 'unavailable', useComponentValue: false, color: ['frequent', 'erratic'].includes(trip.lane_changing_grade) ? 'text-red-500' : trip.lane_changing_grade === 'acceptable' ? 'text-sky-500' : 'text-emerald-500', capitalize: true, badge: trip.lane_changing_confidence !== 'imu_calibrated' ? 'GPS estimate' : null },
@@ -3385,7 +3485,8 @@ export default function TripDetail() {
             <div className="mb-2 flex items-center justify-between text-sm">
               <span className="font-medium">Braking Efficiency</span>
               <span className="font-semibold capitalize">
-                {trip.braking_efficiency_grade?.replace('_', ' ') || `${trip.smooth_braking_ratio}% smooth`}
+                {trip.braking_efficiency_grade?.replace('_', ' ') ||
+                  formatMeasured(trip.smooth_braking_ratio, (value) => `${Math.round(value)}% smooth`)}
               </span>
             </div>
             {trip.braking_context && (
@@ -3421,7 +3522,7 @@ export default function TripDetail() {
               </span>
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
-              {formatDistance(trip.climb_distance_km ?? 0, units)} climbing, {formatDistance(trip.descent_distance_km ?? 0, units)} descending. Use engine braking on descents rather than braking repeatedly.
+              {formatMeasured(trip.climb_distance_km, (value) => formatDistance(value, units))} climbing, {formatMeasured(trip.descent_distance_km, (value) => formatDistance(value, units))} descending. Use engine braking on descents rather than braking repeatedly.
             </div>
             <div role="alert" className="mt-2 flex gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
@@ -3461,11 +3562,11 @@ export default function TripDetail() {
                 <div className="text-[11px] text-muted-foreground">score</div>
               </div>
               <div className="rounded-lg bg-card p-2">
-                <div className="font-grotesk text-lg font-bold">{trip.mean_lateral_g}</div>
+                <div className="font-grotesk text-lg font-bold">{formatMeasured(trip.mean_lateral_g, (value) => value.toFixed(2), { fallback: '-' })}</div>
                 <div className="text-[11px] text-muted-foreground">mean g</div>
               </div>
               <div className="rounded-lg bg-card p-2">
-                <div className="font-grotesk text-lg font-bold">{trip.peak_lateral_g}</div>
+                <div className="font-grotesk text-lg font-bold">{formatMeasured(trip.peak_lateral_g, (value) => value.toFixed(2), { fallback: '-' })}</div>
                 <div className="text-[11px] text-muted-foreground">peak g</div>
               </div>
             </div>
@@ -3592,141 +3693,6 @@ export default function TripDetail() {
         </motion.div>
       )}
 
-      {false && displayEvents.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25 }}
-          className="bg-card border border-border rounded-3xl p-5 shadow-sm"
-        >
-          <h2 className="font-semibold mb-4">
-            Driving Events
-            <span className="ml-2 text-xs font-normal text-muted-foreground">
-              {displayEvents.length} recorded
-            </span>
-          </h2>
-          {(feedbackCounts.accurate > 0 || feedbackCounts.wrong > 0) && (
-            <div className="mb-4 rounded-2xl border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
-              Detection feedback: <span className="font-semibold text-emerald-600 dark:text-emerald-300">{feedbackCounts.accurate} accurate</span>
-              <span className="mx-1">/</span>
-              <span className="font-semibold text-red-600 dark:text-red-300">{feedbackCounts.wrong} needs review</span>
-              {trip.feedback_adjusted_events_count > 0 && (
-                <span className="ml-1">/ {trip.feedback_adjusted_events_count} removed from scoring</span>
-              )}
-            </div>
-          )}
-          {feedbackStatus && (
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card p-3 text-xs font-medium text-muted-foreground">
-              <span>{feedbackStatus}</span>
-              {lastFeedbackUndo && (
-                <button
-                  type="button"
-                  disabled={feedbackMutation.isPending}
-                  onClick={() => feedbackMutation.mutate({
-                    ...lastFeedbackUndo,
-                    isUndo: true,
-                  })}
-                  className="rounded-lg border border-border bg-background px-2.5 py-1 font-semibold text-foreground disabled:opacity-50"
-                >
-                  Undo
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Summary counts */}
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            {[
-              { label: 'Harsh Brakes', value: trip.harsh_brakes_count, icon: TrendingDown, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
-              { label: 'Rapid Accel', value: trip.rapid_accel_count, icon: Zap, color: 'text-yellow-500', bg: 'bg-yellow-50 dark:bg-yellow-950/30' },
-              { label: 'Sharp Turns', value: trip.sharp_turns_count, icon: CornerUpRight, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30' },
-              { label: 'Speeding', value: trip.speeding_events_count, icon: AlertTriangle, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-              { label: 'Heading Events (Beta)', value: headingDeviationEventCount, icon: Shuffle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800/50' },
-              { label: 'Stop-Start Patterns', value: trip.stop_start_pattern_count ?? trip.tailgate_cycle_count, icon: ShieldCheck, color: 'text-violet-500', bg: 'bg-violet-50 dark:bg-violet-950/30' },
-              { label: 'Erratic Speed', value: trip.distraction_events_count, icon: Focus, color: 'text-cyan-500', bg: 'bg-cyan-50 dark:bg-cyan-950/30' },
-              { label: 'Brake-Turn Alerts', value: trip.close_proximity_count, icon: ShieldCheck, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-950/30' },
-              { label: 'Overtake Patterns (Beta)', value: trip.overtake_event_count, icon: Zap, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-              ...(trip.overtake_count > 0 ? [{ label: 'Overtake Quality (Beta)', value: formatScoreWithProvenance(trip.overtake_quality_score, trip.score_provenance), icon: Shuffle, color: 'text-sky-500', bg: 'bg-sky-50 dark:bg-sky-950/30' }] : []),
-            ].map(({ label, value, icon: Icon, color, bg }) => (
-              <div key={label} className={`${bg} rounded-xl p-3 flex items-center gap-3`}>
-                <Icon className={`w-5 h-5 ${color}`} />
-                <div>
-                  <div className={`font-grotesk font-bold text-xl ${color}`}>{value || 0}</div>
-                  <div className="text-xs text-muted-foreground">{label}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Event list */}
-          <div className="space-y-2 max-h-64 overflow-y-auto thin-scrollbar">
-            {displayEvents.map((evt, i) => {
-              const key = eventFeedbackKey(evt, i);
-              const feedback = eventFeedback[key]?.verdict || null;
-              const labels = {
-                harsh_brake: { label: 'Harsh Brake', icon: '🛑', color: 'text-red-600' },
-                rapid_acceleration: { label: 'Rapid Acceleration', icon: '⚡', color: 'text-yellow-600' },
-                sharp_turn: { label: 'Sharp Turn', icon: '↰', color: 'text-blue-600' },
-                speeding: { label: 'Speeding', icon: '🚀', color: 'text-orange-600' },
-                idle: { label: 'Excessive Idle', icon: '⏸', color: 'text-slate-500' },
-                close_proximity: { label: 'Estimated brake-turn manoeuvre (GPS proxy)', icon: '!', color: 'text-red-700' },
-                aggressive_overtake: { label: 'Overtake Pattern (Beta)', icon: '>>', color: 'text-orange-600' },
-                heading_deviation: { label: 'Heading Event (Beta)', icon: '<>', color: 'text-sky-600' },
-                heading_deviation_legacy: { label: 'Heading Event (Legacy)', icon: '<>', color: 'text-sky-600' },
-                tailgate_cycle: { label: 'Stop-Start Pattern (Legacy)', icon: '!!', color: 'text-red-600' },
-                stop_start_pattern: { label: 'Stop-Start Pattern', icon: '!!', color: 'text-red-600' },
-                erratic_speed: { label: 'Erratic Speed', icon: '~', color: 'text-yellow-600' },
-                possible_crash: { label: 'Possible Incident', icon: '!!', color: 'text-red-700' },
-                phone_use: { label: 'Phone Use', icon: 'P', color: 'text-red-600' },
-              };
-              const cfg = labels[evt.type] || { label: evt.type, icon: '⚠', color: 'text-foreground' };
-              const eventValueText = evt.type === 'possible_crash'
-                ? `${formatSpeed(evt.speed_before_kmh || 0, units)} before - ${evt.peak_linear_ms2 || 0} m/s² peak`
-                : evt.type === 'phone_use'
-                  ? `${Math.round(evt.durationS ?? evt.duration_seconds ?? 0)}s at ${formatSpeed(evt.speed_kmh || 0, units)}`
-                  : evt.type === 'speeding' ? formatSpeed(evt.value || 0, units) : `${evt.value?.toFixed?.(1) ?? '-'} ${evt.type === 'idle' ? 's' : 'm/s²'}`;
-              const inferredTypes = ['heading_deviation', 'heading_deviation_legacy', 'tailgate_cycle', 'stop_start_pattern', 'erratic_speed', 'phone_use', 'close_proximity', 'aggressive_overtake'];
-              const confidenceText = evt.source === 'android_usage_access'
-                ? 'Measured phone activity'
-                : evt.type === 'speeding' && evt.speed_limit_source
-                  ? evt.speed_limit_source === 'inferred'
-                    ? 'Inferred limit - may not reflect actual limit; half-weight score penalty'
-                    : evt.speed_limit_source === 'osm_highway_default'
-                      ? `Estimated from OSM road type${evt.speed_limit_default_country ? ` (${String(evt.speed_limit_default_country).toUpperCase()} profile)` : ''}; not proof of the posted speed limit, check posted signs`
-                      : evt.speed_limit_source === 'region_default_estimate'
-                        ? 'Regional default estimate - more reliable than GPS-only inference, but still an estimate unless confirmed by posted data'
-                    : `Limit from ${String(evt.speed_limit_source).replace(/_/g, ' ')}`
-                  : inferredTypes.includes(evt.type)
-                    ? `${evt.confidence_level || evt.zone_confidence || 'medium'} confidence GPS inference`
-                    : 'Measured from GPS motion';
-              return (
-                <div key={i} className="flex flex-col gap-2 py-2 border-b border-border/50 last:border-0 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-lg">{cfg.icon}</span>
-                    <div>
-                      <div className={`text-sm font-medium ${cfg.color}`}>{cfg.label}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {new Date(evt.timestamp).toLocaleTimeString()} - {eventValueText}
-                      </div>
-                      <div className="mt-0.5 text-[11px] text-muted-foreground">{confidenceText}</div>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 pl-8 sm:pl-0">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize
-                      ${evt.severity === 'high' ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400' :
-                        evt.severity === 'medium' ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-400' :
-                        'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-400'}`}>
-                      {evt.severity}
-                    </span>
-                    {renderEventFeedbackControls(evt, key, feedback, { diagnostic: isDiagnosticOnlyTripEvent(evt) })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </motion.div>
-      )}
-
       {/* Route Points summary */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
@@ -3803,8 +3769,11 @@ function scoreDriverReason(driver = {}) {
   }
 
   const scoreText = Number.isFinite(Number(driver.score)) ? `${driver.score}/100` : 'below full credit';
+  // `deficit` is simply 100 minus this component's own score. Phrasing it as
+  // "N points below perfect" alongside the overall score read as "this factor
+  // cost you N points off your overall", which it is not.
   const deficitText = Number.isFinite(Number(driver.deficit)) && driver.deficit > 0
-    ? `, about ${driver.deficit} point${driver.deficit === 1 ? '' : 's'} below perfect`
+    ? `, ${driver.deficit} short of this component's maximum`
     : '';
   const prefix = `This scored ${scoreText}${deficitText}.`;
 
@@ -3907,7 +3876,14 @@ const shouldPromptForCalibrationSurvey = (tripId, labelCount, status) => {
   const count = Number(labelCount);
   if (!Number.isFinite(count) || count < 20) return true;
   const input = String(tripId || '');
-  const hash = [...input].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  // A plain sum of character codes clusters badly for sequential or
+  // timestamp-like ids: neighbouring ids land in neighbouring buckets, so
+  // whole runs of trips are prompted or skipped together. FNV-1a spreads them.
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
   return hash % 3 === 0;
 };
 
@@ -3941,8 +3917,12 @@ function PostTripCalibrationSurvey({ trip, status, labelCount, isPending, error,
     });
   }, [editing, status, submitted]);
 
+  // These reviews feed personal detection thresholds only. They are never
+  // uploaded, so they cannot count toward the global 2,000-label penalty-scale
+  // fit - do not present them as progress toward it.
   const progressText = Number.isFinite(Number(labelCount))
-    ? Number(labelCount).toLocaleString() + ' local score review' + (Number(labelCount) === 1 ? '' : 's')
+    ? Number(labelCount).toLocaleString() + ' local score review' + (Number(labelCount) === 1 ? '' : 's') +
+      ' - used for your own detection thresholds, never uploaded'
     : 'Saved only on this device';
   const savedAnswer = SCORE_ACCURACY_LABELS[status?.score_accuracy] || null;
   const statusText = submitted
@@ -4029,7 +4009,10 @@ function PostTripCalibrationSurvey({ trip, status, labelCount, isPending, error,
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span className="shrink-0 rounded-full bg-secondary px-2 py-0.5 text-[11px] font-semibold">
-              Score {tripScore ?? '—'}
+              {/* Every other score on this page carries the approximate-score
+                  prefix via formatScoreWithProvenance; this one showed the raw
+                  number, implying it was exact. */}
+              Score {formatScoreWithProvenance(tripScore, trip?.score_provenance, { empty: '—' })}
             </span>
             <h2 className="min-w-0 text-sm font-semibold leading-tight">
               {submitted ? 'Your score review is saved' : 'Does this trip score look fair?'}
@@ -4347,7 +4330,10 @@ function TripScoreOverview({
             <div className="mt-1 text-[10px] text-muted-foreground">{scoreConfidence.sampleText}</div>
           )}
         </div>
-        <div className="trip-score-headlines grid flex-1 grid-cols-3 gap-3">
+        {/* Column count must match the number of headline scores; a fixed
+            grid-cols-3 left a permanent empty third column. Full class names
+            are written out so Tailwind can still see them statically. */}
+        <div className={`trip-score-headlines grid flex-1 gap-3 ${headlineScores.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
           {headlineScores.map(({ label, key, component }) => {
             const unavailable = component.value == null || component.evidence === 'unavailable';
             const { color: c } = unavailable ? { color: 'text-muted-foreground' } : getScoreColor(component.value || 0);
@@ -4402,9 +4388,14 @@ function TripScoreOverview({
           <div className="flex items-start gap-2">
             <Tag className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
             <div className="min-w-0 flex-1">
-              <div className="font-semibold text-foreground">Speed-limit sources used for scoring</div>
+              {/* buildSpeedLimitSourceBreakdown re-resolves every point against
+                  CURRENT settings, so changing the fallback country in Settings
+                  changes this panel with no rescore. Do not claim it describes
+                  the stored score. */}
+              <div className="font-semibold text-foreground">Speed-limit sources, recomputed now</div>
               <div className="mt-1 text-muted-foreground">
                 Speeding penalties depend on where the app got the limit. Posted and confirmed sources are strongest; estimates are clearly marked.
+                This breakdown is recalculated from your current settings and may differ from the sources used when the score was last computed.
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {topSpeedLimitSourceRows.map((row) => (

@@ -14,7 +14,7 @@ import {
   titleCase,
 } from '@/lib/mapPopupHtml';
 import { buildSpeedSegments } from '@/lib/tripInsights';
-import { calculateBearing, formatDistance, formatDuration, formatSpeed, headingDiff, haversineDistance } from '@/lib/tripEngine';
+import { formatDistance, formatDuration, formatSpeed, haversineDistance, lateralGForTriplet } from '@/lib/tripEngine';
 import { buildMapDiagnosticsAggregate } from '@/lib/mapDiagnostics';
 import { HEIGHTENED_PRIVACY_MODE_KEY } from '@/lib/privacyMode';
 import {
@@ -305,7 +305,7 @@ const buildSpeedLimitOverlayRuns = (route, localKnowledgeForPoint) => {
     const tripLimit = Number(curr.speed_limit_kmh ?? prev.speed_limit_kmh);
     const selectedLimit = userLocal || (
       Number.isFinite(tripLimit) && tripLimit > 0
-        ? { limitKmh: tripLimit, source: curr.speed_limit_source || prev.speed_limit_source || 'openstreetmap' }
+        ? { limitKmh: tripLimit, source: curr.speed_limit_source || prev.speed_limit_source || null }
         : fallbackLocal
     );
     const limit = speedLimitKmhFrom(selectedLimit);
@@ -317,8 +317,11 @@ const buildSpeedLimitOverlayRuns = (route, localKnowledgeForPoint) => {
     const speed = Number(curr.speed_kmh ?? prev.speed_kmh) || 0;
     const overBy = speed - limit;
     const color = overBy > 10 ? '#ef4444' : overBy > 0 ? '#f97316' : '#22c55e';
-    const source = speedLimitSourceFrom(selectedLimit) || curr.speed_limit_source || prev.speed_limit_source || 'openstreetmap';
-    const roadName = curr.speed_limit_road_name || prev.speed_limit_road_name || 'matched road';
+    // A stored limit with no recorded source may be a regional default or a
+    // GPS inference. Defaulting it to 'openstreetmap' made the popup assert
+    // "OpenStreetMap posted limit" for data OSM never supplied.
+    const source = speedLimitSourceFrom(selectedLimit) || curr.speed_limit_source || prev.speed_limit_source || 'unknown';
+    const roadName = curr.speed_limit_road_name || prev.speed_limit_road_name || null;
     const key = `${color}:${Math.round(limit)}:${source}:${roadName}`;
 
     if (!active || active.key !== key) {
@@ -359,14 +362,23 @@ const speedLimitOverlayPopupHtml = (route, run, units = 'metric') => {
     : minOver < 0
       ? `${formatSpeed(Math.abs(minOver), units)} under`
       : 'At the saved limit';
-  return `${routeLabelPopupPrefix(route.label)}<b>${escapeHtml(run.roadName)}</b>` +
-    `<br>Speed: ${escapeHtml(formatSpeedRange(run.minSpeed, run.maxSpeed, units))}` +
+  // Omit the road-name line entirely when no road name was recorded, rather
+  // than printing the literal placeholder "matched road" as if it were one.
+  return `${routeLabelPopupPrefix(route.label)}` +
+    (run.roadName ? `<b>${escapeHtml(run.roadName)}</b><br>` : '') +
+    `Speed: ${escapeHtml(formatSpeedRange(run.minSpeed, run.maxSpeed, units))}` +
     `<br>Limit: ${escapeHtml(formatSpeed(run.limit, units))}` +
     `<br>${escapeHtml(comparison)}` +
     `<br>Source: ${escapeHtml(speedLimitSourceLabel(run.source))}` +
     `<br>${escapeHtml(run.segmentCount)} merged segment${run.segmentCount === 1 ? '' : 's'}`;
 };
 
+/**
+ * Telemetry for the rendered route. Note this runs over the downsampled,
+ * smoothed map point set, so `distanceKm` is a render-set approximation and
+ * will not exactly equal the trip's stored `distance_km`. Anything that must
+ * agree with the trip record should read the trip, not this.
+ */
 const routeTelemetry = (points = []) => {
   const clean = points.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
   if (!clean.length) {
@@ -1018,20 +1030,14 @@ function TripMapContent({
             const curr = route.route_points[i];
             const next = route.route_points[i + 1];
             if (isRouteGapSegment(prev, curr) || isRouteGapSegment(curr, next)) continue;
-            const dtPrev = (new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime()) / 1000;
-            const dtNext = (new Date(next.timestamp).getTime() - new Date(curr.timestamp).getTime()) / 1000;
-            if (dtPrev <= 0 || dtNext <= 0 || dtPrev > 15 || dtNext > 15) continue;
-            const h1 = calculateBearing(prev.lat, prev.lng, curr.lat, curr.lng);
-            const h2 = calculateBearing(curr.lat, curr.lng, next.lat, next.lng);
-            const headingChange = headingDiff(h1, h2);
-            const speedCandidates = [prev.speed_kmh, curr.speed_kmh, next.speed_kmh]
-              .map(Number)
-              .filter(Number.isFinite);
-            const speed = speedCandidates.length
-              ? speedCandidates.reduce((sum, value) => sum + value, 0) / speedCandidates.length
-              : 0;
-            if (speed < 15 || headingChange < 1.5) continue;
-            const lateralG = ((speed / 3.6) * ((headingChange * Math.PI / 180) / Math.max(1.5, (dtPrev + dtNext) / 2))) / 9.81;
+            // Use the engine's own lateral-g calculation. The heat map used to
+            // average the two sample intervals and floor the result at 1.5 s,
+            // while the sharp-turn detector sums them - so the map coloured
+            // corners against bands the events were never measured against.
+            // lateralGForTriplet also applies the engine's noise, minimum
+            // segment length, and sample-gap gates.
+            const lateralG = lateralGForTriplet(route.route_points, i);
+            if (!Number.isFinite(lateralG)) continue;
             const band = corneringBandForG(lateralG);
             if (!band) continue;
             const intensityWeight = band.weight + Math.min(5, Math.max(0, (lateralG - band.min) * 10));
@@ -1529,7 +1535,10 @@ function TripMapContent({
           {diagnostics.durationSeconds > 0 && (
             <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
               <span>{formatDuration(diagnostics.durationSeconds)}</span>
-              <span>{formatSpeed(diagnostics.avgSpeedKmh, units)} average including stops</span>
+              {/* routeTelemetry averages the per-point speed readings; it is
+                  not distance over duration, and it is computed from the
+                  downsampled render set. Say what it is. */}
+              <span>{formatSpeed(diagnostics.avgSpeedKmh, units)} mean of GPS speed samples</span>
               <span>{recordedPointCount} GPS</span>
               {!overviewDiagnostics && recordedPointCount !== telemetry.pointCount && <span>{telemetry.pointCount} map pts</span>}
             </div>

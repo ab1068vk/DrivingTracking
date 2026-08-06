@@ -13,15 +13,27 @@ import improvedArtwork from '@/assets/premium-coaching-responsiveness-improved.j
 const clampPercent = (value) => Math.max(0, Math.min(100, Number(value) || 0));
 
 /**
- * Derives the premium presentation from the same local program history used by
+ * Derives the premium presentation from the same responsiveness summary used by
  * the standard Coaching Responsiveness card.
- * @param {Array<Record<string, any>>} programs
+ *
+ * Accepts either the summary object from buildCoachingResponsivenessSummary or,
+ * for older callers, a bare program-history array.
+ * @param {Record<string, any>|Array<Record<string, any>>} [source]
  */
-export function buildCoachingResponsivenessMetrics(programs = []) {
-  const safePrograms = Array.isArray(programs) ? programs : [];
-  const completed = safePrograms.length;
-  const graduated = safePrograms.filter((program) => program?.result?.graduated).length;
-  const improved = safePrograms.filter((program) => Number(program?.result?.improvement) > 0).length;
+export function buildCoachingResponsivenessMetrics(source = {}) {
+  const summary = Array.isArray(source)
+    ? {
+      completed: source.length,
+      graduated: source.filter((program) => program?.result?.graduated).length,
+      improved: source.filter((program) => Number(program?.result?.improvement) > 0).length,
+      focuses: [],
+      fallbackBaselineCount: 0,
+      measuredCount: 0,
+    }
+    : (source || {});
+  const completed = Number(summary.completed) || 0;
+  const graduated = Number(summary.graduated) || 0;
+  const improved = Number(summary.improved) || 0;
   const percentOfCompleted = (value) => completed > 0
     ? clampPercent((value / completed) * 100)
     : 0;
@@ -30,6 +42,9 @@ export function buildCoachingResponsivenessMetrics(programs = []) {
     completed,
     graduated,
     improved,
+    measuredCount: Number(summary.measuredCount) || 0,
+    fallbackBaselineCount: Number(summary.fallbackBaselineCount) || 0,
+    focuses: Array.isArray(summary.focuses) ? summary.focuses : [],
     metrics: [
       {
         accent: 'programs',
@@ -66,13 +81,14 @@ export function buildCoachingResponsivenessMetrics(programs = []) {
 }
 
 /**
- * @param {{ programs?: Array<Record<string, any>>, loading?: boolean }} props
+ * @param {{ summary?: Record<string, any>, programs?: Array<Record<string, any>>, loading?: boolean }} props
  */
 export default function PremiumCoachingResponsivenessCard({
+  summary = null,
   programs = [],
   loading = false,
 }) {
-  const model = buildCoachingResponsivenessMetrics(programs);
+  const model = buildCoachingResponsivenessMetrics(summary || programs);
   const title = loading
     ? 'Loading coaching history'
     : model.completed > 0
@@ -142,10 +158,27 @@ export default function PremiumCoachingResponsivenessCard({
         })}
       </div>
 
+      {model.focuses.length > 0 && (
+        <ul className="premium-coaching-responsiveness-focuses">
+          {model.focuses.map((focus) => (
+            <li key={focus.focusId}>
+              <span>{focus.label}</span>
+              <small>
+                {focus.programCount} program{focus.programCount === 1 ? '' : 's'}
+                {focus.graduationRate == null ? '' : ` · ${focus.graduationRate}% graduated`}
+                {focus.averageImprovement == null ? '' : ` · ${focus.averageImprovement > 0 ? '+' : ''}${focus.averageImprovement} avg change`}
+              </small>
+            </li>
+          ))}
+        </ul>
+      )}
+
       <footer className="premium-coaching-responsiveness-footer">
         <p>
-          Road Sage can use this history to show which drills and difficulty levels
-          produce measurable changes for you.
+          {model.measuredCount
+            ? `Measured from ${model.measuredCount} completed program${model.measuredCount === 1 ? '' : 's'}. This compares your drives before and after each program with no control group, so treat it as a direction, not proof.`
+            : 'Complete a program and this will show which drills and difficulty levels produce measurable changes for you.'}
+          {model.fallbackBaselineCount > 0 && ` ${model.fallbackBaselineCount} program${model.fallbackBaselineCount === 1 ? '' : 's'} used an all-drives baseline for lack of comparable drives, which weakens the comparison.`}
         </p>
         <div aria-hidden="true"><ShieldCheck /></div>
       </footer>

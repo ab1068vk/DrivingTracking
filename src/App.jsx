@@ -293,7 +293,9 @@ const AuthenticatedApp = () => {
       }
       activeTripStore.hydrate()
         .catch((error) => logSystemFailure('active_trip_hydrate', error));
-      syncNativeCompletedTripsToLocalStore()
+      // reconcileExisting so milestones crossed by locally-recorded trips (which
+      // never appear in the native import list) are still evaluated.
+      syncNativeCompletedTripsToLocalStore({ reconcileExisting: true })
         .catch((error) => logSystemFailure('native_completed_trips_boot_sync', error));
       notificationService
         .then(({ syncReminderNotifications }) => syncReminderNotifications(settings, { requestPermission: false }))
@@ -388,7 +390,7 @@ const AuthenticatedApp = () => {
           .catch((error) => logSystemFailure('app_resume_settings_hydrate', error));
         measureAsync('app.resume.privacyZoneSweep', () => sweepExpiredZonesOnForeground(), { source: 'appStateChange' })
           .catch((error) => logSystemFailure('app_resume_privacy_zone_expiry', error));
-        measureAsync('app.resume.nativeTripSync', () => syncNativeCompletedTripsToLocalStore(), { source: 'appStateChange' })
+        measureAsync('app.resume.nativeTripSync', () => syncNativeCompletedTripsToLocalStore({ reconcileExisting: true }), { source: 'appStateChange' })
           .catch((error) => logSystemFailure('app_resume_native_completed_trips_sync', error));
         measureAsync('app.resume.keyRotation', () => checkAndRotateEncryptionKeyFromApp(), { source: 'appStateChange' })
           .catch((error) => logSystemFailure('app_resume_key_rotation_check', error));
