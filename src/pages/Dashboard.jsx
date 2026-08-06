@@ -37,6 +37,7 @@ import {
   calculateTripStats, detectDrivingEvents, calculateTripScores,
   inferSpeedZones,
   prefetchLocalKnowledge,
+  reliablePointSpeed,
   resolveEffectiveSpeedLimitForIndex,
   getTripComponentScore,
   getScoreProvenanceStatus,
@@ -46,6 +47,7 @@ import {
   trimParkedTail,
   validateCandidateTrip
 } from '@/lib/tripEngine';
+import { computeLiveTripScore } from '@/lib/liveTripScore';
 import { resolveParkedLocation } from '@/lib/parkedLocationResolver';
 import { getParkingLearningProfile } from '@/lib/parkingLearning';
 import {
@@ -1203,8 +1205,19 @@ export default function Dashboard() {
           )),
           point,
         ];
-        const speed = Number(point.speed_kmh) || 0;
         const thresholds = buildDrivingThresholds(latestSettings);
+        // Spike-filtered, matching LiveCoachOverlay. This used to be the raw
+        // point speed, so a single bad GPS fix could drive a speed alert here
+        // while the coach overlay — looking at the same drive through the
+        // filtered value — stayed silent.
+        const filteredSpeed = reliablePointSpeed(
+          routePointsForLiveContext,
+          routePointsForLiveContext.length - 1,
+          thresholds
+        );
+        const speed = Number.isFinite(filteredSpeed)
+          ? filteredSpeed
+          : Number(point.speed_kmh) || 0;
         inferredSpeedZonesRef.current = inferSpeedZones(routePointsForLiveContext, thresholds);
         const pointTimestampMs = new Date(point.timestamp || Date.now()).getTime();
         const localKnowledge = pointInPrivacyZone
@@ -3001,22 +3014,12 @@ export default function Dashboard() {
       dismissedSpeedLimitReviewFingerprint,
       activeSpeedLimitReviewFingerprint
     );
-  const activeFatigueAlert = tracking && elapsed > 90 * 60 && (() => {
-    const points = activeTrip?.route_points || [];
-    if (points.length < 12) return false;
-    const firstWindowEnd = new Date(activeTrip.start_time).getTime() + 10 * 60 * 1000;
-    const lastWindowStart = Date.now() - 10 * 60 * 1000;
-    const firstPoints = points.filter((point) => new Date(point.timestamp).getTime() <= firstWindowEnd);
-    const lastPoints = points.filter((point) => new Date(point.timestamp).getTime() >= lastWindowStart);
-    if (firstPoints.length < 3 || lastPoints.length < 3) return false;
-    const { events: firstEvents, phoneUse: firstPhoneUse } = detectDrivingEvents(firstPoints);
-    const { events: lastEvents, phoneUse: lastPhoneUse } = detectDrivingEvents(lastPoints);
-    const firstStats = calculateTripStats(firstPoints, firstPoints[0].timestamp, firstPoints[firstPoints.length - 1].timestamp);
-    const lastStats = calculateTripStats(lastPoints, lastPoints[0].timestamp, lastPoints[lastPoints.length - 1].timestamp);
-    const lastScore = calculateTripScores(lastEvents, lastStats, lastPoints, DEFAULT_THRESHOLDS, lastStats.duration_seconds, lastPhoneUse).component_scores.overall.value;
-    const firstScore = calculateTripScores(firstEvents, firstStats, firstPoints, DEFAULT_THRESHOLDS, firstStats.duration_seconds, firstPhoneUse).component_scores.overall.value;
-    return lastScore != null && firstScore != null && lastScore < firstScore - 15;
-  })();
+  // This used to be an inline IIFE that ran detectDrivingEvents, calculateTripStats,
+  // and calculateTripScores twice each on every Dashboard render and collapsed all
+  // of it into one boolean. computeLiveTripScore does the same comparison once on a
+  // throttled cadence, so a render now costs a cache lookup.
+  const activeFatigueAlert = tracking
+    && computeLiveTripScore(activeTrip, settings, { nowMs: Date.now() }).fatigueAlert;
 
   const units = settings.units || 'metric';
   const activeTripIsCandidate = activeTrip?.trip_state === TRIP_STATES.CANDIDATE;

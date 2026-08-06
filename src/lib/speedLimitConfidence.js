@@ -1,5 +1,19 @@
 const DAY_MS = 86400000;
 
+/** Agreeing observations needed before a learned limit earns a corroboration bonus. */
+const MIN_CORROBORATION_EVIDENCE = 3;
+/** Matches MIN_OPERATIONAL_AGREEMENT in localRoadMemory.js. */
+const MIN_AGREEMENT_RATIO_FOR_BONUS = 0.67;
+
+/**
+ * Fixed reference profile per speed-limit source.
+ *
+ * These `confidence` numbers are NOT learned or measured: they are provisional
+ * constants expressing how much each source type is trusted by policy. They do
+ * not reflect this user's observed hit rate for any source, and they never
+ * change with use. UI that surfaces them should say "reference profile", not
+ * imply a computed confidence.
+ */
 export const SPEED_LIMIT_SOURCE_PROFILES = Object.freeze({
   user_confirmed_posted_sign: {
     confidence: 0.92,
@@ -144,11 +158,31 @@ export function assessSpeedLimitEvidence(record = {}, nowMs = Date.now()) {
     Number(record.evidenceCount ?? record.tripCount ?? record.sampleCount) || 0
   );
 
+  // The corroboration bonus must be earned by evidence that *agrees*. It used to
+  // read the raw evidence count, and the learner incremented that count on the
+  // disagreement branch too — so repeatedly contradicting a saved limit could
+  // push it past the threshold and raise its confidence.
+  const explicitAgreeingCount = Number(record.agreeingEvidenceCount ?? record.agreementCount);
+  const agreeingEvidenceCount = Math.max(
+    0,
+    Number.isFinite(explicitAgreeingCount) ? explicitAgreeingCount : (conflict ? 0 : evidenceCount)
+  );
+  const agreementRatio = Number(record.agreementRatio);
+  const agreementSupported = Number.isFinite(agreementRatio)
+    ? agreementRatio >= MIN_AGREEMENT_RATIO_FOR_BONUS
+    : !conflict;
+
   let confidence = baseConfidence;
   if (stale) confidence -= profile.authority === 'confirmed' ? 0.12 : 0.18;
   if (conflict) confidence -= 0.22;
   if (expired) confidence = 0;
-  if (evidenceCount >= 3 && profile.authority === 'learned') confidence += 0.05;
+  if (
+    agreeingEvidenceCount >= MIN_CORROBORATION_EVIDENCE &&
+    agreementSupported &&
+    profile.authority === 'learned'
+  ) {
+    confidence += 0.05;
+  }
   confidence = Math.max(0, Math.min(1, confidence));
 
   return {
@@ -159,6 +193,8 @@ export function assessSpeedLimitEvidence(record = {}, nowMs = Date.now()) {
     authority: profile.authority,
     scoringWeight: profile.scoringWeight,
     evidenceCount,
+    agreeingEvidenceCount,
+    agreementRatio: Number.isFinite(agreementRatio) ? agreementRatio : null,
     ageDays,
     stale,
     expired,

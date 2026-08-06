@@ -5,7 +5,16 @@
  */
 import { clamp as clampNumber } from '@/lib/mathUtils';
 import { CURRENCY_SYMBOL_OPTIONS } from '@/lib/currency';
-import { NIGHT_END_TIME, NIGHT_START_TIME } from '@/lib/appConstants';
+import {
+  MOTION_SAMPLE_RETENTION_DAYS_DEFAULT,
+  NIGHT_END_TIME,
+  NIGHT_START_TIME,
+} from '@/lib/appConstants';
+import {
+  CAPTURE_FIDELITY_VALUES,
+  DEFAULT_CAPTURE_FIDELITY,
+  normalizeCaptureFidelity,
+} from '@/lib/captureFidelity';
 import { logError } from '@/lib/errorReporting';
 import { recordSystemEvent } from '@/lib/systemLog';
 import { scoringValue } from '@/lib/scoringConstants';
@@ -55,7 +64,7 @@ let settingsCacheSerialized = '';
 let memorySettings = null;
 let activeTripMemory = null;
 let activeTripWriteQueue = Promise.resolve();
-const CURRENT_SETTINGS_DEFAULTS_VERSION = 22;
+const CURRENT_SETTINGS_DEFAULTS_VERSION = 24;
 const SYSTEM_THEME_QUERY = '(prefers-color-scheme: dark)';
 const THEME_MODE_VALUES = Object.freeze(['system', 'light', 'dark']);
 let activeThemeMode = 'system';
@@ -316,6 +325,9 @@ export const DEFAULT_SETTINGS = {
   trip_end_notification: true,
   weekly_report_notification: true,
   achievement_notifications: true,
+  // Personal detection-calibration progress is a separate system from the
+  // Milestones page and gets its own toggle.
+  calibration_notifications: true,
   safe_driving_reminder: false,
   background_tracking_enabled: false,
   auto_tracking_enabled: false,
@@ -325,6 +337,12 @@ export const DEFAULT_SETTINGS = {
   threshold_harsh_brake_ms2: scoringValue('HARSH_BRAKE_MS2'),
   threshold_rapid_accel_ms2: scoringValue('RAPID_ACCEL_MS2'),
   threshold_stop_start_decel_ms2: scoringValue('STOP_START_DECEL_MS2'),
+  // DriveSenseAutoTrackingService reads these three keys for its live stop-start
+  // detector but nothing on the JS side ever wrote them, so native silently ran on
+  // its own hardcoded fallbacks and user calibration never reached the device.
+  threshold_stop_start_min_speed_kmh: scoringValue('STOP_START_MIN_SPEED_KMH'),
+  threshold_stop_start_speed_drop_kmh: scoringValue('STOP_START_SPEED_DROP_KMH'),
+  threshold_stop_start_urban_decel_ms2: scoringValue('STOP_START_URBAN_DECEL_MS2'),
   threshold_sharp_turn_g_low: scoringValue('SHARP_TURN_G_LOW'),
   threshold_sharp_turn_g_medium: scoringValue('SHARP_TURN_G_MEDIUM'),
   threshold_sharp_turn_g_high: scoringValue('SHARP_TURN_G_HIGH'),
@@ -406,6 +424,14 @@ export const DEFAULT_SETTINGS = {
   voice_attention_incident_alerts_enabled: true,
   voice_coaching_reminder_alerts_enabled: true,
   voice_alert_style: DEFAULT_VOICE_ALERT_STYLE,
+  // Motion-capture fidelity is deliberately separate from experience_mode: it
+  // changes what lands on disk, so it needs its own consent and its own switch.
+  capture_fidelity: DEFAULT_CAPTURE_FIDELITY,
+  motion_sample_retention_days: MOTION_SAMPLE_RETENTION_DAYS_DEFAULT,
+  // Protective governor, not an optimizer: it only acts at <=15% battery or
+  // moderate-plus heat, where the alternative is a lost trip. 'off' is a full
+  // runtime kill switch reachable without an app update.
+  adaptive_capture_mode: 'guard',
   sensor_fusion_enabled: true,
   crash_detection_enabled: true,
   emergency_workflow_enabled: false,
@@ -510,6 +536,22 @@ export function migrateDefaultSettings(parsed = {}) {
     merged.night_boundary_tolerance_minutes = 5;
   }
 
+  // v24: phone_confidence_threshold became the single source of truth for the GPS
+  // phone-use proxy. Until now the low/high sensitivity presets were applied at read
+  // time in buildDrivingThresholds and silently discarded whatever the stored
+  // threshold said. Carry the preset the user was effectively running into the
+  // stored value so their detection sensitivity does not change on upgrade.
+  if (version < 24) {
+    const sensitivity = parsed.phone_use_sensitivity;
+    if (sensitivity === 'low' || sensitivity === 'high') {
+      merged.phone_confidence_threshold = scoringValue(
+        sensitivity === 'low'
+          ? 'PHONE_LOW_SENSITIVITY_CONFIDENCE_THRESHOLD'
+          : 'PHONE_HIGH_SENSITIVITY_CONFIDENCE_THRESHOLD'
+      );
+    }
+  }
+
   if (parsed.threshold_stop_start_decel_ms2 == null && parsed.threshold_tailgate_decel_ms2 != null) {
     merged.threshold_stop_start_decel_ms2 = parsed.threshold_tailgate_decel_ms2;
   }
@@ -542,6 +584,10 @@ export function migrateDefaultSettings(parsed = {}) {
 
   if (
     version < 12 &&
+    // Only seed a value the user has never expressed a preference about. This
+    // used to force `true` on every upgrade, so a driver who had deliberately
+    // turned estimated speech off had it switched back on behind their back.
+    parsed.speak_estimated_speed_checks == null &&
     parsed.voice_alerts_enabled !== false &&
     parsed.speed_warning_enabled !== false
   ) {
@@ -571,6 +617,18 @@ export function migrateDefaultSettings(parsed = {}) {
   const voiceAlertStyleChanged = !Object.prototype.hasOwnProperty.call(parsed, 'voice_alert_style') ||
     merged.voice_alert_style !== normalizeVoiceAlertStyle(merged.voice_alert_style);
   merged.voice_alert_style = normalizeVoiceAlertStyle(merged.voice_alert_style);
+  // v23 introduced capture_fidelity. Existing installs land on standard, which is
+  // bit-identical to how they already recorded, so an upgrade changes nothing until
+  // the user opts in.
+  const captureFidelityChanged = !Object.prototype.hasOwnProperty.call(parsed, 'capture_fidelity') ||
+    merged.capture_fidelity !== normalizeCaptureFidelity(merged.capture_fidelity);
+  merged.capture_fidelity = normalizeCaptureFidelity(merged.capture_fidelity);
+  if (!Number.isFinite(Number(merged.motion_sample_retention_days))) {
+    merged.motion_sample_retention_days = MOTION_SAMPLE_RETENTION_DAYS_DEFAULT;
+  }
+  if (merged.adaptive_capture_mode !== 'off' && merged.adaptive_capture_mode !== 'guard') {
+    merged.adaptive_capture_mode = DEFAULT_SETTINGS.adaptive_capture_mode;
+  }
   const themeModeChanged = !THEME_MODE_VALUES.includes(merged.dark_mode);
   if (themeModeChanged) merged.dark_mode = DEFAULT_SETTINGS.dark_mode;
 
@@ -579,50 +637,70 @@ export function migrateDefaultSettings(parsed = {}) {
   merged.settings_defaults_version = CURRENT_SETTINGS_DEFAULTS_VERSION;
   return {
     settings: merged,
-    changed: calibrationSharingChanged || ecoSettingsRepaired || experienceModeChanged || voiceAlertStyleChanged || themeModeChanged || osrmZoneGuardChanged || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
+    changed: calibrationSharingChanged || ecoSettingsRepaired || experienceModeChanged || voiceAlertStyleChanged || captureFidelityChanged || themeModeChanged || osrmZoneGuardChanged || version < CURRENT_SETTINGS_DEFAULTS_VERSION || legacyProxyKeys.some((key) => Object.prototype.hasOwnProperty.call(parsed, key)),
   };
 }
 
-const IMPORT_NUMBER_RANGES = {
+/**
+ * Allowed numeric range for every settable numeric setting.
+ *
+ * This is the single source of truth for three things that used to disagree:
+ *   1. what a Settings slider offers (Settings.jsx reads its min/max from here),
+ *   2. what validateSettingsPatch accepts on the normal save path,
+ *   3. what sanitizeImportedSettings clamps a restored backup into.
+ *
+ * Previously the import table was far wider than the sliders — rapid acceleration
+ * was 1.5-6 in the UI but 0.5-15 here — so validation enforced nothing the UI
+ * cared about, and a restored backup could hold a threshold the UI cannot represent
+ * or a user reach. Detection thresholds are now stated once, at the band the product
+ * actually supports; the wider bounds are kept only for keys with no slider.
+ */
+const SETTING_NUMBER_RANGES = {
   data_retention_days: [0, 3650],
   raw_gps_retention_days: [0, 3650],
+  motion_sample_retention_days: [0, 365],
   threshold_harsh_brake_ms2: [2, 8],
-  threshold_rapid_accel_ms2: [0.5, 15],
-  threshold_stop_start_decel_ms2: [0.5, 15],
-  threshold_sharp_turn_g_low: [0.05, 2],
-  threshold_sharp_turn_g_medium: [0.05, 2],
-  threshold_sharp_turn_g_high: [0.05, 2],
-  threshold_speeding_kmh: [10, 250],
+  threshold_rapid_accel_ms2: [1.5, 6],
+  threshold_stop_start_decel_ms2: [1.5, 5],
+  threshold_stop_start_min_speed_kmh: [10, 120],
+  threshold_stop_start_speed_drop_kmh: [2, 60],
+  threshold_stop_start_urban_decel_ms2: [0.5, 5],
+  threshold_sharp_turn_g_low: [0.2, 0.6],
+  threshold_sharp_turn_g_medium: [0.25, 0.8],
+  threshold_sharp_turn_g_high: [0.35, 1.0],
+  threshold_speeding_kmh: [80, 160],
   estimated_voice_margin_kmh: [0, 60],
   inferred_voice_margin_kmh: [0, 80],
-  threshold_speed_over_kmh: [0, 80],
+  threshold_speed_over_kmh: [5, 30],
   threshold_eco_cruise_min_kmh: [0, 160],
   threshold_eco_cruise_max_kmh: [20, 200],
   eco_cruise_score_multiplier: [50, 200],
   eco_idle_penalty_multiplier: [0, 300],
   eco_idle_max_penalty: [0, 50],
   eco_min_moving_kmh: [0, 50],
-  threshold_idle_seconds: [10, 3600],
+  threshold_idle_seconds: [90, 300],
   threshold_long_drive_minutes: [5, 1440],
   night_sunset_offset_minutes: [-180, 180],
   night_sunrise_offset_minutes: [-180, 180],
   night_boundary_tolerance_minutes: [0, 30],
-  threshold_manoeuvre_alert_brake_ms2: [0.5, 15],
-  threshold_manoeuvre_alert_turn_degs: [1, 180],
-  threshold_heading_drift_std_degs: [1, 90],
-  threshold_phone_proxy_oscillations: [1, 20],
-  phone_micro_steer_count: [1, 20],
+  threshold_manoeuvre_alert_brake_ms2: [2.5, 5],
+  threshold_manoeuvre_alert_turn_degs: [15, 60],
+  threshold_heading_drift_std_degs: [5, 15],
+  threshold_phone_proxy_oscillations: [6, 8],
+  phone_micro_steer_count: [6, 8],
   phone_micro_steer_window_s: [1, 120],
   phone_proxy_max_accuracy_m: [1, 100],
-  phone_creep_rate_kmh_s: [0.1, 10],
-  phone_lane_drift_deg: [1, 90],
-  phone_coupling_threshold: [0, 1],
-  phone_confidence_threshold: [0, 1],
-  phone_min_window_s: [1, 120],
-  threshold_speed_creep_kmh: [1, 80],
+  phone_creep_rate_kmh_s: [0.5, 4],
+  phone_lane_drift_deg: [3, 18],
+  phone_coupling_threshold: [0.05, 0.4],
+  // Must stay wide enough to hold both sensitivity presets
+  // (PHONE_LOW/HIGH_SENSITIVITY_CONFIDENCE_THRESHOLD), which the preset buttons write.
+  phone_confidence_threshold: [0.15, 0.8],
+  phone_min_window_s: [2, 12],
+  threshold_speed_creep_kmh: [5, 25],
   threshold_overtake_accel_ms2: [3, 5],
-  min_speed_rapid_accel_kmh: [0, 100],
-  min_speed_harsh_brake_kmh: [0, 150],
+  min_speed_rapid_accel_kmh: [0, 40],
+  min_speed_harsh_brake_kmh: [5, 60],
   weekly_goal_harsh_brakes: [0, 1000],
   weekly_goal_speeding_events: [0, 1000],
   weekly_goal_min_avg_score: [0, 100],
@@ -644,6 +722,8 @@ const IMPORT_NUMBER_RANGES = {
 const SETTINGS_ENUMS = {
   experience_mode: EXPERIENCE_MODE_VALUES,
   voice_alert_style: VOICE_ALERT_STYLE_VALUES,
+  capture_fidelity: CAPTURE_FIDELITY_VALUES,
+  adaptive_capture_mode: ['off', 'guard'],
   tracking_mode: ['manual', 'auto_detect', 'background_auto'],
   units: ['metric', 'imperial'],
   currencySymbol: CURRENCY_SYMBOL_OPTIONS.map((option) => option.value),
@@ -792,7 +872,7 @@ export function sanitizeImportedSettings(raw = {}) {
     if (typeof defaultValue === 'number') {
       const number = Number(value);
       if (!Number.isFinite(number)) return;
-      const [min, max] = IMPORT_NUMBER_RANGES[key] || [-1_000_000, 1_000_000];
+      const [min, max] = SETTING_NUMBER_RANGES[key] || [-1_000_000, 1_000_000];
       sanitized[key] = clampNumber(number, min, max);
       return;
     }
@@ -804,6 +884,18 @@ export function sanitizeImportedSettings(raw = {}) {
   repairEcoScoringSettings(sanitized, 'backup_settings_import', normalizedRaw);
 
   return sanitized;
+}
+
+/**
+ * Inclusive [min, max] a numeric setting may hold, or null when unconstrained.
+ * Settings sliders read their bounds from here so the control can never offer a
+ * value that validateSettingsPatch will then reject.
+ * @param {string} key
+ * @returns {[number, number]|null}
+ */
+export function settingRange(key) {
+  const range = SETTING_NUMBER_RANGES[key];
+  return range ? [range[0], range[1]] : null;
 }
 
 export function validateSettingsPatch(patch = {}) {
@@ -834,10 +926,10 @@ export function validateSettingsPatch(patch = {}) {
       errors.push(`${key} must be one of: ${SETTINGS_ENUMS[key].join(', ')}.`);
       return;
     }
-    if (IMPORT_NUMBER_RANGES[key]) {
+    if (SETTING_NUMBER_RANGES[key]) {
       if (value === '') return;
       const number = Number(value);
-      const [min, max] = IMPORT_NUMBER_RANGES[key];
+      const [min, max] = SETTING_NUMBER_RANGES[key];
       if (!Number.isFinite(number) || number < min || number > max) {
         errors.push(`${key} must be between ${min} and ${max}.`);
       }

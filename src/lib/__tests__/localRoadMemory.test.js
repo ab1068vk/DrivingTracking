@@ -671,3 +671,105 @@ describe('local Road Memory', () => {
     });
   });
 });
+
+describe('trip vote retention', () => {
+  const observation = (tripId, limitKmh = 50) => ({
+    tripId: String(tripId),
+    limitKmh,
+    sectionPoints: [
+      { lat: 43.65, lng: -79.39 },
+      { lat: 43.65, lng: -79.388 },
+    ],
+    lat: 43.65,
+    lng: -79.39,
+    directionBearing: 90,
+  });
+
+  it('keeps the newest votes, not the highest-numbered trip ids', () => {
+    // Trip ids are frequently integer-like, and integer-like object keys
+    // enumerate numerically regardless of insertion order. Trimming with
+    // Object.entries(...).slice(-50) therefore kept the 50 *highest* ids, so a
+    // long-running install silently froze its evidence at whatever ids happened
+    // to sort last.
+    let candidate = null;
+    const ids = [];
+    for (let i = 200; i > 0; i -= 1) {
+      ids.push(String(i));
+      candidate = mergeRoadMemoryObservation(candidate, observation(i), 'candidate-1');
+    }
+
+    const kept = Object.keys(candidate.tripVotes);
+    expect(kept).toHaveLength(50);
+    // The last 50 observations recorded were ids 50 down to 1.
+    expect(new Set(kept)).toEqual(new Set(ids.slice(-50)));
+    expect(kept).not.toContain('200');
+  });
+
+  it('never drops the observation it just recorded', () => {
+    let candidate = null;
+    for (let i = 500; i > 400; i -= 1) {
+      candidate = mergeRoadMemoryObservation(candidate, observation(i), 'candidate-1');
+    }
+    candidate = mergeRoadMemoryObservation(candidate, observation(1), 'candidate-1');
+
+    expect(candidate.tripVotes).toHaveProperty('1');
+    expect(candidate.tripVoteOrder.at(-1)).toBe('1');
+  });
+
+  it('preserves order across a merge that carries no explicit order', () => {
+    // A candidate persisted before tripVoteOrder existed still trims sanely.
+    const legacy = {
+      tripVotes: Object.fromEntries(Array.from({ length: 50 }, (_, i) => [String(i + 1), 50])),
+      limitKmh: 50,
+    };
+    const merged = mergeRoadMemoryObservation(legacy, observation(9001), 'candidate-1');
+    expect(Object.keys(merged.tripVotes)).toHaveLength(50);
+    expect(merged.tripVotes).toHaveProperty('9001');
+  });
+});
+
+describe('learned limit provenance', () => {
+  const tripAt = (speedKmh, pointOverrides = {}) => ({
+    ...routeTrip(11, { speedKmh }),
+    route_points: routeTrip(11, { speedKmh }).route_points.map((point) => ({
+      ...point,
+      ...pointOverrides,
+    })),
+  });
+
+  it('learns the measured p85 rather than a low-confidence estimate on the points', () => {
+    // The points carry an `inferred` estimate of 80, which is 0.35 confidence.
+    // It used to override the measured p85 outright, and the result then accrued
+    // votes up to 0.72 confidence as though it had been measured.
+    const observations = buildRoadMemoryObservations(tripAt(49, {
+      speed_limit_kmh: 80,
+      speed_limit_source: 'inferred',
+    }));
+
+    expect(observations.length).toBeGreaterThan(0);
+    expect(observations[0].limitKmh).toBe(50);
+    expect(observations[0].inferenceBasis).toBe('driving_behavior_p85');
+  });
+
+  it('falls back to the estimate only when the p85 cannot be resolved', () => {
+    // 55 km/h sits exactly between the 50 and 60 rungs, so the ladder refuses to
+    // answer and the estimate is consulted as a tie-break.
+    const observations = buildRoadMemoryObservations(tripAt(55, {
+      speed_limit_kmh: 60,
+      speed_limit_source: 'region_default_estimate',
+    }));
+
+    expect(observations.length).toBeGreaterThan(0);
+    expect(observations[0].limitKmh).toBe(60);
+    expect(observations[0].inferenceBasis).toBe('trip_estimate_consensus');
+  });
+
+  it('learns a mph road on mph rungs when the ladder is imperial', () => {
+    // 56.3 km/h is 35 mph. On the metric ladder it snaps to 60.
+    const metric = buildRoadMemoryObservations(tripAt(56.3));
+    const imperial = buildRoadMemoryObservations(tripAt(56.3), { units: 'imperial' });
+
+    expect(metric[0].limitKmh).toBe(60);
+    expect(imperial[0].limitKmh).toBe(56);
+  });
+});

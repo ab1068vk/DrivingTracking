@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   EXCLUDED_SPEED_SECTIONS_STORAGE_KEY,
   isSpeedSectionExcluded,
+  clearExcludedSpeedSectionKeys,
   readExcludedSpeedSectionKeys,
   speedSectionExclusionKeys,
   writeExcludedSpeedSectionKeys,
@@ -65,9 +66,17 @@ describe('speed section exclusions', () => {
     };
     vi.stubGlobal('window', { localStorage });
     try {
+      // Reading is non-destructive: the keys have to survive until whatever is
+      // migrating them has actually committed, or a throw in between loses the
+      // user's exclusions with nothing written in their place.
       expect(readExcludedSpeedSectionKeys()).toEqual([
         'geom:43.41000,-80.32000|43.41100,-80.32040',
       ]);
+      expect(values.has(EXCLUDED_SPEED_SECTIONS_STORAGE_KEY)).toBe(true);
+      expect(readExcludedSpeedSectionKeys()).toHaveLength(1);
+
+      // Erasing is the caller's explicit second step.
+      clearExcludedSpeedSectionKeys();
       expect(values.has(EXCLUDED_SPEED_SECTIONS_STORAGE_KEY)).toBe(false);
 
       writeExcludedSpeedSectionKeys(['geom:this-must-not-be-plaintext']);

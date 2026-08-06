@@ -1,4 +1,5 @@
 import { MAX_SAVED_SPEED_LIMIT_KMH } from '@/lib/speedKnowledgeCellPolicy';
+import { snapToSpeedLimitLadder } from '@/lib/speed/speedLimitLadder';
 
 const EARTH_RADIUS_M = 6371000;
 const MAX_SECTION_POINTS = 24;
@@ -23,7 +24,11 @@ const ROAD_MEMORY_STALE_DAYS = 120;
 const MATCH_RADIUS_M = 60;
 const ADJACENT_ENDPOINT_RADIUS_M = 180;
 const DIRECTION_TOLERANCE_DEG = 65;
-const COMMON_LIMITS_KMH = [30, 40, 50, 60, 70, 80, 90, 100, 110, 120];
+// The metric-only limit ladder that used to live here moved to
+// src/lib/speed/speedLimitLadder.js, which selects metric or mph rungs from the
+// user's units and returns "ambiguous" instead of guessing.
+/** Trip votes retained per candidate, newest kept. */
+const MAX_TRIP_VOTES = 50;
 const DAY_MS = 86400000;
 
 const plausibleSavedSpeedLimit = (value) => {
@@ -129,13 +134,6 @@ const standardDeviation = (values = []) => {
   if (clean.length < 2) return 0;
   const mean = clean.reduce((sum, value) => sum + value, 0) / clean.length;
   return Math.sqrt(clean.reduce((sum, value) => sum + (value - mean) ** 2, 0) / clean.length);
-};
-
-const nearestCommonLimit = (speedKmh) => {
-  if (!Number.isFinite(Number(speedKmh))) return null;
-  return COMMON_LIMITS_KMH.reduce((best, limit) => (
-    Math.abs(limit - Number(speedKmh)) < Math.abs(best - Number(speedKmh)) ? limit : best
-  ), COMMON_LIMITS_KMH[0]);
 };
 
 const explicitEstimatedLimit = (points = []) => {
@@ -284,7 +282,7 @@ const trafficQualityForPoints = (points = [], speeds = []) => {
   };
 };
 
-const makeObservation = (points = [], trip = {}) => {
+const makeObservation = (points = [], trip = {}, options = {}) => {
   const speeds = points.map(pointSpeed).filter(Number.isFinite);
   const distanceM = sectionLengthMeters(points);
   if (distanceM < MIN_SEGMENT_LENGTH_M || speeds.length < 4) return null;
@@ -297,7 +295,15 @@ const makeObservation = (points = [], trip = {}) => {
     speedDeviationKmh > 24
   ) return null;
 
-  const limitKmh = explicitEstimatedLimit(points) ?? nearestCommonLimit(p85Kmh);
+  // The measured p85 is the actual evidence this module exists to gather. The
+  // explicit estimate is built from `inferred` and `region_default_estimate`
+  // points, which carry 0.35 and 0.40 confidence — it used to *override* the
+  // p85, and the result then accrued votes up to 0.72 confidence as though it
+  // had been measured. It is now only consulted when the ladder cannot resolve
+  // the p85 at all, and never to overrule one it can.
+  const snapped = snapToSpeedLimitLadder(p85Kmh, { units: options.units });
+  const estimatedLimitKmh = snapped.ambiguous ? explicitEstimatedLimit(points) : null;
+  const limitKmh = snapped.limitKmh ?? estimatedLimitKmh;
   if (!Number.isFinite(limitKmh) || limitKmh <= 0) return null;
   const sectionPoints = sampleGeometry(points);
   const center = sectionPoints[Math.floor(sectionPoints.length / 2)];
@@ -312,7 +318,7 @@ const makeObservation = (points = [], trip = {}) => {
     directionMode: Number.isFinite(directionBearing) ? 'forward' : 'both',
     directionBearing,
     limitKmh: Math.round(limitKmh),
-    inferenceBasis: explicitEstimatedLimit(points) != null
+    inferenceBasis: estimatedLimitKmh != null
       ? 'trip_estimate_consensus'
       : 'driving_behavior_p85',
     legalAuthority: false,
@@ -393,7 +399,12 @@ const mergeObservations = (first, second) => {
   };
 };
 
-export function buildRoadMemoryObservations(trip = {}) {
+/**
+ * @param {Object} trip
+ * @param {{units?: string}} [options] Selects the speed-limit ladder, so a road
+ *   in a mph jurisdiction is learned on mph rungs rather than metric ones.
+ */
+export function buildRoadMemoryObservations(trip = {}, options = {}) {
   if (trip?.status && trip.status !== 'completed') return [];
   if (trip?.private_trip === true || trip?.privacy_trend_excluded === true) return [];
   const points = (Array.isArray(trip.route_points) ? trip.route_points : [])
@@ -404,7 +415,7 @@ export function buildRoadMemoryObservations(trip = {}) {
       lng: Number(point.lng),
     }));
   const observations = windowRoutePoints(points)
-    .map((window) => makeObservation(window, trip))
+    .map((window) => makeObservation(window, trip, options))
     .filter(Boolean);
   const merged = [];
   for (const observation of observations) {
@@ -664,8 +675,31 @@ export function mergeRoadMemoryObservation(candidate = null, observation = {}, i
   if (!alreadyObserved && observationTripId) {
     existingTripVotes[observationTripId] = Math.round(Number(observation.limitKmh));
   }
-  const trimmedTripVotes = Object.fromEntries(Object.entries(existingTripVotes).slice(-50));
-  const tripIds = Object.keys(trimmedTripVotes);
+  // Object key order is not insertion order: integer-like keys enumerate
+  // numerically first. Trip ids are frequently integer-like, so trimming with
+  // `Object.entries(...).slice(-50)` kept the 50 *highest* ids rather than the
+  // 50 newest — and could drop the observation that was just added. The order is
+  // now tracked explicitly, oldest first.
+  const priorOrder = Array.isArray(candidate?.tripVoteOrder)
+    ? candidate.tripVoteOrder.map(String)
+    : Object.keys(candidate?.tripVotes && typeof candidate.tripVotes === 'object' ? candidate.tripVotes : {});
+  const seenTripIds = new Set();
+  const tripVoteOrder = [];
+  for (const tripId of [...priorOrder, ...Object.keys(existingTripVotes)]) {
+    if (seenTripIds.has(tripId) || existingTripVotes[tripId] == null) continue;
+    seenTripIds.add(tripId);
+    tripVoteOrder.push(tripId);
+  }
+  if (!alreadyObserved && observationTripId && existingTripVotes[observationTripId] != null) {
+    const existingIndex = tripVoteOrder.indexOf(observationTripId);
+    if (existingIndex >= 0) tripVoteOrder.splice(existingIndex, 1);
+    tripVoteOrder.push(observationTripId);
+  }
+  const keptTripIds = tripVoteOrder.slice(-MAX_TRIP_VOTES);
+  const trimmedTripVotes = Object.fromEntries(
+    keptTripIds.map((tripId) => [tripId, existingTripVotes[tripId]])
+  );
+  const tripIds = keptTripIds;
   const votes = votesFromTripVotes(trimmedTripVotes);
   const winningLimitKmh = candidateLimitFromVotes(votes) ?? observation.limitKmh;
   const voteTotal = Object.values(votes).reduce((sum, value) => sum + (Number(value) || 0), 0);
@@ -788,6 +822,7 @@ export function mergeRoadMemoryObservation(candidate = null, observation = {}, i
     needsReview: true,
     tripIds,
     tripVotes: trimmedTripVotes,
+    tripVoteOrder: keptTripIds,
     tripCount: tripIds.length,
     evidenceCount: tripIds.length,
     limitVotes: votes,

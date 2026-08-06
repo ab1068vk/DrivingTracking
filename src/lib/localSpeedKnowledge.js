@@ -28,6 +28,20 @@ import {
   decorateRoadMemoryCandidates,
   roadMemoryContextKey,
 } from '@/lib/roadMemoryIntelligence';
+import { buildSpeedSpatialIndex } from '@/lib/speed/speedSpatialIndex';
+import {
+  appendLimitVote,
+  limitVotesFromLegacyCell,
+  summarizeLimitVotes,
+} from '@/lib/speed/speedEvidenceModel';
+import {
+  SPEED_KNOWLEDGE_CHANGED_EVENT,
+  broadcastSpeedKnowledgeChanged,
+  getSpeedResolverSnapshot,
+  invalidateSpeedResolverSnapshot,
+} from '@/lib/speed/speedResolverSnapshot';
+
+export { SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/speed/speedResolverSnapshot';
 
 // CHANGES (session):
 // - Added LocalSpeedKnowledge with geohash-backed local speed cache, user corrections, pruning, and privacy-zone guards.
@@ -39,7 +53,6 @@ import {
 // - Restricted learned-cache writes to OSM maxspeed and user-confirmed posted sign sources.
 
 export const STORAGE_KEY = SPEED_KNOWLEDGE_STORAGE_KEY;
-export const SPEED_KNOWLEDGE_CHANGED_EVENT = 'speed-knowledge-changed';
 export const CELL_PRECISION = 6;
 export const FALLBACK_PRECISION = 5;
 const CACHEABLE_SOURCES = new Set(['openstreetmap', 'user_confirmed_posted_sign']);
@@ -56,7 +69,16 @@ const fallbackMutationTails = new WeakMap();
 
 const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
 
+/**
+ * @returns {string} The geohash, or '' when the coordinate is not usable.
+ *
+ * This used to encode NaN as the perfectly valid-looking cell '000000' — every
+ * comparison against the midpoint is false, so the algorithm walks the whole
+ * hash to the low corner. Callers pre-validate today, but a lookup key derived
+ * from bad input must fail closed rather than silently address Null Island.
+ */
 export function geohashEncode(lat, lng, precision = CELL_PRECISION) {
+  if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) return '';
   let latitude = [-90, 90];
   let longitude = [-180, 180];
   let hash = '';
@@ -684,7 +706,10 @@ function recordMatchesExcludedSection(record = {}, exclusion = {}) {
 }
 
 function pointMatchesExcludedSection(data = {}, lat, lng, options = {}) {
-  return (Array.isArray(data.excludedSections) ? data.excludedSections : [])
+  const exclusions = Array.isArray(options.nearbyExclusions)
+    ? options.nearbyExclusions
+    : (Array.isArray(data.excludedSections) ? data.excludedSections : []);
+  return exclusions
     .some((exclusion) => correctionMatchesPoint(
       exclusion,
       Number(lat),
@@ -908,6 +933,9 @@ function createRoadMemoryCandidateId(observation = {}, index = 0) {
 }
 
 function emitSpeedKnowledgeChanged(detail = {}) {
+  // Other tabs hold their own resolver snapshot and cannot see this window's
+  // CustomEvent, so they are told over the broadcast channel as well.
+  broadcastSpeedKnowledgeChanged(detail);
   if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
   window.dispatchEvent(new CustomEvent(SPEED_KNOWLEDGE_CHANGED_EVENT, { detail }));
 }
@@ -923,9 +951,19 @@ function logSpeedKnowledgeFailure(action, error, details = {}) {
   logSystemFailure(`speed_knowledge_${action}`, error, details);
 }
 
-export function timeToBucket(timestampMs) {
-  const date = new Date(timestampMs);
-  const hour = Number.isFinite(date.getTime()) ? date.getHours() : new Date().getHours();
+/**
+ * The two-hour clock bucket an instant falls in.
+ *
+ * @param {number} timestampMs
+ * @param {number|null} [utcOffsetMinutes] The offset recorded *with the
+ *   observation*. Without it this falls back to the device's current timezone,
+ *   which silently reassigns history: drive abroad, or cross a DST boundary, and
+ *   yesterday's rush-hour evidence starts reading as a different time of day.
+ *   Road Memory already honours the recorded offset; the cell buckets did not.
+ */
+export function timeToBucket(timestampMs, utcOffsetMinutes = null) {
+  const instant = Number.isFinite(new Date(timestampMs).getTime()) ? timestampMs : Date.now();
+  const hour = Math.floor(localClockParts(instant, utcOffsetMinutes).minutes / 60);
   const start = Math.floor(hour / 2) * 2;
   const end = start + 2;
   return `${String(start).padStart(2, '0')}-${String(end).padStart(2, '0')}`;
@@ -1031,22 +1069,83 @@ function bucketSpeedForPoint(point, fallbackLimitKmh) {
   return Number.isFinite(speed) && speed > 0 ? speed : Number(fallbackLimitKmh);
 }
 
+/** Observations retained per time bucket. Enough for a stable p85, bounded for storage. */
+const MAX_BUCKET_SAMPLES = 40;
+
+/**
+ * Learned cells retained. `cells` was previously unbounded and only ever
+ * trimmed by an explicit prune from a settings screen, so a heavy driver's store
+ * grew without limit — and every cell lives in the single encrypted row the
+ * resolver snapshot is built from.
+ *
+ * ~6000 geohash-6 cells is on the order of several thousand km of distinct road,
+ * which is far more than any one driver's regular territory.
+ */
+const MAX_LEARNED_CELLS = 6000;
+
+/**
+ * Drop the least recently updated cells once the cap is exceeded.
+ *
+ * Recency is the right key here rather than confidence: a high-confidence cell
+ * for a road the user stopped driving two years ago is exactly what should go,
+ * and a road they still drive gets its timestamp refreshed on every trip.
+ */
+function evictLeastRecentlyUpdatedCells(data, limit = MAX_LEARNED_CELLS) {
+  const entries = Object.entries(data?.cells || {});
+  if (entries.length <= limit) return 0;
+  const updatedAt = ([, cell]) => {
+    const value = new Date(cell?.lastUpdatedAt ?? cell?.verifiedAt ?? cell?.firstSeenAt ?? 0).getTime();
+    return Number.isFinite(value) ? value : 0;
+  };
+  const kept = entries.sort((a, b) => updatedAt(b) - updatedAt(a)).slice(0, limit);
+  data.cells = Object.fromEntries(kept);
+  return entries.length - kept.length;
+}
+
+/** True 85th percentile by linear interpolation, matching localRoadMemory's percentile. */
+function bucketPercentile(values = [], ratio = 0.85) {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const index = Math.max(0, Math.min(sorted.length - 1, (sorted.length - 1) * ratio));
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
+}
+
+/**
+ * `p85Kmh` used to be a running arithmetic *mean* stored under a percentile's
+ * name — and it re-derived its running total from the already-rounded stored
+ * value, so rounding error compounded on every single update. It now keeps a
+ * bounded sample window and reports an actual 85th percentile.
+ */
 function updateTimeOfDayBuckets(cell, point, fallbackLimitKmh) {
-  const bucketKey = timeToBucket(timestampForPoint(point));
+  const bucketKey = timeToBucket(
+    timestampForPoint(point),
+    point?.utc_offset_minutes ?? point?.utcOffsetMinutes ?? null
+  );
   const bucketSpeed = bucketSpeedForPoint(point, fallbackLimitKmh);
+  if (!Number.isFinite(bucketSpeed)) return;
   cell.timeOfDayBuckets ??= {};
-  const existing = cell.timeOfDayBuckets[bucketKey] || { p85Kmh: 0, count: 0 };
-  const count = (Number(existing.count) || 0) + 1;
-  const previousTotal = (Number(existing.p85Kmh) || 0) * (count - 1);
+  const existing = cell.timeOfDayBuckets[bucketKey] || {};
+  const storedMean = Number(existing.p85Kmh);
+  const priorSamples = Array.isArray(existing.samples)
+    ? existing.samples.map(Number).filter(Number.isFinite)
+    // A bucket written before the sample window existed carries only its running
+    // mean. Seeding from it keeps the bucket's history rather than discarding it.
+    : (Number.isFinite(storedMean) && storedMean > 0 ? [storedMean] : []);
+  const samples = [...priorSamples, bucketSpeed].slice(-MAX_BUCKET_SAMPLES);
   cell.timeOfDayBuckets[bucketKey] = {
-    p85Kmh: Math.round((previousTotal + bucketSpeed) / count),
-    count,
+    p85Kmh: Math.round(bucketPercentile(samples, 0.85)),
+    count: (Number(existing.count) || 0) + 1,
+    samples: samples.map((value) => Math.round(value)),
   };
 }
 
-function applyBucketLimit(cell, timestampMs) {
+function applyBucketLimit(cell, timestampMs, utcOffsetMinutes = null) {
   if (timestampMs == null || !cell?.timeOfDayBuckets) return cell;
-  const bucket = cell.timeOfDayBuckets[timeToBucket(timestampMs)];
+  // Read the bucket back in the same clock it was written in.
+  const bucket = cell.timeOfDayBuckets[timeToBucket(timestampMs, utcOffsetMinutes)];
   const bucketLimit = Number(bucket?.p85Kmh);
   if (!Number.isFinite(bucketLimit)) return cell;
   return {
@@ -1247,23 +1346,69 @@ export class LocalSpeedKnowledge {
     ) + 1;
     data.knowledgeUpdatedAt = new Date().toISOString();
     await this._store.set(STORAGE_KEY, data);
+    // Drop the resolver snapshot before anything can read it again, so a lookup
+    // can never be served from knowledge this write just superseded.
+    invalidateSpeedResolverSnapshot();
     return data;
   }
 
   _prepareResolverData(data) {
     const model = decorateRoadMemoryCandidates(data.roadMemory?.candidates || []);
-    return {
-      ...data,
-      _preparedRoadMemoryCandidates: model.candidates.filter((candidate) => (
-        candidate.canAffectScoreAndAlerts === true &&
-        plausibleResolverLimit(candidate?.limitKmh) &&
-        Array.isArray(candidate?.sectionPoints) && candidate.sectionPoints.length >= 2 &&
-        !candidateCoveredByConfirmedCorrection(candidate, data.corrections) &&
-        !(data.excludedSections || []).some((exclusion) => (
-          recordMatchesExcludedSection(candidate, exclusion)
-        ))
-      )),
+    const preparedCandidates = model.candidates.filter((candidate) => (
+      candidate.canAffectScoreAndAlerts === true &&
+      plausibleResolverLimit(candidate?.limitKmh) &&
+      Array.isArray(candidate?.sectionPoints) && candidate.sectionPoints.length >= 2 &&
+      !candidateCoveredByConfirmedCorrection(candidate, data.corrections) &&
+      !(data.excludedSections || []).some((exclusion) => (
+        recordMatchesExcludedSection(candidate, exclusion)
+      ))
+    ));
+    const resolvableCorrections = (data.corrections || [])
+      .filter((item) => plausibleResolverLimit(item?.limitKmh));
+
+    // Each index bakes in the match radius its records are tested against, so a
+    // bucket hit is a superset of the linear scan and the precise matcher still
+    // decides. See speedSpatialIndex.js.
+    const spatialIndex = {
+      corrections: buildSpeedSpatialIndex(
+        resolvableCorrections,
+        recordPoints,
+        ROAD_SECTION_MATCH_RADIUS_KM
+      ),
+      candidates: buildSpeedSpatialIndex(
+        preparedCandidates,
+        recordPoints,
+        ROAD_SECTION_MATCH_RADIUS_KM
+      ),
+      exclusions: buildSpeedSpatialIndex(
+        data.excludedSections || [],
+        recordPoints,
+        // A point-only exclusion is still tested against the legacy radius, so
+        // its footprint has to be padded to match or the index would drop it.
+        (exclusion) => (recordPoints(exclusion).length >= 2
+          ? ROAD_SECTION_MATCH_RADIUS_KM
+          : LEGACY_CELL_MATCH_RADIUS_KM)
+      ),
     };
+
+    // Non-enumerable so the derived resolver state stays out of structuredClone,
+    // JSON.stringify and object spreads. The indexes hold functions, and the
+    // prepared document reaches snapshotData through getDashboardSpeedSnapshot.
+    const prepared = { ...data };
+    for (const [key, value] of Object.entries({
+      _preparedRoadMemoryCandidates: preparedCandidates,
+      _resolvableCorrections: resolvableCorrections,
+      _spatialIndex: spatialIndex,
+    })) {
+      Object.defineProperty(prepared, key, { value, enumerable: false, configurable: true });
+    }
+    return prepared;
+  }
+
+  /** Records near this point, from the index when one was built. */
+  _nearby(data, kind, list, lat, lng) {
+    const index = data?._spatialIndex?.[kind];
+    return index ? index.query(lat, lng) : list;
   }
 
   async _commit(data, previous, action, historyGroup = null, {
@@ -1437,12 +1582,21 @@ export class LocalSpeedKnowledge {
   }
 
   _resolveForPoint(data, lat, lng, timestampMs = null, options = {}) {
+    // An excluded section suppresses every saved source here, including a
+    // user-confirmed posted sign. That precedence is deliberate and pinned by
+    // the web/native parity fixture (excluded_private_section_blocks_saved_rule),
+    // so it is left alone; see the Phase 1 notes on D9.
     if (pointMatchesExcludedSection(data, lat, lng, {
       ...options,
       timestampMs,
+      nearbyExclusions: this._nearby(data, 'exclusions', data.excludedSections, lat, lng),
     })) return null;
-    const correctionMatch = (data.corrections || [])
-      .filter((item) => plausibleResolverLimit(item?.limitKmh))
+
+    const correctionMatch = (
+      data._resolvableCorrections
+        ? this._nearby(data, 'corrections', data._resolvableCorrections, lat, lng)
+        : (data.corrections || []).filter((item) => plausibleResolverLimit(item?.limitKmh))
+    )
       .map((item) => ({
         correction: item,
         match: correctionMatchDetails(item, lat, lng, ROAD_SECTION_MATCH_RADIUS_KM, {
@@ -1519,7 +1673,7 @@ export class LocalSpeedKnowledge {
         .filter((candidate) => candidate.canAffectScoreAndAlerts === true &&
           plausibleResolverLimit(candidate?.limitKmh) &&
           Array.isArray(candidate?.sectionPoints) && candidate.sectionPoints.length >= 2);
-    const roadMemoryMatch = activeRoadMemoryCandidates
+    const roadMemoryMatch = this._nearby(data, 'candidates', activeRoadMemoryCandidates, lat, lng)
       .map((candidate) => ({
         candidate,
         match: correctionMatchDetails(candidate, lat, lng, ROAD_SECTION_MATCH_RADIUS_KM, {
@@ -1604,10 +1758,15 @@ export class LocalSpeedKnowledge {
     // corrections remain the highest-authority result above both sources.
     for (const precision of [CELL_PRECISION, FALLBACK_PRECISION]) {
       const geohash = geohashEncode(lat, lng, precision);
+      if (!geohash) break;
       const cell = data.cells?.[geohash];
       if (cell && !this._isExpired(cell)) {
         return {
-          ...applyBucketLimit(cell, timestampMs),
+          ...applyBucketLimit(
+            cell,
+            timestampMs,
+            options.utcOffsetMinutes ?? options.utc_offset_minutes ?? null
+          ),
           geohash,
           knowledgeRevision: Number(data.knowledgeRevision) || 0,
         };
@@ -1659,13 +1818,24 @@ export class LocalSpeedKnowledge {
       ))[0]?.result || null;
   }
 
+  /**
+   * The prepared, indexed resolver document. Built once per knowledge change
+   * rather than once per lookup — see speedResolverSnapshot.js for why.
+   */
+  _resolverSnapshot() {
+    return getSpeedResolverSnapshot(
+      this._store,
+      async () => this._prepareResolverData(await this._load())
+    );
+  }
+
   async getForPoint(lat, lng, timestampMs = null, options = {}) {
-    const data = this._prepareResolverData(await this._load());
+    const data = await this._resolverSnapshot();
     return this._resolveForPoint(data, lat, lng, timestampMs, options);
   }
 
   async getForPoints(points = []) {
-    const data = this._prepareResolverData(await this._load());
+    const data = await this._resolverSnapshot();
     const results = (Array.isArray(points) ? points : [])
       .map((point) => this._resolveForPointOrSection(data, point));
     Object.defineProperty(results, 'knowledgeMetadata', {
@@ -2053,7 +2223,13 @@ export class LocalSpeedKnowledge {
     };
   }
 
-  async learnRoadMemoryFromTrips(trips = [], privacyZones = []) {
+  /**
+   * @param {Array} trips
+   * @param {Array} privacyZones
+   * @param {{units?: string}} [options] Selects the speed-limit ladder the
+   *   learner snaps observations onto. Defaults to metric.
+   */
+  async learnRoadMemoryFromTrips(trips = [], privacyZones = [], options = {}) {
     try {
       const data = await this._load();
       data.roadMemory ??= { version: 3, candidates: [], processedTrips: {}, intelligence: null };
@@ -2119,7 +2295,9 @@ export class LocalSpeedKnowledge {
           : trip;
         // Removing private points can leave two public endpoints whose straight
         // connection crosses the hidden zone. Do not learn that synthetic link.
-        const observations = buildRoadMemoryObservations(publicTrip).filter((observation) => (
+        const observations = buildRoadMemoryObservations(publicTrip, {
+          units: options?.units,
+        }).filter((observation) => (
           !geometryTouchesPrivacyZones(observation.sectionPoints || [], activePrivacyZones) &&
           !candidateCoveredByConfirmedCorrection(observation, data.corrections) &&
           !(data.excludedSections || []).some((exclusion) => (
@@ -2281,68 +2459,80 @@ export class LocalSpeedKnowledge {
           : [];
         if (existingEvidenceIds.includes(evidenceId)) continue;
         const tripEvidenceIds = [...existingEvidenceIds, evidenceId].slice(-100);
-        if (!existing) {
-          const cell = {
-            limitKmh,
-            source: 'trip_consensus',
-            confidence: 0.55,
-            tripCount: 1,
-            evidenceCount: 1,
-            tripEvidenceIds,
-            firstSeenAt: now,
-            lastUpdatedAt: now,
-            verifiedAt: now,
-            verificationStatus: 'learned_from_confirmed_source',
-            auditTrail: [auditEntry('learned', { limitKmh, pointSource: pointSource(point) })],
+        const nowMs = Date.parse(now);
+        const incumbentLimitKmh = existing ? Math.round(Number(existing.limitKmh)) : null;
+        // Reconstruct votes for a cell saved before the vote history existed, so
+        // an upgrade keeps its accumulated evidence rather than restarting.
+        const priorVotes = existing
+          ? (Array.isArray(existing.limitVotes) && existing.limitVotes.length
+            ? existing.limitVotes
+            : limitVotesFromLegacyCell(existing, nowMs))
+          : [];
+        const limitVotes = appendLimitVote(
+          priorVotes,
+          { limitKmh, at: nowMs, evidenceId },
+          nowMs
+        );
+        const summary = summarizeLimitVotes(limitVotes, {
+          incumbentLimitKmh,
+          nowMs,
+        });
+
+        const auditAction = !existing
+          ? 'learned'
+          : summary.changed
+            ? 'limit_converged'
+            : summary.pendingLimitKmh != null
+              ? 'conflict_detected'
+              : 'evidence_added';
+
+        const cell = {
+          ...(existing || {}),
+          limitKmh: summary.limitKmh,
+          limitVotes: summary.votes,
+          source: existing?.source || 'trip_consensus',
+          confidence: summary.confidence,
+          // Distinct on purpose: tripCount is how much evidence this cell has
+          // seen, evidenceCount is how much of it *agrees*. They used to be the
+          // same number, which is how contradiction earned a corroboration bonus.
+          tripCount: summary.totalVotes,
+          evidenceCount: summary.agreeingVotes,
+          agreeingEvidenceCount: summary.agreeingVotes,
+          agreementRatio: Math.round(summary.agreementRatio * 100) / 100,
+          tripEvidenceIds,
+          firstSeenAt: existing?.firstSeenAt || now,
+          lastUpdatedAt: now,
+          verifiedAt: now,
+          verificationStatus: existing?.verificationStatus || 'learned_from_confirmed_source',
+          auditTrail: [
+            ...(Array.isArray(existing?.auditTrail) ? existing.auditTrail : []),
+            auditEntry(auditAction, {
+              limitKmh: summary.limitKmh,
+              observedLimitKmh: limitKmh,
+              previousLimitKmh: summary.previousLimitKmh,
+              agreeingVotes: summary.agreeingVotes,
+              totalVotes: summary.totalVotes,
+              pointSource: pointSource(point),
+            }),
+          ].slice(-25),
+        };
+        updateTimeOfDayBuckets(cell, point, limitKmh);
+
+        // A rival limit that is gathering support but has not yet earned the
+        // switch is surfaced for review rather than silently discarded.
+        if (summary.pendingLimitKmh != null && Math.abs(summary.pendingLimitKmh - summary.limitKmh) > 10) {
+          cell.conflict = true;
+          cell.conflictDetails = {
+            existingLimitKmh: summary.limitKmh,
+            newLimitKmh: summary.pendingLimitKmh,
+            supportingVotes: summary.pendingVotes,
+            detectedAt: now,
           };
-          updateTimeOfDayBuckets(cell, point, limitKmh);
-          data.cells[geohash] = cell;
-        } else if (Number(existing.limitKmh) === limitKmh) {
-          const n = (Number(existing.tripCount) || 0) + 1;
-          const cell = {
-            ...existing,
-            tripCount: n,
-            evidenceCount: n,
-            tripEvidenceIds,
-            confidence: Math.min(0.85, 0.50 + n * 0.035),
-            lastUpdatedAt: now,
-            verifiedAt: now,
-            auditTrail: [
-              ...(Array.isArray(existing.auditTrail) ? existing.auditTrail : []),
-              auditEntry('evidence_added', { limitKmh, pointSource: pointSource(point) }),
-            ].slice(-25),
-          };
-          updateTimeOfDayBuckets(cell, point, limitKmh);
-          data.cells[geohash] = cell;
         } else {
-          const conflictDelta = Math.abs(Number(existing.limitKmh) - limitKmh);
-          const cell = {
-            ...existing,
-            confidence: Math.max(0.25, (Number(existing.confidence) || 0) - 0.12),
-            lastUpdatedAt: now,
-            tripCount: (Number(existing.tripCount) || 0) + 1,
-            evidenceCount: (Number(existing.evidenceCount ?? existing.tripCount) || 1) + 1,
-            tripEvidenceIds,
-            auditTrail: [
-              ...(Array.isArray(existing.auditTrail) ? existing.auditTrail : []),
-              auditEntry('conflict_detected', {
-                existingLimitKmh: Number(existing.limitKmh),
-                observedLimitKmh: limitKmh,
-                pointSource: pointSource(point),
-              }),
-            ].slice(-25),
-          };
-          updateTimeOfDayBuckets(cell, point, limitKmh);
-          if (conflictDelta > 10) {
-            cell.conflict = true;
-            cell.conflictDetails = {
-              existingLimitKmh: Number(existing.limitKmh),
-              newLimitKmh: limitKmh,
-              detectedAt: now,
-            };
-          }
-          data.cells[geohash] = cell;
+          delete cell.conflict;
+          delete cell.conflictDetails;
         }
+        data.cells[geohash] = cell;
         cellChanged = true;
         if (!wasEligible && speedKnowledgeCellEligibility(data.cells[geohash] || {}).eligible) {
           newlyEligibleCellGeohashes.add(geohash);
@@ -2350,6 +2540,13 @@ export class LocalSpeedKnowledge {
       }
 
       if (!cellChanged) return { newlyEligibleCellGeohashes: [] };
+      const evictedCells = evictLeastRecentlyUpdatedCells(data);
+      if (evictedCells > 0) {
+        recordSpeedKnowledgeEvent('cells_evicted', {
+          evicted: evictedCells,
+          retained: Object.keys(data.cells).length,
+        });
+      }
       await this._write(data, data);
       if (newlyEligibleCellGeohashes.size) {
         void import('@/lib/localSpeedScoreRefresh')
@@ -2477,6 +2674,29 @@ export class LocalSpeedKnowledge {
         ...draftCorrection,
         id: previousCorrection?.id || previousCorrection?.ruleId || previousCorrection?.sectionKey || draftCorrection.id,
       };
+      // correctionIdentity deliberately excludes limitKmh, so saving a different
+      // limit on the same geometry replaces the existing rule rather than adding
+      // a second competing one. That is intentional. What was *not* intentional
+      // is that the replacement started with a blank audit trail, so the record
+      // of what this rule previously said disappeared with it. The trail is
+      // carried forward with an entry naming the change.
+      const replacedLimitKmh = Number(previousCorrection?.limitKmh);
+      if (
+        previousCorrection != null &&
+        Number.isFinite(replacedLimitKmh) &&
+        replacedLimitKmh !== Number(nextCorrection.limitKmh)
+      ) {
+        nextCorrection.auditTrail = [
+          ...(Array.isArray(previousCorrection.auditTrail) ? previousCorrection.auditTrail : []),
+          ...(Array.isArray(nextCorrection.auditTrail) ? nextCorrection.auditTrail : []),
+          auditEntry('limit_replaced_on_save', {
+            previousLimitKmh: replacedLimitKmh,
+            nextLimitKmh: Number(nextCorrection.limitKmh),
+            previousSource: correctionSource(previousCorrection),
+          }),
+        ].slice(-25);
+      }
+
       data.corrections = data.corrections.filter((correction) => correctionIdentity(correction) !== identity);
       data.corrections.push(nextCorrection);
       if (resolvesConflictGeohash) delete data.cells[resolvesConflictGeohash];

@@ -40,7 +40,7 @@ describe('tracking store default settings', () => {
     })).toMatchObject({
       changed: true,
       settings: {
-        settings_defaults_version: 22,
+        settings_defaults_version: 24,
         experience_mode: EXPERIENCE_MODES.COACHING,
       },
     });
@@ -50,14 +50,15 @@ describe('tracking store default settings', () => {
     })).toMatchObject({
       changed: true,
       settings: {
-        settings_defaults_version: 22,
+        settings_defaults_version: 24,
         experience_mode: EXPERIENCE_MODES.COACHING,
       },
     });
     expect(migrateDefaultSettings({
-      settings_defaults_version: 22,
+      settings_defaults_version: 24,
       experience_mode: EXPERIENCE_MODES.TRACKING,
       voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
+      capture_fidelity: 'standard',
     })).toMatchObject({
       changed: false,
       settings: {
@@ -88,12 +89,12 @@ describe('tracking store default settings', () => {
     })).toMatchObject({
       changed: true,
       settings: {
-        settings_defaults_version: 22,
+        settings_defaults_version: 24,
         voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
       },
     });
     expect(migrateDefaultSettings({
-      settings_defaults_version: 22,
+      settings_defaults_version: 24,
       voice_alert_style: 'robot',
     })).toMatchObject({
       changed: true,
@@ -109,10 +110,59 @@ describe('tracking store default settings', () => {
     expect(validateSettingsPatch({ voice_alert_style: 'invalid' })).toMatchObject({ valid: false });
   });
 
+  it('defaults motion capture to standard so an upgrade records exactly as before', () => {
+    expect(DEFAULT_SETTINGS.capture_fidelity).toBe('standard');
+    expect(DEFAULT_SETTINGS.motion_sample_retention_days).toBe(14);
+    // Shorter than raw GPS retention on purpose: the largest data ages out first.
+    expect(DEFAULT_SETTINGS.motion_sample_retention_days)
+      .toBeLessThan(DEFAULT_SETTINGS.raw_gps_retention_days);
+
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 22,
+    })).toMatchObject({
+      changed: true,
+      settings: {
+        settings_defaults_version: 24,
+        capture_fidelity: 'standard',
+        motion_sample_retention_days: 14,
+      },
+    });
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 24,
+      capture_fidelity: 'ultra',
+    }).settings.capture_fidelity).toBe('standard');
+
+    expect(sanitizeImportedSettings({ capture_fidelity: 'high' })).toMatchObject({ capture_fidelity: 'high' });
+    expect(sanitizeImportedSettings({ capture_fidelity: 'ultra' })).not.toHaveProperty('capture_fidelity');
+    expect(sanitizeImportedSettings({ motion_sample_retention_days: 7 }))
+      .toMatchObject({ motion_sample_retention_days: 7 });
+    // Numeric imports clamp to their declared range rather than being dropped.
+    expect(sanitizeImportedSettings({ motion_sample_retention_days: 99999 }))
+      .toMatchObject({ motion_sample_retention_days: 365 });
+    expect(sanitizeImportedSettings({ motion_sample_retention_days: -5 }))
+      .toMatchObject({ motion_sample_retention_days: 0 });
+    expect(validateSettingsPatch({ capture_fidelity: 'high' })).toEqual({ valid: true, errors: [] });
+    expect(validateSettingsPatch({ capture_fidelity: 'ultra' })).toMatchObject({ valid: false });
+  });
+
+  it('defaults the low-power capture guard on and keeps a reachable kill switch', () => {
+    expect(DEFAULT_SETTINGS.adaptive_capture_mode).toBe('guard');
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 24,
+      adaptive_capture_mode: 'aggressive',
+    }).settings.adaptive_capture_mode).toBe('guard');
+    expect(validateSettingsPatch({ adaptive_capture_mode: 'off' })).toEqual({ valid: true, errors: [] });
+    expect(validateSettingsPatch({ adaptive_capture_mode: 'aggressive' })).toMatchObject({ valid: false });
+    expect(sanitizeImportedSettings({ adaptive_capture_mode: 'off' }))
+      .toMatchObject({ adaptive_capture_mode: 'off' });
+    expect(sanitizeImportedSettings({ adaptive_capture_mode: 'aggressive' }))
+      .not.toHaveProperty('adaptive_capture_mode');
+  });
+
   it('keeps the trip-start voice confirmation independent from live voice alerts', () => {
     expect(DEFAULT_SETTINGS.trip_start_voice_alert_enabled).toBe(true);
     expect(migrateDefaultSettings({
-      settings_defaults_version: 22,
+      settings_defaults_version: 24,
       experience_mode: EXPERIENCE_MODES.COACHING,
       voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
       voice_alerts_enabled: false,
@@ -136,7 +186,7 @@ describe('tracking store default settings', () => {
     expect(migrateDefaultSettings({
       settings_defaults_version: 21,
     }).settings).toMatchObject({
-      settings_defaults_version: 22,
+      settings_defaults_version: 24,
       speed_sign_scanner_enabled: false,
       speed_sign_mounted_mode_enabled: false,
     });
@@ -178,14 +228,15 @@ describe('tracking store default settings', () => {
     })).toMatchObject({
       changed: true,
       settings: {
-        settings_defaults_version: 22,
+        settings_defaults_version: 24,
         premium_visual_experience: false,
       },
     });
     expect(migrateDefaultSettings({
-      settings_defaults_version: 22,
+      settings_defaults_version: 24,
       experience_mode: EXPERIENCE_MODES.COACHING,
       voice_alert_style: VOICE_ALERT_STYLES.MODE_DEFAULT,
+      capture_fidelity: 'standard',
       premium_visual_experience: true,
     })).toMatchObject({
       changed: false,
@@ -220,7 +271,7 @@ describe('tracking store default settings', () => {
     expect(migrateDefaultSettings({
       settings_defaults_version: 13,
     }).settings).toMatchObject({
-      settings_defaults_version: 22,
+      settings_defaults_version: 24,
       heightened_privacy_mode: true,
       weather_context_enabled: false,
       speed_limit_lookup_enabled: false,
@@ -347,13 +398,24 @@ describe('tracking store default settings', () => {
     expect(sanitizeImportedSettings({ configurable_country_defaults: 'mars' }).configurable_country_defaults).toBeUndefined();
   });
 
-  it('enables spoken estimated speed checks for older installs with speed voice enabled', () => {
+  it('seeds spoken estimated speed checks only where the user never chose', () => {
+    // Never expressed a preference and speed voice is on: seed it enabled.
+    expect(migrateDefaultSettings({
+      settings_defaults_version: 11,
+      voice_alerts_enabled: true,
+      speed_warning_enabled: true,
+    }).settings.speak_estimated_speed_checks).toBe(true);
+
+    // Explicitly turned off. A version upgrade must not overrule that — this
+    // migration used to switch it back on behind the driver's back.
     expect(migrateDefaultSettings({
       settings_defaults_version: 11,
       voice_alerts_enabled: true,
       speed_warning_enabled: true,
       speak_estimated_speed_checks: false,
-    }).settings.speak_estimated_speed_checks).toBe(true);
+    }).settings.speak_estimated_speed_checks).toBe(false);
+
+    // Speed voice is off entirely, so there is nothing to seed.
     expect(migrateDefaultSettings({
       settings_defaults_version: 11,
       voice_alerts_enabled: false,
@@ -466,7 +528,7 @@ describe('tracking store default settings', () => {
     }).settings;
 
     expect(legacySunset.night_end_time).toBe('05:00');
-    expect(legacySunset.settings_defaults_version).toBe(22);
+    expect(legacySunset.settings_defaults_version).toBe(24);
     expect(legacySunset.raw_gps_retention_days).toBe(30);
     expect(legacyCustom.night_end_time).toBe('06:00');
     expect(legacyCustom.raw_gps_retention_days).toBe(30);

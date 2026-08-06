@@ -4,11 +4,35 @@ import {
   setEncryptedJson,
 } from '@/lib/securePayloadCrypto';
 import { withRetry } from '@/lib/retry';
-import { boundsOverlapPrivacyZone, getPrivacyZones, isPointInPrivacyZone } from '@/lib/privacyZones';
+import { boundsOverlapPrivacyZone, isPointInPrivacyZone, resolvePrivacyZonesForLookup } from '@/lib/privacyZones';
 import { privacyGatedFetch } from '@/lib/privacyGatedFetch';
 import { enqueueLocationRequest } from '@/lib/requestObfuscator';
 import { isHeightenedPrivacyMode } from '@/lib/privacyMode';
 import { normalizeHttpsEndpoint } from '@/lib/urlSecurity';
+import { canonicalSpeedSource } from '@/lib/speed/speedTierNames';
+import {
+  confidenceForSource,
+  speedAlertPolicy,
+  speedPenaltyWeightForConfidence,
+  visualAlertMarginKmh,
+} from '@/lib/speed/speedConfidencePolicy';
+
+// The tier vocabulary and the confidence -> policy mapping moved to
+// src/lib/speed/. They are re-exported here so the existing import sites keep
+// working, but src/lib/speed/ is where they are defined.
+export {
+  LEGACY_SPEED_SOURCE_ALIASES,
+  SPEED_LIMIT_CONFIDENCE,
+  VOICE_COOLDOWNS_BY_TIER,
+  canonicalSpeedTier,
+  tierForSource,
+} from '@/lib/speed/speedTierNames';
+export { confidenceForSource } from '@/lib/speed/speedConfidencePolicy';
+
+/** @deprecated Use speedPenaltyWeightForConfidence from src/lib/speed/speedConfidencePolicy. */
+export const confidenceToPenaltyWeight = speedPenaltyWeightForConfidence;
+/** @deprecated Use visualAlertMarginKmh from src/lib/speed/speedConfidencePolicy. */
+export const alertMarginForConfidence = visualAlertMarginKmh;
 
 export const SPEED_LIMIT_CACHE_KEY = 'drivesense_osm_speed_limit_cache_v2';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
@@ -24,8 +48,16 @@ const MAX_PRIVACY_CORRIDOR_QUERIES = 12;
 const MAX_CORRIDOR_SAMPLE_POINTS = 180;
 const CORRIDOR_PAD_DEG = 0.006;
 const ZONE_GUARD_M = 50;
+// Every bounding box is snapped outward onto this fixed grid (~555 m) before it
+// is checked against the privacy zones or sent. Two things follow: the emitted
+// coordinates never carry more than 3 decimals of route precision, and the hole
+// the privacy split leaves behind is always grid-aligned, so its edges are a
+// property of the grid rather than of the zone that caused it.
+const BBOX_GRID_DEG = 0.005;
+const BBOX_DECIMALS = 3;
 const ALL_POINTS_PRIVATE_REASON = 'all_points_private';
 const PRIVACY_BOUNDS_OVERLAP_REASON = 'privacy_bounds_overlap';
+const PRIVACY_ZONES_UNAVAILABLE_REASON = 'privacy_zones_unavailable';
 export const DEFAULT_SPEED_LIMIT_COUNTRY = 'global';
 export const SPEED_LIMIT_DEFAULT_COUNTRY_LABELS = Object.freeze({
   global: 'Global',
@@ -75,38 +107,6 @@ export const REGION_SPEED_DEFAULTS = Object.freeze({
     _country: Object.freeze({ urban: 50, suburban: 60, rural: 80, expressway: 100, highway: 100 }),
   }),
 });
-
-export const VOICE_COOLDOWNS_BY_TIER = Object.freeze({
-  POSTED: 60000,
-  MAP_ESTIMATED: 90000,
-  LEARNED_LOCAL: 90000,
-  REGION_DEFAULT: 120000,
-  GPS_INFERRED: 180000,
-  UNKNOWN: Infinity,
-});
-
-export const SPEED_LIMIT_CONFIDENCE = Object.freeze({
-  POSTED: 'posted',
-  MAP_ESTIMATED: 'map_estimated',
-  LEARNED_LOCAL: 'learned_local',
-  REGION_DEFAULT: 'region_default_estimate',
-  GPS_INFERRED: 'gps_inferred',
-  UNKNOWN: 'unknown',
-});
-
-export const LEGACY_SPEED_SOURCE_ALIASES = Object.freeze({
-  country_statutory: 'region_default_estimate',
-  COUNTRY_STATUTORY: 'REGION_DEFAULT',
-  user_correction: 'user_entered_estimate',
-});
-
-function canonicalSpeedSource(source) {
-  return LEGACY_SPEED_SOURCE_ALIASES[source] || source;
-}
-
-export function canonicalSpeedTier(tierName) {
-  return LEGACY_SPEED_SOURCE_ALIASES[tierName] || tierName;
-}
 
 // Rough road-type estimates used only when OSM returns a highway tag without
 // a posted maxspeed. These are not official legal speed-limit references.
@@ -181,69 +181,6 @@ export const OSM_HIGHWAY_DEFAULT_SPEED_LIMITS_KMH = Object.freeze({
   }),
 });
 
-export function tierForSource(source) {
-  switch (canonicalSpeedSource(source)) {
-    case 'openstreetmap':
-    case 'user_confirmed_posted_sign':
-      return 'POSTED';
-    case 'user_entered_estimate':
-    case 'learned_local':
-    case 'local_road_memory':
-      return 'LEARNED_LOCAL';
-    case 'osm_highway_default':
-      return 'MAP_ESTIMATED';
-    case 'region_default_estimate':
-      return 'REGION_DEFAULT';
-    case 'inferred':
-      return 'GPS_INFERRED';
-    default:
-      return 'UNKNOWN';
-  }
-}
-
-export function confidenceForSource(source, learnedLocalConfidence = null) {
-  const explicitConfidence = learnedLocalConfidence == null
-    ? null
-    : Number(learnedLocalConfidence);
-  const hasExplicitConfidence = Number.isFinite(explicitConfidence);
-  switch (canonicalSpeedSource(source)) {
-    case 'openstreetmap':
-      return 1.0;
-    case 'user_confirmed_posted_sign':
-      return hasExplicitConfidence ? explicitConfidence : 0.92;
-    case 'user_entered_estimate':
-      return hasExplicitConfidence ? explicitConfidence : 0.75;
-    case 'learned_local':
-    case 'local_road_memory':
-      return learnedLocalConfidence ?? 0.65;
-    case 'osm_highway_default':
-      return 0.70;
-    case 'region_default_estimate':
-      return 0.45;
-    case 'inferred':
-      return 0.35;
-    default:
-      return 0.0;
-  }
-}
-
-export function confidenceToPenaltyWeight(confidence) {
-  if (confidence >= 0.95) return 1.0;
-  if (confidence >= 0.90) return 0.95;
-  if (confidence >= 0.65) return 0.85;
-  if (confidence >= 0.45) return 0.55;
-  if (confidence >= 0.30) return 0.50;
-  return 0.0;
-}
-
-export function alertMarginForConfidence(confidence, baseMarginKmh = 5) {
-  if (confidence >= 0.90) return baseMarginKmh;
-  if (confidence >= 0.65) return baseMarginKmh + 3;
-  if (confidence >= 0.45) return baseMarginKmh + 7;
-  if (confidence >= 0.30) return baseMarginKmh + 15;
-  return Infinity;
-}
-
 export function getRegionDefaultEstimate(countryCode, provinceCode, roadContext) {
   if (!roadContext) return null;
   const countryKey = countryCode ? String(countryCode).toUpperCase() : 'GLOBAL';
@@ -297,14 +234,14 @@ function complianceFallbackLimit(roadContext, thresholds = {}) {
 }
 
 function tier(tierName, limitKmh, confidence, source, baseMarginKmh) {
-  const margin = alertMarginForConfidence(confidence, baseMarginKmh);
+  const margin = visualAlertMarginKmh(confidence, baseMarginKmh);
   return {
     limitKmh,
     tier: tierName,
     confidence,
     source,
     alertMarginKmh: margin,
-    penaltyWeight: confidenceToPenaltyWeight(confidence),
+    penaltyWeight: speedPenaltyWeightForConfidence(confidence),
     shouldAlert: (speedKmh) => Number(speedKmh) > limitKmh + margin,
   };
 }
@@ -323,9 +260,7 @@ export function resolveSpeedLimitWithTier(point, context = {}) {
   const storedSource = point?.speed_limit_source;
 
   if (localKnowledge?.source === 'user_confirmed_posted_sign' && Number(localKnowledge.limitKmh) > 0) {
-    const confidence = Number.isFinite(Number(localKnowledge.confidence))
-      ? Number(localKnowledge.confidence)
-      : 0.92;
+    const confidence = confidenceForSource('user_confirmed_posted_sign', localKnowledge.confidence);
     return tier('POSTED', Number(localKnowledge.limitKmh), confidence, 'user_confirmed_posted_sign', baseMargin);
   }
 
@@ -333,7 +268,7 @@ export function resolveSpeedLimitWithTier(point, context = {}) {
   // user-confirmed sign is handled above; lower-authority local knowledge is
   // considered before map/region/GPS defaults below.
   if (storedSource === 'openstreetmap' && storedLimit > 0) {
-    return tier('POSTED', storedLimit, 1.0, 'openstreetmap', baseMargin);
+    return tier('POSTED', storedLimit, confidenceForSource('openstreetmap'), 'openstreetmap', baseMargin);
   }
 
   if (
@@ -349,7 +284,7 @@ export function resolveSpeedLimitWithTier(point, context = {}) {
   }
 
   if (storedSource === 'osm_highway_default' && storedLimit > 0) {
-    return tier('MAP_ESTIMATED', storedLimit, 0.70, 'osm_highway_default', baseMargin);
+    return tier('MAP_ESTIMATED', storedLimit, confidenceForSource('osm_highway_default'), 'osm_highway_default', baseMargin);
   }
 
   const inferredZoneKmh = Number(inferredZone?.inferredZoneKmh);
@@ -361,12 +296,12 @@ export function resolveSpeedLimitWithTier(point, context = {}) {
     const limitKmh = regionKey === 'GLOBAL'
       ? Math.min(regionalDefaultEstimate, complianceFallbackLimit(roadContext, thresholds))
       : regionalDefaultEstimate;
-    return tier('REGION_DEFAULT', limitKmh, 0.45, 'region_default_estimate', baseMargin);
+    return tier('REGION_DEFAULT', limitKmh, confidenceForSource('region_default_estimate'), 'region_default_estimate', baseMargin);
   }
 
   if (Number.isFinite(inferredZoneKmh) && inferredZoneKmh > 0) {
     const fallbackLimit = complianceFallbackLimit(roadContext ?? 'urban', thresholds);
-    return tier('GPS_INFERRED', Math.min(inferredZoneKmh, fallbackLimit), 0.35, 'inferred', baseMargin);
+    return tier('GPS_INFERRED', Math.min(inferredZoneKmh, fallbackLimit), confidenceForSource('inferred'), 'inferred', baseMargin);
   }
 
   return {
@@ -407,46 +342,6 @@ export function applySafetyGuards(best, candidates = [], settings = {}) {
   return best;
 }
 
-function alertPolicyForLimit(candidate, settings = {}) {
-  const tierName = canonicalSpeedTier(candidate?.tier || 'UNKNOWN');
-  const baseMargin = settings.threshold_speed_over_kmh ?? settings.SPEED_OVER_KMH ?? 5;
-  const visualMarginKmh = Number.isFinite(Number(candidate?.alertMarginKmh))
-    ? Number(candidate.alertMarginKmh)
-    : alertMarginForConfidence(Number(candidate?.confidence) || 0, baseMargin);
-  const estimatedTier = ['MAP_ESTIMATED', 'LEARNED_LOCAL', 'REGION_DEFAULT'].includes(tierName);
-  const estimateGuidanceAllowed = settings.speed_estimates_enabled !== false || tierName === 'POSTED';
-  const finiteSetting = (value, fallback) => {
-    if (value === '') return fallback;
-    const number = Number(value);
-    return Number.isFinite(number) ? number : fallback;
-  };
-  const voiceMarginKmh = (tierName === 'GPS_INFERRED' || estimatedTier)
-    ? finiteSetting(settings.estimated_voice_margin_kmh, 12)
-    : visualMarginKmh;
-  const voiceAllowed =
-    settings.voice_alerts_enabled !== false &&
-    estimateGuidanceAllowed &&
-    (tierName === 'POSTED'
-      ? settings.speak_posted_speed_warnings !== false
-      : estimatedTier
-        ? settings.speak_estimated_speed_checks === true
-        : tierName === 'GPS_INFERRED' && settings.speak_estimated_speed_checks === true);
-  const visualAllowed =
-    settings.speed_warning_enabled !== false &&
-    tierName !== 'UNKNOWN' &&
-    estimateGuidanceAllowed;
-
-  return {
-    marginKmh: visualMarginKmh,
-    visualMarginKmh,
-    voiceMarginKmh,
-    visualAllowed,
-    voiceAllowed,
-    messageMode: tierName === 'POSTED' ? 'posted_limit_warning' : tierName === 'UNKNOWN' ? 'none' : 'speed_check',
-    cooldownMs: VOICE_COOLDOWNS_BY_TIER[tierName] ?? 60000,
-  };
-}
-
 /**
  * @param {{speedKmh?: number, candidate?: {limitKmh?: number, tier?: string, confidence?: number}, settings?: Record<string, any>}} params
  */
@@ -456,7 +351,7 @@ export function shouldWarnForSpeed({ speedKmh, candidate, settings = {} } = {}) 
   if (!Number.isFinite(speed)) return null;
   if (!Number.isFinite(limit)) return null;
 
-  const policy = alertPolicyForLimit(candidate, settings);
+  const policy = speedAlertPolicy(candidate, settings);
   const overBy = speed - limit;
   const visual = policy.visualAllowed && overBy > policy.visualMarginKmh;
   const voice = policy.voiceAllowed && overBy > policy.voiceMarginKmh;
@@ -470,6 +365,7 @@ export function shouldWarnForSpeed({ speedKmh, candidate, settings = {} } = {}) 
     cooldownMs: policy.cooldownMs,
     visualMarginKmh: policy.visualMarginKmh,
     voiceMarginKmh: policy.voiceMarginKmh,
+    meetsConfidenceFloor: policy.meetsConfidenceFloor,
   };
 }
 
@@ -567,18 +463,40 @@ function hasFiniteBounds(bounds) {
     Number.isFinite(bounds?.east);
 }
 
+// round() here returns a string, so snapping does its own numeric rounding to
+// clear the floating-point dust left by the grid multiply.
+const snapToGrid = (value, snap) => Number((snap(value / BBOX_GRID_DEG) * BBOX_GRID_DEG).toFixed(BBOX_DECIMALS));
+const snapDown = (value) => snapToGrid(value, Math.floor);
+const snapUp = (value) => snapToGrid(value, Math.ceil);
+
+/**
+ * Snap a box outward onto the shared grid. Growing the box only ever discloses
+ * less about the route inside it, and doing it here — before the privacy-overlap
+ * check in collectPrivacySafeSegmentBounds — means the box that is tested is the
+ * box that is actually sent.
+ */
+function quantizeBounds(bounds) {
+  if (!hasFiniteBounds(bounds)) return null;
+  const quantized = {
+    south: snapDown(bounds.south),
+    west: snapDown(bounds.west),
+    north: snapUp(bounds.north),
+    east: snapUp(bounds.east),
+  };
+  return hasFiniteBounds(quantized) ? quantized : null;
+}
+
 function routeBounds(points = [], pad = 0.01) {
   const valid = finiteRoutePoints(points);
   if (!valid.length) return null;
   const lats = valid.map((point) => point.lat);
   const lngs = valid.map((point) => point.lng);
-  const bounds = {
+  return quantizeBounds({
     south: Math.min(...lats) - pad,
     west: Math.min(...lngs) - pad,
     north: Math.max(...lats) + pad,
     east: Math.max(...lngs) + pad,
-  };
-  return hasFiniteBounds(bounds) ? bounds : null;
+  });
 }
 
 function skippedReasonForMissingBounds(routePoints = [], privacyZones = [], safePoints = [], queryBounds = null) {
@@ -591,11 +509,13 @@ function skippedReasonForMissingBounds(routePoints = [], privacyZones = [], safe
 }
 
 function cacheKeyForBounds(bounds) {
+  // Matches the bbox grid: a coarser key would collapse two neighbouring grid
+  // boxes into one and silently drop the second query.
   return [
-    round(bounds.south, 2),
-    round(bounds.west, 2),
-    round(bounds.north, 2),
-    round(bounds.east, 2),
+    round(bounds.south, BBOX_DECIMALS),
+    round(bounds.west, BBOX_DECIMALS),
+    round(bounds.north, BBOX_DECIMALS),
+    round(bounds.east, BBOX_DECIMALS),
   ].join(',');
 }
 
@@ -697,7 +617,7 @@ function privacySafeQueryBounds(routePoints = [], privacyZones = []) {
   };
 }
 
-const overpassBboxCoordinate = (value) => Number(value).toFixed(6);
+const overpassBboxCoordinate = (value) => Number(value).toFixed(BBOX_DECIMALS);
 
 function overpassQuery(bounds) {
   const bbox = [
@@ -892,7 +812,24 @@ export async function loadOsmSpeedLimitWays(routePoints = [], settings = {}) {
   if (settings.speed_limit_lookup_enabled === false) {
     return { ways: [], status: 'disabled', source: 'openstreetmap_overpass' };
   }
-  const privacyZones = getPrivacyZones(settings);
+  const { zones: privacyZones, failed: privacyZonesUnavailable } = await resolvePrivacyZonesForLookup(settings);
+  if (privacyZonesUnavailable) {
+    await privacyGatedFetch('overpass', { url: overpassUrls(settings)[0] }, {
+      type: 'Speed limit query',
+      coordinateDisclosure: 'blocked',
+      block: {
+        reason: 'privacy_zones_unavailable',
+        privacyVerificationEvidence: ['privacy zones are configured but could not be read before send'],
+        protections: ['privacy-zone guard unavailable - request blocked'],
+      },
+    });
+    return {
+      ways: [],
+      status: 'empty_route',
+      source: 'openstreetmap_overpass',
+      skipped_reason: PRIVACY_ZONES_UNAVAILABLE_REASON,
+    };
+  }
   const safeRoutePoints = privacySafeRoutePoints(routePoints, privacyZones);
   const bounds = routeBounds(safeRoutePoints);
   if (!bounds) {

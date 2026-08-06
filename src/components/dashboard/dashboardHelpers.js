@@ -4,7 +4,9 @@
 // module-scope in the page and are moved here byte-identical.
 import { logError } from '@/lib/errorReporting';
 import { isAndroid } from '@/lib/nativePlatform';
-import { VOICE_COOLDOWNS_BY_TIER, alertMarginForConfidence, shouldWarnForSpeed } from '@/lib/speedLimitSource';
+import { VOICE_COOLDOWNS_BY_TIER, shouldWarnForSpeed } from '@/lib/speedLimitSource';
+export { createTierAwareSpeedLimitContext } from '@/lib/speed/speedTierContext';
+import { liveSpeedAlertGate } from '@/lib/speed/speedAlertGate';
 import { TRIP_STATES, formatSpeed } from '@/lib/tripEngine';
 import { formatDistanceMeters, speedUnitLabel } from '@/lib/unitFormatting';
 import { shouldMuteWebViewVoiceForTrip, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
@@ -46,36 +48,6 @@ export function hasLiveSpeedEvidence(trip, routePoints = [], point = null, nowVa
 
 export function shouldMuteDashboardWebViewVoice(trip) {
   return shouldMuteWebViewVoiceForTrip(trip, { isAndroidPlatform: isAndroid() });
-}
-
-export function createTierAwareSpeedLimitContext(context, settings = {}) {
-  const limitKmh = context?.limitKmh ?? context?.effectiveLimitKmh ?? null;
-  const confidence = Number(context?.confidence) || 0;
-  const margin = alertMarginForConfidence(confidence, settings.threshold_speed_over_kmh ?? 5);
-  const tier = context?.tier || 'UNKNOWN';
-  const estimateGuidanceAllowed = settings.speed_estimates_enabled !== false || tier === 'POSTED';
-  if (!estimateGuidanceAllowed) {
-    return {
-      ...context,
-      limitKmh: null,
-      tier: 'UNKNOWN',
-      confidence: 0,
-      alertMarginKmh: Infinity,
-      shouldAlert: () => false,
-    };
-  }
-  return {
-    ...context,
-    limitKmh,
-    alertMarginKmh: margin,
-    shouldAlert: (speedKmh) => (
-      settings.speed_warning_enabled !== false &&
-      estimateGuidanceAllowed &&
-      Number.isFinite(Number(speedKmh)) &&
-      Number.isFinite(Number(limitKmh)) &&
-      Number(speedKmh) > Number(limitKmh) + margin
-    ),
-  };
 }
 
 export function annotatePointWithResolvedSpeedLimit(point = {}, resolved = null) {
@@ -129,15 +101,34 @@ export function speedLimitBadgeForResolved(resolved, units = 'metric') {
   return badgeByTier[tier] || badgeByTier.UNKNOWN;
 }
 
-export function checkAndSpeakSpeedAlert(speed, resolved, settings, onAlert, { voiceMuted = false } = {}) {
+export function checkAndSpeakSpeedAlert(speed, resolved, settings, onAlert, {
+  voiceMuted = false,
+  gate = liveSpeedAlertGate,
+  nowMs = Date.now(),
+} = {}) {
   if (speed < 1) return;
   const warning = shouldWarnForSpeed({ speedKmh: speed, candidate: resolved, settings });
-  if (!warning) return;
-
-  if (warning.visual) {
-    onAlert?.();
+  if (!warning) {
+    // Below every margin, so the sustained timer must not keep running.
+    gate?.reset?.();
+    return;
   }
+
+  // The badge is the cheap, early signal and stays immediate. Speech has to earn
+  // it: sustained over the limit for the same window the native service uses, so
+  // a lone GPS spike cannot make the app talk.
+  if (warning.visual) onAlert?.();
   if (voiceMuted || !warning.voice) return;
+
+  const sustained = gate
+    ? gate.evaluate({
+      speedKmh: speed,
+      limitKmh: resolved.limitKmh,
+      marginKmh: warning.voiceMarginKmh,
+      nowMs,
+    }).sustained
+    : true;
+  if (!sustained) return;
 
   const message = buildSpeedingMessage({
     speedKmh: speed,
@@ -147,7 +138,9 @@ export function checkAndSpeakSpeedAlert(speed, resolved, settings, onAlert, { vo
   if (!message) return;
 
   speakSafetyAlertOnce(
-    `speeding_${resolved.tier}`,
+    // Keyed on the event, not the tier. `speeding_${tier}` meant a tier flip
+    // mid-drive produced a fresh key and re-armed the debounce instantly.
+    'speeding',
     message,
     settings,
     VOICE_COOLDOWNS_BY_TIER[resolved.tier] ?? 60000

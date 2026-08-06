@@ -1,6 +1,6 @@
 import { saveExportToDownloads } from './nativeDownloads';
 import { logSystemFailure, recordSystemEvent } from './systemLog';
-import { clamp, eventRatePerDistance, pearsonCorrelation } from './mathUtils';
+import { clamp, eventRatePerDistance, pearsonCorrelation, STANDARD_GRAVITY_MS2 } from './mathUtils';
 import { detectTripStops, estimateTripEconomics, FATIGUE_HEATMAP_SEGMENT_SECONDS } from './tripInsights';
 import { createPrivacyExportSalt, isPointInPrivacyZone, maskEventCoordinatesForPrivacy, maskTripForPrivacyExport } from './privacyZones';
 import { applyDifferentialPrivacyToAggregates } from './differentialPrivacy';
@@ -27,6 +27,10 @@ import {
   scoringValue,
 } from './scoringConstants';
 import { ECO_DEFAULTS } from './ecoDefaults';
+import { classifyMagnitudeSeverity, classifySpeedingSeverity } from './scoring/eventSeverity';
+import { EVENT_TYPES } from './scoring/eventTypes';
+import { refineEventsWithMotion } from './scoring/motionEventRefinement';
+import { calculateImuJerk } from './scoring/motionJerk';
 import { formatEstimatedScore, isEstimatedScoreMetric } from './scoreDisplay';
 import {
   alertMarginForConfidence,
@@ -69,15 +73,58 @@ export const STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_HIGHWAY = scoringValue('STOP_
 export const STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_URBAN = scoringValue('STOP_START_MIN_DEFENSIVE_SAMPLE_COUNT_URBAN') ?? 1;
 export const FATIGUE_SEGMENT_SECONDS = FATIGUE_HEATMAP_SEGMENT_SECONDS;
 export const PHONE_USE_SAFETY_WEIGHT = scoringValue('PHONE_USE_SAFETY_WEIGHT');
+/**
+ * Provisional per-km scale applied to GPS-proxy distraction penalty points. Used only when
+ * no confirmed Usage Access phone-use signal is available for the trip.
+ */
+const GPS_DISTRACTION_PENALTY_SCALE = scoringValue('GPS_DISTRACTION_PENALTY_SCALE');
+/**
+ * Provisional deductions building `phone_use_score` from confirmed phone-use windows. These
+ * deliberately differ from EVENT_PENALTY_POINTS.phone_use and PHONE_USE_RISK_DEDUCTION_POINTS;
+ * reconciling the three ladders needs labeled distracted-driving data, not a guess.
+ */
+const PHONE_USE_WINDOW_PENALTY_POINTS = scoringValue('PHONE_USE_WINDOW_PENALTY_POINTS');
+const PHONE_USE_HIGH_SPEED_PENALTY_POINTS = scoringValue('PHONE_USE_HIGH_SPEED_PENALTY_POINTS');
+/**
+ * Ceiling for the flat night-driving Safety deduction. `calculateNightPenalty` already
+ * divides by point count, so its result is a finished 0-12 deduction rather than a penalty
+ * point total awaiting per-km normalization.
+ */
+const NIGHT_SAFETY_MAX_PENALTY = scoringValue('NIGHT_SAFETY_MAX_PENALTY');
+/**
+ * Floor on the per-km penalty denominator. Displayed event rates use true distance, so below
+ * this distance the scored rate and the displayed rate legitimately disagree.
+ */
+const SCORE_DISTANCE_NORMALIZATION_FLOOR_KM = scoringValue('SCORE_DISTANCE_NORMALIZATION_FLOOR_KM');
 const OBD_SPEED_FALLBACK_ACCURACY_M = 15;
 const OBD_SPEED_MAX_SAMPLE_AGE_MS = 2500;
 const OBD_IDLE_RPM_MIN = 500;
 const OBD_OVER_REV_RPM = 3500;
 const OBD_HIGH_THROTTLE_PCT = 75;
 const OBD_ECO_PENALTY_MAX = 15;
-const MAX_REASONABLE_GPS_SPEED_KMH = 220;
+const MAX_REASONABLE_GPS_SPEED_KMH = scoringValue('MAX_REASONABLE_GPS_SPEED_KMH');
 const MAX_REASONABLE_OBD_SPEED_KMH = 260;
-const ROUTE_GAP_SECONDS = 120;
+const ROUTE_GAP_SECONDS = scoringValue('MAX_SAMPLE_GAP_SECONDS');
+/**
+ * Acceleration is derived two ways and the two limits below measure different spans,
+ * so they are deliberately different numbers rather than one shared constant:
+ *
+ *  - ACCEL_SMOOTHING_MAX_WINDOW_SECONDS bounds the CENTERED 3-point window
+ *    (points[i-1] -> points[i+1]), i.e. two sample gaps.
+ *  - ACCEL_RAW_MAX_GAP_SECONDS bounds the SINGLE segment used by the raw fallback
+ *    that runs when the smoothed value is unavailable (e.g. a neighbouring speed spike).
+ *
+ * Both exist to stop a long GPS outage being averaged into a plausible-looking
+ * m/s2 reading: a speed change spread over 20 s is not a braking event.
+ */
+const ACCEL_SMOOTHING_MAX_WINDOW_SECONDS = 15;
+const ACCEL_RAW_MAX_GAP_SECONDS = 10;
+/** Textbook dry-asphalt tyre friction coefficient, used only for the slippery-condition proxy. */
+const DRY_ROAD_FRICTION_COEFFICIENT = 0.75;
+const PHONE_MICRO_STEER_MIN_DEG = scoringValue('PHONE_MICRO_STEER_MIN_DEG');
+const PHONE_MICRO_STEER_MAX_DEG = scoringValue('PHONE_MICRO_STEER_MAX_DEG');
+const PHONE_DETECT_MIN_SPEED_KMH = scoringValue('PHONE_DETECT_MIN_SPEED_KMH');
+const STOP_START_URBAN_MEDIAN_SPEED_KMH = scoringValue('STOP_START_URBAN_MEDIAN_SPEED_KMH');
 const MIN_MANUAL_SAVE_SECONDS = 30;
 const MANUAL_SPARSE_GPS_MIN_SECONDS = 30;
 const MANUAL_SPARSE_GPS_MIN_SPEED_KMH = 10;
@@ -153,6 +200,7 @@ export const DEFAULT_THRESHOLDS = {
   SHARP_TURN_G_LOW: scoringValue('SHARP_TURN_G_LOW'),
   SHARP_TURN_G_MEDIUM: scoringValue('SHARP_TURN_G_MEDIUM'),
   SHARP_TURN_G_HIGH: scoringValue('SHARP_TURN_G_HIGH'),
+  SHARP_TURN_MIN_HEADING_CHANGE_DEG: scoringValue('SHARP_TURN_MIN_HEADING_CHANGE_DEG'),
   // Speeding fallback: above 100 km/h when no open-source speed limit data is available.
   SPEEDING_FALLBACK_KMH: scoringValue('SPEEDING_FALLBACK_KMH'),
   SPEED_OVER_KMH: scoringValue('SPEED_OVER_KMH'),
@@ -254,22 +302,9 @@ export const DEFAULT_THRESHOLDS = {
   ADVANCED_SAFETY_DETECTION_ENABLED: true,
 };
 
-export const EVENT_TYPES = {
-  HARSH_BRAKE: 'harsh_brake',
-  RAPID_ACCELERATION: 'rapid_acceleration',
-  SHARP_TURN: 'sharp_turn',
-  SPEEDING: 'speeding',
-  IDLE: 'idle',
-  HEADING_DEVIATION: 'heading_deviation',
-  HEADING_DEVIATION_LEGACY: 'heading_deviation_legacy',
-  STOP_START_PATTERN: 'stop_start_pattern',
-  TAILGATE_CYCLE: 'tailgate_cycle',
-  ERRATIC_SPEED: 'erratic_speed',
-  NEAR_MISS: 'near_miss',
-  CLOSE_PROXIMITY: 'close_proximity',
-  AGGRESSIVE_OVERTAKE: 'aggressive_overtake',
-  PHONE_USE: 'phone_use',
-};
+// Defined in ./scoring/eventTypes.js and re-exported here so the small scoring modules can
+// name an event type without importing this file back.
+export { EVENT_TYPES };
 
 const isDiagnosticOnlyScoringEvent = (event = {}, { advancedSafetyEnabled = true } = {}) => (
   event?.type === EVENT_TYPES.AGGRESSIVE_OVERTAKE ||
@@ -357,17 +392,36 @@ function registeredComponentConfidence(componentKey, distanceKm, sampleCount, va
   );
 }
 
+const UNAVAILABLE_EVIDENCE_LABELS = Object.freeze([
+  'insufficient_data',
+  'insufficient_highway_distance',
+  'usage_access_required',
+  'beta_diagnostic_only',
+]);
+const HIGH_EVIDENCE_LABELS = Object.freeze(['observed_stops', 'observed', 'road_type_stratified']);
+const DEVELOPING_EVIDENCE_LABELS = Object.freeze(['partial_road_type_data']);
+
 function normalizedEvidenceLevel(evidence, value) {
   if (value == null) return CONFIDENCE_LEVELS.UNAVAILABLE;
   if (Object.values(CONFIDENCE_LEVELS).includes(evidence)) return evidence;
-  if (['insufficient_data', 'insufficient_highway_distance', 'usage_access_required', 'beta_diagnostic_only'].includes(evidence)) {
-    return CONFIDENCE_LEVELS.UNAVAILABLE;
+  if (UNAVAILABLE_EVIDENCE_LABELS.includes(evidence)) return CONFIDENCE_LEVELS.UNAVAILABLE;
+  if (HIGH_EVIDENCE_LABELS.includes(evidence)) return CONFIDENCE_LEVELS.HIGH;
+  if (DEVELOPING_EVIDENCE_LABELS.includes(evidence)) return CONFIDENCE_LEVELS.DEVELOPING;
+
+  const numericEvidence = Number(evidence);
+  if (Number.isFinite(numericEvidence)) return confidenceLevelFromNumeric(numericEvidence);
+
+  // An unrecognised non-numeric label would otherwise fall through to NaN -> UNAVAILABLE,
+  // and createComponentScore discards the value of an UNAVAILABLE component. That silently
+  // deletes a correctly computed score with no error and no failing test, so make it loud
+  // in development: a new evidence label must be added to one of the lists above.
+  if (evidence != null && evidence !== '') {
+    const message = `normalizedEvidenceLevel: unrecognised evidence label ${JSON.stringify(evidence)}. `
+      + 'Add it to UNAVAILABLE_EVIDENCE_LABELS, HIGH_EVIDENCE_LABELS or DEVELOPING_EVIDENCE_LABELS.';
+    if (import.meta.env?.DEV) throw new Error(message);
+    logSystemFailure('tripEngine.normalizedEvidenceLevel', new Error(message));
   }
-  if (evidence === 'observed_stops' || evidence === 'observed' || evidence === 'road_type_stratified') {
-    return CONFIDENCE_LEVELS.HIGH;
-  }
-  if (evidence === 'partial_road_type_data') return CONFIDENCE_LEVELS.DEVELOPING;
-  return confidenceLevelFromNumeric(Number(evidence));
+  return CONFIDENCE_LEVELS.UNAVAILABLE;
 }
 
 /**
@@ -448,13 +502,33 @@ export function getTripComponentScore(trip = {}, componentKey) {
   });
 }
 
+/**
+ * Read a numeric setting, falling back when the stored value is absent or unusable.
+ *
+ * `null` and `''` must be treated as "not set", not as zero. `Number(null)` and
+ * `Number('')` are both `0` and both pass `Number.isFinite`, so without the explicit
+ * guard a cleared threshold field would silently configure a threshold of 0 — which
+ * for HARSH_BRAKE_MS2 means every deceleration on the trip becomes a harsh brake.
+ */
 function settingNumber(value, fallback) {
+  if (value == null || value === '') return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function ecoSettingNumber(value, fallback) {
-  return value == null || value === '' ? fallback : settingNumber(value, fallback);
+const ecoSettingNumber = settingNumber;
+
+/**
+ * Default GPS phone-proxy confidence threshold implied by a sensitivity preset.
+ * Exported so Settings can show the seeded value and tell the user when their own
+ * stored threshold is overriding the preset.
+ * @param {string} sensitivity
+ * @returns {number}
+ */
+export function phoneSensitivityPresetThreshold(sensitivity) {
+  if (sensitivity === 'low') return scoringValue('PHONE_LOW_SENSITIVITY_CONFIDENCE_THRESHOLD');
+  if (sensitivity === 'high') return scoringValue('PHONE_HIGH_SENSITIVITY_CONFIDENCE_THRESHOLD');
+  return scoringValue('PHONE_CONFIDENCE_THRESHOLD');
 }
 
 function resolveEcoScoringConfig(thresholds) {
@@ -487,6 +561,9 @@ export function buildDrivingThresholds(settings = {}) {
     HARSH_BRAKE_MS2: settingNumber(settings.threshold_harsh_brake_ms2, DEFAULT_THRESHOLDS.HARSH_BRAKE_MS2),
     RAPID_ACCEL_MS2: settingNumber(settings.threshold_rapid_accel_ms2, DEFAULT_THRESHOLDS.RAPID_ACCEL_MS2),
     STOP_START_DECEL_MS2: settingNumber(settings.threshold_stop_start_decel_ms2 ?? settings.threshold_tailgate_decel_ms2, DEFAULT_THRESHOLDS.STOP_START_DECEL_MS2),
+    STOP_START_MIN_SPEED_KMH: settingNumber(settings.threshold_stop_start_min_speed_kmh, DEFAULT_THRESHOLDS.STOP_START_MIN_SPEED_KMH),
+    STOP_START_SPEED_DROP_KMH: settingNumber(settings.threshold_stop_start_speed_drop_kmh, DEFAULT_THRESHOLDS.STOP_START_SPEED_DROP_KMH),
+    STOP_START_URBAN_DECEL_MS2: settingNumber(settings.threshold_stop_start_urban_decel_ms2, DEFAULT_THRESHOLDS.STOP_START_URBAN_DECEL_MS2),
     SHARP_TURN_G_LOW: settingNumber(settings.threshold_sharp_turn_g_low, DEFAULT_THRESHOLDS.SHARP_TURN_G_LOW),
     SHARP_TURN_G_MEDIUM: settingNumber(settings.threshold_sharp_turn_g_medium, DEFAULT_THRESHOLDS.SHARP_TURN_G_MEDIUM),
     SHARP_TURN_G_HIGH: settingNumber(settings.threshold_sharp_turn_g_high, DEFAULT_THRESHOLDS.SHARP_TURN_G_HIGH),
@@ -513,11 +590,12 @@ export function buildDrivingThresholds(settings = {}) {
     PHONE_CREEP_RATE_KMH_S: settingNumber(settings.phone_creep_rate_kmh_s, DEFAULT_THRESHOLDS.PHONE_CREEP_RATE_KMH_S),
     PHONE_LANE_DRIFT_DEG: settingNumber(settings.phone_lane_drift_deg, DEFAULT_THRESHOLDS.PHONE_LANE_DRIFT_DEG),
     PHONE_COUPLING_THRESHOLD: settingNumber(settings.phone_coupling_threshold, DEFAULT_THRESHOLDS.PHONE_COUPLING_THRESHOLD),
-    PHONE_CONFIDENCE_THRESHOLD: settings.phone_use_sensitivity === 'low'
-      ? scoringValue('PHONE_LOW_SENSITIVITY_CONFIDENCE_THRESHOLD')
-      : settings.phone_use_sensitivity === 'high'
-        ? scoringValue('PHONE_HIGH_SENSITIVITY_CONFIDENCE_THRESHOLD')
-        : settingNumber(settings.phone_confidence_threshold, DEFAULT_THRESHOLDS.PHONE_CONFIDENCE_THRESHOLD),
+    // phone_confidence_threshold is the single source of truth. The low/high/medium
+    // sensitivity presets are a shortcut that WRITES this value when chosen (see
+    // Settings and the settings migration), rather than a branch that overrides it
+    // here. Previously the preset was applied at read time, so for any sensitivity
+    // other than "medium" the expert slider in Settings silently did nothing.
+    PHONE_CONFIDENCE_THRESHOLD: settingNumber(settings.phone_confidence_threshold, DEFAULT_THRESHOLDS.PHONE_CONFIDENCE_THRESHOLD),
     PHONE_MIN_WINDOW_S: settingNumber(settings.phone_min_window_s, DEFAULT_THRESHOLDS.PHONE_MIN_WINDOW_S),
     PHONE_USE_DETECTION_ENABLED: settings.phone_use_detection_enabled !== false,
     PHONE_USE_AFFECTS_SCORE: settings.phone_use_affects_score !== false,
@@ -566,6 +644,7 @@ const PROVENANCE_THRESHOLD_KEYS = Object.freeze([
   'MIN_SPEED_RAPID_ACCEL_KMH',
   'MIN_SPEED_HARSH_BRAKE_KMH',
   'STOP_START_DECEL_MS2',
+  'SHARP_TURN_MIN_HEADING_CHANGE_DEG',
   'STOP_START_MIN_SPEED_KMH',
   'STOP_START_CRUISE_SECONDS',
   'STOP_START_SPEED_DROP_KMH',
@@ -839,7 +918,7 @@ function accuracyMeters(point) {
 function movementNoiseFloorMeters(point, previousPoint, thresholds = DEFAULT_THRESHOLDS) {
   const bestAccuracy = Math.max(accuracyMeters(point), accuracyMeters(previousPoint));
   return Math.max(
-    thresholds.MIN_POINT_DISTANCE_M ?? 8,
+    thresholds.MIN_POINT_DISTANCE_M ?? DEFAULT_THRESHOLDS.MIN_POINT_DISTANCE_M,
     Math.min(25, bestAccuracy * 0.6)
   );
 }
@@ -940,18 +1019,22 @@ export function computeSmoothedAccelerations(points, thresholds = DEFAULT_THRESH
     const next = points[i + 1];
     const dtTotal = (timestampMs(next) - timestampMs(prev)) / 1000;
 
-    if (dtTotal <= 0 || dtTotal > 15) continue;
+    if (dtTotal <= 0 || dtTotal > ACCEL_SMOOTHING_MAX_WINDOW_SECONDS) continue;
 
     const segPrev = calculateSegmentMetrics(prev, curr, thresholds);
     const segNext = calculateSegmentMetrics(curr, next, thresholds);
     if (segPrev.isNoise || segNext.isNoise) continue;
 
+    // Centered difference: the speeds either side of points[i], over the time between
+    // them. Both ends have to come from the same span as dtTotal — pairing the single-step
+    // delta (curr -> next) with the two-step dtTotal reported exactly half the true rate,
+    // so a sustained 5 m/s2 stop was measured as 2.5 and never reached the trigger.
+    const speedBefore = reliablePointSpeed(points, i - 1, thresholds);
+    const speedAfter = reliablePointSpeed(points, i + 1, thresholds);
+    if (speedBefore == null || speedAfter == null) continue;
+
     result[i] = {
-      accel_ms2: calculateAcceleration(
-        segPrev.reliableSpeedKmh,
-        segNext.reliableSpeedKmh,
-        dtTotal
-      ),
+      accel_ms2: calculateAcceleration(speedBefore, speedAfter, dtTotal),
       speed_kmh: segPrev.reliableSpeedKmh,
     };
   }
@@ -2281,6 +2364,10 @@ export function inferSpeedZones(routePoints = [], thresholds = DEFAULT_THRESHOLD
       inferredZone: zone.inferredZone,
       inferredZoneKmh: zone.inferredZoneKmh,
       inferredLimitKmh,
+      // This measures how *consistent* the driver's speed was in the window,
+      // not how confident we are that the inferred limit is correct. Both
+      // names are exported so the UI can say which one it is showing.
+      speed_consistency: deviation < 8 ? 'high' : deviation < 18 ? 'medium' : 'low',
       confidence: deviation < 8 ? 'high' : deviation < 18 ? 'medium' : 'low',
       median_speed_kmh: round1(medianSpeed),
       p85_speed_kmh: round1(p85Speed),
@@ -2301,7 +2388,14 @@ export function inferSpeedZones(routePoints = [], thresholds = DEFAULT_THRESHOLD
   });
 }
 
-export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = DEFAULT_THRESHOLDS) {
+/**
+ * @param {Array<object>} cleanPoints
+ * @param {number|object} distanceKmOrThresholds Trip distance in km, or resolved thresholds.
+ * @param {{motionSamples?: Array<object>, orientationCalibration?: object|null}} [motionContext]
+ *   Optional IMU stream. When it yields a usable jerk estimate the reported avg_jerk_ms3 comes
+ *   from the ~50 Hz accelerometer instead of twice-differentiated 1 Hz GPS speed.
+ */
+export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = DEFAULT_THRESHOLDS, motionContext = null) {
   const thresholds = typeof distanceKmOrThresholds === 'number'
     ? DEFAULT_THRESHOLDS
     : distanceKmOrThresholds || DEFAULT_THRESHOLDS;
@@ -2309,12 +2403,18 @@ export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = DE
     ? (Number.isFinite(distanceKmOrThresholds) ? Math.max(0, distanceKmOrThresholds) : 0)
     : calculateRouteDistanceKm(cleanPoints, thresholds);
 
+  const imuJerk = calculateImuJerk(
+    motionContext?.motionSamples || [],
+    motionContext?.orientationCalibration || null
+  );
+
   if (!cleanPoints || cleanPoints.length < 3) {
     return {
       jerk_score: null,
       jerk_score_confidence: 'insufficient_data',
       jerk_event_count: 0,
       avg_jerk_ms3: 0,
+      jerk_data_source: ['gps'],
     };
   }
 
@@ -2356,12 +2456,21 @@ export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = DE
     if (absJerk > 1.5) jerkEventCount++;
   }
 
+  const gpsAvgJerkMs3 = round1(jerkSampleCount ? jerkAbsTotal / jerkSampleCount : 0);
+  // The event count and the score itself stay on the GPS path: the penalty ladder was fitted
+  // against GPS-derived jerk, and rescaling it for a differently-conditioned signal without
+  // labelled data would move every smoothness score for reasons unrelated to driving.
+  // The reported magnitude does switch, because that is the number a user reads.
+  const avgJerkMs3 = imuJerk.available ? imuJerk.avg_jerk_ms3 : gpsAvgJerkMs3;
+  const jerkDataSource = imuJerk.available ? ['gps', 'imu'] : ['gps'];
+
   if (distanceKm < 0.5 || jerkSampleCount === 0) {
     return {
       jerk_score: null,
       jerk_score_confidence: 'insufficient_data',
       jerk_event_count: jerkEventCount,
-      avg_jerk_ms3: round1(jerkSampleCount ? jerkAbsTotal / jerkSampleCount : 0),
+      avg_jerk_ms3: avgJerkMs3,
+      jerk_data_source: jerkDataSource,
     };
   }
 
@@ -2370,9 +2479,13 @@ export function calculateJerkScore(cleanPoints = [], distanceKmOrThresholds = DE
   const jerkScore = Math.max(0, 100 - penaltyContribution);
   return {
     jerk_score: Math.round(jerkScore),
+    // A short trip stays low-confidence regardless of sensors; a long trip backed by the
+    // IMU is the only case that reaches high confidence on a corroborated magnitude.
     jerk_score_confidence: distanceKm < 3 ? 'low' : 'high',
     jerk_event_count: jerkEventCount,
-    avg_jerk_ms3: round1(jerkSampleCount ? jerkAbsTotal / jerkSampleCount : 0),
+    avg_jerk_ms3: avgJerkMs3,
+    gps_avg_jerk_ms3: gpsAvgJerkMs3,
+    jerk_data_source: jerkDataSource,
   };
 }
 
@@ -3013,7 +3126,7 @@ export function detectLaneChanges(cleanPoints = [], motionSamples = [], orientat
 
       if (lateralValues.length < 4 || yawValues.length < 4) continue;
 
-      const peakLateral = Math.max(...lateralValues.map((value) => Math.abs(value))) / 9.80665;
+      const peakLateral = Math.max(...lateralValues.map((value) => Math.abs(value))) / STANDARD_GRAVITY_MS2;
       if (peakLateral < LANE_CHANGE_MIN_LATERAL_G) continue;
       if (peakLateral > LANE_CHANGE_MAX_LATERAL_G) continue;
 
@@ -3269,8 +3382,16 @@ function detectStopStartPatternsForMode(cleanPoints = [], thresholds = DEFAULT_T
       continue;
     }
 
-    const prevSpeed = finiteSpeed(prev);
-    const currSpeed = finiteSpeed(curr);
+    // Use the same spike-filtered speed every other detector uses. Reading raw
+    // finiteSpeed here made stop-start the one detector that could build a whole
+    // cruise-then-decelerate cycle out of a single bad GPS sample; a spike now
+    // resets the state machine instead of manufacturing a pattern.
+    const prevSpeed = reliablePointSpeed(cleanPoints, i - 1, thresholds);
+    const currSpeed = reliablePointSpeed(cleanPoints, i, thresholds);
+    if (prevSpeed == null || currSpeed == null) {
+      resetState();
+      continue;
+    }
     const accel = calculateAcceleration(prevSpeed, currSpeed, dt);
 
     if (state === 'IDLE') {
@@ -3306,9 +3427,18 @@ function detectStopStartPatternsForMode(cleanPoints = [], thresholds = DEFAULT_T
       const speedDrop = cruiseSpeed - currSpeed;
 
       if (speedDrop >= speedDropThreshold && elapsed <= maxElapsedSeconds) {
+        // Both dimensions have to escalate together, so classify on whichever
+        // exceeds its own trigger by the smaller factor. Scoring the ratio rather
+        // than the raw values is what lets the urban profile (decel 1.4, drop 6)
+        // reach medium/high at all — against the previous absolute 3.0/18 and
+        // 4.0/30 literals every urban stop-start was pinned to "low".
+        const severityRatio = Math.min(
+          maxDecel / Math.max(decelThreshold, Number.EPSILON),
+          speedDrop / Math.max(speedDropThreshold, Number.EPSILON)
+        );
         events.push({
           type: EVENT_TYPES.STOP_START_PATTERN,
-          severity: maxDecel > 4.0 && speedDrop > 30 ? 'high' : maxDecel > 3.0 && speedDrop > 18 ? 'medium' : 'low',
+          severity: classifyMagnitudeSeverity(severityRatio, 1, EVENT_TYPES.STOP_START_PATTERN),
           label: 'stop-start pattern (estimated)',
           confidence: 'low',
           stop_start_context: urbanMode ? 'urban' : 'highway',
@@ -3685,8 +3815,8 @@ function summarizePhoneUseEvents(events = [], durationSeconds = 0) {
       ? 'medium'
       : 'low';
   const scorePenalty = confirmedEvents.reduce((sum, event) => (
-    sum + (event.severity === 'high' ? 20 : event.severity === 'medium' ? 8 : 3)
-  ), 0) + (anyVeryFast ? 15 : 0);
+    sum + (PHONE_USE_WINDOW_PENALTY_POINTS[event.severity] ?? PHONE_USE_WINDOW_PENALTY_POINTS.low)
+  ), 0) + (anyVeryFast ? PHONE_USE_HIGH_SPEED_PENALTY_POINTS : 0);
   return {
     phone_use_events: confirmedEvents,
     phone_use_window_count: confirmedEvents.length,
@@ -3756,21 +3886,22 @@ export function detectPhoneUseWindows(routePoints = [], thresholds = DEFAULT_THR
   // Signal 1: micro-steering oscillations.
   for (let i = 0; i < samples.length; i++) {
     const start = samples[i];
-    if (start.speed_kmh < 30) continue;
-    const windowSeconds = thresholds.PHONE_MICRO_STEER_WINDOW_S ?? 15;
+    if (start.speed_kmh < PHONE_DETECT_MIN_SPEED_KMH) continue;
+    const windowSeconds = thresholds.PHONE_MICRO_STEER_WINDOW_S ?? DEFAULT_THRESHOLDS.PHONE_MICRO_STEER_WINDOW_S;
     const window = samples.filter((sample) => sample.timestamp >= start.timestamp && sample.timestamp <= start.timestamp + windowSeconds * 1000);
     if (window.length < 4) continue;
-    const maxAccuracy = thresholds.PHONE_PROXY_MAX_ACCURACY_M ?? 20;
+    const maxAccuracy = thresholds.PHONE_PROXY_MAX_ACCURACY_M ?? DEFAULT_THRESHOLDS.PHONE_PROXY_MAX_ACCURACY_M;
     if (window.some((sample) => Number.isFinite(Number(sample.point?.accuracy)) && Number(sample.point.accuracy) > maxAccuracy)) continue;
     let oscillations = 0;
     for (let j = 2; j < window.length; j++) {
       const globalIndex = window[j].index;
       const d1 = signedHeadingDeltas[Math.max(0, globalIndex - 1)];
       const d2 = signedHeadingDeltas[globalIndex];
-      const bothMicro = Math.abs(d1) >= 3 && Math.abs(d1) <= 18 && Math.abs(d2) >= 3 && Math.abs(d2) <= 18;
+      const isMicro = (delta) => Math.abs(delta) >= PHONE_MICRO_STEER_MIN_DEG && Math.abs(delta) <= PHONE_MICRO_STEER_MAX_DEG;
+      const bothMicro = isMicro(d1) && isMicro(d2);
       if (bothMicro && Math.sign(d1) !== Math.sign(d2)) oscillations++;
     }
-    if (oscillations >= (thresholds.PHONE_MICRO_STEER_COUNT ?? 6)) {
+    if (oscillations >= (thresholds.PHONE_MICRO_STEER_COUNT ?? DEFAULT_THRESHOLDS.PHONE_MICRO_STEER_COUNT)) {
       addVote('micro_steer', window[0].index, window[window.length - 1].index, Math.min(1, oscillations / 8));
       i += Math.max(1, Math.floor(window.length / 2));
     }
@@ -3791,7 +3922,7 @@ export function detectPhoneUseWindows(routePoints = [], thresholds = DEFAULT_THR
       Math.max(...window.map((sample) => Math.abs(accelSamples[sample.index] || 0))) < 2.5;
     const after = samples.filter((sample) => sample.timestamp > window[window.length - 1].timestamp && sample.timestamp <= window[window.length - 1].timestamp + 3000);
     const correctionAbrupt = after.some((sample) => (accelSamples[sample.index] || 0) <= -1.5);
-    if (driftRate >= (thresholds.PHONE_CREEP_RATE_KMH_S ?? 1.5) && trendIsMonotonic && correctionAbrupt) {
+    if (driftRate >= (thresholds.PHONE_CREEP_RATE_KMH_S ?? DEFAULT_THRESHOLDS.PHONE_CREEP_RATE_KMH_S) && trendIsMonotonic && correctionAbrupt) {
       addVote('speed_creep', window[0].index, window[window.length - 1].index, 0.7);
     }
   }
@@ -3825,7 +3956,7 @@ export function detectPhoneUseWindows(routePoints = [], thresholds = DEFAULT_THR
     const recovery = window[window.length - 1];
     const timeToRecover = Math.max(0.5, (recovery.timestamp - peak.timestamp) / 1000);
     const recoverySpeed = headingDiff(recovery.heading, peak.heading) / timeToRecover;
-    if (driftMagnitude >= (thresholds.PHONE_LANE_DRIFT_DEG ?? 8) && recoverySpeed >= 3) {
+    if (driftMagnitude >= (thresholds.PHONE_LANE_DRIFT_DEG ?? DEFAULT_THRESHOLDS.PHONE_LANE_DRIFT_DEG) && recoverySpeed >= 3) {
       addVote('lane_drift', window[0].index, window[window.length - 1].index, Math.min(1, driftMagnitude / 20));
     }
   }
@@ -3840,7 +3971,7 @@ export function detectPhoneUseWindows(routePoints = [], thresholds = DEFAULT_THR
     const speedChanges = window.map((sample) => Math.abs(speedDeltas[sample.index] || 0));
     if (average(headingChanges) < 1 || average(speedChanges) < 0.2) continue;
     const correlation = pearsonCorrelation(headingChanges, speedChanges);
-    const threshold = thresholds.PHONE_COUPLING_THRESHOLD ?? 0.15;
+    const threshold = thresholds.PHONE_COUPLING_THRESHOLD ?? DEFAULT_THRESHOLDS.PHONE_COUPLING_THRESHOLD;
     if (correlation < threshold) {
       addVote('speed_heading_decoupling', window[0].index, window[window.length - 1].index, Math.min(1, (threshold - correlation) * 5));
     }
@@ -3858,7 +3989,7 @@ export function detectPhoneUseWindows(routePoints = [], thresholds = DEFAULT_THR
     return sum + weight * (timeline[sourceIndex] || 0);
   }, 0));
 
-  const confidenceThreshold = thresholds.PHONE_CONFIDENCE_THRESHOLD ?? 0.40;
+  const confidenceThreshold = thresholds.PHONE_CONFIDENCE_THRESHOLD ?? DEFAULT_THRESHOLDS.PHONE_CONFIDENCE_THRESHOLD;
   const runs = [];
   let startRun = null;
   for (let i = 0; i < smoothed.length; i++) {
@@ -3878,7 +4009,7 @@ export function detectPhoneUseWindows(routePoints = [], thresholds = DEFAULT_THR
     else merged.push({ ...run });
   }
 
-  const minWindowS = thresholds.PHONE_MIN_WINDOW_S ?? 4;
+  const minWindowS = thresholds.PHONE_MIN_WINDOW_S ?? DEFAULT_THRESHOLDS.PHONE_MIN_WINDOW_S;
   const events = merged
     .map((run) => {
       const startTimeMs = timestampMs(points[run.startIndex]);
@@ -3951,8 +4082,8 @@ export function detectPhoneUseWindows(routePoints = [], thresholds = DEFAULT_THR
         ? 'medium'
         : 'low';
   const scorePenalty = events.reduce((sum, event) => (
-    sum + (event.severity === 'high' ? 20 : event.severity === 'medium' ? 8 : 3)
-  ), 0) + (anyVeryFast ? 15 : 0);
+    sum + (PHONE_USE_WINDOW_PENALTY_POINTS[event.severity] ?? PHONE_USE_WINDOW_PENALTY_POINTS.low)
+  ), 0) + (anyVeryFast ? PHONE_USE_HIGH_SPEED_PENALTY_POINTS : 0);
   const tripDurationS = Math.max(1, (timestampMs(points[points.length - 1]) - timestampMs(points[0])) / 1000);
 
   return {
@@ -4376,7 +4507,13 @@ export function calculateReactionTimeProxy(routePoints, drivingEvents = [], thre
   return calculateBrakeOnsetSmoothness(routePoints, drivingEvents, thresholds);
 }
 
-function lateralGForTriplet(points, index, thresholds = DEFAULT_THRESHOLDS) {
+/**
+ * Lateral g at `index`, or null when the triplet is unusable (too slow, noisy,
+ * too short, or too sparsely sampled). Exported so the cornering heat map can
+ * render the same number the sharp-turn detector scores, instead of a second
+ * approximation with a different denominator.
+ */
+export function lateralGForTriplet(points, index, thresholds = DEFAULT_THRESHOLDS) {
   if (index <= 0 || index >= points.length - 1) return null;
   const speed = reliablePointSpeed(points, index, thresholds);
   const minSpeed = thresholds.CORNERING_MIN_SPEED_KMH ?? DEFAULT_THRESHOLDS.CORNERING_MIN_SPEED_KMH;
@@ -4394,7 +4531,7 @@ function lateralGForTriplet(points, index, thresholds = DEFAULT_THRESHOLDS) {
   const rawHeadingChange = headingDiff(h0, h2);
   const effectiveDt = Math.max(1.5, prevSegment.dt + nextSegment.dt);
   const omegaRadPerSec = (rawHeadingChange * Math.PI / 180) / effectiveDt;
-  return (speed / 3.6 * omegaRadPerSec) / 9.81;
+  return (speed / 3.6 * omegaRadPerSec) / STANDARD_GRAVITY_MS2;
 }
 
 function hasSustainedLateralG(points, index, thresholdG, thresholds = DEFAULT_THRESHOLDS) {
@@ -4921,14 +5058,19 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
       if (speedLimitContext.limitSource === 'osm_highway_default') bucket.osmDefaultPoints++;
     }
     bucket.maxSpeed = Math.max(bucket.maxSpeed, speed);
+    // Every evaluated point contributes to the denominator, not just the over-limit ones.
+    // Accumulating weight only inside the branch below made the score a mean severity
+    // *while speeding*, so one over-limit point in a thousand scored the same as a
+    // thousand out of a thousand. Compliant points carry weight with zero penalty, which
+    // is what makes extent of speeding — not only its severity — move the score.
+    const penaltyWeight = confidenceToPenaltyWeight(speedLimitContext.confidence);
+    bucket.totalPostedWeight += penaltyWeight;
     if (speed > limit + speedOver) {
       const rawPenalty = Math.min(100, Math.max(0, (speed - (limit + speedOver)) * 2));
-      const penaltyWeight = confidenceToPenaltyWeight(speedLimitContext.confidence);
       bucket.overLimitPoints++;
       bucket.penalizedPoints++;
       bucket.totalRawPenalty += rawPenalty;
       bucket.totalWeightedPenalty += rawPenalty * penaltyWeight;
-      bucket.totalPostedWeight += penaltyWeight;
     }
   });
 
@@ -4948,18 +5090,35 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
       UNKNOWN: 'unknown',
     }[canonicalSpeedTier(dominantTier)] || 'unknown';
     const averageConfidence = bucket.confidenceTotal / bucket.totalPoints;
-    const rawScore = bucket.penalizedPoints
-      ? clamp(Math.round(100 - (bucket.totalRawPenalty / bucket.penalizedPoints)), 0, 100)
+    const rawScore = bucket.totalPoints
+      ? clamp(Math.round(100 - (bucket.totalRawPenalty / bucket.totalPoints)), 0, 100)
       : 100;
-    const score = bucket.totalPostedWeight > 0
+    // Zero posted weight means no point in this bucket carried a limit we trust
+    // enough to score against — every one resolved below the 0.30 penalty floor.
+    // That is absence of evidence, and it used to read as 100: a drive with no
+    // speed data at all scored as perfect compliance, and then carried its full
+    // point count into the trip average. It is now unavailable, and excluded
+    // from the average rather than counted.
+    const scoreAvailable = bucket.totalPostedWeight > 0;
+    const score = scoreAvailable
       ? clamp(Math.round(100 - (bucket.totalWeightedPenalty / bucket.totalPostedWeight)), 0, 100)
-      : 100;
+      : null;
+    // Mean penalty across over-limit points only. Deliberately not the score: it answers
+    // "how hard did they speed when they sped", which says nothing about how much of the
+    // trip was spent over the limit. Kept as a diagnostic alongside `rate`.
+    const overLimitSeverity = bucket.penalizedPoints
+      ? round1(bucket.totalRawPenalty / bucket.penalizedPoints)
+      : 0;
     const penaltyWeight = bucket.totalRawPenalty > 0
       ? bucket.totalWeightedPenalty / bucket.totalRawPenalty
       : confidenceToPenaltyWeight(averageConfidence);
     return {
       score,
+      score_available: scoreAvailable,
+      evidence_level: scoreAvailable ? undefined : CONFIDENCE_LEVELS.UNAVAILABLE,
       raw_score: rawScore,
+      over_limit_severity: overLimitSeverity,
+      over_limit_point_count: bucket.overLimitPoints,
       penalty_weight: round2(penaltyWeight),
       total_raw_penalty: round2(bucket.totalRawPenalty),
       total_weighted_penalty: round2(bucket.totalWeightedPenalty),
@@ -4980,7 +5139,10 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
   const highway = build(byType.highway);
   const urban = build(byType.urban);
   const residential = build(byType.residential);
-  const weighted = [highway, urban, residential].filter(Boolean);
+  const buckets = [highway, urban, residential].filter(Boolean);
+  // Only buckets that actually have a trustworthy limit contribute. An
+  // unavailable bucket must not pull the average toward a number it never earned.
+  const weighted = buckets.filter((item) => item.score != null);
   const totalPoints = weighted.reduce((sum, item) => sum + item.point_count, 0);
   const overall = totalPoints
     ? Math.round(weighted.reduce((sum, item) => sum + item.score * item.point_count, 0) / totalPoints)
@@ -4991,10 +5153,13 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
     urban_compliance: urban,
     residential_compliance: residential,
     overall_compliance_score: overall,
+    // Diagnostics span every bucket, including the unavailable ones: the raw
+    // penalty is what the driving earned before confidence weighting, and it is
+    // the only signal left when no bucket produced a score.
     speed_penalty_totals: {
-      totalRawPenalty: round2(weighted.reduce((sum, item) => sum + (Number(item.total_raw_penalty) || 0), 0)),
-      totalWeightedPenalty: round2(weighted.reduce((sum, item) => sum + (Number(item.total_weighted_penalty) || 0), 0)),
-      totalPostedWeight: round2(weighted.reduce((sum, item) => sum + (Number(item.total_posted_weight) || 0), 0)),
+      totalRawPenalty: round2(buckets.reduce((sum, item) => sum + (Number(item.total_raw_penalty) || 0), 0)),
+      totalWeightedPenalty: round2(buckets.reduce((sum, item) => sum + (Number(item.total_weighted_penalty) || 0), 0)),
+      totalPostedWeight: round2(buckets.reduce((sum, item) => sum + (Number(item.total_posted_weight) || 0), 0)),
     },
   };
 }
@@ -5110,7 +5275,7 @@ export function detectSlipperyConditionProxy(routePoints, _drivingEvents = [], t
   const ratios = [];
   for (const sequence of sequences) {
     const entrySpeedMps = sequence.entrySpeed / 3.6;
-    const theoreticalDryStoppingDistanceM = (entrySpeedMps * entrySpeedMps) / (2 * 0.75 * 9.81);
+    const theoreticalDryStoppingDistanceM = (entrySpeedMps * entrySpeedMps) / (2 * DRY_ROAD_FRICTION_COEFFICIENT * STANDARD_GRAVITY_MS2);
     if (theoreticalDryStoppingDistanceM > 0) {
       ratios.push(sequence.distanceM / theoreticalDryStoppingDistanceM);
     }
@@ -5511,7 +5676,7 @@ export function detectAggressiveOvertakes(cleanPoints = [], thresholds = DEFAULT
   const accelThreshold = thresholds.threshold_overtake_accel_ms2 ?? DEFAULT_THRESHOLDS.threshold_overtake_accel_ms2;
   const baselineSpeedKmh = thresholds.OVERTAKE_MIN_BASELINE_SPEED_KMH ?? 80;
   const minimumStraightDistanceKm = thresholds.OVERTAKE_MIN_STRAIGHT_DISTANCE_KM ?? 1;
-  const straightHeadingStdMaxDeg = thresholds.OVERTAKE_STRAIGHT_HEADING_STD_MAX_DEG ?? 4;
+  const straightHeadingStdMaxDeg = thresholds.OVERTAKE_STRAIGHT_HEADING_STD_MAX_DEG ?? DEFAULT_THRESHOLDS.OVERTAKE_STRAIGHT_HEADING_STD_MAX_DEG;
   let lastEventTime = 0;
   for (let i = 0; i < cleanPoints.length; i++) {
     const start = cleanPoints[i];
@@ -5652,7 +5817,6 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
     [EVENT_TYPES.SHARP_TURN]: null,
     [EVENT_TYPES.SPEEDING]: null,
   };
-  const MIN_POINTS_BEFORE_EVENTS = 0;
   const MIN_SPEEDING_SECONDS = 3;
   const advancedSafetyEnabled = thresholds.ADVANCED_SAFETY_DETECTION_ENABLED !== false;
   const smoothedAccels = computeSmoothedAccelerations(points, thresholds);
@@ -5664,7 +5828,6 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
   let idleStart = null;
   let idleAccum = 0;
   let previousReliableSpeed = points[0]?.speed_kmh ?? 0;
-  let acceptedSegmentCount = 0;
   let speedingAccumSeconds = 0;
   let speedingStart = null;
   let speedingPeakPoint = null;
@@ -5691,11 +5854,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
     return true;
   };
 
-  const speedingSeverity = (speed, limit = null) => (
-    limit != null
-      ? speed > limit + 30 ? 'high' : speed > limit + 20 ? 'medium' : 'low'
-      : speed > 160 ? 'high' : speed > 140 ? 'medium' : 'low'
-  );
+  const speedingSeverity = (speed, limit = null) => classifySpeedingSeverity(speed, limit, thresholds);
 
   const flushSpeedingWindow = () => {
     if (speedingAccumSeconds >= MIN_SPEEDING_SECONDS && speedingStart) {
@@ -5741,27 +5900,23 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
       continue;
     }
 
-    acceptedSegmentCount++;
     const speed2 = reliablePointSpeed(points, i, thresholds) ?? currSegment.impliedSpeedKmh;
-
-    if (acceptedSegmentCount <= MIN_POINTS_BEFORE_EVENTS) {
-      previousReliableSpeed = speed2;
-      continue;
-    }
 
     const smooth = [i - 1, i, i + 1].some((idx) => isLikelySpeedSpike(points, idx, thresholds))
       ? null
       : smoothedAccels[i];
     const speed1 = smooth?.speed_kmh ?? previousReliableSpeed;
-    const rawAccel = dt <= 10 ? calculateAcceleration(previousReliableSpeed, speed2, dt) : null;
+    const rawAccel = dt <= ACCEL_RAW_MAX_GAP_SECONDS ? calculateAcceleration(previousReliableSpeed, speed2, dt) : null;
     const accel = smooth?.accel_ms2 ?? rawAccel;
 
     // ── Harsh Braking
-    // Threshold: deceleration > 4.5 m/s² while above 20 km/h (to avoid parking noise)
-    if (accel != null && accel < -thresholds.HARSH_BRAKE_MS2 && speed1 >= (thresholds.MIN_SPEED_HARSH_BRAKE_KMH ?? 25)) {
+    // Deceleration beyond HARSH_BRAKE_MS2 (default 3.5) while above
+    // MIN_SPEED_HARSH_BRAKE_KMH (default 25), which keeps parking manoeuvres out.
+    const harshBrakeThresholdMs2 = thresholds.HARSH_BRAKE_MS2 ?? DEFAULT_THRESHOLDS.HARSH_BRAKE_MS2;
+    if (accel != null && accel < -harshBrakeThresholdMs2 && speed1 >= (thresholds.MIN_SPEED_HARSH_BRAKE_KMH ?? DEFAULT_THRESHOLDS.MIN_SPEED_HARSH_BRAKE_KMH)) {
       pushEvent({
         type: EVENT_TYPES.HARSH_BRAKE,
-        severity: Math.abs(accel) > 6 ? 'high' : Math.abs(accel) > 5 ? 'medium' : 'low',
+        severity: classifyMagnitudeSeverity(accel, harshBrakeThresholdMs2, EVENT_TYPES.HARSH_BRAKE),
         lat: curr.lat,
         lng: curr.lng,
         timestamp: curr.timestamp,
@@ -5772,11 +5927,13 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
     }
 
     // ── Rapid Acceleration
-    // Threshold: acceleration > 3.0 m/s2 from speed > 5 km/h
-    if (accel != null && accel > thresholds.RAPID_ACCEL_MS2 && speed1 >= (thresholds.MIN_SPEED_RAPID_ACCEL_KMH ?? DEFAULT_THRESHOLDS.MIN_SPEED_RAPID_ACCEL_KMH)) {
+    // Acceleration beyond RAPID_ACCEL_MS2 (default 3.0) from above
+    // MIN_SPEED_RAPID_ACCEL_KMH (default 5).
+    const rapidAccelThresholdMs2 = thresholds.RAPID_ACCEL_MS2 ?? DEFAULT_THRESHOLDS.RAPID_ACCEL_MS2;
+    if (accel != null && accel > rapidAccelThresholdMs2 && speed1 >= (thresholds.MIN_SPEED_RAPID_ACCEL_KMH ?? DEFAULT_THRESHOLDS.MIN_SPEED_RAPID_ACCEL_KMH)) {
       pushEvent({
         type: EVENT_TYPES.RAPID_ACCELERATION,
-        severity: accel > 5 ? 'high' : accel > 4 ? 'medium' : 'low',
+        severity: classifyMagnitudeSeverity(accel, rapidAccelThresholdMs2, EVENT_TYPES.RAPID_ACCELERATION),
         lat: curr.lat,
         lng: curr.lng,
         timestamp: curr.timestamp,
@@ -5798,7 +5955,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
       const rawHeadingChange = Number.isFinite(h0) && Number.isFinite(h2) ? headingDiff(h0, h2) : 0;
 
       if (
-        rawHeadingChange >= 30 &&
+        rawHeadingChange >= (thresholds.SHARP_TURN_MIN_HEADING_CHANGE_DEG ?? DEFAULT_THRESHOLDS.SHARP_TURN_MIN_HEADING_CHANGE_DEG) &&
         Number.isFinite(lateralG) &&
         lateralG >= lowG &&
         hasSustainedLateralG(points, i, lowG, thresholds)
@@ -5872,7 +6029,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
       if (idleAccum >= thresholds.IDLE_EVENT_SECONDS) {
         events.push({
           type: EVENT_TYPES.IDLE,
-          severity: idleAccum > 300 ? 'high' : idleAccum > 180 ? 'medium' : 'low',
+          severity: classifyMagnitudeSeverity(idleAccum, thresholds.IDLE_EVENT_SECONDS, EVENT_TYPES.IDLE),
           lat: curr.lat,
           lng: curr.lng,
           timestamp: idleStart,
@@ -5901,7 +6058,7 @@ export function detectDrivingEvents(points, thresholds = DEFAULT_THRESHOLDS, end
     const lastPoint = points[points.length - 1];
     events.push({
       type: EVENT_TYPES.IDLE,
-      severity: idleAccum > 300 ? 'high' : idleAccum > 180 ? 'medium' : 'low',
+      severity: classifyMagnitudeSeverity(idleAccum, thresholds.IDLE_EVENT_SECONDS, EVENT_TYPES.IDLE),
       lat: lastPoint.lat,
       lng: lastPoint.lng,
       timestamp: lastPoint.timestamp,
@@ -5971,9 +6128,15 @@ export function detectCloseProximityManeuverAlerts(cleanPoints = [], thresholds 
     }
 
     if (candidateDurationSeconds >= 1.5 && peakCandidate) {
+      // Braking and steering both have to escalate, so classify on whichever
+      // exceeds its own configured trigger by the smaller factor.
+      const severityRatio = Math.min(
+        Math.abs(peakCandidate.accelMs2) / Math.max(brakeThreshold, Number.EPSILON),
+        peakCandidate.headingRate / Math.max(turnThreshold, Number.EPSILON)
+      );
       events.push({
         type: EVENT_TYPES.CLOSE_PROXIMITY,
-        severity: peakCandidate.accelMs2 < -5.5 && peakCandidate.headingRate > 60 ? 'high' : peakCandidate.accelMs2 < -4.5 && peakCandidate.headingRate > 45 ? 'medium' : 'low',
+        severity: classifyMagnitudeSeverity(severityRatio, 1, EVENT_TYPES.CLOSE_PROXIMITY),
         label: 'close-proximity manoeuvre alert (estimated)',
         confidence: 'low',
         lat: peakCandidate.curr.lat,
@@ -5993,7 +6156,7 @@ export function detectCloseProximityManeuverAlerts(cleanPoints = [], thresholds 
 
 export function detectStopStartPatterns(cleanPoints = [], thresholds = DEFAULT_THRESHOLDS) {
   const highwayEvents = detectStopStartPatternsForMode(cleanPoints, thresholds, 'highway');
-  if (medianMovingSpeedKmh(cleanPoints) >= 50) return highwayEvents;
+  if (medianMovingSpeedKmh(cleanPoints) >= STOP_START_URBAN_MEDIAN_SPEED_KMH) return highwayEvents;
 
   const urbanEvents = detectStopStartPatternsForMode(cleanPoints, thresholds, 'urban');
   if (!highwayEvents.length) return urbanEvents;
@@ -6008,11 +6171,12 @@ export function detectStopStartPatterns(cleanPoints = [], thresholds = DEFAULT_T
   return [...highwayEvents, ...dedupedUrbanEvents].sort((a, b) => timestampMs(a) - timestampMs(b));
 }
 
-// Compatibility export for callers compiled against older versions.
-export const detectTailgateCycles = detectStopStartPatterns;
-
-// Compatibility export; new detections are manoeuvre alerts rather than near-miss claims.
-export const detectNearMisses = detectCloseProximityManeuverAlerts;
+// NOTE: there are deliberately no `detectTailgateCycles` / `detectNearMisses` detectors.
+// `EVENT_TYPES.TAILGATE_CYCLE` and `EVENT_TYPES.NEAR_MISS` are read-only legacy types kept
+// so trips recorded by older builds still score and render; nothing emits them any more.
+// Do not alias them onto `detectStopStartPatterns` / `detectCloseProximityManeuverAlerts` —
+// scoring already folds TAILGATE_CYCLE into the stop-start count (see calculateTripScores),
+// so wiring an alias in would count one physical manoeuvre under two event types at once.
 
 export function calculateFatigueScore(durationSeconds, routePoints = []) {
   const durationMinutes = (durationSeconds || 0) / 60;
@@ -6848,7 +7012,14 @@ export function calculateTripScores(
   const privacyZones = Array.isArray(options?.privacyZones) ? options.privacyZones : [];
   const motionSamples = Array.isArray(options?.motionSamples) ? options.motionSamples : [];
   const orientationCalibration = options?.orientationCalibration || options?.phoneOrientation || null;
-  const eventsListRaw = Array.isArray(events) ? events : events?.events || [];
+  const eventsListDetected = Array.isArray(events) ? events : events?.events || [];
+  // Refine before masking and before any counting: severity downgrades from contradicting
+  // IMU evidence have to reach the penalty totals, not just the displayed event list.
+  const { events: eventsListRaw, summary: imuRefinement } = refineEventsWithMotion(
+    eventsListDetected,
+    motionSamples,
+    orientationCalibration
+  );
   const eventsList = privacyZones.length
     ? eventsListRaw.map((event) => maskEventCoordinatesForPrivacy(event, privacyZones))
     : eventsListRaw;
@@ -6900,15 +7071,30 @@ export function calculateTripScores(
       p *= speedFactor;
     }
     if (evt.type === EVENT_TYPES.SPEEDING) {
-      p *= confidenceToPenaltyWeight(confidenceForSource(evt.speed_limit_source || evt.limitSource || 'inferred'));
+      // The event records the confidence the resolver actually settled on
+      // (zone_confidence), which already carries the staleness, conflict and
+      // expiry adjustments from assessSpeedLimitEvidence. Re-deriving the weight
+      // from the static source profile instead meant the same limit was weighted
+      // one way here and another way in calculateSpeedLimitCompliance, and a
+      // stale or conflicted limit still charged an event at full profile weight.
+      const resolvedConfidence = Number(evt.zone_confidence ?? evt.speed_limit_confidence);
+      p *= confidenceToPenaltyWeight(
+        Number.isFinite(resolvedConfidence)
+          ? resolvedConfidence
+          : confidenceForSource(evt.speed_limit_source || evt.limitSource || 'inferred')
+      );
     }
     // Safety uses scored driving evidence only; GPS-only advisory patterns stay diagnostic.
+    // PHONE_USE is deliberately absent: confirmed phone-use windows already reach Safety as
+    // a weighted component (phoneUseScoreForSafety at PHONE_USE_SAFETY_WEIGHT). Adding the
+    // event penalty here too charged one signal twice and then blended the two halves as if
+    // they were independent evidence, which is how a single 'high' window could drive
+    // baseSafety to 0 on a 10 km trip while the phone-use component alone read 80.
     if ([
       EVENT_TYPES.HARSH_BRAKE,
       EVENT_TYPES.SPEEDING,
       EVENT_TYPES.SHARP_TURN,
       EVENT_TYPES.ERRATIC_SPEED,
-      EVENT_TYPES.PHONE_USE,
     ].includes(evt.type)) safetyPenalty += p;
     // Smoothness: deducts from harsh_brake, rapid_acceleration, sharp_turn
     if ([EVENT_TYPES.HARSH_BRAKE, EVENT_TYPES.RAPID_ACCELERATION, EVENT_TYPES.SHARP_TURN].includes(evt.type)) smoothnessPenalty += p;
@@ -6941,14 +7127,27 @@ export function calculateTripScores(
     phone_proxy_count: phoneUseResult.phone_proxy_count ?? proxyEvents.length,
     phone_proxy_risk: phoneUseResult.phone_proxy_risk || 'none',
   };
-  safetyPenalty += calculateNightPenalty(routePoints, thresholds);
+  // Night exposure is applied as a flat post-normalize deduction alongside fatigue, NOT
+  // added to safetyPenalty. calculateNightPenalty already divides by point count, so
+  // routing it through the per-km normalize() below divided it a second time: the same
+  // 100%-deep-night driving scored baseSafety 0 over 1 km and 88 over 40 km.
+  const nightPenalty = clamp(
+    calculateNightPenalty(routePoints, thresholds),
+    0,
+    NIGHT_SAFETY_MAX_PENALTY
+  );
   const fatiguePenalty = clamp(
     (Number(stats.fatigue_risk_score) || 0) * FATIGUE_SAFETY_PENALTY_SCALE,
     0,
     FATIGUE_SAFETY_MAX_PENALTY
   );
 
-  const distKm = Math.max(1, stats.distance_km || 1);
+  const trueDistanceKm = Number(stats.distance_km) > 0 ? Number(stats.distance_km) : 0;
+  const distKm = Math.max(SCORE_DISTANCE_NORMALIZATION_FLOOR_KM, trueDistanceKm);
+  // True below the floor, where the scored per-km rate is deliberately lower than the rate
+  // shown on trip detail. Surfaces that display both should annotate rather than imply they
+  // describe the same quantity.
+  const eventRateBelowScoringFloor = trueDistanceKm < SCORE_DISTANCE_NORMALIZATION_FLOOR_KM;
   const phoneUseScoreDeduction = confirmedPhoneScoreAvailable
     ? Math.max(0, Math.min(100, 100 - Number(phoneUseResult.phone_use_score)))
     : null;
@@ -6967,7 +7166,7 @@ export function calculateTripScores(
 
   const baseSafety = Math.round(normalize(safetyPenalty));
   const baseSmoothness = Math.round(normalize(smoothnessPenalty));
-  const jerk = calculateJerkScore(routePoints, stats.distance_km || distKm);
+  const jerk = calculateJerkScore(routePoints, stats.distance_km || distKm, { motionSamples, orientationCalibration });
   const ecoDriving = calculateEcoDrivingScore(routePoints, stats, thresholds);
   const svi = calculateSpeedVariabilityIndex(routePoints, thresholds);
   const fuelBand = calculateFuelBandScore(routePoints, thresholds);
@@ -7014,7 +7213,7 @@ export function calculateTripScores(
     { score: urbanStopStartPatternScore, weight: urbanStopStartDistanceKm },
   ]);
   const distractionDeductionCap = thresholds.DISTRACTION_DEDUCTION_CAP ?? 70;
-  const gpsDistractionDeduction = distractionPenalty * (3 / distKm);
+  const gpsDistractionDeduction = distractionPenalty * (GPS_DISTRACTION_PENALTY_SCALE / distKm);
   const distractionDeduction = confirmedPhoneScoreAvailable
     ? phoneUseDeduction
     : gpsDistractionDeduction;
@@ -7078,7 +7277,18 @@ export function calculateTripScores(
   const brakeOnsetEvidence = evidenceFor('brake_onset_smoothness', brakeOnset.brake_onset_sequence_count, brakeOnset.brake_onset_smoothness_score);
   const corneringEvidence = evidenceFor('cornering_consistency', cornering.corner_sample_count, cornering.cornering_consistency_score);
   const brakingScoreForSafety = brakingEvidence === CONFIDENCE_LEVELS.UNAVAILABLE ? null : brakingEfficiency.braking_efficiency_score;
-  const complianceScoreForSafety = compliance.overall_compliance_score;
+  // Gated exactly like brakingScoreForSafety above. It used to pass through raw,
+  // so an all-guessed trip contributed to Safety at the same 0.10 weight as a
+  // fully posted one. weightedBlend drops null components and renormalizes, so
+  // the remaining evidence keeps its relative weight instead of being diluted.
+  const complianceEvidence = evidenceFor(
+    'speed_limit_compliance',
+    routeSampleCount,
+    compliance.overall_compliance_score
+  );
+  const complianceScoreForSafety = complianceEvidence === CONFIDENCE_LEVELS.UNAVAILABLE
+    ? null
+    : compliance.overall_compliance_score;
   const laneChangingScoreForSafety = laneChangingScoreValue;
   const phoneUseScoreForSafety = thresholds.PHONE_USE_AFFECTS_SCORE === false || !confirmedPhoneScoreAvailable
     ? null
@@ -7101,7 +7311,7 @@ export function calculateTripScores(
   ]) ?? baseSafety;
   let safety = safetyWithoutOvertake;
   safety = Math.min(100, safety + (slippery.safety_condition_bonus || 0));
-  safety = Math.round(clamp(safety - fatiguePenalty, SCORE_FLOOR, 100));
+  safety = Math.round(clamp(safety - fatiguePenalty - nightPenalty, SCORE_FLOOR, 100));
   const smoothnessBlend = scoringValue('SMOOTHNESS_SCORE_BLEND_WEIGHTS');
   const smoothness = weightedBlend([
     { score: baseSmoothness, weight: smoothnessBlend.base },
@@ -7189,6 +7399,8 @@ export function calculateTripScores(
     sharp_turns_count: counts[EVENT_TYPES.SHARP_TURN],
     speeding_events_count: counts[EVENT_TYPES.SPEEDING],
     heading_deviation_count: counts[EVENT_TYPES.HEADING_DEVIATION],
+    event_rate_below_scoring_floor: eventRateBelowScoringFloor,
+    event_rate_scoring_floor_km: SCORE_DISTANCE_NORMALIZATION_FLOOR_KM,
     heading_deviations_per_10km: eventRatePerDistance(counts[EVENT_TYPES.HEADING_DEVIATION], stats.distance_km),
     heading_deviation_legacy_count: counts[EVENT_TYPES.HEADING_DEVIATION_LEGACY],
     heading_deviation_legacy_per_10km: eventRatePerDistance(counts[EVENT_TYPES.HEADING_DEVIATION_LEGACY], stats.distance_km),
@@ -7282,6 +7494,7 @@ export function calculateTripScores(
     ...aggressive,
     aggressive_driving_score_confidence: componentEvidence.aggressive_driving,
     driving_events: serializableEvents,
+    imu_refinement: imuRefinement,
   };
   delete componentScores.speed_creep_severity_counts;
 
@@ -7520,17 +7733,43 @@ export function formatDateTime(dateStr) {
 }
 
 // ─── Report Calculations ───────────────────────────────────────────────────────
+/**
+ * Distance-weighted mean of a trip score field.
+ *
+ * A scored trip with zero distance contributes 0 to both the numerator and the denominator,
+ * so it drops out of the weighted mean entirely. That is defensible — a trip covering no
+ * ground carries no weight — but it means the reported average can silently cover fewer
+ * trips than `total_trips`. The returned `tripCount` and `basis` make that visible rather
+ * than leaving two incompatible aggregations of the same field side by side, and an
+ * all-zero-distance set falls back to the unweighted mean instead of reporting nothing.
+ *
+ * @param {Array} trips
+ * @param {string} field
+ * @returns {{score:number|null, tripCount:number, basis:'distance_weighted'|'unweighted_mean'|'unavailable'}}
+ */
 function distanceWeightedTripScore(trips = [], field = 'score_overall') {
   const scored = trips
     .map((trip) => ({
       score: Number(trip?.[field]),
-      distance: Number(trip?.distance_km) || 0,
+      distance: Math.max(0, Number(trip?.distance_km) || 0),
     }))
     .filter((item) => Number.isFinite(item.score));
+  if (scored.length === 0) return { score: null, tripCount: 0, basis: 'unavailable' };
+
   const totalKm = scored.reduce((sum, item) => sum + item.distance, 0);
-  return totalKm > 0
-    ? scored.reduce((sum, item) => sum + item.score * item.distance, 0) / totalKm
-    : null;
+  if (totalKm > 0) {
+    const weighted = scored.filter((item) => item.distance > 0);
+    return {
+      score: scored.reduce((sum, item) => sum + item.score * item.distance, 0) / totalKm,
+      tripCount: weighted.length,
+      basis: 'distance_weighted',
+    };
+  }
+  return {
+    score: scored.reduce((sum, item) => sum + item.score, 0) / scored.length,
+    tripCount: scored.length,
+    basis: 'unweighted_mean',
+  };
 }
 
 /**
@@ -7546,6 +7785,8 @@ export function generateReportSummary(trips) {
       total_distance_km: 0,
       total_duration_seconds: 0,
       avg_score: null,
+      avg_score_trip_count: 0,
+      avg_score_basis: 'unavailable',
       best_trip: null,
       worst_trip: null,
       total_harsh_brakes: 0,
@@ -7566,7 +7807,7 @@ export function generateReportSummary(trips) {
     .map((trip) => Number(trip.score_overall))
     .filter((score) => Number.isFinite(score));
   const weightedScore = distanceWeightedTripScore(completed);
-  const avgScore = weightedScore == null ? null : Math.round(weightedScore);
+  const avgScore = weightedScore.score == null ? null : Math.round(weightedScore.score);
 
   const scoredTrips = completed.filter((trip) => Number.isFinite(Number(trip.score_overall)));
   const sorted = [...scoredTrips].sort((a, b) => Number(b.score_overall) - Number(a.score_overall));
@@ -7597,6 +7838,10 @@ export function generateReportSummary(trips) {
     total_distance_km: Math.round(totalDistance * 10) / 10,
     total_duration_seconds: totalDuration,
     avg_score: avgScore,
+    // How many of `total_trips` actually back `avg_score`, and how it was aggregated.
+    // `score_trend` below is the unweighted score of every scored trip, so these can differ.
+    avg_score_trip_count: weightedScore.tripCount,
+    avg_score_basis: weightedScore.basis,
     best_trip: bestTrip,
     worst_trip: worstTrip,
     total_harsh_brakes: hb,

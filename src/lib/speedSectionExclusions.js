@@ -35,18 +35,37 @@ export function speedSectionExclusionKeys(section = {}) {
   return unique([...carriedKeys, ...stableIds]);
 }
 
+/**
+ * Read the legacy exclusion cache without consuming it.
+ *
+ * This used to erase the cache as a side effect of reading it. The read is the
+ * first step of migrating the keys into the atomic speed-knowledge store, so a
+ * throw anywhere between the read and the commit destroyed the user's
+ * exclusions with nothing written in their place — and an exclusion is the user
+ * asking us not to learn from a private place. Erasing is now a separate,
+ * explicit step for the caller to take once the migration has committed.
+ */
 export function readExcludedSpeedSectionKeys() {
   if (typeof window === 'undefined') return [];
   try {
     const parsed = JSON.parse(window.localStorage.getItem(EXCLUDED_SPEED_SECTIONS_STORAGE_KEY) || '[]');
-    // This legacy UI cache can contain rounded route coordinates. Consume it
-    // once for migration into the atomic speed-knowledge store, then erase it.
-    window.localStorage.removeItem(EXCLUDED_SPEED_SECTIONS_STORAGE_KEY);
     return Array.isArray(parsed) ? unique(parsed) : [];
   } catch {
+    // Unparseable content carries no recoverable exclusions, so dropping it
+    // loses nothing and stops the same failure repeating on every read.
     window.localStorage.removeItem(EXCLUDED_SPEED_SECTIONS_STORAGE_KEY);
     return [];
   }
+}
+
+/**
+ * Erase the legacy cache. Call only after the keys are durably stored elsewhere.
+ * The cache can hold rounded route coordinates in plaintext, so it should not
+ * outlive the migration.
+ */
+export function clearExcludedSpeedSectionKeys() {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(EXCLUDED_SPEED_SECTIONS_STORAGE_KEY);
 }
 
 export function writeExcludedSpeedSectionKeys(_keys = []) {

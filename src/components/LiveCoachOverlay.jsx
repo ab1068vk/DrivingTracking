@@ -1,4 +1,4 @@
-// @ts-check
+﻿// @ts-check
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, X } from 'lucide-react';
@@ -22,7 +22,8 @@ import {
 import { isAndroid } from '@/lib/nativePlatform';
 import { buildPhoneUseFromAndroidUsage, mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
 import { speakSafetyAlert, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
-import { alertMarginForConfidence, shouldWarnForSpeed, VOICE_COOLDOWNS_BY_TIER } from '@/lib/speedLimitSource';
+import { shouldWarnForSpeed, VOICE_COOLDOWNS_BY_TIER } from '@/lib/speedLimitSource';
+import { createTierAwareSpeedLimitContext } from '@/lib/speed/speedTierContext';
 import { buildSpeedingMessage, buildVoiceAlertMessage } from '@/lib/voiceAlertMessages';
 import { LocalSpeedKnowledge } from '@/lib/localSpeedKnowledge';
 import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
@@ -53,63 +54,33 @@ const VOICE_COOLDOWNS_MS = {
   idle: 5 * 60 * 1000,
 };
 
-function createTierAwareSpeedLimitContext(context, settings = {}) {
-  const limitKmh = context?.limitKmh ?? context?.effectiveLimitKmh ?? null;
-  const confidence = Number(context?.confidence) || 0;
-  const margin = alertMarginForConfidence(confidence, settings.threshold_speed_over_kmh ?? 5);
-  const tier = context?.tier || 'UNKNOWN';
-  const estimateGuidanceAllowed = settings.speed_estimates_enabled !== false || tier === 'POSTED';
-  if (!estimateGuidanceAllowed) {
-    return {
-      ...context,
-      limitKmh: null,
-      tier: 'UNKNOWN',
-      confidence: 0,
-      alertMarginKmh: Infinity,
-      shouldAlert: () => false,
-    };
-  }
-  return {
-    ...context,
-    limitKmh,
-    alertMarginKmh: margin,
-    shouldAlert: (speedKmh) => (
-      settings.speed_warning_enabled !== false &&
-      estimateGuidanceAllowed &&
-      Number.isFinite(Number(speedKmh)) &&
-      Number.isFinite(Number(limitKmh)) &&
-      Number(speedKmh) > Number(limitKmh) + margin
-    ),
-  };
-}
-
 function speedLimitBadgeForResolved(resolved, units = 'metric') {
   const tier = resolved?.tier || 'UNKNOWN';
   const limit = Number(resolved?.limitKmh);
   const displayLimit = Number.isFinite(limit) ? formatSpeed(limit, units) : null;
   const badgeByTier = {
     POSTED: {
-      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : displayLimit,
+      text: displayLimit == null ? `â€” ${speedUnitLabel(units)}` : displayLimit,
       className: 'border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-100',
     },
     MAP_ESTIMATED: {
-      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `~${displayLimit} (road type)`,
+      text: displayLimit == null ? `â€” ${speedUnitLabel(units)}` : `~${displayLimit} (road type)`,
       className: 'border-amber-300 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100',
     },
     LEARNED_LOCAL: {
-      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `${displayLimit} (this road)`,
+      text: displayLimit == null ? `â€” ${speedUnitLabel(units)}` : `${displayLimit} (this road)`,
       className: 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100',
     },
     REGION_DEFAULT: {
-      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `~${displayLimit} (regional estimate)`,
+      text: displayLimit == null ? `â€” ${speedUnitLabel(units)}` : `~${displayLimit} (regional estimate)`,
       className: 'border-dashed border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100',
     },
     GPS_INFERRED: {
-      text: displayLimit == null ? `— ${speedUnitLabel(units)}` : `~${displayLimit} (estimated)`,
+      text: displayLimit == null ? `â€” ${speedUnitLabel(units)}` : `~${displayLimit} (estimated)`,
       className: 'border-dashed border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100',
     },
     UNKNOWN: {
-      text: `— ${speedUnitLabel(units)}`,
+      text: `â€” ${speedUnitLabel(units)}`,
       className: 'border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100',
     },
   };
@@ -237,12 +208,23 @@ export default function LiveCoachOverlay({
     });
   }, [tripStartTime]);
 
+  // Route points arrive as a fresh array on every GPS fix. Listing them in the
+  // effect deps below tore down and restarted the CHECK_INTERVAL_MS timer on
+  // essentially every fix, so the interval almost never elapsed and evaluate()
+  // ran far more often than intended. Reading them through a ref keeps the
+  // timer stable while evaluate() still sees the latest route.
+  const routePointsRef = useRef(currentRoutePoints);
+  routePointsRef.current = currentRoutePoints;
+  const hasEvaluableRoute = currentRoutePoints.length >= 2;
+
   useEffect(() => {
-    if (!tripStartTime || currentRoutePoints.length < 2) return undefined;
+    if (!tripStartTime || !hasEvaluableRoute) return undefined;
 
     const evaluate = async () => {
       const settings = localSettings.get();
       if (settings.live_coaching_enabled === false) return;
+      const routePoints = routePointsRef.current;
+      if (routePoints.length < 2) return;
 
       const thresholds = buildDrivingThresholds(settings);
       const currentTime = new Date().toISOString();
@@ -254,15 +236,15 @@ export default function LiveCoachOverlay({
         lastDisplayedAlertRef.current[key] = now;
         return true;
       };
-      const stats = calculateTripStats(currentRoutePoints, tripStartTime, currentTime, thresholds);
-      const { events, phoneUse: gpsPhoneUse } = detectDrivingEvents(currentRoutePoints, thresholds, currentTime);
+      const stats = calculateTripStats(routePoints, tripStartTime, currentTime, thresholds);
+      const { events, phoneUse: gpsPhoneUse } = detectDrivingEvents(routePoints, thresholds, currentTime);
       let phoneUse = settings.phone_use_detection_enabled === false
         ? {}
         : mergePhoneUseSignals(gpsPhoneUse, {}, stats.duration_seconds);
       const tripStartMs = new Date(tripStartTime).getTime();
       if (settings.phone_use_detection_enabled !== false && isAndroid() && Number.isFinite(tripStartMs)) {
         const usageSummary = await getAndroidPhoneUsageSummaryForOverlay(tripStartMs, now).catch(() => null);
-        const usagePhoneUse = buildPhoneUseFromAndroidUsage(usageSummary || {}, currentRoutePoints, stats.duration_seconds);
+        const usagePhoneUse = buildPhoneUseFromAndroidUsage(usageSummary || {}, routePoints, stats.duration_seconds);
         phoneUse = mergePhoneUseSignals(gpsPhoneUse, usagePhoneUse, stats.duration_seconds);
       }
       const lastCoachCheckTime = lastCoachCheckRef.current || (now - CHECK_INTERVAL_MS);
@@ -280,8 +262,8 @@ export default function LiveCoachOverlay({
       const stopStartPatternCount = events.filter((event) => event.type === EVENT_TYPES.STOP_START_PATTERN || event.type === EVENT_TYPES.TAILGATE_CYCLE).length;
       const speedingEvents = events.filter((event) => event.type === EVENT_TYPES.SPEEDING);
       const latestSpeeding = speedingEvents[speedingEvents.length - 1];
-      const latestSpeed = reliablePointSpeed(currentRoutePoints, currentRoutePoints.length - 1, thresholds) ?? 0;
-      const latestPoint = currentRoutePoints[currentRoutePoints.length - 1] || null;
+      const latestSpeed = reliablePointSpeed(routePoints, routePoints.length - 1, thresholds) ?? 0;
+      const latestPoint = routePoints[routePoints.length - 1] || null;
       if (!localSpeedKnowledgeRef.current) {
         localSpeedKnowledgeRef.current = new LocalSpeedKnowledge(speedKnowledgeStore);
       }
@@ -297,8 +279,8 @@ export default function LiveCoachOverlay({
         ).catch(() => null)
         : null;
       const latestSpeedLimitContext = resolveEffectiveSpeedLimitForIndex(
-        currentRoutePoints,
-        currentRoutePoints.length - 1,
+        routePoints,
+        routePoints.length - 1,
         thresholds,
         { localKnowledge, settings }
       );
@@ -490,7 +472,7 @@ export default function LiveCoachOverlay({
     const interval = setInterval(evaluate, CHECK_INTERVAL_MS);
     evaluate();
     return () => clearInterval(interval);
-  }, [currentRoutePoints, tripStartTime, dismissed, voiceMuted]);
+  }, [hasEvaluableRoute, tripStartTime, dismissed, voiceMuted]);
 
   if (dismissed) return null;
 

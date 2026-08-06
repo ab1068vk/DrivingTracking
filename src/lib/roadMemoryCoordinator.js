@@ -3,6 +3,7 @@ import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import { getPrivacyZones } from '@/lib/privacyZones';
 import { localSettings } from '@/lib/trackingStore';
 import { logSystemFailure } from '@/lib/systemLog';
+import { speedLimitLadderUnits } from '@/lib/speed/speedLimitLadder';
 
 let synchronizationChain = Promise.resolve();
 let historyBackfillPromise = null;
@@ -13,9 +14,13 @@ async function synchronize(trips = [], { rescore = true } = {}) {
   if (!completed.length) return { changed: false, changedCandidates: [] };
 
   const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
+  const settings = localSettings.get();
   const result = await knowledge.learnRoadMemoryFromTrips(
     completed,
-    getPrivacyZones(localSettings.get())
+    getPrivacyZones(settings),
+    // Picks the speed-limit ladder, so a road posted in mph is learned on mph
+    // rungs. Snapping 35 mph onto the metric ladder produced 60 km/h.
+    { units: speedLimitLadderUnits(settings) }
   );
   if (!result.changed || !result.changedCandidates?.length || rescore === false) return result;
 

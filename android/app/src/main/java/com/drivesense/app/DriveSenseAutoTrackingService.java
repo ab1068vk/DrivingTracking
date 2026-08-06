@@ -23,10 +23,12 @@ import android.hardware.TriggerEvent;
 import android.hardware.TriggerEventListener;
 import android.location.Location;
 import android.net.Uri;
+import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -95,8 +97,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final int ACTIVITY_RECOGNITION_REQUEST_CODE = 4102;
     private static final int NOTIF_ID_AUTO_STATUS = 4103;
     private static final int NOTIF_ID_POSSIBLE_INCIDENT = 4011;
-    private static final int NIGHT_START_HOUR = 22;
-    private static final int NIGHT_END_HOUR = 5;
+    private static final int NIGHT_START_HOUR = DetectionConstants.NIGHT_START_HOUR;
+    private static final int NIGHT_END_HOUR = DetectionConstants.NIGHT_END_HOUR;
     private static final String NIGHT_DETECTION_MODE_SUNSET = "sunset";
     private static final String NIGHT_DETECTION_MODE_CIVIL_TWILIGHT = "civil_twilight";
     private static final String NIGHT_DETECTION_MODE_CUSTOM = "custom";
@@ -110,8 +112,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final int MIN_VEHICLE_CONFIDENCE = 65;
     private static final int MIN_STILL_CONFIDENCE = 70;
     private static final int MIN_POINTS_TO_SAVE = 2;
-    private static final long MIN_TRIP_MS = 30_000L;
-    private static final double MIN_TRIP_KM = 0.1d;
+    private static final long MIN_TRIP_MS = DetectionConstants.MIN_TRIP_MS;
+    private static final double MIN_TRIP_KM = DetectionConstants.MIN_TRIP_KM;
     private static final long AUTO_STOP_FOOT_MS = 10_000L;
     private static final long AUTO_STOP_STILL_STABLE_MS = 90_000L;
     private static final long AUTO_STOP_STILL_DRIFT_MS = 150_000L;
@@ -126,14 +128,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final double GPS_STILL_DRIFT_M = 8.0d;
     private static final double GPS_VEHICLE_DRIFT_M = 5.0d;
     private static final double GPS_VEHICLE_DRIFT_RELAXED_M = 20.0d;
-    private static final float MAX_ACCURACY_M = 50f;
-    private static final double MIN_POINT_DISTANCE_M = 8d;
-    private static final double STATIONARY_SPEED_KMH = 5d;
-    private static final double MIN_TRUSTED_SPEED_KMH = 18d;
+    private static final float MAX_ACCURACY_M = DetectionConstants.MAX_ACCURACY_M;
+    private static final double MIN_POINT_DISTANCE_M = DetectionConstants.MIN_POINT_DISTANCE_M;
+    private static final double STATIONARY_SPEED_KMH = DetectionConstants.STATIONARY_SPEED_KMH;
+    private static final double MIN_TRUSTED_SPEED_KMH = DetectionConstants.MIN_TRUSTED_SPEED_KMH;
     // Mirrors the reported-vs-implied speed agreement checks in src/lib/tripEngine.js.
     private static final double MIN_REPORTED_MOVEMENT_DISPLACEMENT_M = 2d;
     private static final double REPORTED_SPEED_AGREEMENT_KMH = 12d;
-    private static final double MAX_SPEED_KMH = 220d;
+    private static final double MAX_SPEED_KMH = DetectionConstants.MAX_SPEED_KMH;
     private static final double AUTO_START_SPEED_KMH = 5d;
     private static final long AUTO_START_MOVING_MS = 2_000L;
     // Armed-tier back-off thresholds: how long activity recognition must report a confident
@@ -178,12 +180,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final String KEY_LAST_TRIP_COMPLETED_NOTIFICATION_ID = "last_trip_completed_notification_id";
     private static final int PHONE_USE_NOTIFICATION_ID = 4001;
     private static final int TRIP_COMPLETED_NOTIFICATION_ID = 2002;
-    private static final int PHONE_MICRO_STEER_WINDOW_MS = 15_000;
-    private static final int PHONE_MICRO_STEER_MIN_COUNT = 6;
-    private static final float PHONE_PROXY_MAX_ACCURACY_M = 20f;
-    private static final double PHONE_MICRO_STEER_MIN_DEG = 3.0d;
-    private static final double PHONE_MICRO_STEER_MAX_DEG = 18.0d;
-    private static final double PHONE_DETECT_MIN_SPEED_KMH = 30.0d;
+    // Micro-steer window, oscillation count and accuracy gate are user-settable, so they are
+    // read per sample rather than frozen here; only the non-settable band bounds stay static.
+    private static final double PHONE_MICRO_STEER_MIN_DEG = DetectionConstants.PHONE_MICRO_STEER_MIN_DEG;
+    private static final double PHONE_MICRO_STEER_MAX_DEG = DetectionConstants.PHONE_MICRO_STEER_MAX_DEG;
+    private static final double PHONE_DETECT_MIN_SPEED_KMH = DetectionConstants.PHONE_DETECT_MIN_SPEED_KMH;
     private static final long PHONE_NOTIFY_COOLDOWN_MS = 120_000L;
     private static final long PHONE_WINDOW_COUNT_COOLDOWN_MS = 15_000L;
     private static final long LIVE_NOTIFICATION_MIN_INTERVAL_MS = 10_000L;
@@ -192,11 +193,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final long ACTIVE_CHECKPOINT_RESUME_WINDOW_MS = 10 * 60_000L;
     private static final int MAX_LIVE_TELEMETRY_EVENTS = 40;
     private static final int MAX_LIVE_ROUTE_PREVIEW_POINTS = 160;
-    private static final long STATS_MAX_SAMPLE_GAP_SECONDS = 120L;
+    private static final long STATS_MAX_SAMPLE_GAP_SECONDS = DetectionConstants.STATS_MAX_SAMPLE_GAP_SECONDS;
     private static final double SUSTAINED_TURN_HEADING_CHANGE_DEG = 35.0d;
     private static final float TTS_SPEECH_RATE = 0.95f;
     private static final float TTS_VOLUME = 0.95f;
-    private static final long SPEED_ALERT_SUSTAINED_MS = 5_000L;
+    // Shared with the webview through DetectionConstants so the two sides cannot
+    // drift. They previously agreed only by hand-copied coincidence.
+    private static final long SPEED_ALERT_SUSTAINED_MS = DetectionConstants.SPEED_ALERT_SUSTAINED_MS;
+    private static final double SPEED_ALERT_RELEASE_KMH = DetectionConstants.SPEED_ALERT_RELEASE_KMH;
     private static final long SPEED_ALERT_COOLDOWN_MS = 60_000L;
     private static final long SPEED_ALERT_ESTIMATED_COOLDOWN_MS = 90_000L;
     private static final long SPEED_ALERT_INFERRED_COOLDOWN_MS = 180_000L;
@@ -215,16 +219,21 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final long HEADING_DRIFT_ALERT_COOLDOWN_MS = 10 * 60_000L;
     private static final long HEADING_DRIFT_WINDOW_MS = 5 * 60_000L;
     private static final int HEADING_DRIFT_MIN_SAMPLES = 8;
-    private static final double HEADING_DRIFT_HIGHWAY_SPEED_KMH = 80.0d;
+    private static final double HEADING_DRIFT_HIGHWAY_SPEED_KMH = DetectionConstants.HEADING_DRIFT_HIGHWAY_SPEED_KMH;
     private static final double HEADING_DRIFT_HIGHWAY_SHARE = 0.80d;
     private static final long LIVE_EVENT_MAX_SAMPLE_GAP_MS = 6_000L;
     private static final double LIVE_EVENT_MAX_ACCURACY_M = 25.0d;
-    private static final double LIVE_EVENT_MIN_SPEED_KMH = 15.0d;
-    private static final double SHARP_TURN_MIN_HEADING_CHANGE_DEG = 12.0d;
-    private static final double STANDARD_GRAVITY_MS2 = 9.80665d;
-    private static final long MAX_TERMINAL_IDLE_SECONDS = 1800L;
+    private static final double SHARP_TURN_MIN_HEADING_CHANGE_DEG = DetectionConstants.SHARP_TURN_MIN_HEADING_CHANGE_DEG;
+    private static final double STANDARD_GRAVITY_MS2 = DetectionConstants.STANDARD_GRAVITY_MS2;
+    private static final long MAX_TERMINAL_IDLE_SECONDS = DetectionConstants.MAX_TERMINAL_IDLE_SECONDS;
+    // Size budget for the in-trip IMU buffer. Overflow is handled by
+    // MotionSampleRetention's generational decimation, not FIFO eviction, so a long
+    // drive keeps whole-trip coverage at reduced resolution instead of losing its start.
     private static final int MAX_NATIVE_MOTION_SAMPLES = 5000;
     private static final long MOTION_SAMPLE_MIN_INTERVAL_MS = 100L;
+    // Battery and thermal state move slowly; re-deciding more often than this would
+    // only add wake cost and risk thrashing the LocationRequest.
+    private static final long CAPTURE_TIER_EVAL_INTERVAL_MS = 30_000L;
     private static final long MOTION_AXIS_FRESH_MS = 500L;
     private static final int POSSIBLE_INCIDENT_RECENT_POINTS = 8;
     private static final long POSSIBLE_INCIDENT_SAMPLE_WINDOW_MS = 12_000L;
@@ -253,6 +262,22 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private JSONArray activePoints;
     private JSONArray activeTimeline;
     private JSONArray activeMotionSamples;
+    // How many IMU samples retention thinned out of this trip's buffer. Reported so
+    // a long drive can state its motion resolution instead of implying full coverage.
+    private int activeMotionSamplesDropped = 0;
+    // Resolved once per trip so a mid-drive settings change cannot make the buffer
+    // policy shift underneath the samples already recorded for this trip.
+    private CaptureFidelityProfile.Profile activeCaptureProfile = CaptureFidelityProfile.resolve(null);
+    // Measured from the first serialized sample; the byte cap is meaningless if it
+    // is derived from the same estimate that sized the count budget.
+    private long activeMotionSampleBytes = 0L;
+    // Adaptive capture governor state. Time in each tier is accumulated so a trip can
+    // state "GPS was throttled for 6 min: battery <=15%, not charging" instead of
+    // leaving a quietly degraded stretch unexplained.
+    private CaptureTierPolicy.Decision activeCaptureTier = null;
+    private long activeCaptureTierSinceMs = 0L;
+    private long lastCaptureTierEvalMs = 0L;
+    private final java.util.LinkedHashMap<String, Long> activeCaptureTierSeconds = new java.util.LinkedHashMap<>();
     private JSONArray activeIncidentEvents;
     private JSONArray activeTelemetryEvents;
     private long activeStartMs = 0L;
@@ -261,7 +286,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private Location previousLocation;
     // Single thread so checkpoint writes stay ordered; the newest state always wins.
     private ExecutorService checkpointExecutor;
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    // Created lazily rather than in a field initializer: an initializer would make
+    // every `new DriveSenseAutoTrackingService()` call Looper.getMainLooper(), which
+    // is unmocked in JVM unit tests and took the whole JS/Android parity suite down.
+    private Handler mainHandler;
     private ArmedTier armedTier = ArmedTier.HIGH_ACCURACY;
     private long armedStillSinceMs = 0L;
     private Sensor significantMotionSensor;
@@ -518,7 +546,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         }
         if (speechController != null) speechController.shutdown();
         removeTrackingNotification();
-        mainHandler.removeCallbacksAndMessages(null);
+        if (mainHandler != null) mainHandler.removeCallbacksAndMessages(null);
         // Teardown checkpoint writes above are synchronous, so nothing durable is lost here.
         if (checkpointExecutor != null) {
             checkpointExecutor.shutdownNow();
@@ -926,6 +954,13 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         activePoints = new JSONArray();
         activeTimeline = new JSONArray();
         activeMotionSamples = new JSONArray();
+        activeMotionSamplesDropped = 0;
+        activeCaptureProfile = resolveCaptureProfile();
+        activeMotionSampleBytes = 0L;
+        activeCaptureTier = null;
+        activeCaptureTierSinceMs = 0L;
+        lastCaptureTierEvalMs = 0L;
+        activeCaptureTierSeconds.clear();
         activeIncidentEvents = new JSONArray();
         activeTelemetryEvents = new JSONArray();
         hasPermissionLoss = false;
@@ -982,6 +1017,13 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         activePoints = new JSONArray();
         activeTimeline = new JSONArray();
         activeMotionSamples = new JSONArray();
+        activeMotionSamplesDropped = 0;
+        activeCaptureProfile = resolveCaptureProfile();
+        activeMotionSampleBytes = 0L;
+        activeCaptureTier = null;
+        activeCaptureTierSinceMs = 0L;
+        lastCaptureTierEvalMs = 0L;
+        activeCaptureTierSeconds.clear();
         activeIncidentEvents = new JSONArray();
         activeTelemetryEvents = new JSONArray();
         hasPermissionLoss = false;
@@ -1045,9 +1087,17 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             return;
         }
 
+        if (activeCaptureTier == null) {
+            activeCaptureTier = resolveCaptureTier();
+            activeCaptureTierSinceMs = System.currentTimeMillis();
+        }
+
         stopLocationUpdates();
-        LocationRequest request = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2_000L)
-            .setMinUpdateIntervalMillis(1_000L)
+        LocationRequest request = new LocationRequest.Builder(
+            Priority.PRIORITY_HIGH_ACCURACY,
+            activeCaptureTier.locationIntervalMs
+        )
+            .setMinUpdateIntervalMillis(activeCaptureTier.minUpdateIntervalMs)
             .setMinUpdateDistanceMeters(5f)
             .build();
 
@@ -1057,6 +1107,105 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             handleLocationPermissionLost("trip_location_permission_security_exception");
         }
         recordDiagnostic("armed_location_watch", "Waiting for movement after a parked or ended trip.", "armed_gps_backup", lastKnownSpeedKmh, 0L, 0d);
+    }
+
+    private Handler mainHandler() {
+        if (mainHandler == null) mainHandler = new Handler(Looper.getMainLooper());
+        return mainHandler;
+    }
+
+    private CaptureTierPolicy.Decision resolveCaptureTier() {
+        boolean adaptiveEnabled = !"off".equalsIgnoreCase(getSettingString("adaptive_capture_mode", "guard"));
+        return CaptureTierPolicy.decide(
+            deviceBatteryPercent(),
+            deviceIsCharging(),
+            deviceThermalStatus(),
+            adaptiveEnabled
+        );
+    }
+
+    /**
+     * Re-evaluates the capture tier on the in-trip location tick and re-issues the
+     * LocationRequest only when the tier actually changes, so an unchanged decision
+     * costs nothing. Every transition lands on the timeline and in diagnostics: a
+     * silently degraded stretch of a drive would be worse than no governor at all.
+     */
+    private void evaluateCaptureTier(long nowMs) {
+        if (!isTripActive()) return;
+        if (nowMs - lastCaptureTierEvalMs < CAPTURE_TIER_EVAL_INTERVAL_MS) return;
+        lastCaptureTierEvalMs = nowMs;
+
+        CaptureTierPolicy.Decision next = resolveCaptureTier();
+        CaptureTierPolicy.Decision current = activeCaptureTier;
+        if (current == null) {
+            activeCaptureTier = next;
+            activeCaptureTierSinceMs = nowMs;
+            return;
+        }
+        if (current.tier.equals(next.tier)) return;
+
+        accumulateCaptureTierSeconds(current.tier, nowMs);
+        activeCaptureTier = next;
+        activeCaptureTierSinceMs = nowMs;
+        recordTimeline(
+            "capture_tier_" + next.tier,
+            next.label + ": " + next.reason,
+            next.reason,
+            lastKnownSpeedKmh,
+            0L,
+            maxDriftSinceStopM
+        );
+        recordDiagnostic(
+            "capture_tier_" + next.tier,
+            next.label + ": " + next.reason,
+            next.reason,
+            lastKnownSpeedKmh,
+            0L,
+            maxDriftSinceStopM
+        );
+        startTripLocationUpdates();
+    }
+
+    private void accumulateCaptureTierSeconds(String tier, long nowMs) {
+        if (tier == null || activeCaptureTierSinceMs <= 0L || nowMs <= activeCaptureTierSinceMs) return;
+        long seconds = (nowMs - activeCaptureTierSinceMs) / 1000L;
+        if (seconds <= 0L) return;
+        Long existing = activeCaptureTierSeconds.get(tier);
+        activeCaptureTierSeconds.put(tier, (existing == null ? 0L : existing) + seconds);
+    }
+
+    private int deviceBatteryPercent() {
+        try {
+            Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+            if (battery == null) return -1;
+            int level = battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+            int scale = battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+            return level >= 0 && scale > 0 ? Math.round(level * 100f / scale) : -1;
+        } catch (Exception ignored) {
+            return -1;
+        }
+    }
+
+    private boolean deviceIsCharging() {
+        try {
+            Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+            if (battery == null) return false;
+            int status = battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+            return status == BatteryManager.BATTERY_STATUS_CHARGING
+                || status == BatteryManager.BATTERY_STATUS_FULL;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private int deviceThermalStatus() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return PowerManager.THERMAL_STATUS_NONE;
+        try {
+            PowerManager manager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            return manager == null ? PowerManager.THERMAL_STATUS_NONE : manager.getCurrentThermalStatus();
+        } catch (Exception ignored) {
+            return PowerManager.THERMAL_STATUS_NONE;
+        }
     }
 
     /**
@@ -1270,6 +1419,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (!candidateTrip) {
             evaluatePossibleIncident();
         }
+        evaluateCaptureTier(System.currentTimeMillis());
         persistActiveTripStatusIfDue();
         updateLiveTripNotification(false);
     }
@@ -1485,6 +1635,12 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         activePoints = null;
         activeTimeline = null;
         activeMotionSamples = null;
+        activeMotionSamplesDropped = 0;
+        activeMotionSampleBytes = 0L;
+        activeCaptureTier = null;
+        activeCaptureTierSinceMs = 0L;
+        lastCaptureTierEvalMs = 0L;
+        activeCaptureTierSeconds.clear();
         activeIncidentEvents = null;
         activeTelemetryEvents = null;
         hasPermissionLoss = false;
@@ -1586,7 +1742,29 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         JSONArray points = activePoints;
         JSONArray timeline = activeTimeline != null ? activeTimeline : new JSONArray();
         JSONArray motionSamples = activeMotionSamples != null ? activeMotionSamples : new JSONArray();
-        JSONArray incidentEvents = activeIncidentEvents != null ? activeIncidentEvents : new JSONArray();
+        int motionSamplesDropped = activeMotionSamplesDropped;
+        CaptureFidelityProfile.Profile captureProfile = activeCaptureProfile;
+        long motionSampleBytes = activeMotionSampleBytes;
+        if (activeCaptureTier != null) accumulateCaptureTierSeconds(activeCaptureTier.tier, endMs);
+        JSONObject captureTierSeconds = new JSONObject();
+        boolean captureThrottled = false;
+        for (java.util.Map.Entry<String, Long> entry : activeCaptureTierSeconds.entrySet()) {
+            try {
+                captureTierSeconds.put(entry.getKey(), entry.getValue());
+            } catch (JSONException ignored) {
+                // A single unreportable tier must not cost the trip its payload.
+            }
+            if (!CaptureTierPolicy.TIER_NORMAL.equals(entry.getKey()) && entry.getValue() > 0L) {
+                captureThrottled = true;
+            }
+        }
+        // Redacted at construction in evaluatePossibleIncident; re-checked here so a
+        // trip recovered from a checkpoint written by an older build cannot journal
+        // raw in-zone incident coordinates.
+        JSONArray incidentEvents = PrivacyZoneChecker.redactEvents(
+            this,
+            activeIncidentEvents != null ? activeIncidentEvents : new JSONArray()
+        );
         long startMs = activeStartMs;
         boolean startedNearParked = candidateNearParked;
         long confirmedMs = candidateConfirmedMs;
@@ -1619,6 +1797,12 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         activePoints = null;
         activeTimeline = null;
         activeMotionSamples = null;
+        activeMotionSamplesDropped = 0;
+        activeMotionSampleBytes = 0L;
+        activeCaptureTier = null;
+        activeCaptureTierSinceMs = 0L;
+        lastCaptureTierEvalMs = 0L;
+        activeCaptureTierSeconds.clear();
         activeIncidentEvents = null;
         activeTelemetryEvents = null;
         hasPermissionLoss = false;
@@ -1697,6 +1881,16 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             trip.put("route_points", PrivacyZoneChecker.redactRoutePoints(this, points));
             trip.put("motion_samples", motionSamples);
             trip.put("native_motion_sample_count", motionSamples.length());
+            // Retention thins the oldest half rather than evicting the trip's start,
+            // so coverage stays whole-trip; this says how much resolution was traded.
+            trip.put("native_motion_samples_dropped", motionSamplesDropped);
+            trip.put("motion_capture_profile", buildMotionCaptureProfile(
+                captureProfile,
+                motionSamples,
+                motionSamplesDropped,
+                motionSampleBytes,
+                stats.durationSeconds
+            ));
             trip.put("driving_events", incidentEvents);
             trip.put("possible_crash_count", incidentEvents.length());
             trip.put("emergency_workflow_pending", hasPendingEmergencyWorkflow(incidentEvents));
@@ -1732,12 +1926,16 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             trip.put("speed_limit_context", speedLimitContext);
             trip.put("speed_limit_review_required", true);
             trip.put("speed_limit_review_reason", "Background tracking cannot confirm posted signs while driving.");
-            if (permissionLoss) {
-                JSONArray flags = new JSONArray();
-                flags.put("location_permission_loss");
+            JSONArray flags = new JSONArray();
+            if (permissionLoss) flags.put("location_permission_loss");
+            if (captureThrottled) flags.put("capture_throttled");
+            if (flags.length() > 0) {
                 trip.put("data_quality_flags", flags);
-                trip.put("score_confidence_flag", "data_gap_detected");
+                // A permission loss is a real gap; a governor throttle is reduced
+                // resolution, not missing data, so only the former lowers confidence.
+                if (permissionLoss) trip.put("score_confidence_flag", "data_gap_detected");
             }
+            if (captureTierSeconds.length() > 0) trip.put("capture_tier_seconds", captureTierSeconds);
             trip.put("native_phone_proxy_count", nativeMicroSteerCount);
             trip.put("native_phone_usage_access_granted", phoneUsage.optBoolean("usage_access_granted", false));
             trip.put("native_phone_usage_events", phoneUsage.optJSONArray("events") != null ? phoneUsage.optJSONArray("events") : new JSONArray());
@@ -1841,6 +2039,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         candidateConfirmedMs = 0L;
         candidateNearParked = false;
         sendTripCompletedNotification(trip, stats);
+        // Personal detection-calibration progress is evaluated here so a step
+        // reached on a background trip is reported straight away, rather than
+        // the next time the user opens the Settings page.
+        CalibrationMilestoneNotifier.recordCompletedTrip(this, stats == null ? 0d : stats.distanceKm);
     }
 
     private JSONObject buildParkingSignals(
@@ -2104,6 +2306,13 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         stats.nightDriving = nightClassification.isNight;
         stats.nightClassification = nightClassification.metadata;
 
+        // Accumulate in fractional seconds so sub-second sample gaps are not truncated to
+        // zero (which would drop the segment entirely) or rounded up (which would inflate
+        // implied speed). Rounded into the long stats fields once the loop finishes.
+        double gapSecondsAccum = 0d;
+        double movingSecondsAccum = 0d;
+        double idleSecondsAccum = 0d;
+
         for (int i = 1; i < points.length(); i++) {
             JSONObject prev = points.optJSONObject(i - 1);
             JSONObject curr = points.optJSONObject(i);
@@ -2118,12 +2327,12 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             if (!Double.isFinite(distance)) continue;
             long prevMs = parseIso(prev.optString("timestamp"));
             long currMs = parseIso(curr.optString("timestamp"));
-            long dt = (currMs - prevMs) / 1000L;
-            if (dt <= 0L) continue;
+            double dt = (currMs - prevMs) / 1000d;
+            if (!(dt > 0d)) continue;
             double impliedSpeed = distance / (dt / 3600d);
             double reportedSpeed = curr.optDouble("speed_kmh", impliedSpeed);
             if (dt > STATS_MAX_SAMPLE_GAP_SECONDS) {
-                stats.gapSeconds += dt;
+                gapSecondsAccum += dt;
                 stats.gapCount += 1;
                 continue;
             }
@@ -2139,10 +2348,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             stats.maxSpeedKmh = Math.max(stats.maxSpeedKmh, speed);
             stats.speedSamples += 1;
 
-            if (speed >= STATIONARY_SPEED_KMH) stats.movingSeconds += dt;
-            else stats.idleSeconds += dt;
+            if (speed >= STATIONARY_SPEED_KMH) movingSecondsAccum += dt;
+            else idleSecondsAccum += dt;
 
         }
+
+        stats.gapSeconds = Math.round(gapSecondsAccum);
+        stats.movingSeconds = Math.round(movingSecondsAccum);
+        stats.idleSeconds = Math.round(idleSecondsAccum);
 
         JSONObject last = points.optJSONObject(points.length() - 1);
         if (last != null) {
@@ -2257,8 +2470,78 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         // The scoring model uses sample magnitudes and axes; Android sensor accuracy is not currently scored.
     }
 
+    /**
+     * Describes what the IMU buffer actually captured, so forensics can say
+     * "motion covered the whole trip at ~2.5 Hz" instead of silently implying
+     * full-rate coverage across a long drive.
+     */
+    private JSONObject buildMotionCaptureProfile(
+        CaptureFidelityProfile.Profile profile,
+        JSONArray motionSamples,
+        int droppedSamples,
+        long bytesPerSample,
+        long durationSeconds
+    ) {
+        JSONObject captured = new JSONObject();
+        try {
+            CaptureFidelityProfile.Profile resolved = profile == null
+                ? CaptureFidelityProfile.resolve(null)
+                : profile;
+            int retained = motionSamples == null ? 0 : motionSamples.length();
+            captured.put("fidelity", resolved.fidelity);
+            captured.put("budget", resolved.effectiveSampleBudget(bytesPerSample));
+            captured.put("event_windows_enabled", resolved.eventWindowsEnabled);
+            captured.put("retained_sample_count", retained);
+            captured.put("dropped_sample_count", Math.max(0, droppedSamples));
+            captured.put("recorded_sample_count", retained + Math.max(0, droppedSamples));
+            captured.put("bytes_per_sample", bytesPerSample > 0L ? bytesPerSample : JSONObject.NULL);
+            captured.put(
+                "effective_hz_estimate",
+                durationSeconds > 0L ? round((double) retained / durationSeconds, 2) : JSONObject.NULL
+            );
+            // Retention thins, it does not truncate, so retained samples always span
+            // the whole drive. This flag says the resolution is uneven, not partial.
+            captured.put("whole_trip_coverage", true);
+            captured.put("resolution_reduced", droppedSamples > 0);
+        } catch (JSONException error) {
+            Log.w(TAG, "Could not build motion capture profile", error);
+        }
+        return captured;
+    }
+
+    /**
+     * Reads `capture_fidelity` from the shared settings blob the JS app writes.
+     * No bridge work is needed: the service already reads CapacitorStorage directly.
+     */
+    private CaptureFidelityProfile.Profile resolveCaptureProfile() {
+        CaptureFidelityProfile.Profile profile = CaptureFidelityProfile.resolve(
+            getSettingString("capture_fidelity", CaptureFidelityProfile.STANDARD)
+        );
+        return CaptureFidelityProfile.underStoragePressure(profile, isDeviceStorageLow());
+    }
+
+    private boolean isDeviceStorageLow() {
+        try {
+            java.io.File dir = getFilesDir();
+            if (dir == null) return false;
+            return dir.getUsableSpace() < AppExperienceWatchdog.LOW_STORAGE_USABLE_BYTES;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private void appendMotionSample(long timestampMs) {
-        if (activeMotionSamples == null || timestampMs - lastMotionSampleMs < MOTION_SAMPLE_MIN_INTERVAL_MS) return;
+        if (activeMotionSamples == null) return;
+        long minIntervalMs = activeCaptureProfile != null
+            ? activeCaptureProfile.sampleMinIntervalMs
+            : MOTION_SAMPLE_MIN_INTERVAL_MS;
+        if (activeCaptureTier != null) {
+            // The governor can only ever make sampling coarser (CaptureTierPolicy
+            // enforces NORMAL as its ceiling), and 0 means suspended.
+            if (activeCaptureTier.motionSuspended()) return;
+            minIntervalMs = Math.max(minIntervalMs, activeCaptureTier.motionSampleMinIntervalMs);
+        }
+        if (timestampMs - lastMotionSampleMs < minIntervalMs) return;
         if (timestampMs - lastLinearSensorMs > MOTION_AXIS_FRESH_MS) return;
 
         JSONObject sample = new JSONObject();
@@ -2286,9 +2569,15 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             }
             sample.put("source", "android_native_sensors");
             activeMotionSamples.put(sample);
-            while (activeMotionSamples.length() > MAX_NATIVE_MOTION_SAMPLES) {
-                activeMotionSamples.remove(0);
+            if (activeMotionSampleBytes <= 0L) {
+                activeMotionSampleBytes = sample.toString().length();
             }
+            activeMotionSamplesDropped += MotionSampleRetention.enforceBudget(
+                activeMotionSamples,
+                activeCaptureProfile == null
+                    ? MAX_NATIVE_MOTION_SAMPLES
+                    : activeCaptureProfile.effectiveSampleBudget(activeMotionSampleBytes)
+            );
             lastMotionSampleMs = timestampMs;
         } catch (JSONException error) {
             Log.w(TAG, "Could not append motion sample", error);
@@ -2322,7 +2611,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         } catch (JSONException error) {
             Log.w(TAG, "Could not evaluate possible incident", error);
         }
-        activeIncidentEvents.put(incident);
+        // The incident copies its coordinates from the raw active route point, so
+        // redact before it reaches the in-memory list that feeds both the recovery
+        // checkpoint and the completed-trip journal.
+        activeIncidentEvents.put(PrivacyZoneChecker.redactEvent(this, incident));
         recordLiveTelemetryEvent(
             "possible_incident",
             "Possible incident signal recorded",
@@ -2504,8 +2796,15 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private void updatePhoneUseProxy(double bearing, double speedKmh, float accuracyM, long timestampMs) {
-        if (!isSettingEnabled("phone_use_detection_enabled", true) || accuracyM > PHONE_PROXY_MAX_ACCURACY_M) return;
-        while (!recentHeadings.isEmpty() && timestampMs - recentHeadings.peekFirst()[1] > PHONE_MICRO_STEER_WINDOW_MS) {
+        double maxAccuracyM = getSettingDouble("phone_proxy_max_accuracy_m", DetectionConstants.PHONE_PROXY_MAX_ACCURACY_M);
+        if (!isSettingEnabled("phone_use_detection_enabled", true) || accuracyM > maxAccuracyM) return;
+        long microSteerWindowMs = (long) (getSettingDouble(
+            "phone_micro_steer_window_s", DetectionConstants.PHONE_MICRO_STEER_WINDOW_S) * 1000d);
+        // src/lib/tripEngine.js reads the same pair of keys in this order.
+        int microSteerMinCount = (int) Math.round(getSettingDouble(
+            "phone_micro_steer_count",
+            getSettingDouble("threshold_phone_proxy_oscillations", DetectionConstants.PHONE_MICRO_STEER_COUNT)));
+        while (!recentHeadings.isEmpty() && timestampMs - recentHeadings.peekFirst()[1] > microSteerWindowMs) {
             recentHeadings.pollFirst();
         }
         recentHeadings.addLast(new double[]{ bearing, timestampMs });
@@ -2535,10 +2834,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         }
 
         double netHeadingChange = first != null && last != null ? Math.abs(signedHeadingDiff(first[0], last[0])) : 0.0d;
-        boolean sustainedTurnLike = netHeadingChange >= SUSTAINED_TURN_HEADING_CHANGE_DEG && oscillations < PHONE_MICRO_STEER_MIN_COUNT;
+        boolean sustainedTurnLike = netHeadingChange >= SUSTAINED_TURN_HEADING_CHANGE_DEG && oscillations < microSteerMinCount;
         if (sustainedTurnLike) return;
 
-        if (oscillations >= PHONE_MICRO_STEER_MIN_COUNT) {
+        if (oscillations >= microSteerMinCount) {
             if (timestampMs - lastNativeProxyWindowMs < PHONE_WINDOW_COUNT_COOLDOWN_MS) return;
             lastNativeProxyWindowMs = timestampMs;
             nativeMicroSteerCount++;
@@ -2570,12 +2869,21 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private boolean recordStopStartCycle(long nowMs, double priorSpeedKmh, double speedKmh, double accelerationMs2) {
-        double decelThreshold = getSettingDouble("threshold_stop_start_decel_ms2", 2.5d);
-        double urbanDecelThreshold = getSettingDouble("threshold_stop_start_urban_decel_ms2", 1.4d);
-        double minSpeedKmh = getSettingDouble("threshold_stop_start_min_speed_kmh", 25.0d);
-        double speedDropKmh = getSettingDouble("threshold_stop_start_speed_drop_kmh", 6.0d);
-        boolean citySpeedPattern = priorSpeedKmh < 55.0d;
-        double requiredDecel = citySpeedPattern ? urbanDecelThreshold : decelThreshold;
+        // The JS detector picks its threshold set from the trip median moving speed. Live
+        // coaching has no trip median yet, so the current speed stands in for it; the split
+        // point itself is shared so the two sides agree on where urban ends.
+        boolean citySpeedPattern = priorSpeedKmh < DetectionConstants.STOP_START_URBAN_SPEED_SPLIT_KMH;
+        double requiredDecel = citySpeedPattern
+            ? getSettingDouble("threshold_stop_start_urban_decel_ms2", DetectionConstants.STOP_START_URBAN_DECEL_MS2)
+            : getSettingDouble("threshold_stop_start_decel_ms2", DetectionConstants.STOP_START_DECEL_MS2);
+        // Only the highway pair is user-settable; urban minimum speed and speed drop are
+        // detector-internal on the JS side too, so they come straight from the shared constants.
+        double minSpeedKmh = citySpeedPattern
+            ? DetectionConstants.STOP_START_URBAN_MIN_SPEED_KMH
+            : getSettingDouble("threshold_stop_start_min_speed_kmh", DetectionConstants.STOP_START_MIN_SPEED_KMH);
+        double speedDropKmh = citySpeedPattern
+            ? DetectionConstants.STOP_START_URBAN_SPEED_DROP_KMH
+            : getSettingDouble("threshold_stop_start_speed_drop_kmh", DetectionConstants.STOP_START_SPEED_DROP_KMH);
         if (priorSpeedKmh < minSpeedKmh ||
             priorSpeedKmh - speedKmh < speedDropKmh ||
             accelerationMs2 > -Math.abs(requiredDecel)) {
@@ -3054,14 +3362,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         );
         double speedLimitKmh = localSpeedLimit != null
             ? localSpeedLimit.limitKmh
-            : getSettingDouble("threshold_speeding_kmh", 100.0d);
+            : getSettingDouble("threshold_speeding_kmh", DetectionConstants.SPEEDING_FALLBACK_KMH);
         boolean postedLimit = localSpeedLimit != null &&
             "user_confirmed_posted_sign".equals(localSpeedLimit.source);
         boolean estimatedLimit = localSpeedLimit != null && !postedLimit;
         double speedMarginKmh = estimatedLimit
             ? getSettingDouble("estimated_voice_margin_kmh", 12.0d)
             : postedLimit
-                ? getSettingDouble("threshold_speed_over_kmh", 5.0d)
+                ? getSettingDouble("threshold_speed_over_kmh", DetectionConstants.SPEED_OVER_KMH)
                 : getSettingDouble("estimated_voice_margin_kmh", 12.0d);
         boolean sourceVoiceAllowed = postedLimit
             ? isSettingEnabled("speak_posted_speed_warnings", true)
@@ -3086,13 +3394,19 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                     speakNativeAlert(message, true, () -> lastSpeedAlertMs = now);
                 }
             }
-        } else {
+        } else if (speedingSinceMs == 0L ||
+            speedKmh <= speedLimitKmh + speedMarginKmh - SPEED_ALERT_RELEASE_KMH) {
+            // Hysteresis, matching speedAlertGate.js: the over-limit state clears
+            // only once speed drops clear of the band. Resetting the moment speed
+            // dipped below the threshold restarted the sustained window on every
+            // fix while hovering on the line, so a driver sitting just over the
+            // limit could be alerted repeatedly.
             speedingSinceMs = 0L;
         }
 
         long fatigueThresholdMs = Math.max(
             1L,
-            Math.round(getSettingDouble("threshold_long_drive_minutes", 120.0d))
+            Math.round(getSettingDouble("threshold_long_drive_minutes", DetectionConstants.LONG_DRIVE_MINUTES))
         ) * 60_000L;
         if (activeStartMs > 0L && now - activeStartMs >= fatigueThresholdMs &&
             now - lastFatigueAlertMs >= FATIGUE_ALERT_COOLDOWN_MS) {
@@ -3125,8 +3439,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
         double accelerationMs2 = calculateLongitudinalAccelerationMs2(priorSpeedKmh, speedKmh, dtMs);
         lastLongitudinalAccelerationMs2 = accelerationMs2;
-        double harshBrakeThreshold = getSettingDouble("threshold_harsh_brake_ms2", 3.5d);
-        double rapidAccelThreshold = getSettingDouble("threshold_rapid_accel_ms2", 3.0d);
+        double harshBrakeThreshold = getSettingDouble("threshold_harsh_brake_ms2", DetectionConstants.HARSH_BRAKE_MS2);
+        double rapidAccelThreshold = getSettingDouble("threshold_rapid_accel_ms2", DetectionConstants.RAPID_ACCEL_MS2);
         double priorBearing = priorLocation.hasBearing()
             ? priorLocation.getBearing()
             : priorLocation.bearingTo(location);
@@ -3134,8 +3448,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         double headingChange = Math.abs(signedHeadingDiff(priorBearing, currentBearing));
         double headingRateDegS = headingChange / (dtMs / 1000d);
         lastHeadingRateDegS = headingRateDegS;
-        double manoeuvreBrakeThreshold = getSettingDouble("threshold_manoeuvre_alert_brake_ms2", 4.0d);
-        double manoeuvreTurnThreshold = getSettingDouble("threshold_manoeuvre_alert_turn_degs", 25.0d);
+        double manoeuvreBrakeThreshold = getSettingDouble("threshold_manoeuvre_alert_brake_ms2", DetectionConstants.MANOEUVRE_ALERT_BRAKE_MS2);
+        double manoeuvreTurnThreshold = getSettingDouble("threshold_manoeuvre_alert_turn_degs", DetectionConstants.MANOEUVRE_ALERT_TURN_DEG_S);
         if (speedKmh >= 30.0d &&
             accelerationMs2 <= -Math.abs(manoeuvreBrakeThreshold) &&
             headingRateDegS >= manoeuvreTurnThreshold &&
@@ -3159,7 +3473,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             return;
         }
         if (accelerationMs2 <= -harshBrakeThreshold &&
-            priorSpeedKmh >= LIVE_EVENT_MIN_SPEED_KMH &&
+            priorSpeedKmh >= DetectionConstants.MIN_SPEED_HARSH_BRAKE_KMH &&
             now - lastHarshBrakeAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
             recordLiveTelemetryEvent("harsh_brake", "Braking threshold exceeded", accelerationMs2, "m/s²", now);
             lastHarshBrakeAlertMs = now;
@@ -3169,7 +3483,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             return;
         }
         if (accelerationMs2 >= rapidAccelThreshold &&
-            speedKmh >= LIVE_EVENT_MIN_SPEED_KMH &&
+            speedKmh >= DetectionConstants.MIN_SPEED_RAPID_ACCEL_KMH &&
             now - lastRapidAccelAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
             recordLiveTelemetryEvent("rapid_acceleration", "Acceleration threshold exceeded", accelerationMs2, "m/s²", now);
             lastRapidAccelAlertMs = now;
@@ -3181,9 +3495,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
         double lateralG = calculateLateralG(speedKmh, headingChange, dtMs);
         lastLateralG = lateralG;
-        double sharpTurnThreshold = getSettingDouble("threshold_sharp_turn_g_low", 0.35d);
+        double sharpTurnThreshold = getSettingDouble("threshold_sharp_turn_g_low", DetectionConstants.SHARP_TURN_G_LOW);
         if (headingChange >= SHARP_TURN_MIN_HEADING_CHANGE_DEG &&
-            speedKmh >= LIVE_EVENT_MIN_SPEED_KMH &&
+            speedKmh >= DetectionConstants.CORNERING_MIN_SPEED_KMH &&
             lateralG >= sharpTurnThreshold &&
             now - lastCorneringAlertMs >= MANOEUVRE_ALERT_COOLDOWN_MS) {
             recordLiveTelemetryEvent("sharp_cornering", "Cornering threshold exceeded", lateralG, "g", now);
@@ -3194,7 +3508,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             return;
         }
 
-        double headingDriftThreshold = getSettingDouble("threshold_heading_drift_std_degs", 8.0d);
+        double headingDriftThreshold = getSettingDouble("threshold_heading_drift_std_degs", DetectionConstants.HEADING_DRIFT_STD_DEG);
         if (shouldAlertHeadingDrift(headingDriftThreshold) &&
             now - lastHeadingDriftAlertMs >= HEADING_DRIFT_ALERT_COOLDOWN_MS) {
             recordLiveTelemetryEvent("heading_pattern", "Heading pattern recorded", headingDriftThreshold, "°", now);
@@ -3407,7 +3721,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         double confidence = cell.has("confidence")
             ? cell.optDouble("confidence", Double.NaN)
             : nativeSpeedCellDefaultConfidence(source);
-        if (!Double.isFinite(confidence) || confidence < 0.55d) return false;
+        if (!Double.isFinite(confidence) || confidence < DetectionConstants.SPEED_ALERT_MIN_CONFIDENCE) return false;
 
         Object rawExpiry = cell.opt("expiresAt");
         Long expiresAtMs = parseFlexibleEpochMsOrNull(rawExpiry);
@@ -4445,6 +4759,13 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         activeTimeline = checkpoint.optJSONArray("timeline");
         if (activeTimeline == null) activeTimeline = new JSONArray();
         activeMotionSamples = new JSONArray();
+        activeMotionSamplesDropped = 0;
+        activeCaptureProfile = resolveCaptureProfile();
+        activeMotionSampleBytes = 0L;
+        activeCaptureTier = null;
+        activeCaptureTierSinceMs = 0L;
+        lastCaptureTierEvalMs = 0L;
+        activeCaptureTierSeconds.clear();
         activeIncidentEvents = checkpoint.optJSONArray("incident_events");
         if (activeIncidentEvents == null) activeIncidentEvents = new JSONArray();
         activeTelemetryEvents = new JSONArray();
@@ -4559,9 +4880,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             checkpoint.put("still_since_ms", stillSinceMs);
             checkpoint.put("native_phone_proxy_count", nativeMicroSteerCount);
             checkpoint.put("route_point_count_original", activePoints.length());
+            // The checkpoint outlives a crash or process kill, so in-zone
+            // coordinates must be redacted here rather than only at trip finalize.
             checkpoint.put(
                 "route_points",
-                DriveSenseActiveTripCheckpointStore.compactRoutePoints(activePoints)
+                PrivacyZoneChecker.redactRoutePoints(
+                    this,
+                    DriveSenseActiveTripCheckpointStore.compactRoutePoints(activePoints)
+                )
             );
             checkpoint.put(
                 "timeline",
@@ -4610,7 +4936,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             executor.execute(() -> {
                 boolean saved = DriveSenseActiveTripCheckpointStore.save(this, pendingCheckpoint);
                 if (saved) return;
-                mainHandler.post(() -> recordCheckpointSaveResult(false, nowMs));
+                mainHandler().post(() -> recordCheckpointSaveResult(false, nowMs));
             });
         } catch (RejectedExecutionException error) {
             recordCheckpointSaveResult(DriveSenseActiveTripCheckpointStore.save(this, pendingCheckpoint), nowMs);

@@ -219,21 +219,104 @@ describe('speed-limit compliance', () => {
     const postedResult = calculateSpeedLimitCompliance(posted, {}, DEFAULT_THRESHOLDS);
     const inferredResult = calculateSpeedLimitCompliance(inferred, {}, DEFAULT_THRESHOLDS);
     expect(postedResult.speed_penalty_totals.totalRawPenalty).toBeGreaterThan(0);
-    expect(postedResult.speed_penalty_totals.totalWeightedPenalty).toBe(postedResult.speed_penalty_totals.totalRawPenalty);
+    // A mapped OSM maxspeed is high-confidence but not certain (0.90 -> weight 0.95), so it
+    // keeps nearly all of the raw penalty while a GPS-inferred limit keeps far less.
+    expect(postedResult.speed_penalty_totals.totalWeightedPenalty)
+      .toBeGreaterThan(postedResult.speed_penalty_totals.totalRawPenalty * 0.9);
+    expect(postedResult.speed_penalty_totals.totalWeightedPenalty)
+      .toBeLessThanOrEqual(postedResult.speed_penalty_totals.totalRawPenalty);
     expect(inferredResult.speed_penalty_totals.totalWeightedPenalty).toBeLessThan(inferredResult.speed_penalty_totals.totalRawPenalty);
     expect(inferredResult.speed_penalty_totals.totalPostedWeight).toBeLessThan(postedResult.speed_penalty_totals.totalPostedWeight);
   });
 
-  it('scores unknown-tier over-limit points as zero penalty', () => {
+  it('reports compliance as unavailable when no limit is trustworthy enough to score', () => {
     const points = Array.from({ length: 20 }, (_, index) => ({
       ...p(index, 82),
       speed_limit_kmh: 60,
       speed_limit_source: 'unknown',
     }));
     const result = calculateSpeedLimitCompliance(points, {}, DEFAULT_THRESHOLDS);
+
+    // The raw penalty is still recorded: they were 22 km/h over something.
     expect(result.speed_penalty_totals.totalRawPenalty).toBeGreaterThan(0);
     expect(result.speed_penalty_totals.totalWeightedPenalty).toBe(0);
-    expect(result.overall_compliance_score).toBe(100);
+    expect(result.speed_penalty_totals.totalPostedWeight).toBe(0);
+
+    // But no limit was trustworthy enough to score against, so there is no
+    // score. This used to report 100 — "no evidence" read as "perfect".
+    expect(result.overall_compliance_score).toBeNull();
+    const bucket = result.urban_compliance ?? result.highway_compliance ?? result.residential_compliance;
+    expect(bucket.score).toBeNull();
+    expect(bucket.score_available).toBe(false);
+  });
+
+  it('excludes an unavailable bucket from the trip average instead of counting it as 100', () => {
+    // Urban points with a posted limit they are well over, plus a longer run of
+    // highway points whose limit is unknown. The unknown run must not lift the
+    // trip average toward 100.
+    const scored = Array.from({ length: 10 }, (_, index) => ({
+      ...p(index, 82),
+      speed_limit_kmh: 50,
+      speed_limit_source: 'openstreetmap',
+    }));
+    const unknown = Array.from({ length: 40 }, (_, index) => ({
+      ...p(index + 10, 82),
+      speed_limit_kmh: 60,
+      speed_limit_source: 'unknown',
+    }));
+    const result = calculateSpeedLimitCompliance([...scored, ...unknown], {}, DEFAULT_THRESHOLDS);
+
+    const scoredBuckets = [result.highway_compliance, result.urban_compliance, result.residential_compliance]
+      .filter((bucket) => bucket?.score != null);
+    expect(scoredBuckets.length).toBeGreaterThan(0);
+    expect(result.overall_compliance_score).toBeLessThan(100);
+  });
+
+  // A trip long enough to clear the trip-level evidence gates, so score_safety
+  // is a real number rather than 'unavailable'. ~22.8 m per second is 82 km/h.
+  const scorableTrip = (source, speedKmh = 82) => Array.from({ length: 600 }, (_, index) => ({
+    lat: 43.65 + index * 0.000205,
+    lng: -79.38,
+    speed_kmh: speedKmh,
+    speed_limit_kmh: 60,
+    speed_limit_source: source,
+    timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, 0) + index * 1000).toISOString(),
+  }));
+
+  it('weights a speeding event by the confidence the resolver settled on', () => {
+    // Same source string, different resolved confidence. The event path used to
+    // re-derive the weight from the static source profile, so a stale or
+    // conflicted limit charged the full penalty anyway — and disagreed with the
+    // weight calculateSpeedLimitCompliance gave the very same limit.
+    const points = scorableTrip('learned_local');
+    const stats = calculateTripStats(points, points[0].timestamp, points.at(-1).timestamp);
+    const scoresFor = (zoneConfidence) => calculateTripScores(
+      [{
+        type: EVENT_TYPES.SPEEDING,
+        severity: 'high',
+        speed_limit_source: 'learned_local',
+        zone_confidence: zoneConfidence,
+      }],
+      stats,
+      points,
+      DEFAULT_THRESHOLDS
+    );
+
+    const trusted = scoresFor(0.92);
+    const doubtful = scoresFor(0.34);
+    expect(Number.isFinite(trusted.score_safety)).toBe(true);
+    expect(doubtful.score_safety).toBeGreaterThan(trusted.score_safety);
+  });
+
+  it('keeps compliance out of Safety when there is no compliance evidence', () => {
+    const points = scorableTrip('unknown');
+    const stats = calculateTripStats(points, points[0].timestamp, points.at(-1).timestamp);
+    const scores = calculateTripScores([], stats, points, DEFAULT_THRESHOLDS);
+
+    // No trustworthy limit anywhere, so compliance is unavailable and must not
+    // enter the Safety blend as if it were a scored component.
+    expect(scores.overall_compliance_score).toBeNull();
+    expect(Number.isFinite(scores.score_safety)).toBe(true);
   });
 
   it('adds penaltyReductionFraction to trip_speed_summary_v1', () => {
@@ -281,22 +364,35 @@ describe('confidenceToPenaltyWeight backward compatibility', () => {
 });
 
 describe('confidenceForSource correction split', () => {
+  // These values now come from the single SPEED_LIMIT_SOURCE_PROFILES table in
+  // speedLimitConfidence.js. confidenceForSource used to carry a second, disagreeing copy
+  // (openstreetmap 1.0, osm_highway_default 0.70, region_default_estimate 0.45) while both
+  // fed speeding penalties. A crowd-sourced OSM tag is mapped data, not a verified sign,
+  // so it ranks below user_confirmed_posted_sign rather than at certainty.
   it('separates posted signs, user estimates, regional defaults, and legacy corrections', () => {
-    expect(confidenceForSource('openstreetmap')).toBe(1.0);
+    expect(confidenceForSource('openstreetmap')).toBe(0.90);
     expect(confidenceForSource('user_confirmed_posted_sign')).toBe(0.92);
     expect(confidenceForSource('user_entered_estimate')).toBe(0.75);
     expect(confidenceForSource('user_correction')).toBe(0.75);
-    expect(confidenceForSource('region_default_estimate')).toBe(0.45);
+    expect(confidenceForSource('region_default_estimate')).toBe(0.40);
+    expect(confidenceForSource('osm_highway_default')).toBe(0.48);
+  });
+
+  it('lets a stored per-record confidence override the source default', () => {
+    expect(confidenceForSource('learned_local', 0.83)).toBe(0.83);
+    expect(confidenceForSource('user_confirmed_posted_sign', 0.97)).toBe(0.97);
+    // A source with no per-record evidence ignores the argument.
+    expect(confidenceForSource('openstreetmap', 0.2)).toBe(0.90);
   });
 });
 
 describe('regression - existing behaviour preserved', () => {
-  it('existing OSM maxspeed events still produce weight 1.0', () => {
+  it('existing OSM maxspeed events still produce near-full penalty weight', () => {
     const r = resolveSpeedLimitWithTier(
       { speed_limit_kmh: 60, speed_limit_source: 'openstreetmap' },
       {}
     );
-    expect(r.penaltyWeight).toBe(1.0);
+    expect(r.penaltyWeight).toBe(0.95);
   });
 
   it('existing inferred events produce weight <= 0.50', () => {

@@ -13,14 +13,9 @@ export const VOICE_ALERT_MESSAGE_STYLES = Object.freeze({
 // - Updated REGION_DEFAULT voice wording and removed forbidden certainty terms from estimated tiers.
 // - Updated REGION_DEFAULT event label to "no posted sign confirmed" wording.
 
-export const VOICE_COOLDOWNS_BY_TIER = Object.freeze({
-  POSTED: 60000,
-  MAP_ESTIMATED: 90000,
-  LEARNED_LOCAL: 90000,
-  REGION_DEFAULT: 120000,
-  GPS_INFERRED: 180000,
-  UNKNOWN: Infinity,
-});
+// Defined in src/lib/speed/speedTierNames.js; re-exported here for the existing
+// import sites. It used to be a second literal that could drift from the first.
+export { VOICE_COOLDOWNS_BY_TIER } from '@/lib/speed/speedTierNames';
 
 export const TIER_EVENT_LABELS = Object.freeze({
   POSTED: 'Posted speed limit (OSM or user-confirmed)',

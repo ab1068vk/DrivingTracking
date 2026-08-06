@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { geohashEncode, LocalSpeedKnowledge, STORAGE_KEY, timeToBucket } from '@/lib/localSpeedKnowledge';
 import { applySafetyGuards } from '@/lib/speedLimitSource';
+import { MAX_LEARNED_CONFIDENCE, confidenceFromAgreement } from '@/lib/speed/speedEvidenceModel';
 
 // CHANGES (session):
 // - Added Category D LocalSpeedKnowledge tests for privacy, learning, corrections, pruning, safety guards, and misses.
@@ -101,15 +102,26 @@ describe('LocalSpeedKnowledge', () => {
     expect(result.source).toBe('trip_consensus');
   });
 
-  it('grows confidence from 0.55 to 0.85 over 10 trips', async () => {
+  it('grows confidence monotonically with corroborating trips, under the learned cap', async () => {
     const store = new MockStore();
     const lsk = new LocalSpeedKnowledge(store);
+    const confidences = [];
     for (let i = 0; i < 10; i++) {
       await lsk.learnFromTrip([{ lat: 43.65, lng: -79.38, limitKmh: 60, source: 'openstreetmap' }], []);
+      const data = await lsk.exportData();
+      confidences.push(data.cells[geohashEncode(43.65, -79.38)].confidence);
     }
     const cell = await lsk.getForPoint(43.65, -79.38);
+
     expect(cell.tripCount).toBe(10);
-    expect(cell.confidence).toBeCloseTo(0.85, 3);
+    expect(cell.agreementRatio).toBe(1);
+    // Each fully-agreeing trip raises confidence, and a learned limit never
+    // reaches posted-limit confidence however much evidence it accumulates.
+    for (let i = 1; i < confidences.length; i++) {
+      expect(confidences[i]).toBeGreaterThan(confidences[i - 1]);
+    }
+    expect(cell.confidence).toBeCloseTo(confidenceFromAgreement(10, 10), 6);
+    expect(cell.confidence).toBeLessThanOrEqual(MAX_LEARNED_CONFIDENCE);
   });
 
   it('counts a dense same-cell route as one independent trip', async () => {
@@ -129,7 +141,8 @@ describe('LocalSpeedKnowledge', () => {
 
     expect(cell.tripCount).toBe(1);
     expect(cell.evidenceCount).toBe(1);
-    expect(cell.confidence).toBe(0.55);
+    expect(cell.confidence).toBeCloseTo(confidenceFromAgreement(1, 1), 6);
+    // One trip is never enough to drive alerts or scoring.
     await expect(lsk.getForPoint(43.65, -79.38)).resolves.toBeNull();
   });
 
@@ -140,7 +153,10 @@ describe('LocalSpeedKnowledge', () => {
     await lsk.learnFromTrip([{ lat: 43.65, lng: -79.38, limitKmh: 50, source: 'openstreetmap' }], []);
     const data = await lsk.exportData();
     const cell = data.cells[geohashEncode(43.65, -79.38)];
-    expect(cell.confidence).toBeCloseTo(0.43, 3);
+    // Half the evidence disagrees, so confidence sits below what a single
+    // uncontested observation would earn — contradiction can only lower it.
+    expect(cell.confidence).toBeLessThan(confidenceFromAgreement(1, 1));
+    expect(cell.agreementRatio).toBe(0.5);
     await expect(lsk.getForPoint(43.65, -79.38)).resolves.toBeNull();
   });
 
@@ -996,5 +1012,116 @@ describe('LocalSpeedKnowledge', () => {
     expect((await lsk.listUserCorrections())[0].limitKmh).toBe(70);
     expect(await lsk.undo()).toBe(true);
     expect((await lsk.listUserCorrections())[0].limitKmh).toBe(50);
+  });
+});
+
+describe('time-of-day buckets', () => {
+  const learn = (lsk, speedKmh, utcOffsetMinutes) => lsk.learnFromTrip([{
+    lat: 43.65,
+    lng: -79.38,
+    limitKmh: 60,
+    source: 'openstreetmap',
+    speed_kmh: speedKmh,
+    // 2026-07-01T12:00:00Z
+    timestamp: '2026-07-01T12:00:00.000Z',
+    utc_offset_minutes: utcOffsetMinutes,
+  }], []);
+
+  it('buckets by the offset recorded with the observation, not the device clock', () => {
+    // The same instant, recorded in two different zones, belongs to two
+    // different local-clock buckets. Using the device's current timezone made
+    // this depend on where the *reader* is, not where the driving happened.
+    expect(timeToBucket(Date.parse('2026-07-01T12:00:00.000Z'), 0)).toBe('12-14');
+    expect(timeToBucket(Date.parse('2026-07-01T12:00:00.000Z'), -240)).toBe('08-10');
+    expect(timeToBucket(Date.parse('2026-07-01T12:00:00.000Z'), 330)).toBe('16-18');
+  });
+
+  it('stores a real 85th percentile, not a running mean', async () => {
+    const lsk = new LocalSpeedKnowledge(new MockStore());
+    // An even split at 30 and 60. The arithmetic mean of this is 45; the 85th
+    // percentile is 60. The field was named p85Kmh and held the mean.
+    for (const speed of [30, 30, 30, 30, 30, 60, 60, 60, 60, 60]) {
+      await lsk.learnFromTrip([{
+        lat: 43.65,
+        lng: -79.38,
+        limitKmh: 60,
+        source: 'openstreetmap',
+        speed_kmh: speed,
+        timestamp: '2026-07-01T12:00:00.000Z',
+        utc_offset_minutes: 0,
+      }], []);
+    }
+
+    const data = await lsk.exportData();
+    const bucket = data.cells[geohashEncode(43.65, -79.38)].timeOfDayBuckets['12-14'];
+    expect(bucket.count).toBe(10);
+    expect(bucket.samples).toHaveLength(10);
+    expect(bucket.p85Kmh).toBe(60);
+  });
+
+  it('is robust to a single outlier, which a mean is not', async () => {
+    const lsk = new LocalSpeedKnowledge(new MockStore());
+    for (const speed of [40, 40, 40, 40, 40, 40, 40, 40, 40, 150]) {
+      await lsk.learnFromTrip([{
+        lat: 43.65,
+        lng: -79.38,
+        limitKmh: 60,
+        source: 'openstreetmap',
+        speed_kmh: speed,
+        timestamp: '2026-07-01T12:00:00.000Z',
+        utc_offset_minutes: 0,
+      }], []);
+    }
+
+    const data = await lsk.exportData();
+    const bucket = data.cells[geohashEncode(43.65, -79.38)].timeOfDayBuckets['12-14'];
+    // One 150 km/h GPS spike moved the old running mean by 11 km/h.
+    expect(bucket.p85Kmh).toBe(40);
+  });
+
+  it('does not compound rounding error across repeated updates', async () => {
+    const lsk = new LocalSpeedKnowledge(new MockStore());
+    // A constant observation must produce exactly that value, however many
+    // times it is recorded. Re-deriving the running total from the rounded
+    // stored value made this drift.
+    for (let i = 0; i < 30; i += 1) {
+      await learn(lsk, 47, 0);
+    }
+    const data = await lsk.exportData();
+    const bucket = data.cells[geohashEncode(43.65, -79.38)].timeOfDayBuckets['12-14'];
+    expect(bucket.p85Kmh).toBe(47);
+  });
+});
+
+describe('learned cell retention', () => {
+  it('caps the cell map and evicts the least recently updated roads', async () => {
+    const store = new MockStore();
+    const lsk = new LocalSpeedKnowledge(store);
+
+    // Seed well past the cap with cells of staggered ages, oldest first.
+    const cells = {};
+    for (let i = 0; i < 6100; i += 1) {
+      cells[`cell${String(i).padStart(5, '0')}`] = {
+        limitKmh: 50,
+        source: 'trip_consensus',
+        confidence: 0.7,
+        tripCount: 3,
+        evidenceCount: 3,
+        lastUpdatedAt: new Date(Date.UTC(2020, 0, 1) + i * 3600000).toISOString(),
+      };
+    }
+    await store.set(STORAGE_KEY, { cells, corrections: [], excludedSections: [] });
+
+    await lsk.learnFromTrip([{
+      lat: 43.65, lng: -79.38, limitKmh: 60, source: 'openstreetmap',
+    }], [], { tripId: 'fresh' });
+
+    const data = await store.get(STORAGE_KEY);
+    const kept = Object.keys(data.cells);
+    expect(kept.length).toBeLessThanOrEqual(6000);
+    // The just-learned road survives; the oldest seeded ones do not.
+    expect(kept).toContain(geohashEncode(43.65, -79.38));
+    expect(kept).not.toContain('cell00000');
+    expect(kept).toContain('cell06099');
   });
 });

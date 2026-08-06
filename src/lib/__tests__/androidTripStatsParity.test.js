@@ -3,6 +3,13 @@ import { readDashboardSource } from '@/lib/__tests__/helpers/pageSourceBundle';
 import { readFileSync } from 'node:fs';
 import fixture from '@/lib/__fixtures__/androidTripStatsParityFixture.json';
 import { calculateSegmentMetrics, calculateTripStats, DEFAULT_THRESHOLDS, reviewManualTripSave } from '@/lib/tripEngine';
+import { scoringValue } from '@/lib/scoringConstants';
+import { STANDARD_GRAVITY_MS2 } from '@/lib/mathUtils';
+import {
+  SPEED_ALERT_MIN_CONFIDENCE,
+  SPEED_ALERT_RELEASE_KMH,
+  SPEED_ALERT_SUSTAINED_MS,
+} from '@/lib/appConstants';
 
 function jsParityResult() {
   const stats = calculateTripStats(
@@ -139,14 +146,67 @@ describe('Android auto-tracking stats parity', () => {
     expect(source).not.toContain('trip.put("score_overall", 100');
   });
 
+  it('keeps every generated native detection constant equal to its JavaScript source', () => {
+    const source = readFileSync(
+      new URL('../../../android/app/src/main/java/com/drivesense/app/DetectionConstants.java', import.meta.url),
+      'utf8'
+    );
+    // Each field is emitted as `/** JS_CONSTANT_NAME */` followed by its declaration, so the
+    // Java file carries the mapping and this test does not have to repeat it.
+    const fields = [...source.matchAll(
+      /\/\*\* ([\w.\s*]+) \*\/\s*\n\s*static final (\w+) (\w+) = (-?[\d.]+)[dfL]?;/g
+    )];
+
+    expect(fields.length).toBeGreaterThan(30);
+
+    const overrides = {
+      // Emitted in milliseconds; the JS constant is in seconds.
+      'MIN_TRIP_DURATION_SECONDS * 1000': () => scoringValue('MIN_TRIP_DURATION_SECONDS') * 1000,
+      'mathUtils.js STANDARD_GRAVITY_MS2': () => STANDARD_GRAVITY_MS2,
+      // Speed-alert gating lives in appConstants, not scoringConstants: it is
+      // alert policy rather than scoring policy, so it must not move
+      // SCORING_VERSION and invalidate historical trips when it is retuned.
+      'appConstants.SPEED_ALERT_SUSTAINED_MS': () => SPEED_ALERT_SUSTAINED_MS,
+      'appConstants.SPEED_ALERT_MIN_CONFIDENCE': () => SPEED_ALERT_MIN_CONFIDENCE,
+      'appConstants.SPEED_ALERT_RELEASE_KMH': () => SPEED_ALERT_RELEASE_KMH,
+    };
+
+    for (const [, jsSource, , javaName, javaValue] of fields) {
+      const expected = overrides[jsSource] ? overrides[jsSource]() : scoringValue(jsSource);
+      expect(Number.isFinite(expected), `${jsSource} is not a scoring constant`).toBe(true);
+      expect(Number(javaValue), `${javaName} drifted from ${jsSource}`).toBe(expected);
+    }
+  });
+
   it('keeps the native GPS accuracy gate aligned with JavaScript scoring', () => {
     const source = readFileSync(
-      new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url),
+      new URL('../../../android/app/src/main/java/com/drivesense/app/DetectionConstants.java', import.meta.url),
       'utf8'
     );
     const nativeAccuracy = source.match(/MAX_ACCURACY_M\s*=\s*(\d+(?:\.\d+)?)f/)?.[1];
 
     expect(Number(nativeAccuracy)).toBe(DEFAULT_THRESHOLDS.MAX_GPS_ACCURACY_M);
+  });
+
+  it('leaves no hand-copied detection literal behind in the tracking service', () => {
+    const source = readFileSync(
+      new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url),
+      'utf8'
+    );
+
+    // One shared minimum speed used to gate braking, acceleration and cornering alerts,
+    // which is why the live detector announced events the scored trip never recorded.
+    expect(source).not.toContain('LIVE_EVENT_MIN_SPEED_KMH');
+    expect(source).toContain('DetectionConstants.MIN_SPEED_HARSH_BRAKE_KMH');
+    expect(source).toContain('DetectionConstants.MIN_SPEED_RAPID_ACCEL_KMH');
+    expect(source).toContain('DetectionConstants.CORNERING_MIN_SPEED_KMH');
+    // Stop-start must pick urban vs highway thresholds the way the scorer does.
+    expect(source).toContain('DetectionConstants.STOP_START_URBAN_SPEED_SPLIT_KMH');
+    expect(source).toContain('DetectionConstants.STOP_START_URBAN_MIN_SPEED_KMH');
+    // Phone-proxy tuning must follow the settings sliders, not frozen static finals.
+    expect(source).toMatch(/getSettingDouble\(\s*"phone_proxy_max_accuracy_m"/);
+    expect(source).toMatch(/getSettingDouble\(\s*"phone_micro_steer_window_s"/);
+    expect(source).toMatch(/getSettingDouble\(\s*\n?\s*"phone_micro_steer_count"/);
   });
 
   it('keeps active-trip crash recovery encrypted, throttled, and bounded', () => {

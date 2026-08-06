@@ -13,6 +13,45 @@ export const SCORE_OUTPUT_CALIBRATION_STATUSES = Object.freeze({
 
 export { SCORING_VERSION };
 
+/**
+ * Revision marker for the scoring *calculation code*, as opposed to the constants below.
+ *
+ * `scripts/generate-scoring-version.mjs` derives SCORING_VERSION by hashing the exports of
+ * this module only. That means a change to a formula in `tripEngine.js` — a penalty moved
+ * from a per-km pool to a flat deduction, a corrected denominator, a removed double-count —
+ * shifts every existing user's stored scores while SCORING_VERSION stays put, so no trip is
+ * flagged as scored by a different model and nothing offers to re-score.
+ *
+ * This constant closes that gap: it is part of the hashed payload, so incrementing it
+ * regenerates SCORING_VERSION and the existing rescore-mismatch machinery
+ * (`localTripRepository` / Settings score-migration summary) picks the change up.
+ *
+ * Increment it in the same commit as any change to how a score is computed, and record the
+ * change below. Do not increment it for refactors that provably cannot move a score.
+ *
+ * Revision history:
+ *   1 - baseline; all scoring code prior to the calculation audit.
+ *   2 - audit fixes: night-driving penalty applied as a flat post-normalize deduction
+ *       instead of being diluted by trip distance; confirmed phone use no longer both
+ *       penalized as an event and blended as an independent component; speed-limit
+ *       compliance divided by total posted-limit points instead of over-limit points only.
+ *   3 - detection audit:
+ *       - computeSmoothedAccelerations paired a single-step speed delta with a two-step
+ *         time span, reporting exactly half the true rate for any sustained event. A 5 m/s2
+ *         stop measured as 2.5 and never reached the 3.5 trigger. Now a proper centered
+ *         difference, so harsh braking and rapid acceleration fire at their stated
+ *         thresholds. This raises event counts on existing trips.
+ *       - Event severity is classified against the user's configured trigger threshold
+ *         (EVENT_SEVERITY_BAND_MULTIPLIERS) instead of hardcoded literals, so a changed
+ *         threshold now moves the severity mix and not just the event count.
+ *       - Stop-start and close-proximity severity require both dimensions to escalate.
+ *       - Stop-start speeds run through the same GPS noise filter as every other detector.
+ *       - Speed-limit confidence has one source (SPEED_LIMIT_SOURCE_PROFILES); the second,
+ *         disagreeing table rated OSM at certainty and osm_highway_default at 0.70.
+ *       - IMU refinement can downgrade a GPS event the motion stream contradicts.
+ */
+export const SCORING_ALGORITHM_REVISION = 3;
+
 const scoreMetrics = ['score_overall', 'score_safety', 'score_smoothness'];
 const routeRiskMetrics = ['route_risk_score', 'pre_trip_readiness_score'];
 const ubiMetrics = ['ubi_score'];
@@ -205,6 +244,49 @@ export const SCORING_CONSTANTS = Object.freeze({
     aggressive_overtake: { low: 12, medium: 25, high: 45 },
     phone_use: { low: 15, medium: 35, high: 65 },
   }), { label: 'Driving event penalty points', domain: 'trip_score', calibration_note: 'Event deductions are product heuristics pending outcome calibration.', affected_metrics: scoreMetrics }),
+  // Only the event types listed here are actually routed into a penalty bucket by
+  // tripEngine.calculateTripScores. Every other key in EVENT_PENALTY_POINTS above is inert:
+  // its penalty is computed and then discarded, so tuning it changes no score even though
+  // EVENT_PENALTY_POINTS declares `affected_metrics: scoreMetrics`. Keep this list in sync
+  // with the bucket routing in calculateTripScores, and consult it before "recalibrating"
+  // an event penalty — an inert entry needs wiring first, which is a scoring change.
+  SCORE_AFFECTING_EVENT_TYPES: constant(Object.freeze([
+    'harsh_brake',
+    'rapid_acceleration',
+    'sharp_turn',
+    'speeding',
+    'erratic_speed',
+    'phone_use',
+  ]), { label: 'Score-affecting event types', domain: 'trip_score', calibration_note: 'Structural, not calibrated: records which event penalties reach a scoring bucket.', affected_metrics: scoreMetrics }),
+  // Severity bands are expressed as MULTIPLES of whatever trigger threshold is in
+  // force for the event, so a user who moves a detection slider also moves the
+  // low/medium/high boundaries with it. Before this was introduced the bands were
+  // absolute literals, which meant a harsh-brake threshold raised to 7 m/s2 made
+  // every detected event "high" and one lowered to 2 m/s2 made every event "low".
+  //
+  // The multipliers below are chosen so that, at the DEFAULT thresholds, the
+  // resulting boundaries land within a few percent of the previous literals:
+  //   harsh_brake        3.5 -> 4.90 / 6.13   (was 5 / 6)
+  //   rapid_acceleration 3.0 -> 4.05 / 5.10   (was 4 / 5)
+  //   idle                90 -> 180 / 297     (was 180 / 300)
+  // sharp_turn is deliberately absent: it already classifies against its own
+  // SHARP_TURN_G_MEDIUM / _HIGH settings and is the model this generalizes.
+  EVENT_SEVERITY_BAND_MULTIPLIERS: constant(Object.freeze({
+    harsh_brake: Object.freeze({ medium: 1.40, high: 1.75 }),
+    rapid_acceleration: Object.freeze({ medium: 1.35, high: 1.70 }),
+    idle: Object.freeze({ medium: 2.00, high: 3.30 }),
+    stop_start_pattern: Object.freeze({ medium: 1.20, high: 1.60 }),
+    close_proximity: Object.freeze({ medium: 1.15, high: 1.40 }),
+  }), { label: 'Event severity band multipliers', domain: 'trip_score', calibration_note: 'Provisional severity boundaries expressed relative to each event\'s configured trigger threshold so user calibration moves severity with detection.', affected_metrics: scoreMetrics }),
+  SPEEDING_SEVERITY_MEDIUM_OVER_KMH: constant(20, { label: 'Speeding medium severity margin', domain: 'trip_score', calibration_note: 'Provisional km/h above the applicable posted or inferred limit before a speeding event is medium severity.', affected_metrics: scoreMetrics }),
+  SPEEDING_SEVERITY_HIGH_OVER_KMH: constant(30, { label: 'Speeding high severity margin', domain: 'trip_score', calibration_note: 'Provisional km/h above the applicable posted or inferred limit before a speeding event is high severity.', affected_metrics: scoreMetrics }),
+  // Applied to SPEEDING_FALLBACK_KMH when no limit is known for the segment. At the
+  // default 100 km/h fallback these reproduce the previous absolute 140 / 160 literals.
+  SPEEDING_SEVERITY_NO_LIMIT_MEDIUM_MULTIPLIER: constant(1.4, { label: 'Speeding medium severity multiplier without a limit', domain: 'trip_score', calibration_note: 'Provisional multiple of the fallback speeding threshold used when no posted or inferred limit is available.', affected_metrics: scoreMetrics }),
+  SPEEDING_SEVERITY_NO_LIMIT_HIGH_MULTIPLIER: constant(1.6, { label: 'Speeding high severity multiplier without a limit', domain: 'trip_score', calibration_note: 'Provisional multiple of the fallback speeding threshold used when no posted or inferred limit is available.', affected_metrics: scoreMetrics }),
+  GPS_DISTRACTION_PENALTY_SCALE: constant(3, { label: 'GPS distraction penalty scale', domain: 'trip_score', calibration_note: 'Provisional per-km scale applied to GPS-proxy distraction penalty points when no confirmed phone-use signal exists.', affected_metrics: ['distraction_score', 'score_safety', 'score_overall'] }),
+  PHONE_USE_WINDOW_PENALTY_POINTS: constant(Object.freeze({ low: 3, medium: 8, high: 20 }), { label: 'Confirmed phone-use window deductions', domain: 'trip_score', calibration_note: 'Provisional per-window deductions building phone_use_score; disagrees with EVENT_PENALTY_POINTS.phone_use and PHONE_USE_RISK_DEDUCTION_POINTS, which is unresolved calibration debt.', affected_metrics: ['phone_use_score', 'score_safety', 'score_overall'] }),
+  PHONE_USE_HIGH_SPEED_PENALTY_POINTS: constant(15, { label: 'High-speed phone-use surcharge', domain: 'trip_score', calibration_note: 'Provisional flat surcharge when any confirmed phone-use window occurs at or above 100 km/h.', affected_metrics: ['phone_use_score', 'score_safety', 'score_overall'] }),
   OVERALL_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ safety: 0.55, smoothness: 0.30, intersection: 0.15 }), { label: 'Overall score blend weights', domain: 'trip_score', calibration_note: 'Composite driving score weighting policy.', affected_metrics: ['score_overall'] }),
   LANE_CHANGING_SAFETY_WEIGHT: constant(LANE_CHANGING_SAFETY_WEIGHT, { label: 'Lane-changing Safety blend weight', domain: 'trip_score', calibration_note: 'Provisional Safety blend share for lane-changing rate and simultaneous-braking evidence. GPS-only confidence applies a 0.7 weight multiplier.', affected_metrics: ['score_safety', 'score_overall'] }),
   // KNOWN CALIBRATION DEBT (audit finding, deliberately not fixed in code):
@@ -218,10 +300,38 @@ export const SCORING_CONSTANTS = Object.freeze({
   // against. Resolve during a calibration pass, then bump SCORING_VERSION deliberately.
   // NOTE: keep this as a comment — `calibration_note` is part of the hashed payload, so
   // recording it there would bump SCORING_VERSION and force a rescore on its own.
+  // KNOWN OVERLAP, deliberately left in place: speeding reaches Safety twice.
+  // A SPEEDING event charges a penalty against `base` (0.52), and the same
+  // speeding also lowers overall_compliance_score, which enters at `compliance`
+  // (0.10). One behaviour, two deductions.
+  //
+  // It is not rebalanced because every weight here is provisional pending the
+  // fleet labeling study, so replacing 0.52/0.10 with other uncalibrated numbers
+  // would not make the score more accurate — it would only invalidate every
+  // historical trip (these weights feed SCORING_VERSION). Resolve it when there
+  // is calibration data to resolve it *against*, and rescore deliberately.
+  //
+  // The confidence weighting on both paths is already consistent: as of the
+  // speed-evidence work, the event penalty and the compliance calculation both
+  // derive their weight from the resolved evidence confidence rather than from
+  // a static source profile, so at least the overlap is no longer double-counted
+  // at two different strengths.
   SAFETY_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ base: 0.52, stopStart: 0.05, braking: 0.15, compliance: 0.10, laneChanging: LANE_CHANGING_SAFETY_WEIGHT }), { label: 'Safety score blend weights', domain: 'trip_score', calibration_note: 'Composite Safety weighting policy; phone-use share is recorded separately.', affected_metrics: ['score_safety', 'score_overall'] }),
   SMOOTHNESS_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ base: 0.45, jerk: 0.25, speedVariability: 0.10, brakeOnset: 0.10, cornering: 0.10 }), { label: 'Smoothness score blend weights', domain: 'trip_score', calibration_note: 'Composite Smoothness weighting policy.', affected_metrics: ['score_smoothness', 'score_overall'] }),
   DEFENSIVE_SCORE_BLEND_WEIGHTS: constant(Object.freeze({ smoothBraking: 0.30, intersection: 0.20, speedVariability: 0.20, stopStart: 0.30 }), { label: 'Defensive-driving blend weights', domain: 'trip_score', calibration_note: 'GPS behavior estimate weighting policy.', affected_metrics: ['defensive_driving_score'] }),
   PHONE_USE_RISK_DEDUCTION_POINTS: constant(Object.freeze({ none: 0, low: 10, medium: 35, high: 55 }), { label: 'Phone-use risk deductions', domain: 'trip_score', calibration_note: 'Confirmed signal score deductions.', affected_metrics: ['score_safety', 'score_overall'] }),
+  // Short-trip protection: the per-km score normalizer never divides by less than this, so
+  // a single event on a 300 m trip is not amplified into an extreme penalty rate. Displayed
+  // event rates deliberately use true distance instead (see mathUtils.eventRatePerDistance),
+  // which means the two disagree below this distance — trips in that range are flagged with
+  // `event_rate_below_scoring_floor` so a surface can say so rather than showing a displayed
+  // rate and a scored rate that differ by up to an order of magnitude with no explanation.
+  SCORE_DISTANCE_NORMALIZATION_FLOOR_KM: constant(1, { label: 'Score distance normalization floor', domain: 'trip_score', calibration_note: 'Provisional short-trip guard on the per-km penalty denominator.', affected_metrics: scoreMetrics }),
+  // The night exposure value returned by tripEngine.calculateNightPenalty is already
+  // normalized by point count (a 0-12 blend of the 8-point night and 12-point deep-night
+  // weights), so it is a flat Safety deduction, not a per-km penalty. This cap is the
+  // function's own ceiling restated as a registered constant, not a new tuning knob.
+  NIGHT_SAFETY_MAX_PENALTY: constant(12, { label: 'Night-driving Safety deduction cap', domain: 'trip_score', calibration_note: 'Provisional flat Safety deduction ceiling for night exposure, applied after per-km normalization so trip distance neither dilutes nor amplifies it.', affected_metrics: ['score_safety', 'score_overall'] }),
   WEATHER_SCORE_PENALTY_CAP: constant(12, { label: 'Weather score deduction cap', domain: 'weather_score', calibration_note: 'Weather-context adjustment ceiling.', affected_metrics: ['score_safety', 'score_overall'] }),
   WEATHER_EVENT_PENALTY_SCALE: constant(6, { label: 'Weather event deduction scale', domain: 'weather_score', calibration_note: 'Weather-context adjustment multiplier.', affected_metrics: ['score_safety', 'score_overall'] }),
 
@@ -230,6 +340,14 @@ export const SCORING_CONSTANTS = Object.freeze({
   SHARP_TURN_G_LOW: constant(0.35, { label: 'Sharp turn low threshold', domain: 'trip_threshold', calibration_note: 'GPS-derived lateral acceleration trigger.', affected_metrics: scoreMetrics, setting_key: 'threshold_sharp_turn_g_low' }),
   SHARP_TURN_G_MEDIUM: constant(0.45, { label: 'Sharp turn medium threshold', domain: 'trip_threshold', calibration_note: 'GPS-derived lateral acceleration trigger.', affected_metrics: scoreMetrics, setting_key: 'threshold_sharp_turn_g_medium' }),
   SHARP_TURN_G_HIGH: constant(0.60, { label: 'Sharp turn high threshold', domain: 'trip_threshold', calibration_note: 'GPS-derived lateral acceleration trigger.', affected_metrics: scoreMetrics, setting_key: 'threshold_sharp_turn_g_high' }),
+  // Companion gate to the SHARP_TURN_G_* thresholds: a corner must both pull enough
+  // lateral g AND actually change direction by this much, which keeps GPS heading
+  // jitter on a straight road from registering as a turn. It is a detector shape
+  // constant rather than a sensitivity knob, so it is deliberately not user-settable
+  // — but it must be registered, because while it was an inline literal it silently
+  // capped the configurable g thresholds: lowering SHARP_TURN_G_LOW below the level
+  // reachable at a 30-degree heading change had no observable effect.
+  SHARP_TURN_MIN_HEADING_CHANGE_DEG: constant(30, { label: 'Sharp turn minimum heading change', domain: 'trip_threshold', calibration_note: 'Provisional direction-change gate applied alongside the lateral-g thresholds.', affected_metrics: scoreMetrics }),
   SPEEDING_FALLBACK_KMH: constant(100, { label: 'Fallback speeding threshold', domain: 'trip_threshold', calibration_note: 'Used where posted/open map speed-limit context is unavailable.', affected_metrics: scoreMetrics, setting_key: 'threshold_speeding_kmh' }),
   SPEED_OVER_KMH: constant(5, { label: 'Speed-over-limit allowance', domain: 'trip_threshold', calibration_note: 'Tolerance applied above available or inferred limits.', affected_metrics: scoreMetrics, setting_key: 'threshold_speed_over_kmh' }),
   ECO_CRUISE_MIN_KMH: constant(55, { label: 'Efficient-cruise minimum', domain: 'trip_efficiency', calibration_note: 'Efficient-cruise band assumption.', affected_metrics: ['eco_driving_score', 'fuel_band_score'], setting_key: 'threshold_eco_cruise_min_kmh' }),
@@ -287,11 +405,38 @@ export const SCORING_CONSTANTS = Object.freeze({
   MERGE_EXIT_SPEED_KMH: constant(85, { label: 'Merge exit speed', domain: 'trip_threshold', calibration_note: 'GPS merge estimate.', affected_metrics: ['merge_score'] }),
   PARKING_LOOKBACK_SECONDS: constant(90, { label: 'Parking approach lookback', domain: 'trip_threshold', calibration_note: 'GPS parking-approach estimate.', affected_metrics: ['parking_approach_score'] }),
   MAX_TERMINAL_IDLE_SECONDS: constant(1800, { label: 'Terminal idle maximum', domain: 'trip_threshold', calibration_note: 'Trip-ending idle cap.', affected_metrics: ['idle_time_seconds'] }),
+  MAX_REASONABLE_GPS_SPEED_KMH: constant(220, { label: 'Maximum plausible GPS speed', domain: 'trip_threshold', calibration_note: 'Rejects impossible GPS speed readings before they reach any detector.', affected_metrics: scoreMetrics }),
+  // IMU refinement. GPS triggers every event; the motion stream only confirms or refutes
+  // it. A phone being picked up produces accelerations indistinguishable from braking, and
+  // calibratePhoneOrientation recovers the axis but neither its sign nor a full rotation
+  // matrix, so the IMU is never allowed to create an event on its own.
+  IMU_REFINEMENT_WINDOW_SECONDS: constant(1.5, { label: 'IMU refinement window', domain: 'trip_threshold', calibration_note: 'Half-width of the motion-sample window compared against a GPS-derived event.', affected_metrics: scoreMetrics }),
+  IMU_REFINEMENT_MIN_SAMPLES: constant(5, { label: 'IMU refinement minimum samples', domain: 'trip_threshold', calibration_note: 'Fewer samples than this in the window cannot support confirming or refuting.', affected_metrics: scoreMetrics }),
+  IMU_CONFIRM_RATIO: constant(0.6, { label: 'IMU confirmation ratio', domain: 'trip_threshold', calibration_note: 'Provisional: IMU peak of at least this fraction of the GPS magnitude counts as agreement.', affected_metrics: scoreMetrics }),
+  IMU_REFUTE_RATIO: constant(0.3, { label: 'IMU refutation ratio', domain: 'trip_threshold', calibration_note: 'Provisional: IMU peak at or below this fraction of the GPS magnitude contradicts it, the signature of a GPS speed cliff in an urban canyon or tunnel exit.', affected_metrics: scoreMetrics }),
+  // IMU jerk. Differentiating a raw ~50 Hz accelerometer measures road vibration and phone
+  // rattle, not driving, so the signal is low-pass filtered and differentiated over a step
+  // long enough to be a vehicle motion rather than a suspension response.
+  IMU_JERK_SMOOTHING_WINDOW_MS: constant(200, { label: 'IMU jerk smoothing window', domain: 'trip_threshold', calibration_note: 'Moving-average width applied before differentiating longitudinal acceleration.', affected_metrics: ['jerk_score', 'score_smoothness'] }),
+  IMU_JERK_STEP_MS: constant(200, { label: 'IMU jerk differentiation step', domain: 'trip_threshold', calibration_note: 'Interval between smoothed acceleration samples used to derive jerk.', affected_metrics: ['jerk_score', 'score_smoothness'] }),
+  IMU_JERK_MAX_GAP_MS: constant(300, { label: 'IMU jerk maximum sample gap', domain: 'trip_threshold', calibration_note: 'A longer gap breaks the derivative rather than averaging across a sensor dropout.', affected_metrics: ['jerk_score', 'score_smoothness'] }),
+  IMU_JERK_MIN_SAMPLES: constant(200, { label: 'IMU jerk minimum samples', domain: 'trip_threshold', calibration_note: 'Below this the IMU jerk estimate is not preferred over the GPS-derived one.', affected_metrics: ['jerk_score', 'score_smoothness'] }),
+  // A gap longer than this is a GPS outage, not a driving sample: distance, idle time and
+  // live telemetry all stop accumulating across it rather than interpolating through it.
+  MAX_SAMPLE_GAP_SECONDS: constant(120, { label: 'Maximum trip sample gap', domain: 'trip_threshold', calibration_note: 'Boundary between a sampling gap and a genuine recording outage.', affected_metrics: scoreMetrics }),
+  // Median moving speed at or above this classifies a trip as highway for stop-start
+  // detection; below it the urban threshold set applies.
+  STOP_START_URBAN_MEDIAN_SPEED_KMH: constant(50, { label: 'Stop-start urban/highway split', domain: 'trip_threshold', calibration_note: 'Trip-level road-type proxy for stop-start threshold selection.', affected_metrics: ['defensive_driving_score'] }),
   MANOEUVRE_ALERT_BRAKE_MS2: constant(4.0, { label: 'Brake-turn alert braking threshold', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; not object proximity.', affected_metrics: ['close_proximity_score'], setting_key: 'threshold_manoeuvre_alert_brake_ms2' }),
   MANOEUVRE_ALERT_TURN_DEG_S: constant(25, { label: 'Brake-turn alert heading threshold', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; not object proximity.', affected_metrics: ['close_proximity_score'], setting_key: 'threshold_manoeuvre_alert_turn_degs' }),
   HEADING_DRIFT_STD_DEG: constant(8, { label: 'Heading-drift threshold', domain: 'trip_threshold', calibration_note: 'GPS attention-pattern beta diagnostic only.', affected_metrics: ['heading_drift_beta_score'], setting_key: 'threshold_heading_drift_std_degs' }),
   PHONE_MICRO_STEER_COUNT: constant(6, { label: 'Phone proxy oscillation count', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; excluded from phone-use score.', affected_metrics: [], setting_key: 'threshold_phone_proxy_oscillations' }),
   PHONE_MICRO_STEER_WINDOW_S: constant(15, { label: 'Phone proxy window', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; excluded from phone-use score.', affected_metrics: [], setting_key: 'phone_micro_steer_window_s' }),
+  // A heading correction only counts as a micro-steer if it sits inside this band: below
+  // the minimum it is GPS heading noise, above the maximum it is a deliberate turn.
+  PHONE_MICRO_STEER_MIN_DEG: constant(3, { label: 'Phone proxy micro-steer minimum', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; excluded from phone-use score.', affected_metrics: [] }),
+  PHONE_MICRO_STEER_MAX_DEG: constant(18, { label: 'Phone proxy micro-steer maximum', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; excluded from phone-use score.', affected_metrics: [] }),
+  PHONE_DETECT_MIN_SPEED_KMH: constant(30, { label: 'Phone proxy minimum speed', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; below this speed steering corrections are not separable from manoeuvring.', affected_metrics: [] }),
   PHONE_PROXY_MAX_ACCURACY_M: constant(20, { label: 'Phone proxy GPS accuracy gate', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; excluded from phone-use score.', affected_metrics: [], setting_key: 'phone_proxy_max_accuracy_m' }),
   PHONE_CREEP_RATE_KMH_S: constant(1.5, { label: 'Phone proxy speed-creep rate', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; excluded from phone-use score.', affected_metrics: [], setting_key: 'phone_creep_rate_kmh_s' }),
   PHONE_LANE_DRIFT_DEG: constant(8, { label: 'Phone proxy drift threshold', domain: 'trip_threshold', calibration_note: 'GPS diagnostic only; excluded from phone-use score.', affected_metrics: [], setting_key: 'phone_lane_drift_deg' }),
@@ -393,35 +538,12 @@ export function scoringValue(key) {
   return SCORING_CONSTANTS[key]?.value;
 }
 
-const thresholdKeys = [
-  'HARSH_BRAKE_MS2', 'RAPID_ACCEL_MS2', 'SHARP_TURN_G_LOW', 'SHARP_TURN_G_MEDIUM', 'SHARP_TURN_G_HIGH',
-  'SPEEDING_FALLBACK_KMH', 'SPEED_OVER_KMH', 'ECO_CRUISE_MIN_KMH', 'ECO_CRUISE_MAX_KMH',
-  'ECO_CRUISE_SCORE_MULTIPLIER', 'ECO_IDLE_PENALTY_MULTIPLIER', 'ECO_IDLE_MAX_PENALTY', 'ECO_MIN_MOVING_KMH',
-  'IDLE_SPEED_KMH', 'IDLE_EVENT_SECONDS', 'LONG_DRIVE_MINUTES', 'MIN_TRIP_DISTANCE_KM', 'MIN_TRIP_DURATION_SECONDS',
-  'MAX_GPS_ACCURACY_M', 'MIN_POINT_DISTANCE_M', 'MIN_TRUSTED_SPEED_KMH', 'STATIONARY_SPEED_KMH',
-  'TRAFFIC_STOP_SPEED_KMH', 'TRAFFIC_STOP_MIN_SECONDS', 'TRAFFIC_STOP_MAX_SAMPLE_GAP_SECONDS', 'INTERSECTION_MIN_DISTANCE_KM',
-  'MAX_SPEED_SPIKE_DELTA_KMH', 'MAX_SPEED_SPIKE_RATIO', 'MAX_ALTITUDE_ACCURACY_M', 'MIN_HILL_SEGMENT_DISTANCE_M',
-  'HILL_GRADE_THRESHOLD_PCT', 'HILL_ACCEL_THRESHOLD_MS2', 'HILL_INFRACTION_PENALTY_POINTS', 'HILL_INFRACTION_PENALTY_POINTS_PER_KM',
-  'MIN_SPEED_RAPID_ACCEL_KMH', 'MIN_SPEED_HARSH_BRAKE_KMH', 'STOP_START_DECEL_MS2', 'STOP_START_MIN_SPEED_KMH',
-  'STOP_START_CRUISE_SECONDS', 'STOP_START_SPEED_DROP_KMH', 'STOP_START_URBAN_DECEL_MS2',
-  'STOP_START_URBAN_MIN_SPEED_KMH', 'STOP_START_URBAN_CRUISE_SECONDS', 'STOP_START_URBAN_SPEED_DROP_KMH', 'HEADING_DEVIATION_MIN_SPEED_KMH',
-  'HEADING_DEVIATION_HIGHWAY_MIN_SPEED_KMH', 'HEADING_DEVIATION_MIN_TURN_RATE_DEG_S', 'HEADING_DEVIATION_MAX_TURN_RATE_DEG_S',
-  'HEADING_DEVIATION_MIN_WINDOW_SECONDS', 'HEADING_DEVIATION_STRAIGHT_STD_MAX_DEG', 'HEADING_DEVIATION_SUPPRESS_CONTEXT_METERS',
-  'CORNERING_MIN_SPEED_KMH', 'MERGE_ENTRY_SPEED_KMH', 'MERGE_EXIT_SPEED_KMH', 'PARKING_LOOKBACK_SECONDS',
-  'MAX_TERMINAL_IDLE_SECONDS', 'MANOEUVRE_ALERT_BRAKE_MS2', 'MANOEUVRE_ALERT_TURN_DEG_S',
-  'HEADING_DRIFT_STD_DEG', 'PHONE_MICRO_STEER_COUNT', 'PHONE_MICRO_STEER_WINDOW_S', 'PHONE_PROXY_MAX_ACCURACY_M',
-  'PHONE_CREEP_RATE_KMH_S', 'PHONE_LANE_DRIFT_DEG', 'PHONE_COUPLING_THRESHOLD', 'PHONE_CONFIDENCE_THRESHOLD', 'PHONE_MIN_WINDOW_S',
-];
-
-export const TRIP_THRESHOLD_DEFAULTS = Object.freeze({
-  ...Object.fromEntries(thresholdKeys.map((key) => [key, scoringValue(key)])),
-  threshold_phone_proxy_oscillations: scoringValue('PHONE_MICRO_STEER_COUNT'),
-  threshold_speed_creep_kmh: scoringValue('SPEED_CREEP_THRESHOLD_KMH'),
-  threshold_overtake_accel_ms2: scoringValue('OVERTAKE_ACCEL_THRESHOLD_MS2'),
-  OVERTAKE_MIN_BASELINE_SPEED_KMH: scoringValue('OVERTAKE_MIN_BASELINE_SPEED_KMH'),
-  OVERTAKE_MIN_STRAIGHT_DISTANCE_KM: scoringValue('OVERTAKE_MIN_STRAIGHT_DISTANCE_KM'),
-  OVERTAKE_STRAIGHT_HEADING_STD_MAX_DEG: scoringValue('OVERTAKE_STRAIGHT_STD_MAX_DEG'),
-});
+// TRIP_THRESHOLD_DEFAULTS used to live here. It was a second, parallel copy of
+// tripEngine.DEFAULT_THRESHOLDS built from the same constants but consumed by nothing,
+// and the two had already drifted apart: it exported the key as
+// HEADING_DEVIATION_STRAIGHT_STD_MAX_DEG while the detector reads
+// HEADING_DEVIATION_STRAIGHT_HEADING_STD_MAX_DEG. tripEngine.DEFAULT_THRESHOLDS is the
+// single default set; resolve user overrides on top of it with buildDrivingThresholds.
 
 export function getProvisionalScoringConstants(constants = SCORING_CONSTANTS) {
   return Object.entries(constants || {})

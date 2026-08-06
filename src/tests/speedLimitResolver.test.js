@@ -26,7 +26,9 @@ describe('resolveSpeedLimitWithTier', () => {
       {}
     );
     expect(r.tier).toBe('POSTED');
-    expect(r.confidence).toBe(1.0);
+    // A crowd-sourced OSM maxspeed is high-confidence mapped data, not certainty; the
+    // single SPEED_LIMIT_SOURCE_PROFILES table rates it below a user-confirmed sign.
+    expect(r.confidence).toBe(0.90);
     expect(r.limitKmh).toBe(60);
   });
 
@@ -46,7 +48,8 @@ describe('resolveSpeedLimitWithTier', () => {
       {}
     );
     expect(r.tier).toBe('MAP_ESTIMATED');
-    expect(r.confidence).toBe(0.70);
+    // A limit guessed from an OSM highway tag alone: low confidence, wide alert margin.
+    expect(r.confidence).toBe(0.48);
   });
 
   it('returns POSTED for user-confirmed posted sign over MAP_ESTIMATED', () => {
@@ -223,16 +226,18 @@ describe('alert suppression by tier', () => {
     expect(r.shouldAlert(66)).toBe(true);
   });
 
-  it('MAP_ESTIMATED: no alert at 65 in estimated 60 zone (only +5, needs +8)', () => {
+  it('MAP_ESTIMATED: no alert until well over an estimated 60 zone (needs +12)', () => {
     const r = resolveSpeedLimitWithTier(
       { speed_limit_kmh: 60, speed_limit_source: 'osm_highway_default' },
       { thresholds: { SPEED_OVER_KMH: 5 } }
     );
+    expect(r.alertMarginKmh).toBe(12);
     expect(r.shouldAlert(65)).toBe(false);
-    expect(r.shouldAlert(69)).toBe(true);
+    expect(r.shouldAlert(72)).toBe(false);
+    expect(r.shouldAlert(73)).toBe(true);
   });
 
-  it('REGION_DEFAULT: alert at 63 in 50 zone (> +12)', () => {
+  it('REGION_DEFAULT: alert only well over a 50 zone (> +20)', () => {
     const r = resolveSpeedLimitWithTier(
       {},
       {
@@ -242,8 +247,9 @@ describe('alert suppression by tier', () => {
         thresholds: { SPEED_OVER_KMH: 5 },
       }
     );
-    expect(r.shouldAlert(62)).toBe(false);
-    expect(r.shouldAlert(63)).toBe(true);
+    expect(r.alertMarginKmh).toBe(20);
+    expect(r.shouldAlert(70)).toBe(false);
+    expect(r.shouldAlert(71)).toBe(true);
   });
 });
 
@@ -298,30 +304,44 @@ describe('live speed warning settings policy', () => {
   });
 
   it('requires the configured estimated voice margin before speaking estimates', () => {
-    const r = resolveSpeedLimitWithTier(
-      { speed_limit_kmh: 60, speed_limit_source: 'osm_highway_default' },
-      { thresholds: { SPEED_OVER_KMH: 5 } }
-    );
-    const belowVoiceMargin = shouldWarnForSpeed({
-      speedKmh: 71,
-      candidate: r,
-      settings: {
-        speak_estimated_speed_checks: true,
-        estimated_voice_margin_kmh: 12,
-      },
+    // A learned local limit at 0.70 clears the alert confidence floor, so the
+    // configured voice margin is what separates visual from voice. Its visual
+    // margin is +8, so the voice margin has to sit above that to be observable.
+    const r = resolveSpeedLimitWithTier({}, {
+      localKnowledge: { limitKmh: 60, confidence: 0.7, source: 'learned_local' },
+      thresholds: { SPEED_OVER_KMH: 5 },
     });
-    const aboveVoiceMargin = shouldWarnForSpeed({
-      speedKmh: 73,
-      candidate: r,
-      settings: {
-        speak_estimated_speed_checks: true,
-        estimated_voice_margin_kmh: 12,
-      },
-    });
+    const settings = {
+      speak_estimated_speed_checks: true,
+      estimated_voice_margin_kmh: 20,
+    };
+    const belowVoiceMargin = shouldWarnForSpeed({ speedKmh: 75, candidate: r, settings });
+    const aboveVoiceMargin = shouldWarnForSpeed({ speedKmh: 85, candidate: r, settings });
+
     expect(belowVoiceMargin.visual).toBe(true);
     expect(belowVoiceMargin.voice).toBe(false);
     expect(aboveVoiceMargin.visual).toBe(true);
     expect(aboveVoiceMargin.voice).toBe(true);
+  });
+
+  it('does not speak an estimate that fails the alert confidence floor', () => {
+    // osm_highway_default carries 0.48 confidence, below the 0.55 floor the
+    // native service already applied. Turning estimate speech on is not enough.
+    const r = resolveSpeedLimitWithTier(
+      { speed_limit_kmh: 60, speed_limit_source: 'osm_highway_default' },
+      { thresholds: { SPEED_OVER_KMH: 5 } }
+    );
+    const warning = shouldWarnForSpeed({
+      speedKmh: 85,
+      candidate: r,
+      settings: {
+        speak_estimated_speed_checks: true,
+        estimated_voice_margin_kmh: 20,
+      },
+    });
+    expect(warning.visual).toBe(true);
+    expect(warning.voice).toBe(false);
+    expect(warning.meetsConfidenceFloor).toBe(false);
   });
 
   it('uses the default estimated voice margin while the settings input is blank', () => {
@@ -340,22 +360,45 @@ describe('live speed warning settings policy', () => {
     expect(warning).toBeNull();
   });
 
-  it('uses the estimated voice margin for GPS-only checks', () => {
+  it('never speaks a GPS-only check before the badge is willing to show it', () => {
+    // This used to be inverted: a GPS_INFERRED limit has a +20 visual margin but
+    // the voice margin was a flat 12, so the app spoke at +12 about something it
+    // refused to display until +20.
     const r = resolveSpeedLimitWithTier(
       {},
       { countryCode: 'DE', inferredZone: { inferredZoneKmh: 120 }, thresholds: { SPEED_OVER_KMH: 5, SPEEDING_FALLBACK_KMH: 100 } }
     );
     const warning = shouldWarnForSpeed({
-      speedKmh: 113,
+      speedKmh: 125,
       candidate: r,
       settings: {
         speak_estimated_speed_checks: true,
         estimated_voice_margin_kmh: 12,
-        inferred_voice_margin_kmh: 99,
+        speed_alert_min_confidence: 0.3,
       },
     });
-    expect(warning.visual).toBe(false);
-    expect(warning.voice).toBe(true);
-    expect(warning.voiceMarginKmh).toBe(12);
+    expect(warning.visualMarginKmh).toBe(20);
+    expect(warning.voiceMarginKmh).toBeGreaterThanOrEqual(warning.visualMarginKmh);
+    expect(warning.visual).toBe(true);
+  });
+
+  it('honours inferred_voice_margin_kmh for GPS-only checks', () => {
+    const r = resolveSpeedLimitWithTier(
+      {},
+      { countryCode: 'DE', inferredZone: { inferredZoneKmh: 120 }, thresholds: { SPEED_OVER_KMH: 5, SPEEDING_FALLBACK_KMH: 100 } }
+    );
+    const settings = {
+      speak_estimated_speed_checks: true,
+      estimated_voice_margin_kmh: 12,
+      inferred_voice_margin_kmh: 40,
+      speed_alert_min_confidence: 0.3,
+    };
+    const belowVoiceMargin = shouldWarnForSpeed({ speedKmh: 125, candidate: r, settings });
+    const aboveVoiceMargin = shouldWarnForSpeed({ speedKmh: 145, candidate: r, settings });
+
+    expect(belowVoiceMargin.voiceMarginKmh).toBe(40);
+    expect(belowVoiceMargin.visual).toBe(true);
+    expect(belowVoiceMargin.voice).toBe(false);
+    expect(aboveVoiceMargin.voice).toBe(true);
   });
 });
