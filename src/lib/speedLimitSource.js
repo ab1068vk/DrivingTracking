@@ -246,6 +246,22 @@ function tier(tierName, limitKmh, confidence, source, baseMarginKmh) {
   };
 }
 
+/**
+ * NOT THE LIVE RESOLVER. Production resolves speed limits through
+ * `resolveEffectiveSpeedLimitForIndex` in tripEngine.js; nothing outside tests
+ * calls this. It is a second, parallel implementation of the same policy.
+ *
+ * That matters because ~29 tests exercise this function, which reads like
+ * coverage of the resolution policy and is not: a change to the live resolver
+ * leaves every one of them green. Treat a passing test here as evidence about
+ * this function only.
+ *
+ * Resolving this properly means either making the live path delegate to this
+ * (so the tests become real) or deleting both. That is a deliberate decision
+ * about which resolver is canonical, not a cleanup.
+ *
+ * @deprecated Parallel to the live resolver; see above before relying on it.
+ */
 export function resolveSpeedLimitWithTier(point, context = {}) {
   const {
     localKnowledge,
@@ -315,6 +331,16 @@ export function resolveSpeedLimitWithTier(point, context = {}) {
   };
 }
 
+/**
+ * Suppresses a learned limit more than 10 km/h above the map default.
+ *
+ * NEVER RUNS IN PRODUCTION. No caller outside tests, so the guard this describes
+ * is not actually applied anywhere: a learned limit well above the road-type
+ * default reaches alerts and scoring unchecked. Wiring it in requires the live
+ * resolver to build a candidate list, which it does not currently do.
+ *
+ * @deprecated Tested but dead; the guard is not in effect.
+ */
 export function applySafetyGuards(best, candidates = [], settings = {}) {
   if (!best) return best;
   const list = Array.isArray(candidates) ? candidates : [];
