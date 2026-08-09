@@ -1,5 +1,5 @@
 // @ts-check
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
@@ -21,14 +21,12 @@ import {
   formatDuration,
   formatSpeed,
   getTripComponentScore,
-  prefetchLocalKnowledge,
 } from '@/lib/tripEngine';
 import { convertSpeedKmh, speedUnitLabel } from '@/lib/unitFormatting';
 import { buildPlaybackTimeline, prepareMapRoutePoints, SPEED_BANDS } from '@/lib/mapPlaybackInsights';
-import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
-import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import { getTripDisplayName } from '@/lib/tripMetadata';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { useTripSpeedKnowledge } from '@/hooks/useTripSpeedKnowledge';
 import { speedLimitSourceLabel } from '@/lib/speedLimitDisplay';
 import { summarizeTripSpeedLimitIntelligence } from '@/lib/speedLimitIntelligence';
 
@@ -291,36 +289,15 @@ export default function SpeedAnalysis() {
   const navigate = useNavigate();
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
-  const [speedKnowledgeRevision, setSpeedKnowledgeRevision] = useState(0);
-  const [speedLimitLocalKnowledgeResults, setSpeedLimitLocalKnowledgeResults] = useState([]);
   const { data: trip, isLoading } = useQuery(tripDetailQueryOptions(id));
-  useEffect(() => {
-    let cancelled = false;
-    const loadLocalSpeedKnowledge = async () => {
-      const points = Array.isArray(trip?.route_points) ? trip.route_points : [];
-      if (!points.length) {
-        if (!cancelled) setSpeedLimitLocalKnowledgeResults([]);
-        return;
-      }
-      const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
-      const results = typeof knowledge.getForPoints === 'function'
-        ? await knowledge.getForPoints(points).catch(() => points.map(() => null))
-        : await prefetchLocalKnowledge(points, knowledge).catch(() => points.map(() => null));
-      if (!cancelled) setSpeedLimitLocalKnowledgeResults(results);
-    };
-    loadLocalSpeedKnowledge();
-    return () => {
-      cancelled = true;
-    };
-  }, [trip?.id, trip?.route_points, speedKnowledgeRevision]);
-
-  useEffect(() => {
-    const onSpeedKnowledgeChanged = () => {
-      setSpeedKnowledgeRevision((value) => value + 1);
-    };
-    window.addEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, onSpeedKnowledgeChanged);
-    return () => window.removeEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, onSpeedKnowledgeChanged);
-  }, []);
+  // Previously resolved through knowledge.getForPoints, which passes points
+  // through with no heading, while Trip Detail used prefetchLocalKnowledge,
+  // which derives one. The resolver is direction-aware, so the two screens
+  // could report different limits for the same trip.
+  const {
+    results: speedLimitLocalKnowledgeResults,
+    failed: speedKnowledgeFailed,
+  } = useTripSpeedKnowledge(trip, { context: 'speed_analysis_local_speed_knowledge' });
 
   const localSpeedKnowledge = useMemo(
     () => applyLocalSpeedKnowledgeToTrip(trip || {}, speedLimitLocalKnowledgeResults),
@@ -375,7 +352,17 @@ export default function SpeedAnalysis() {
           <div className="rounded-full border border-border bg-card px-3 py-1 text-xs font-semibold text-muted-foreground">
             {analytics.pointCount} GPS point{analytics.pointCount === 1 ? '' : 's'}
           </div>
-          {localSpeedKnowledge.savedLimitCount > 0 && (
+          {speedKnowledgeFailed ? (
+            // Without this the page shows no local coverage badge at all, which
+            // reads as "you have no saved road speeds" rather than "they could
+            // not be read".
+            <div
+              role="status"
+              className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200"
+            >
+              Saved road speeds unavailable
+            </div>
+          ) : localSpeedKnowledge.savedLimitCount > 0 && (
             <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">
               {localSpeedKnowledge.savedCoveragePercent}% local road-speed coverage
             </div>

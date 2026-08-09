@@ -28,8 +28,6 @@ import PremiumTripContextCard, {
 import SpeedLimitConflictReview from '@/components/SpeedLimitConflictReview';
 import SpeedSignEvidenceReview from '@/components/SpeedSignEvidenceReview';
 import { buildTripSpeedLimitReviewCells, speedLimitReviewNeededForTrip } from '@/lib/speedLimitReview';
-import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
-import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import {
   buildDrivingThresholds,
   calculateSegmentMetrics,
@@ -43,7 +41,6 @@ import {
   getTripComponentScore,
   inferSpeedZones,
   PHONE_USE_SAFETY_WEIGHT,
-  prefetchLocalKnowledge,
   resolveEffectiveSpeedLimitForIndex,
   splitTripAtStops,
 } from '@/lib/tripEngine';
@@ -129,6 +126,7 @@ import { describeTripSpeedCoverage, summarizeTripSpeedCoverage } from '@/lib/tri
 import { getNightClassificationExplanation, getPremiumTripDetailPresentation } from '@/lib/premiumTripPresentation';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { useTripSpeedKnowledge } from '@/hooks/useTripSpeedKnowledge';
 import premiumTripPhoneRisk from '@/assets/premium-trip-phone-risk.webp';
 import premiumTripPhoneSafe from '@/assets/premium-trip-phone-safe.webp';
 import premiumTripPhoneNeutral from '@/assets/premium-trip-phone-neutral.webp';
@@ -453,11 +451,6 @@ export default function TripDetail() {
   const [currentUsageAccessGranted, setCurrentUsageAccessGranted] = useState(null);
   const [calibrationSurveyStatus, setCalibrationSurveyStatus] = useState(null);
   const [calibrationLabelCount, setCalibrationLabelCount] = useState(null);
-  const [speedLimitKnowledgeRevision, setSpeedLimitKnowledgeRevision] = useState(0);
-  const [speedLimitLocalKnowledgeResults, setSpeedLimitLocalKnowledgeResults] = useState([]);
-  // Distinguishes "this route has no saved road speeds" from "the saved road
-  // speeds could not be read", which look identical in the results array.
-  const [speedLimitKnowledgeFailed, setSpeedLimitKnowledgeFailed] = useState(false);
   const metadataSectionRef = useRef(null);
   const speedLimitReviewSectionRef = useRef(null);
   const trip3dAvailabilityLogRef = useRef('');
@@ -488,6 +481,11 @@ export default function TripDetail() {
   };
 
   const { data: trip, isLoading } = useQuery(tripDetailQueryOptions(id));
+  const {
+    results: speedLimitLocalKnowledgeResults,
+    failed: speedLimitKnowledgeFailed,
+    reload: reloadSpeedLimitKnowledge,
+  } = useTripSpeedKnowledge(trip, { context: 'trip_detail_local_speed_knowledge' });
   const { data: tagLearningHistory = [] } = useQuery({
     ...tripSummaryQueryOptions(),
     select: (trips) => trips.filter((item) => item.status === 'completed'),
@@ -532,48 +530,6 @@ export default function TripDetail() {
     queryKey: ['vehicles'],
     queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
   });
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadLocalSpeedKnowledge = async () => {
-      const points = Array.isArray(trip?.route_points) ? trip.route_points : [];
-      if (!points.length) {
-        if (!cancelled) setSpeedLimitLocalKnowledgeResults([]);
-        return;
-      }
-      const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
-      try {
-        const results = await prefetchLocalKnowledge(points, knowledge);
-        if (!cancelled) {
-          setSpeedLimitLocalKnowledgeResults(results);
-          setSpeedLimitKnowledgeFailed(false);
-        }
-      } catch (error) {
-        // Previously swallowed into an all-null array, which is indistinguishable
-        // from a route with genuinely no saved road speeds. The page then reported
-        // no local coverage and could raise the low-coverage banner because the
-        // store failed to open — telling the driver their road memory is empty
-        // when it merely could not be read.
-        logSystemFailure('trip_detail_local_speed_knowledge', error, { trip_id: trip?.id });
-        if (!cancelled) {
-          setSpeedLimitLocalKnowledgeResults(points.map(() => null));
-          setSpeedLimitKnowledgeFailed(true);
-        }
-      }
-    };
-    loadLocalSpeedKnowledge();
-    return () => {
-      cancelled = true;
-    };
-  }, [trip?.id, trip?.route_points, speedLimitKnowledgeRevision]);
-
-  useEffect(() => {
-    const onSpeedKnowledgeChanged = () => {
-      setSpeedLimitKnowledgeRevision((value) => value + 1);
-    };
-    window.addEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, onSpeedKnowledgeChanged);
-    return () => window.removeEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, onSpeedKnowledgeChanged);
-  }, []);
 
   const deleteMutation = useMutation({
     mutationFn: () => tripService.delete(id),
@@ -840,11 +796,11 @@ export default function TripDetail() {
       (Array.isArray(result.corrections) && result.corrections.length > 0)
     );
     if (hasSavedRoadChange) {
-      setSpeedLimitKnowledgeRevision((value) => value + 1);
+      reloadSpeedLimitKnowledge();
     }
     if (!trip?.id || (!hasSavedRoadChange && !result.tripReviewComplete)) return;
     speedLimitReviewMutation.mutate(result);
-  }, [speedLimitReviewMutation, trip?.id]);
+  }, [reloadSpeedLimitKnowledge, speedLimitReviewMutation, trip?.id]);
 
   const feedbackRescoreMutation = useMutation({
     mutationFn: () => tripService.rescoreById(id, { reason: 'event_feedback_manual' }),

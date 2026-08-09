@@ -18,12 +18,11 @@ import {
 } from 'lucide-react';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
-import { formatDistance, formatDate, getScoreColor, getTripComponentScore, prefetchLocalKnowledge } from '@/lib/tripEngine';
+import { formatDistance, formatDate, getScoreColor, getTripComponentScore } from '@/lib/tripEngine';
 import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
 import { localSettings } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
-import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
-import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
+import { useTripSpeedKnowledge } from '@/hooks/useTripSpeedKnowledge';
 import { saveDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { buildRiskHotspots, routeKeyForTrip } from '@/lib/mediumInsights';
@@ -139,8 +138,6 @@ export default function MapScreen() {
   const [osmFetchStatus, setOsmFetchStatus] = useState('');
   const [tripListPage, setTripListPage] = useState(0);
   const [showPremiumRouteDiagnostics, setShowPremiumRouteDiagnostics] = useState(true);
-  const [speedLimitKnowledgeRevision, setSpeedLimitKnowledgeRevision] = useState(0);
-  const [speedLimitLocalKnowledgeResults, setSpeedLimitLocalKnowledgeResults] = useState([]);
   const overviewMapTripsRef = useRef({ key: '', trips: [] });
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
@@ -247,6 +244,10 @@ export default function MapScreen() {
     /** @type {any} */ (overviewTripDetails[index]?.data) || summary
   ));
   const selectedTrip = selectedTripId ? (selectedTripDetail || selectedTripSummary || null) : null;
+  const { results: speedLimitLocalKnowledgeResults } = useTripSpeedKnowledge(
+    selectedTrip,
+    { context: 'map_screen_local_speed_knowledge' }
+  );
   const secondaryTrip = secondaryTripId ? (secondaryTripDetail || secondaryTripSummary || null) : null;
   const selectedEvents = useMemo(() => (
     settings.phone_use_show_on_map === false
@@ -261,32 +262,6 @@ export default function MapScreen() {
   const selectedSpeedLimitStatus = selectedTrip?.speed_limit_context?.status || 'not_fetched';
   const selectedMapMatchingStatus = selectedTrip?.map_matching_context?.status || 'not_fetched';
   const speedLimitLookupEnabled = settings.speed_limit_lookup_enabled !== false;
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadLocalSpeedKnowledge = async () => {
-      const points = Array.isArray(selectedTrip?.route_points) ? selectedTrip.route_points : [];
-      if (!points.length) {
-        if (!cancelled) setSpeedLimitLocalKnowledgeResults([]);
-        return;
-      }
-      const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
-      const results = await prefetchLocalKnowledge(points, knowledge).catch(() => points.map(() => null));
-      if (!cancelled) setSpeedLimitLocalKnowledgeResults(results);
-    };
-    loadLocalSpeedKnowledge();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedTrip?.id, selectedTrip?.route_points, speedLimitKnowledgeRevision]);
-
-  useEffect(() => {
-    const onSpeedKnowledgeChanged = () => {
-      setSpeedLimitKnowledgeRevision((value) => value + 1);
-    };
-    window.addEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, onSpeedKnowledgeChanged);
-    return () => window.removeEventListener(SPEED_KNOWLEDGE_CHANGED_EVENT, onSpeedKnowledgeChanged);
-  }, []);
 
   const selectedLayerEffect = !selectedTrip
     ? 'Select a trip to get road data.'
