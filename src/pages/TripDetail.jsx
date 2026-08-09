@@ -455,6 +455,9 @@ export default function TripDetail() {
   const [calibrationLabelCount, setCalibrationLabelCount] = useState(null);
   const [speedLimitKnowledgeRevision, setSpeedLimitKnowledgeRevision] = useState(0);
   const [speedLimitLocalKnowledgeResults, setSpeedLimitLocalKnowledgeResults] = useState([]);
+  // Distinguishes "this route has no saved road speeds" from "the saved road
+  // speeds could not be read", which look identical in the results array.
+  const [speedLimitKnowledgeFailed, setSpeedLimitKnowledgeFailed] = useState(false);
   const metadataSectionRef = useRef(null);
   const speedLimitReviewSectionRef = useRef(null);
   const trip3dAvailabilityLogRef = useRef('');
@@ -539,8 +542,24 @@ export default function TripDetail() {
         return;
       }
       const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
-      const results = await prefetchLocalKnowledge(points, knowledge).catch(() => points.map(() => null));
-      if (!cancelled) setSpeedLimitLocalKnowledgeResults(results);
+      try {
+        const results = await prefetchLocalKnowledge(points, knowledge);
+        if (!cancelled) {
+          setSpeedLimitLocalKnowledgeResults(results);
+          setSpeedLimitKnowledgeFailed(false);
+        }
+      } catch (error) {
+        // Previously swallowed into an all-null array, which is indistinguishable
+        // from a route with genuinely no saved road speeds. The page then reported
+        // no local coverage and could raise the low-coverage banner because the
+        // store failed to open — telling the driver their road memory is empty
+        // when it merely could not be read.
+        logSystemFailure('trip_detail_local_speed_knowledge', error, { trip_id: trip?.id });
+        if (!cancelled) {
+          setSpeedLimitLocalKnowledgeResults(points.map(() => null));
+          setSpeedLimitKnowledgeFailed(true);
+        }
+      }
     };
     loadLocalSpeedKnowledge();
     return () => {
@@ -1355,7 +1374,10 @@ export default function TripDetail() {
   const osmCoveragePct = Number.isFinite(Number(speedLimitContext?.coverage))
     ? Number(speedLimitContext.coverage)
     : speedLimitCoverage.mapDerivedPercent;
+  // Suppressed when the saved road speeds could not be read: the local tier is
+  // unknown rather than absent, so "low coverage" would be an unfounded claim.
   const showLowSpeedLimitCoverageBanner = speedLimitLookupEnabled &&
+    !speedLimitKnowledgeFailed &&
     !hasLocalSpeedLimitKnowledge &&
     speedLimitCoverage.sampleCount > 0 &&
     osmCoveragePct < 20;
@@ -3121,6 +3143,15 @@ export default function TripDetail() {
             <p className="mt-1 text-sm text-muted-foreground">
               See which road speeds were trusted, what still needs your decision, and exactly when a confirmed change reaches this trip.
             </p>
+            {speedLimitKnowledgeFailed && (
+              <p
+                role="status"
+                className="mt-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200"
+              >
+                Your saved road speeds could not be read, so this review shows only what was
+                recorded during the trip. Nothing has been lost — reload to try again.
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             <Link
