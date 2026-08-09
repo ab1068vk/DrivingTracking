@@ -90,7 +90,8 @@ import {
   normalizeTripTags,
 } from '@/lib/tripMetadata';
 import { inferTripTags } from '@/lib/tripTagIntelligence';
-import { explainTripScoreDrivers } from '@/lib/scoring/scoreExplainer';
+import { explainTripScoreDrivers, scoreFactorLabel } from '@/lib/scoring/scoreExplainer';
+import { isScoreInputsSnapshotUsable } from '@/lib/scoring/scoreInputsSnapshot';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -275,14 +276,59 @@ const speedLimitSourceTone = (source) => {
   return 'bg-slate-400';
 };
 
+const decorateSourceRow = (row) => ({
+  ...row,
+  label: speedLimitSourceLabel(row.source, row.countryLabel),
+  detail: speedLimitSourceDetail(row.source),
+  tone: speedLimitSourceTone(row.source),
+});
+
+/**
+ * Rebuild the breakdown from the snapshot frozen when the trip was scored.
+ * Percentages are derived here rather than stored, so copy and unit changes
+ * never need a rescore while the counts stay fixed.
+ */
+function speedLimitSourceBreakdownFromSnapshot(snapshot) {
+  const total = Number(snapshot.scored_sample_count) || 0;
+  if (!total) return null;
+  const rows = snapshot.speed_limit_sources.map((entry) => {
+    const countryKey = String(entry.country_key || 'global').toLowerCase();
+    const countryLabel = SPEED_LIMIT_DEFAULT_COUNTRY_LABELS[countryKey] || countryKey.toUpperCase();
+    const count = Number(entry.count) || 0;
+    return decorateSourceRow({
+      key: entry.key,
+      source: entry.source,
+      countryLabel,
+      count,
+      percent: Math.round((count / total) * 100),
+      limits: Array.isArray(entry.limits) ? entry.limits : [],
+      confidence: count ? (Number(entry.confidence_sum) || 0) / count : 0,
+    });
+  });
+  return {
+    basis: 'scored',
+    sampleCount: total,
+    rows,
+    summary: rows.map((row) => `${row.percent}% ${row.label}`).join('; '),
+  };
+}
+
 function buildSpeedLimitSourceBreakdown(trip = {}, settings = {}, speedLimitContext = null, localKnowledgeResults = []) {
+  // Prefer what scoring actually used. Re-resolving live reads *current*
+  // settings, so a Settings change used to rewrite this panel with no rescore.
+  if (isScoreInputsSnapshotUsable(trip?.score_inputs)) {
+    const frozen = speedLimitSourceBreakdownFromSnapshot(trip.score_inputs);
+    if (frozen) return frozen;
+  }
   const points = Array.isArray(trip.route_points) ? trip.route_points : [];
   const validIndexes = points
     .map((point, index) => ({ point, index }))
     .filter(({ point }) => Number.isFinite(Number(point?.lat)) && Number.isFinite(Number(point?.lng)));
   const movingIndexes = validIndexes.filter(({ point }) => Number(point?.speed_kmh) > 1);
   const samples = movingIndexes.length ? movingIndexes : validIndexes;
-  if (!samples.length) return { sampleCount: 0, rows: [], summary: 'No route samples available.' };
+  if (!samples.length) {
+    return { basis: 'recomputed_now', sampleCount: 0, rows: [], summary: 'No route samples available.' };
+  }
 
   const thresholds = buildDrivingThresholds(settings);
   const inferredZones = inferSpeedZones(points, thresholds);
@@ -326,18 +372,15 @@ function buildSpeedLimitSourceBreakdown(trip = {}, settings = {}, speedLimitCont
   }
 
   const rows = [...buckets.values()]
-    .map((bucket) => ({
+    .map((bucket) => decorateSourceRow({
       ...bucket,
       percent: Math.round((bucket.count / samples.length) * 100),
-      label: speedLimitSourceLabel(bucket.source, bucket.countryLabel),
-      detail: speedLimitSourceDetail(bucket.source),
-      tone: speedLimitSourceTone(bucket.source),
       limits: [...bucket.limits].sort((a, b) => a - b),
       confidence: bucket.count ? bucket.confidenceTotal / bucket.count : 0,
     }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   const summary = rows.map((row) => `${row.percent}% ${row.label}`).join('; ');
-  return { sampleCount: samples.length, rows, summary };
+  return { basis: 'recomputed_now', sampleCount: samples.length, rows, summary };
 }
 
 const resolveEventDisplayValue = (value, event) => (
@@ -666,11 +709,20 @@ export default function TripDetail() {
         }
         const before = result?.rescoreResult?.before?.overall;
         const after = result?.rescoreResult?.after?.overall;
+        // "Score stayed 38" is true but reads as "your correction was ignored".
+        // The overall score is distance-normalized and saturates on short trips,
+        // so a real change often lands only on components. Name one, so the
+        // driver can see the correction was applied.
+        const movedComponent = (result?.rescoreResult?.updatedTrip?.score_change_ledger?.[0]?.changes || [])
+          .find((change) => change.key !== 'overall' && change.delta != null);
+        const alsoChanged = movedComponent
+          ? ' ' + scoreFactorLabel(movedComponent.key) + ' ' + movedComponent.from + ' → ' + movedComponent.to + '.'
+          : '';
         const scoreChange = before == null || after == null
           ? 'Score remains unavailable.'
           : before === after
-            ? 'Score stayed ' + after + '.'
-            : 'Score ' + before + ' → ' + after + '.';
+            ? 'Overall score stayed ' + after + '.' + (alsoChanged || ' No component changed.')
+            : 'Score ' + before + ' → ' + after + '.' + alsoChanged;
         return vars.verdict === 'wrong'
           ? 'Marked wrong and removed from scoring. ' + scoreChange
           : 'Marked accurate and kept in scoring. ' + scoreChange;
@@ -1332,8 +1384,12 @@ export default function TripDetail() {
       ? `${speedLimitCoverage.inferredPct}% used GPS-inferred limits`
       : null,
   ].filter(Boolean).join('; ') + ` (${speedLimitCoverage.sampleCount} samples).`;
+  const speedLimitBreakdownIsFrozen = speedLimitSourceBreakdown.basis === 'scored';
+  const speedLimitSampleBasisLabel = speedLimitBreakdownIsFrozen
+    ? 'samples scored'
+    : 'moving samples, recomputed now';
   const speedLimitProvenanceSummary = speedLimitSourceBreakdown.sampleCount
-    ? `${speedLimitSourceBreakdown.summary} (${speedLimitSourceBreakdown.sampleCount} moving samples).`
+    ? `${speedLimitSourceBreakdown.summary} (${speedLimitSourceBreakdown.sampleCount} ${speedLimitSampleBasisLabel}).`
     : legacySpeedLimitProvenanceSummary;
   const speedLimitIntelligence = summarizeTripSpeedLimitIntelligence(
     trip,
@@ -1345,6 +1401,19 @@ export default function TripDetail() {
   // sum to 99% or 101%.
   const estimatedCoveragePercent = speedLimitIntelligence.estimatedCoveragePercent;
   const missingCoveragePercent = speedLimitIntelligence.missingCoveragePercent;
+  // These tiles are shares of every recorded route point, while scoring only
+  // evaluated moving samples. Both are legitimate questions; the bug was that
+  // neither said which it answered, so the same word meant two things on one
+  // screen. Name the denominator, and name scoring's when it differs.
+  const scoredSampleCount = isScoreInputsSnapshotUsable(trip?.score_inputs)
+    ? Number(trip.score_inputs.scored_sample_count) || 0
+    : null;
+  const coverageBasisNote = [
+    `Shares of ${speedLimitIntelligence.pointCount} recorded route points.`,
+    scoredSampleCount != null && scoredSampleCount !== speedLimitIntelligence.pointCount
+      ? `Scoring evaluated ${scoredSampleCount} moving samples.`
+      : null,
+  ].filter(Boolean).join(' ');
   const verifiedCoverageForChart = Math.max(
     0,
     Math.min(100, Number(speedLimitIntelligence.verifiedCoveragePercent) || 0)
@@ -2095,7 +2164,10 @@ export default function TripDetail() {
                   aria-valuenow={Math.max(0, Math.min(100, Math.round(osmCoveragePct)))}
                 >
                   <div>
-                    <span>Mapped coverage</span>
+                    {/* Named for its source, not "coverage": this is the OSM
+                        fetch result and excludes limits confirmed since, while
+                        the coverage card below counts every known limit. */}
+                    <span>Mapped by OpenStreetMap</span>
                     <strong>{Math.max(0, Math.min(100, Math.round(osmCoveragePct)))}%</strong>
                   </div>
                   <span aria-hidden="true">
@@ -2521,7 +2593,10 @@ export default function TripDetail() {
                 </div>
                 <div className="premium-trip-road-data-meter">
                   <div>
-                    <span>Mapped coverage</span>
+                    {/* Named for its source, not "coverage": this is the OSM
+                        fetch result and excludes limits confirmed since, while
+                        the coverage card below counts every known limit. */}
+                    <span>Mapped by OpenStreetMap</span>
                     <strong>{Math.max(0, Math.min(100, Math.round(osmCoveragePct)))}%</strong>
                   </div>
                   <span aria-hidden="true">
@@ -2620,6 +2695,7 @@ export default function TripDetail() {
                     </div>
                   </div>
                 </div>
+                <p className="text-xs opacity-80">{coverageBasisNote}</p>
                 <button
                   type="button"
                   onClick={openSpeedLimitReview}
@@ -2657,6 +2733,7 @@ export default function TripDetail() {
                       <div className="text-[10px] font-semibold text-muted-foreground">Missing</div>
                     </div>
                   </div>
+                  <div className="mt-2 text-[10px] text-muted-foreground">{coverageBasisNote}</div>
                 </div>
                 <button
                   type="button"
@@ -3762,6 +3839,32 @@ function scoreConfidenceMeta(component = {}) {
   };
 }
 
+/**
+ * Describe one component's movement across a re-score. A component that gained
+ * or lost a value has no delta, so it is stated as such rather than being shown
+ * as a change from zero.
+ */
+function scoreChangeText(change = {}) {
+  const label = scoreFactorLabel(change.key);
+  if (change.from == null) return `${label}: now scored ${change.to}`;
+  if (change.to == null) return `${label}: no longer scored (was ${change.from})`;
+  const direction = change.delta > 0 ? '+' : '';
+  return `${label}: ${change.from} to ${change.to} (${direction}${change.delta})`;
+}
+
+const scoreChangeReasonText = (reason) => {
+  switch (reason) {
+    case 'scoring_version_changed':
+      return 'the scoring model was updated';
+    case 'scoring_inputs_changed':
+      return 'scoring inputs you changed were applied';
+    case 'provenance_added':
+      return 'this trip was refreshed';
+    default:
+      return 'you asked for a re-score';
+  }
+};
+
 function scoreDriverReason(driver = {}) {
   if (driver.kind === 'event') {
     const category = String(driver.category || 'score').toLowerCase();
@@ -4272,7 +4375,15 @@ function TripScoreOverview({
   const inferredSpeedLimitScoring = usesInferredSpeedLimitScoring(trip);
   const phoneUsePermissionRequired = trip.phone_use_score_status === 'usage_access_required';
   const scoreDrivers = explainTripScoreDrivers(trip);
+  // Newest first; only the most recent re-score is shown so the panel stays a
+  // "did my correction do anything?" answer rather than a changelog.
+  const latestScoreChange = Array.isArray(trip.score_change_ledger)
+    ? trip.score_change_ledger[0]
+    : null;
   const scoreConfidence = scoreConfidenceMeta(overallScore);
+  // 'scored' means these rows came from the snapshot frozen when the trip was
+  // scored, so the heading may claim they describe the stored score.
+  const speedLimitSourcesAreFrozen = speedLimitSourceBreakdown?.basis === 'scored';
   const speedLimitSourceRows = Array.isArray(speedLimitSourceBreakdown?.rows)
     ? speedLimitSourceBreakdown.rows
     : [];
@@ -4388,14 +4499,18 @@ function TripScoreOverview({
           <div className="flex items-start gap-2">
             <Tag className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
             <div className="min-w-0 flex-1">
-              {/* buildSpeedLimitSourceBreakdown re-resolves every point against
-                  CURRENT settings, so changing the fallback country in Settings
-                  changes this panel with no rescore. Do not claim it describes
-                  the stored score. */}
-              <div className="font-semibold text-foreground">Speed-limit sources, recomputed now</div>
+              {/* Without a frozen snapshot this falls back to re-resolving every
+                  point against CURRENT settings, so changing the fallback country
+                  in Settings changes the panel with no rescore. Only the frozen
+                  basis may claim to describe the stored score. */}
+              <div className="font-semibold text-foreground">
+                {speedLimitSourcesAreFrozen ? 'Speed-limit sources used for this score' : 'Speed-limit sources, recomputed now'}
+              </div>
               <div className="mt-1 text-muted-foreground">
                 Speeding penalties depend on where the app got the limit. Posted and confirmed sources are strongest; estimates are clearly marked.
-                This breakdown is recalculated from your current settings and may differ from the sources used when the score was last computed.
+                {speedLimitSourcesAreFrozen
+                  ? ' These are the sources recorded when this trip was scored, so they do not change until it is re-scored.'
+                  : ' This breakdown is recalculated from your current settings and may differ from the sources used when the score was last computed.'}
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {topSpeedLimitSourceRows.map((row) => (
@@ -4468,7 +4583,9 @@ function TripScoreOverview({
               {OVERALL_SCORE_IS_APPROXIMATE && <CalibrationStatusTag />}
             </span>
           </div>
-          <div className="mt-1">Calculated {formatDateTime(scoreProvenance.computed_at)}</div>
+          {/* Scoped deliberately: this timestamp describes the scoring pass, not
+              every panel above it. Panels that still recompute live say so. */}
+          <div className="mt-1">Score last calculated {formatDateTime(scoreProvenance.computed_at)}</div>
           {provenanceChange && (
             <p className="mt-2 rounded-xl bg-secondary/50 p-3">
               {provenanceChange.reason === 'provenance_added'
@@ -4482,6 +4599,33 @@ function TripScoreOverview({
                     : 'Recalculated after scoring calibration inputs changed.'}
               {changedConstants.length > 0 && ` Updated constants: ${changedConstants.join(', ')}.`}
             </p>
+          )}
+          {latestScoreChange && (
+            <div className="mt-2 rounded-xl bg-secondary/50 p-3">
+              <div className="font-semibold text-foreground">What the last re-score changed</div>
+              <div className="mt-1">
+                {`Recalculated ${formatDateTime(latestScoreChange.at)} because ${scoreChangeReasonText(latestScoreChange.reason)}.`}
+              </div>
+              <ul className="mt-2 space-y-1">
+                {(latestScoreChange.changes || []).map((change) => (
+                  <li key={change.key} className="flex items-center gap-2">
+                    <span
+                      className={
+                        change.delta == null
+                          ? 'text-muted-foreground'
+                          : change.delta > 0
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-red-600 dark:text-red-400'
+                      }
+                      aria-hidden="true"
+                    >
+                      {change.delta == null ? '-' : change.delta > 0 ? '^' : 'v'}
+                    </span>
+                    <span className="min-w-0 text-foreground">{scoreChangeText(change)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}

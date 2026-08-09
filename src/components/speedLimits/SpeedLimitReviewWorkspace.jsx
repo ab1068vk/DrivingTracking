@@ -10,6 +10,7 @@ import { AlertTriangle, Gauge, HeartPulse, Search, ShieldCheck, Trash2 } from 'l
 import RoadMemoryChangeReview from '@/components/RoadMemoryChangeReview';
 import SpeedSignEvidenceReview from '@/components/SpeedSignEvidenceReview';
 import { formatSpeedLimit } from '@/components/speedLimits/speedRuleFormatting';
+import { MIN_OBSERVATIONS_FOR_LEARNED_CONFIDENCE } from '@/lib/scoring/learnedSourceReliability';
 
 /**
  * Workspace block props-threaded out of the page body. Owns no state and
@@ -42,6 +43,15 @@ export default function SpeedLimitReviewWorkspace({
   units,
   visibleAttentionItems,
 }) {
+  // Plain derivation, not a hook: this workspace owns no state by design.
+  // Sources with too little evidence are hidden rather than shown as a rate,
+  // since one or two observations is not an accuracy figure.
+  const sourceReliabilityRows = Object.entries(health?.sourceReliability || {})
+    .map(([source, stats]) => ({ source, ...stats }))
+    .filter((row) => Number(row.observations) >= MIN_OBSERVATIONS_FOR_LEARNED_CONFIDENCE)
+    .sort((a, b) => b.observations - a.observations)
+    .slice(0, 6);
+
   return (
         <div ref={reviewWorkspaceRef} className="scroll-mt-24 space-y-4">
           <SpeedSignEvidenceReview
@@ -381,6 +391,36 @@ export default function SpeedLimitReviewWorkspace({
           </button>
         </div>
       </section>
+
+      {sourceReliabilityRows.length > 0 && (
+        <section className="rounded-xl border border-border bg-card p-3">
+          <div className="flex items-start gap-3">
+            <ShieldCheck className="mt-0.5 h-5 w-5 flex-shrink-0 text-primary" />
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold">How often each source has been right</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Measured from your own saved road knowledge: how often a limit proposed by
+                each source matched the limit the area settled on. Scoring still uses the
+                fixed reference confidences, so these figures report accuracy rather than
+                change your scores.
+              </p>
+              <ul className="mt-2 space-y-1 text-xs">
+                {sourceReliabilityRows.map((row) => (
+                  <li key={row.source} className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="font-semibold text-foreground">
+                      {String(row.source).replace(/_/g, ' ')}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {Math.round(row.hitRate * 100)}% agreed over {row.observations}{' '}
+                      observation{row.observations === 1 ? '' : 's'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </section>
+      )}
         </div>
   );
 }

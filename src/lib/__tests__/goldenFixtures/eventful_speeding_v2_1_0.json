@@ -1,7 +1,7 @@
 {
   "id": "eventful_speeding_v2_2_0",
   "description": "Human-verified eventful daytime route with inferred speed-limit speeding events; validates penalties, limited evidence, and provenance component labels independently of the test-runner timezone.",
-  "scoring_version": "d9230d29",
+  "scoring_version": "eb27f8f5",
   "human_verified": true,
   "thresholds": { "NIGHT_DETECTION_MODE": "fixed" },
   "startTime": "2026-05-24T10:00:00.000",
@@ -32,8 +32,8 @@
       "night_driving": false
     },
     "scores": {
-      "score_overall": 42,
-      "score_safety": 13,
+      "score_overall": 70,
+      "score_safety": 56,
       "score_smoothness": 95,
       "score_confidence_label": "developing",
       "harsh_brakes_count": 0,
@@ -41,21 +41,21 @@
       "sharp_turns_count": 0,
       "speeding_events_count": 2,
       "speed_creep_score": 0,
-      "aggressive_driving_score": 3,
+      "aggressive_driving_score": 51,
       "defensive_driving_score": 74
     },
     "component_scores": {
-      "overall": { "value": 42, "evidence": "developing", "dataSource": ["gps", "regional_default_estimate", "gps_inferred_limit"], "sampleCount": 12 },
-      "safety": { "value": 13, "evidence": "developing", "dataSource": ["gps", "regional_default_estimate", "gps_inferred_limit"], "sampleCount": 12 },
+      "overall": { "value": 70, "evidence": "developing", "dataSource": ["gps", "regional_default_estimate", "gps_inferred_limit"], "sampleCount": 12 },
+      "safety": { "value": 56, "evidence": "developing", "dataSource": ["gps", "regional_default_estimate", "gps_inferred_limit"], "sampleCount": 12 },
       "smoothness": { "value": 95, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "intersection": { "value": null, "evidence": "unavailable", "dataSource": ["gps"], "sampleCount": 0 },
       "speed_creep": { "value": 0, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
-      "aggressive_driving": { "value": 3, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
+      "aggressive_driving": { "value": 51, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "defensive_driving": { "value": 74, "evidence": "developing", "dataSource": ["gps"], "sampleCount": 12 },
       "fatigue_risk": { "value": 1, "evidence": "high", "dataSource": ["gps"], "sampleCount": 1 }
     },
     "score_provenance": {
-      "scoring_version": "d9230d29",
+      "scoring_version": "eb27f8f5",
       "components": {
         "overall": "developing",
         "safety": "developing",

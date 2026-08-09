@@ -195,6 +195,43 @@ describe('trip engine calculation coverage', () => {
     expect(aggressive.aggressive_driving_score).toBeLessThan(100);
   });
 
+  // A speeding penalty is only as trustworthy as the limit it was measured
+  // against. Safety and speed-limit compliance both weight it by the resolver's
+  // confidence; aggressive driving used to sum the raw penalty, so the same
+  // event produced two different verdicts -- aggressive_driving 3 alongside
+  // Safety 56 on the eventful_speeding golden fixture.
+  it('weights speeding by limit confidence, matching Safety and compliance', () => {
+    const stats = { distance_km: 2, avg_jerk_ms3: 0 };
+    const speedingAgainst = (extra) => calculateAggressiveDrivingScore(
+      [{ type: 'speeding', severity: 'high', ...extra }],
+      stats
+    ).aggressive_driving_score;
+
+    const confirmed = speedingAgainst({ zone_confidence: 0.92 });
+    const guessed = speedingAgainst({ zone_confidence: 0.35 });
+
+    // Speeding past a confirmed posted sign must cost more than speeding past
+    // a limit the app only inferred.
+    expect(guessed).toBeGreaterThan(confirmed);
+    expect(confirmed).toBeLessThan(100);
+  });
+
+  it('still penalizes non-speeding events at full weight', () => {
+    const stats = { distance_km: 2, avg_jerk_ms3: 0 };
+    const withConfidence = calculateAggressiveDrivingScore(
+      [{ type: 'harsh_brake', severity: 'high', zone_confidence: 0.35 }],
+      stats
+    ).aggressive_driving_score;
+    const withoutConfidence = calculateAggressiveDrivingScore(
+      [{ type: 'harsh_brake', severity: 'high' }],
+      stats
+    ).aggressive_driving_score;
+
+    // Limit confidence is meaningless for a harsh brake; it must not discount it.
+    expect(withConfidence).toBe(withoutConfidence);
+    expect(withConfidence).toBeLessThan(100);
+  });
+
   it('scores smooth eco cruising above stop-and-go driving', () => {
     const cruise = Array.from({ length: 18 }, (_, index) => point(index, { speed_kmh: 82 }));
     const stopGo = Array.from({ length: 18 }, (_, index) => point(index, { speed_kmh: index % 3 === 0 ? 0 : 28 }));
@@ -359,14 +396,24 @@ describe('trip engine calculation coverage', () => {
     checkScoreFields(scores);
   });
 
-  it('floors Safety at zero at the documented 2.5 penalty-points-per-km threshold', () => {
+  // The floor is reached where penaltyRate * PENALTY_SCALE_FACTOR hits the
+  // 100-point deduction cap, so the threshold rate is 100 / the scale factor.
+  // At the previous scale of 40 that was only 2.5 penalty points per km, which
+  // one ordinary harsh brake exceeded several times over on any short trip --
+  // that is the saturation documented in safetyScoreSaturation.test.js.
+  it('floors Safety at zero at the documented 20 penalty-points-per-km threshold', () => {
     const route = Array.from({ length: 20 }, (_, index) => point(0, {
       timestamp: new Date(Date.UTC(2026, 0, 1, 18, 0, index * 10)).toISOString(),
       speed_kmh: 0,
     }));
     const scores = calculateTripScores(
-      [{ type: EVENT_TYPES.ERRATIC_SPEED, severity: 'high' }],
-      { distance_km: 4, duration_seconds: 200, fatigue_risk_score: 0 },
+      // Two high-severity erratic-speed events are 20 penalty points; over the
+      // 1 km normalization floor that is exactly the threshold rate.
+      [
+        { type: EVENT_TYPES.ERRATIC_SPEED, severity: 'high' },
+        { type: EVENT_TYPES.ERRATIC_SPEED, severity: 'high' },
+      ],
+      { distance_km: 1, duration_seconds: 200, fatigue_risk_score: 0 },
       route,
       { ...DEFAULT_THRESHOLDS, PHONE_USE_AFFECTS_SCORE: false },
       200,
@@ -374,7 +421,8 @@ describe('trip engine calculation coverage', () => {
       { includeRoadTypeSegments: false }
     );
 
-    expect(PENALTY_SCALE_FACTOR).toBe(40);
+    expect(PENALTY_SCALE_FACTOR).toBe(5);
+    expect(100 / PENALTY_SCALE_FACTOR).toBe(20);
     expect(scores.score_safety).toBe(0);
   });
 

@@ -31,6 +31,7 @@ import { classifyMagnitudeSeverity, classifySpeedingSeverity } from './scoring/e
 import { EVENT_TYPES } from './scoring/eventTypes';
 import { refineEventsWithMotion } from './scoring/motionEventRefinement';
 import { calculateImuJerk } from './scoring/motionJerk';
+import { buildScoreInputsSnapshot } from './scoring/scoreInputsSnapshot';
 import { formatEstimatedScore, isEstimatedScoreMetric } from './scoreDisplay';
 import {
   alertMarginForConfidence,
@@ -41,6 +42,7 @@ import {
   roadContextFromOsmType,
   canonicalSpeedTier,
   tierForSource,
+  speedLimitDefaultCountryKey,
 } from './speedLimitSource';
 
 // CHANGES (session):
@@ -5029,10 +5031,16 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
   const speedOver = thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH;
   const zoneForIndex = speedLimitContexts ? null : createZoneLookup(zones);
 
+  // Indices this function actually scored. The frozen inputs snapshot reuses
+  // this instead of recomputing reliablePointSpeed for every point a second
+  // time, which also guarantees the two can never disagree on the denominator.
+  const scoredPointIndexes = [];
+
   points.forEach((point, index) => {
     const speed = reliablePointSpeed(points, index, thresholds);
     if (!Number.isFinite(speed)) return;
     if (speed <= (thresholds.STATIONARY_SPEED_KMH ?? DEFAULT_THRESHOLDS.STATIONARY_SPEED_KMH)) return;
+    scoredPointIndexes.push(index);
     const roadType = roadTypes[index] || 'urban';
     const speedLimitContext = speedLimitContexts?.[index] || resolveEffectiveSpeedLimitForIndex(
       points,
@@ -5153,6 +5161,7 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
     urban_compliance: urban,
     residential_compliance: residential,
     overall_compliance_score: overall,
+    scored_point_indexes: scoredPointIndexes,
     // Diagnostics span every bucket, including the unavailable ones: the raw
     // penalty is what the driving earned before confidence weighting, and it is
     // the only signal left when no bucket produced a score.
@@ -6870,11 +6879,23 @@ export function calculateAggressiveDrivingScore(events = [], stats = {}) {
     EVENT_TYPES.SHARP_TURN,
     EVENT_TYPES.SPEEDING,
   ]);
-  const rawPenalty = events.reduce((sum, event) => (
-    aggressiveEventTypes.has(event.type)
-      ? sum + (EVENT_PENALTIES[event.type]?.[event.severity] || 0)
-      : sum
-  ), 0);
+  // Speeding is weighted by how confident the resolver was about the limit,
+  // exactly as calculateTripScores and calculateSpeedLimitCompliance already
+  // do. Summing the raw penalty here charged a full-weight speeding penalty
+  // against a limit the app only *guessed* (a regional default or a GPS
+  // inference), so a trip could read aggressive_driving 3 while Safety, which
+  // half-weights the same event, read 56. Same evidence, two verdicts.
+  const rawPenalty = events.reduce((sum, event) => {
+    if (!aggressiveEventTypes.has(event.type)) return sum;
+    const penalty = EVENT_PENALTIES[event.type]?.[event.severity] || 0;
+    if (event.type !== EVENT_TYPES.SPEEDING) return sum + penalty;
+    const resolvedConfidence = Number(event.zone_confidence ?? event.speed_limit_confidence);
+    return sum + (penalty * confidenceToPenaltyWeight(
+      Number.isFinite(resolvedConfidence)
+        ? resolvedConfidence
+        : confidenceForSource(event.speed_limit_source || event.limitSource || 'inferred')
+    ));
+  }, 0);
   const avgJerkMs3 = stats.avg_jerk_ms3 ?? 0;
   const jerkPenalty = Math.min(Math.max((avgJerkMs3 - 0.3) * 20, 0), 25);
   const combinedPenalty = rawPenalty + jerkPenalty;
@@ -7664,10 +7685,23 @@ export function calculateTripScores(
       note: 'Driving-time proxy only; not a diagnosis of fatigue.',
     }),
   };
+  // One timestamp for the whole scoring pass: provenance and the inputs
+  // snapshot must describe the same moment, or "Calculated <time>" is a claim
+  // about a different computation than the panels beneath it.
+  const scoreComputedAt = new Date().toISOString();
   return {
     ...scoredTrip,
     component_scores,
-    score_provenance: buildScoreProvenance(component_scores, thresholds),
+    score_provenance: buildScoreProvenance(component_scores, thresholds, scoreComputedAt),
+    score_inputs: buildScoreInputsSnapshot({
+      points: routePoints,
+      speedLimitContexts,
+      scoredPointIndexes: compliance.scored_point_indexes,
+      roadTypesByPoint: speedRoadTypesByPoint,
+      stationarySpeedKmh: thresholds.STATIONARY_SPEED_KMH ?? DEFAULT_THRESHOLDS.STATIONARY_SPEED_KMH,
+      fallbackCountry: speedLimitDefaultCountryKey(options.settings || {}),
+      computedAt: scoreComputedAt,
+    }),
   };
 }
 

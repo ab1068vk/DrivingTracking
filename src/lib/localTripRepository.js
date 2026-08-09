@@ -24,6 +24,7 @@ import {
   sanitizeTripForPrivacyStorageAsync,
 } from '@/lib/privacyZones';
 import { prepareScoreInputsForPrivacy } from '@/lib/scoreInputPrivacy';
+import { appendScoreChangeEntry, buildScoreChangeEntry } from '@/lib/scoring/scoreChangeLedger';
 import { invalidateDangerZoneCache } from '@/lib/dangerZoneEngine';
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
@@ -1307,6 +1308,24 @@ const rescoreTrip = (trip, vehicles = []) => {
       rescored_at: scores.score_provenance.computed_at,
     }
     : trip.score_provenance_change;
+  // A trip with no prior component scores is being scored for the first time,
+  // not re-scored; every component would read as "gained a value" and the entry
+  // would be noise rather than a change the user caused.
+  const hadPreviousScores = Object.values(trip.component_scores || {}).some((component) => (
+    Number.isFinite(Number(typeof component === 'object' ? component?.value : component))
+  ));
+  const scoreChangeEntry = hadPreviousScores
+    ? buildScoreChangeEntry({
+      previousTrip: trip,
+      nextTrip: scores,
+      reason: scoreProvenanceChange?.reason || 'user_requested_rescore',
+      changedConstants: provenanceStatus.changedConstants,
+      at: scores.score_provenance.computed_at,
+    })
+    : null;
+  const scoreChangeLedger = scoreChangeEntry
+    ? appendScoreChangeEntry(trip.score_change_ledger, scoreChangeEntry)
+    : trip.score_change_ledger;
   return {
     ...trip,
     ...stats,
@@ -1320,6 +1339,7 @@ const rescoreTrip = (trip, vehicles = []) => {
     driving_events: drivingEvents,
     phone_usage_access_provenance: phoneUsageAccessProvenance.changed ? phoneUsageAccessProvenance : null,
     ...(scoreProvenanceChange ? { score_provenance_change: scoreProvenanceChange } : {}),
+    ...(scoreChangeLedger ? { score_change_ledger: scoreChangeLedger } : {}),
     event_feedback: reconciledFeedback,
     feedback_adjusted_events_count: feedbackAdjusted.removed + phoneFeedbackAdjusted.removed,
     feedback_flagged_events_count: feedbackAdjusted.flagged + phoneFeedbackAdjusted.flagged,

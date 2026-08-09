@@ -1,5 +1,6 @@
 import { assessSpeedLimitEvidence } from '@/lib/speedLimitConfidence';
 import { summarizeRoadMemoryIntelligence } from '@/lib/roadMemoryIntelligence';
+import { summarizeSourceReliability } from '@/lib/scoring/learnedSourceReliability';
 
 const validCoordinate = (value, min, max) => Number.isFinite(Number(value)) &&
   Number(value) >= min &&
@@ -110,6 +111,9 @@ export function inspectSpeedKnowledgeHealth(data = {}, now = Date.now()) {
       candidate?.stage === 'learning' || candidate?.stage === 'suggested'
     )).length,
     roadMemoryIntelligence: intelligence,
+    // Measured agreement per source, from this user's own saved cells. Reported
+    // only; the fixed reference profiles still drive scoring penalty weights.
+    sourceReliability: summarizeSourceReliability(cells.map(([, cell]) => cell)),
     geometryCount: [
       ...corrections,
       ...candidates,

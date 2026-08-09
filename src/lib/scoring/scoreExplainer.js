@@ -81,6 +81,25 @@ const ordered = (components, events, limit) => [
   ...ranked(events, limit),
 ].slice(0, limit);
 
+const FACTOR_LABELS = new Map([
+  ...COMPONENT_FACTORS.map(({ key, label }) => [key, label]),
+  ...HEADLINE_FACTORS.map(({ key, label }) => [key, label]),
+  ['overall', 'Overall'],
+]);
+
+/**
+ * Human label for a component-score key. Falls back to humanising the key so a
+ * component added to the engine still renders readably instead of disappearing
+ * from anything that lists arbitrary keys (e.g. the score-change ledger).
+ */
+export function scoreFactorLabel(key) {
+  if (!key) return 'Unknown component';
+  const known = FACTOR_LABELS.get(key);
+  if (known) return known;
+  const words = String(key).replace(/_/g, ' ').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Unknown component';
+}
+
 export function explainTripScoreDrivers(trip = {}, { limit = 3 } = {}) {
   const detailed = ranked(COMPONENT_FACTORS.map((definition) => componentFactor(trip, definition)), limit);
   const events = ranked(EVENT_FACTORS.map((definition) => eventFactor(trip, definition)), limit);

@@ -188,10 +188,20 @@ export const SCORING_CONSTANTS = Object.freeze({
   DEFAULT_HOURLY_RISK_PROFILE,
   NIGHT_START_HOUR: constant(22, { label: 'Fallback night start hour', domain: 'trip_score', calibration_note: 'Fallback clock window when solar context is unavailable.', affected_metrics: scoreMetrics }),
   NIGHT_END_HOUR: constant(5, { label: 'Fallback night end hour', domain: 'trip_score', calibration_note: 'Fallback clock window when solar context is unavailable.', affected_metrics: scoreMetrics }),
-  PENALTY_SCALE_FACTOR: constant(40, {
+  PENALTY_SCALE_FACTOR: constant(5, {
     label: 'Trip penalty scale factor',
     domain: 'trip_score',
     calibration_status: CALIBRATION_STATUSES.PROVISIONAL,
+    // Was 40, which saturated the score for ordinary trips. A single
+    // high-severity harsh brake carries 12 points scaled by up to 1.92 for
+    // speed, so ~23; at a scale of 40 that is a 263-point deduction against a
+    // 100-point cap on a 3.5 km trip. Every trip under ~9 km with one such
+    // event pinned baseSafety to 0, so one harsh brake and ten scored the same
+    // and marking a false detection "Wrong" could not move the score. The
+    // distance floor cannot fix this: it would have to exceed 9 km, which
+    // would flatten short-trip scoring instead. 5 keeps a single event to a
+    // ~33-point deduction on a 3.5 km trip while a genuinely bad trip still
+    // reaches the floor. Still provisional and still uncalibrated.
     calibration_note: 'Uncalibrated - scores are self-consistent estimates, not validated against crash, claim, or insurer data. Follow PENALTY_SCALE_FACTOR_CALIBRATION_PROCESS before treating downstream scores as calibrated.',
     affected_metrics: scoreMetrics,
     calibration_metadata: Object.freeze({

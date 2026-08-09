@@ -666,7 +666,7 @@ describe('tripEngine', () => {
   });
 
   it('applies the named penalty scale and its current score-floor threshold', () => {
-    expect(PENALTY_SCALE_FACTOR).toBe(40);
+    expect(PENALTY_SCALE_FACTOR).toBe(5);
 
     const partialDeduction = calculateTripScores(
       [{ type: EVENT_TYPES.RAPID_ACCELERATION, severity: 'low' }],
@@ -913,7 +913,7 @@ describe('tripEngine', () => {
         overall: scores.component_scores.overall.evidence,
       },
       constants_snapshot: {
-        PENALTY_SCALE_FACTOR: 40,
+        PENALTY_SCALE_FACTOR: 5,
         HILL_ACCEL_THRESHOLD_MS2: DEFAULT_THRESHOLDS.HILL_ACCEL_THRESHOLD_MS2,
       },
     });

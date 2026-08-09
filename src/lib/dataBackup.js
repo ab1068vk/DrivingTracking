@@ -199,6 +199,8 @@ const IMPORTED_TRIP_FIELDS = new Set([
   'component_scores',
   'score_provenance',
   'score_provenance_change',
+  'score_inputs',
+  'score_change_ledger',
   'harsh_brakes_count',
   'rapid_accel_count',
   'sharp_turns_count',
