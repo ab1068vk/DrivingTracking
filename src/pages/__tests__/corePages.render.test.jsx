@@ -763,7 +763,7 @@ describe('core page component renders', () => {
     expect(html).toContain('Why Detected');
   });
 
-  it('renders TrackingSpeedConsole source confidence and edit-flow links', async () => {
+  it('renders SpeedIntelligenceConsole source confidence and edit-flow links', async () => {
     const speedTrip = {
       ...sampleTrip,
       route_points: [
@@ -795,10 +795,12 @@ describe('core page component renders', () => {
         source: 'user_confirmed_posted_sign',
       }],
     });
-    const { default: TrackingSpeedConsole } = await import('@/pages/TrackingSpeedConsole');
-    const html = renderToStaticMarkup(<TrackingSpeedConsole />);
+    const { default: SpeedIntelligenceConsole } = await import('@/components/speedLimits/SpeedIntelligenceConsole');
+    const html = renderToStaticMarkup(<SpeedIntelligenceConsole />);
 
-    expect(html).toContain('Speed Intelligence');
+    // The "Speed Intelligence" heading and the three toolbar links back to
+    // /speed-limits went with the page chrome: this is now a workspace inside
+    // that page, so its tab supplies both.
     expect(html).toContain('Posted signs override app estimates');
     expect(html).toContain('Your confirmed posted sign');
     expect(html).toContain('Local learned estimate');

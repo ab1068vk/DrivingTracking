@@ -155,7 +155,9 @@ const trackingNavItems = [
   { path: '/tracking/events', label: 'Drive events', hint: 'Timeline', icon: ClipboardList, keywords: ['events', 'timeline', 'telemetry'] },
   { path: '/tracking/alerts', label: 'Driving alerts', hint: 'Voice', icon: Bell, keywords: ['voice', 'speech', 'cooldowns', 'alerts'] },
   { path: '/tracking/evidence', label: 'Data quality', hint: 'Sources', icon: Database, keywords: ['data quality', 'evidence', 'provenance', 'sources'] },
-  { path: '/tracking/speed', label: 'Road speeds', hint: 'Limits', icon: Gauge, keywords: ['speed rules', 'limits', 'markers', 'confidence'] },
+  // Points straight at the merged workspace rather than through the
+  // /tracking/speed redirect, so the nav does not cost an extra hop.
+  { path: '/speed-limits?view=console', label: 'Road speeds', hint: 'Limits', icon: Gauge, keywords: ['speed rules', 'limits', 'markers', 'confidence', 'diagnostics'] },
   { path: '/tracking/privacy', label: 'Trip privacy', hint: 'Zones', icon: ShieldCheck, keywords: ['privacy zones', 'masking', 'audit'] },
   { path: '/tracking/reports', label: 'Share & export', hint: 'Reports', icon: BarChart3, keywords: ['reports', 'csv', 'pdf', 'export'] },
   { path: '/settings', label: 'Settings', hint: 'Preferences', icon: Settings, keywords: ['settings', 'preferences', 'mode'] },

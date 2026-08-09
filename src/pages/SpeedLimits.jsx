@@ -1,5 +1,7 @@
 // @ts-check
 import {
+  lazy,
+  Suspense,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -9,6 +11,11 @@ import {
   useTransition,
 } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import SectionErrorBoundary from '@/components/SectionErrorBoundary';
+
+// Lazy: the diagnostics workspace runs two of its own queries and is the least
+// visited of the four, so it should not weigh on the map or review views.
+const SpeedIntelligenceConsole = lazy(() => import('@/components/speedLimits/SpeedIntelligenceConsole'));
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { AlertTriangle, ArrowLeft, Download, Gauge, Info, Map as MapIcon, Plus, RefreshCw, ShieldCheck, SlidersHorizontal, Undo2, Upload } from 'lucide-react';
 import { geohashEncode, LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
@@ -199,7 +206,11 @@ const SPEED_WORKSPACES = [
   { value: 'map', label: 'Map', Icon: MapIcon },
   { value: 'review', label: 'Needs review', Icon: AlertTriangle },
   { value: 'saved', label: 'Saved roads', Icon: SlidersHorizontal },
+  // Absorbed from the former /tracking/speed page, which was a read-only view
+  // of this page's data whose only navigation was three links back to here.
+  { value: 'console', label: 'Diagnostics', Icon: Gauge },
 ];
+const SPEED_WORKSPACE_VALUES = SPEED_WORKSPACES.map((workspace) => workspace.value);
 const MAP_MODEL_WORKSPACES = new Set(['map', 'review']);
 
 
@@ -282,7 +293,7 @@ function SavedRoadSpeedsSkeleton() {
 export default function SpeedLimits() {
   const [searchParams] = useSearchParams();
   const tripId = searchParams.get('tripId');
-  const initialWorkspace = ['map', 'review', 'saved'].includes(searchParams.get('view'))
+  const initialWorkspace = SPEED_WORKSPACE_VALUES.includes(searchParams.get('view'))
     ? searchParams.get('view')
     : tripId ? 'review' : 'map';
   const knowledge = useMemo(() => new LocalSpeedKnowledge(speedKnowledgeStore), []);
@@ -3668,6 +3679,18 @@ export default function SpeedLimits() {
           visibleRowImpactByKey={visibleRowImpactByKey}
           visibleRows={visibleRows}
         />
+      )}
+
+      {activeWorkspace === 'console' && (
+        <SectionErrorBoundary
+          context="speed_limits_diagnostics"
+          title="Speed diagnostics unavailable"
+          message="Something went wrong while preparing the speed diagnostics. Reload to try again."
+        >
+          <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading speed diagnostics…</div>}>
+            <SpeedIntelligenceConsole units={units} />
+          </Suspense>
+        </SectionErrorBoundary>
       )}
 
       <details className="group rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-950 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">

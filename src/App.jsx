@@ -149,7 +149,6 @@ const Onboarding = lazy(() => import('@/pages/Onboarding'));
 const TrackingOverview = lazy(() => import('@/pages/TrackingOverview'));
 const TrackingMapWorkspace = lazy(() => import('@/pages/TrackingMapWorkspace'));
 const TrackingEvents = lazy(() => import('@/pages/TrackingEvents'));
-const TrackingSpeedConsole = lazy(() => import('@/pages/TrackingSpeedConsole'));
 const TrackingPrivacyConsole = lazy(() => import('@/pages/TrackingPrivacyConsole'));
 const TrackingAlertsLab = lazy(() => import('@/pages/TrackingAlertsLab'));
 const TrackingEvidenceConsole = lazy(() => import('@/pages/TrackingEvidenceConsole'));
@@ -598,11 +597,10 @@ const AuthenticatedApp = () => {
               <TrackingEvidenceConsole />
             </AppRouteBoundary>
           )} />
-          <Route path="/tracking/speed" element={(
-            <AppRouteBoundary context="tracking_speed_console_page" title="Tracking speed console unavailable">
-              <TrackingSpeedConsole />
-            </AppRouteBoundary>
-          )} />
+          {/* Merged into Saved Road Speeds as its Diagnostics workspace. Kept as
+              a redirect rather than removed, so bookmarks and any link still
+              pointing here land on the same content instead of a 404. */}
+          <Route path="/tracking/speed" element={<Navigate to="/speed-limits?view=console" replace />} />
           <Route path="/tracking/privacy" element={(
             <AppRouteBoundary context="tracking_privacy_console_page" title="Tracking privacy console unavailable">
               <TrackingPrivacyConsole />

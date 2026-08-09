@@ -329,9 +329,14 @@ test('renders tracking speed console without horizontal overflow', async ({ page
     }));
   }, onboardedSettings);
 
+  // /tracking/speed is now a redirect: the console became the Diagnostics
+  // workspace of Saved Road Speeds. Following it here keeps the old entry point
+  // covered, so a broken redirect fails this test rather than stranding a
+  // bookmarked link.
   await page.goto('/tracking/speed');
+  await expect(page).toHaveURL(/\/speed-limits\?view=console/);
 
-  await expect(page.getByRole('heading', { name: 'Speed Intelligence', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Saved road speeds', exact: true })).toBeVisible();
   await expect(page.getByText('Source Confidence', { exact: true })).toBeVisible();
   await expect(page.getByText('Trip Coverage', { exact: true })).toBeVisible();
 

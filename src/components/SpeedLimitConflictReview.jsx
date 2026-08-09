@@ -1,6 +1,7 @@
 // @ts-check
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Gauge, MapPin, RefreshCw, ShieldCheck } from 'lucide-react';
 import RoadSectionPreview from '@/components/RoadSectionPreview';
 import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT, geohashCenter, geohashEncode } from '@/lib/localSpeedKnowledge';
@@ -905,6 +906,20 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
     () => sortReviewCells(dedupeSpeedEvidenceReviewItems(filterReviewCells(cells, reviewFilter))),
     [cells, reviewFilter]
   );
+  // This list is uncapped — one card per reviewable section — and each card is a
+  // substantial piece of DOM with its own inputs and expandable preview. A
+  // driver with a well-populated road memory was mounting all of them at once.
+  // Heights vary (evidence text, expanded previews), so measureElement does the
+  // sizing and estimateSize is only the first guess. Drafts live in component
+  // state, not in the card, so a row scrolling out of view keeps its edits.
+  const reviewListScrollRef = useRef(null);
+  const reviewListVirtualizer = useVirtualizer({
+    count: visibleCells.length,
+    getScrollElement: () => reviewListScrollRef.current,
+    estimateSize: () => 320,
+    overscan: 4,
+  });
+  const reviewVirtualItems = reviewListVirtualizer.getVirtualItems();
   const ignoredTripReviewCount = useMemo(() => {
     if (!reviewMode || !trip) return 0;
     const ignored = ignoredTripReviewKeySet;
@@ -1615,7 +1630,12 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
             <div className="rounded-xl border border-amber-200 bg-background/80 p-3 text-xs font-semibold text-muted-foreground dark:border-amber-900/60 dark:bg-background/70">
               No review items match this filter.
             </div>
-          ) : visibleCells.map((cell) => {
+          ) : (
+          <div ref={reviewListScrollRef} className="max-h-[70vh] overflow-y-auto pr-1">
+          <div className="relative w-full" style={{ height: `${reviewListVirtualizer.getTotalSize()}px` }}>
+          {reviewVirtualItems.map((virtualItem) => {
+            const cell = visibleCells[virtualItem.index];
+            if (!cell) return null;
             const center = geohashCenter(cell.geohash);
             const evidence = cell.tripReview ? cell : (routeEvidenceByGeohash.get(cell.geohash) || routeEvidenceForCell(trip, cell.geohash));
             const evidenceLimits = Array.isArray(evidence?.limits) ? evidence.limits : [];
@@ -1655,7 +1675,14 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
             });
             const recommendation = unitAwareRecommendation(cell, units);
             return (
-              <article key={cell.geohash} className="rounded-xl border border-amber-200 bg-background/80 p-3 text-sm shadow-sm dark:border-amber-900/60 dark:bg-background/70">
+              <div
+                key={cell.geohash}
+                ref={reviewListVirtualizer.measureElement}
+                data-index={virtualItem.index}
+                className="absolute left-0 top-0 w-full pb-3"
+                style={{ transform: `translateY(${virtualItem.start}px)` }}
+              >
+              <article className="rounded-xl border border-amber-200 bg-background/80 p-3 text-sm shadow-sm dark:border-amber-900/60 dark:bg-background/70">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <details className="min-w-0 space-y-2 rounded-xl border border-border/70 bg-secondary/20 p-2 lg:flex-1">
                     <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 [&::-webkit-details-marker]:hidden">
@@ -1869,8 +1896,12 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
                   </div>
                 </div>
               </article>
+              </div>
             );
           })}
+          </div>
+          </div>
+          )}
         </div>
       )}
     </section>
