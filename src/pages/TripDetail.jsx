@@ -1045,6 +1045,28 @@ export default function TripDetail() {
   const routeRiskSegments = useMemo(() => (
     trip ? getSegmentsForTrip(trip, routeRiskIndex).filter((segment) => segment.riskLevel === 'high' || segment.riskLevel === 'moderate') : []
   ), [routeRiskIndex, trip]);
+  // Hoisted above the isLoading/!trip early returns below, because that is the
+  // only place a hook may legally live in this component. They ran unmemoized in
+  // the render body, so every state change on this page re-walked every route
+  // point four times over — buildTripSpeedLimitReviewCells alone geohashes each
+  // point and groups them, and its result was used only for a count.
+  const speedLimitSourceBreakdown = useMemo(() => buildSpeedLimitSourceBreakdown(
+    trip || {},
+    settings,
+    trip?.speed_limit_context || null,
+    speedLimitLocalKnowledgeResults
+  ), [settings, speedLimitLocalKnowledgeResults, trip]);
+  const speedLimitCoverage = useMemo(() => summarizeTripSpeedCoverage(trip || {}, {
+    localKnowledgeResults: speedLimitLocalKnowledgeResults,
+  }), [speedLimitLocalKnowledgeResults, trip]);
+  const speedLimitIntelligence = useMemo(
+    () => summarizeTripSpeedLimitIntelligence(trip || {}, speedLimitLocalKnowledgeResults),
+    [speedLimitLocalKnowledgeResults, trip]
+  );
+  const speedLimitReviewCount = useMemo(
+    () => buildTripSpeedLimitReviewCells(trip || {}, { maxCells: Infinity }).length,
+    [trip]
+  );
   const displayedRouteRiskSegments = showAllRouteRiskSegments
     ? routeRiskSegments
     : routeRiskSegments.slice(0, MAX_ROUTE_RISK_SEGMENTS_SHOWN);
@@ -1303,12 +1325,6 @@ export default function TripDetail() {
       : 'Weather unavailable';
   const speedLimitContext = trip.speed_limit_context || null;
   const speedLimitLookupEnabled = settings.speed_limit_lookup_enabled !== false;
-  const speedLimitSourceBreakdown = buildSpeedLimitSourceBreakdown(
-    trip,
-    settings,
-    speedLimitContext,
-    speedLimitLocalKnowledgeResults
-  );
   const hasPostedSpeedLimitEvidence = speedLimitSourceBreakdown.rows.some((row) => (
     ['openstreetmap', 'user_confirmed_posted_sign'].includes(row.source)
   ));
@@ -1336,9 +1352,6 @@ export default function TripDetail() {
       .filter(Number.isFinite)
   )]
     .sort((a, b) => a - b);
-  const speedLimitCoverage = summarizeTripSpeedCoverage(trip, {
-    localKnowledgeResults: speedLimitLocalKnowledgeResults,
-  });
   const osmCoveragePct = Number.isFinite(Number(speedLimitContext?.coverage))
     ? Number(speedLimitContext.coverage)
     : speedLimitCoverage.mapDerivedPercent;
@@ -1373,11 +1386,6 @@ export default function TripDetail() {
   const speedLimitProvenanceSummary = speedLimitSourceBreakdown.sampleCount
     ? `${speedLimitSourceBreakdown.summary} (${speedLimitSourceBreakdown.sampleCount} ${speedLimitSampleBasisLabel}).`
     : legacySpeedLimitProvenanceSummary;
-  const speedLimitIntelligence = summarizeTripSpeedLimitIntelligence(
-    trip,
-    speedLimitLocalKnowledgeResults
-  );
-  const speedLimitReviewCount = buildTripSpeedLimitReviewCells(trip, { maxCells: Infinity }).length;
   // Derived once, from raw point counts, inside summarizeTripSpeedLimitIntelligence -
   // recomputing them here from already-rounded integers made the three tiles
   // sum to 99% or 101%.
@@ -3087,6 +3095,15 @@ export default function TripDetail() {
           nightSettings={settings}
         />
       </SectionErrorBoundary>
+      {/* Speed Review reads the coverage, provenance, and review-cell builders,
+          so it is the calculation-heaviest section on this page. Unwrapped, a
+          throw here blanked the whole trip. */}
+      <SectionErrorBoundary
+        context="trip_detail_speed_review"
+        title="Speed review unavailable"
+        message="Something went wrong while preparing this trip's speed review. Reload to try again."
+        resetKey={trip.id}
+      >
       <motion.section
         ref={speedLimitReviewSectionRef}
         initial={{ opacity: 0, y: 16 }}
@@ -3180,6 +3197,7 @@ export default function TripDetail() {
           </div>
         )}
       </motion.section>
+      </SectionErrorBoundary>
       <div id="trip-score-review" className="scroll-mt-24">
         <PostTripCalibrationSurvey
           trip={trip}
