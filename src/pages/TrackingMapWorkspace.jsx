@@ -17,9 +17,8 @@ import {
   buildPlaybackTimeline,
   prepareMapRoutePoints,
 } from '@/lib/mapPlaybackInsights';
-import { formatDistance, formatSpeed, prefetchLocalKnowledge } from '@/lib/tripEngine';
-import { LocalSpeedKnowledge } from '@/lib/localSpeedKnowledge';
-import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
+import { formatDistance, formatSpeed } from '@/lib/tripEngine';
+import { useTripSpeedKnowledge } from '@/hooks/useTripSpeedKnowledge';
 import { buildRiskHotspots } from '@/lib/mediumInsights';
 import { buildRouteRiskIndex, getSegmentsForTrip } from '@/lib/routeRiskIndex';
 import {
@@ -85,7 +84,6 @@ export default function TrackingMapWorkspace() {
   const [showSpeedLimits, setShowSpeedLimits] = useState(true);
   const [showRouteRisk, setShowRouteRisk] = useState(true);
   const [showDangerZones, setShowDangerZones] = useState(false);
-  const [localKnowledgeResults, setLocalKnowledgeResults] = useState([]);
   const deferredSavedFilter = useDeferredValue(savedFilter);
   const deferredEventFilters = useDeferredValue(eventFilters);
   const deferredSurfaceMode = useDeferredValue(surfaceMode);
@@ -121,6 +119,10 @@ export default function TrackingMapWorkspace() {
     deferredSelectedTripId !== effectiveSelectedTripId;
   const { data: selectedTripRaw, isLoading: selectedTripLoading } = useQuery(tripDetailQueryOptions(deferredSelectedTripId));
   const selectedTrip = selectedTripRaw || filteredSummaries.find((trip) => String(trip.id) === String(deferredSelectedTripId)) || null;
+  const {
+    results: localKnowledgeResults,
+    failed: localKnowledgeFailed,
+  } = useTripSpeedKnowledge(selectedTrip, { context: 'tracking_map_local_speed_knowledge' });
 
   const overviewTripSummaries = useMemo(
     () => effectiveSelectedTripId ? [] : filteredSummaries.slice(0, OVERVIEW_ROUTE_LIMIT),
@@ -161,23 +163,6 @@ export default function TrackingMapWorkspace() {
     () => buildPlaybackTimeline(visualRoutePoints, visibleEvents),
     [visibleEvents, visualRoutePoints]
   );
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadKnowledge = async () => {
-      if (!selectedTrip?.route_points?.length) {
-        setLocalKnowledgeResults([]);
-        return;
-      }
-      const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
-      const results = await prefetchLocalKnowledge(selectedTrip.route_points, knowledge).catch(() => []);
-      if (!cancelled) setLocalKnowledgeResults(results);
-    };
-    loadKnowledge();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedTrip?.id, selectedTrip?.route_points]);
 
   const overlayTrips = useMemo(
     () => selectedTrip ? [selectedTrip, ...overviewTrips] : overviewTrips,
@@ -350,7 +335,14 @@ export default function TrackingMapWorkspace() {
               <InspectorRow label="Route gaps" value={String(routeGapCount)} />
               <InspectorRow label="Privacy gaps" value={String(privacyGapCount)} />
               <InspectorRow label="Speed-limit changes" value={String(speedLimitChangeCount)} />
-              <InspectorRow label="Local speed knowledge" value={`${localKnowledgeResults.filter(Boolean).length} point matches`} />
+              {/* "0 point matches" on a failed read is indistinguishable from a
+                  route that genuinely matched nothing. */}
+              <InspectorRow
+                label="Local speed knowledge"
+                value={localKnowledgeFailed
+                  ? 'unavailable'
+                  : `${localKnowledgeResults.filter(Boolean).length} point matches`}
+              />
               <InspectorRow label="Danger zones" value={`${dangerZones.length} computed`} />
               <InspectorRow label="Route risk segments" value={`${routeRiskSegments.length} visible`} />
 
