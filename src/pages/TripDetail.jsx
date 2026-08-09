@@ -125,6 +125,7 @@ import { eventFeedbackKey } from '@/lib/eventFeedbackKeys';
 import { formatDataSourceLabel } from '@/lib/metricRegistry';
 import { tripScoreDeltaSummary } from '@/lib/speedLimitDisplay';
 import { summarizeTripSpeedLimitIntelligence } from '@/lib/speedLimitIntelligence';
+import { describeTripSpeedCoverage, summarizeTripSpeedCoverage } from '@/lib/tripSpeedCoverage';
 import { getNightClassificationExplanation, getPremiumTripDetailPresentation } from '@/lib/premiumTripPresentation';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import useLocalSettings from '@/hooks/useLocalSettings';
@@ -1335,25 +1336,12 @@ export default function TripDetail() {
       .filter(Number.isFinite)
   )]
     .sort((a, b) => a - b);
-  const speedLimitCoverage = (() => {
-    const points = trip.route_points || [];
-    const limitPoints = points.filter((point) => Number.isFinite(Number(point.speed_limit_kmh)));
-    const posted = limitPoints.filter((point) => point.speed_limit_source === 'openstreetmap').length;
-    const fallbackDefault = limitPoints.filter((point) => point.speed_limit_source === 'osm_highway_default').length;
-    const mapDerived = posted + fallbackDefault;
-    const inferred = limitPoints.filter((point) => point.speed_limit_source === 'inferred').length;
-    const pct = (count) => points.length ? Math.round((count / points.length) * 100) : 0;
-    return {
-      postedPct: pct(posted),
-      fallbackDefaultPct: pct(fallbackDefault),
-      mapDerivedPct: pct(mapDerived),
-      inferredPct: pct(inferred),
-      sampleCount: points.length,
-    };
-  })();
+  const speedLimitCoverage = summarizeTripSpeedCoverage(trip, {
+    localKnowledgeResults: speedLimitLocalKnowledgeResults,
+  });
   const osmCoveragePct = Number.isFinite(Number(speedLimitContext?.coverage))
     ? Number(speedLimitContext.coverage)
-    : speedLimitCoverage.mapDerivedPct;
+    : speedLimitCoverage.mapDerivedPercent;
   const showLowSpeedLimitCoverageBanner = speedLimitLookupEnabled &&
     !hasLocalSpeedLimitKnowledge &&
     speedLimitCoverage.sampleCount > 0 &&
@@ -1375,15 +1363,9 @@ export default function TripDetail() {
   const speedLimitDefaultCountryText = speedLimitDefaultCountries.length
     ? ` Country estimate profile for missing OSM maxspeed tags: ${speedLimitDefaultCountries.join(', ')}.`
     : '';
-  const legacySpeedLimitProvenanceSummary = [
-    `${speedLimitCoverage.postedPct}% of this route used posted OpenStreetMap limits`,
-    speedLimitCoverage.fallbackDefaultPct > 0
-      ? `${speedLimitCoverage.fallbackDefaultPct}% used ${speedLimitDefaultCountryLabel} road-type estimates`
-      : null,
-    speedLimitCoverage.inferredPct > 0
-      ? `${speedLimitCoverage.inferredPct}% used GPS-inferred limits`
-      : null,
-  ].filter(Boolean).join('; ') + ` (${speedLimitCoverage.sampleCount} samples).`;
+  const legacySpeedLimitProvenanceSummary = describeTripSpeedCoverage(speedLimitCoverage, {
+    regionLabel: speedLimitDefaultCountryLabel,
+  });
   const speedLimitBreakdownIsFrozen = speedLimitSourceBreakdown.basis === 'scored';
   const speedLimitSampleBasisLabel = speedLimitBreakdownIsFrozen
     ? 'samples scored'

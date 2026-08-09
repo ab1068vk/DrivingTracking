@@ -3973,6 +3973,7 @@ export default function Settings() {
                 </div>
                 <input
                   type="range"
+                  aria-label="Only notify if score is at least"
                   min={0}
                   max={100}
                   step={5}
@@ -4056,6 +4057,7 @@ export default function Settings() {
               </div>
               <input
                 type="range"
+                aria-label={label}
                 min={min}
                 max={max}
                 step={step}
@@ -4163,6 +4165,8 @@ export default function Settings() {
                     </div>
                     <input
                       type="range"
+                      aria-label={label}
+                      aria-valuetext={`${cfg[key] || 0} minutes`}
                       min={min}
                       max={max}
                       step={15}
@@ -4180,6 +4184,8 @@ export default function Settings() {
                 </div>
                 <input
                   type="range"
+                  aria-label="Boundary buffer"
+                  aria-valuetext={`${cfg.night_boundary_tolerance_minutes ?? 5} minutes`}
                   min={0}
                   max={30}
                   step={1}
@@ -4529,6 +4535,7 @@ export default function Settings() {
               </div>
               <input
                 type="range" min={min} max={max} step={step} value={cfg[key]}
+                aria-label={label} aria-valuetext={`${cfg[key]} ${unit}`}
                 disabled={!thresholdEditingEnabled}
                 onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })}
                 className="w-full accent-primary disabled:opacity-45"
@@ -4575,6 +4582,7 @@ export default function Settings() {
                   </div>
                   <input
                     type="range" min={min} max={max} step={step} value={cfg[key]}
+                    aria-label={label} aria-valuetext={`${cfg[key]} ${unit}`}
                     disabled={!thresholdEditingEnabled || cfg.advanced_safety_detection_enabled === false}
                     onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })}
                     className="w-full accent-primary disabled:opacity-45"
@@ -4617,6 +4625,7 @@ export default function Settings() {
                   </div>
                   <input
                     type="range" min={min} max={max} step={step} value={cfg[key]}
+                    aria-label={label} aria-valuetext={`${cfg[key]} ${unit}`}
                     disabled={!thresholdEditingEnabled}
                     onChange={e => updateCfg({ [key]: parseFloat(e.target.value) })}
                     className="w-full accent-primary disabled:opacity-45"
@@ -4931,6 +4940,8 @@ export default function Settings() {
                     </div>
                     <input
                       type="range"
+                      aria-label={label}
+                      aria-valuetext={`${cfg[key]} ${unit}`}
                       min={min}
                       max={max}
                       step={step}
@@ -5163,6 +5174,8 @@ export default function Settings() {
           </div>
           <input
             type="range"
+            aria-label="OSRM timeout"
+            aria-valuetext={`${Math.round((Number(cfg.osrm_timeout_ms) || 12000) / 1000)} seconds`}
             min={5}
             max={30}
             step={1}
@@ -5281,6 +5294,8 @@ export default function Settings() {
           </div>
           <input
             type="range" min={5} max={30} step={5}
+            aria-label="Warn when over limit by"
+            aria-valuetext={`${cfg.threshold_speed_over_kmh ?? 5} km/h over the limit`}
             value={cfg.threshold_speed_over_kmh ?? 5}
             disabled={cfg.speed_warning_enabled === false}
             onChange={e => updateCfg({ threshold_speed_over_kmh: parseFloat(e.target.value) })}

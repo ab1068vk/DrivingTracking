@@ -4,20 +4,19 @@ import {
   speedLimitConfidenceLabel,
 } from '@/lib/speedLimitConfidence';
 import { buildSpeedEvidenceDecision } from '@/lib/speedEvidenceReasoning';
+import {
+  isPublicRoutePoint,
+  pointLimitKmh,
+  pointLimitSource,
+  pointSpeedKmh,
+} from '@/lib/tripSpeedCoverage';
 
-const pointLimit = (point = {}) => {
-  const value = Number(point.speed_limit_kmh ?? point.limitKmh ?? point.speedLimitKmh);
-  return Number.isFinite(value) && value > 0 ? value : null;
-};
-
-const pointSpeed = (point = {}) => {
-  const value = Number(point.speed_kmh ?? point.speedKmh);
-  return Number.isFinite(value) && value >= 0 ? value : null;
-};
-
-const pointSource = (point = {}) => (
-  point.speed_limit_source ?? point.limitSource ?? point.speedLimitSource ?? point.source ?? 'unknown'
-);
+// Shared with tripSpeedCoverage so coverage and intelligence read a point the
+// same way; a divergence here showed up as two different coverage figures for
+// the same trip on two different screens.
+const pointLimit = pointLimitKmh;
+const pointSpeed = pointSpeedKmh;
+const pointSource = pointLimitSource;
 
 const pointTimestamp = (point = {}) => (
   point.timestampMs ?? point.timestamp_ms ?? point.timestamp ?? point.recorded_at ?? null
@@ -27,14 +26,7 @@ const pointHeading = (point = {}) => (
   point.headingDeg ?? point.heading ?? point.bearing ?? point.course ?? null
 );
 
-const publicPoint = (point = {}) => (
-  Number.isFinite(Number(point.lat)) &&
-  Number.isFinite(Number(point.lng)) &&
-  point.privacy_export_placeholder !== true &&
-  point.masked_for_privacy !== true &&
-  point.privacy_gap !== true &&
-  point.privacy_live_redacted !== true
-);
+const publicPoint = isPublicRoutePoint;
 
 export function speedLimitReviewPriority(item = {}, context = {}) {
   const evidence = assessSpeedLimitEvidence(item);
