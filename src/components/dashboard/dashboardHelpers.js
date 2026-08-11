@@ -6,7 +6,7 @@ import { logError } from '@/lib/errorReporting';
 import { isAndroid } from '@/lib/nativePlatform';
 import { VOICE_COOLDOWNS_BY_TIER, shouldWarnForSpeed } from '@/lib/speedLimitSource';
 export { createTierAwareSpeedLimitContext } from '@/lib/speed/speedTierContext';
-import { liveSpeedAlertGate } from '@/lib/speed/speedAlertGate';
+import { liveSpeedAlertGate, speedAlertSustainedMs } from '@/lib/speed/speedAlertGate';
 import { TRIP_STATES, formatSpeed } from '@/lib/tripEngine';
 import { formatDistanceMeters, speedUnitLabel } from '@/lib/unitFormatting';
 import { shouldMuteWebViewVoiceForTrip, speakSafetyAlertOnce } from '@/lib/voiceAlerts';
@@ -126,6 +126,7 @@ export function checkAndSpeakSpeedAlert(speed, resolved, settings, onAlert, {
       limitKmh: resolved.limitKmh,
       marginKmh: warning.voiceMarginKmh,
       nowMs,
+      sustainedMs: speedAlertSustainedMs(settings),
     }).sustained
     : true;
   if (!sustained) return;

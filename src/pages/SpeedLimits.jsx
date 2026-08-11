@@ -86,6 +86,10 @@ import {
 } from '@/lib/savedRoadSpeedFilters';
 import { backfillLocalRoadMemoryFromTripHistory } from '@/lib/roadMemoryCoordinator';
 import {
+  pruneSpeedKnowledge,
+  speedKnowledgeRetentionDays,
+} from '@/lib/speed/speedKnowledgeMaintenance';
+import {
   readSpeedGeometryIndex,
   rebuildSpeedGeometryIndex,
 } from '@/lib/speedGeometryIndex';
@@ -3156,14 +3160,16 @@ export default function SpeedLimits() {
   };
 
   const cleanExpiredSpeedKnowledge = async () => {
-    const beforeKnowledge = await knowledge.exportData();
-    await knowledge.prune(180);
-    const afterKnowledge = await knowledge.exportData();
-    const updatedTrips = await withRecalculation(() => (
-      refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
-    ));
+    // The window is the driver's setting, not a literal, so this button and the
+    // one in Settings > Saved road speeds remove exactly the same evidence.
+    const { retentionDays, updatedTrips } = await pruneSpeedKnowledge(knowledge, {
+      retentionDays: speedKnowledgeRetentionDays(settings),
+      rescore: (before, after) => withRecalculation(() => (
+        refreshTripsForLocalSpeedKnowledgeChanges(before, after).catch(() => null)
+      )),
+    });
     setStatus(withUndo(updatedTrips
-      ? `Removed expired temporary rules and learned evidence older than 180 days while preserving historical speed versions. Recalculated ${updatedTrips.length} affected trip${updatedTrips.length === 1 ? '' : 's'}.`
+      ? `Removed expired temporary rules and learned evidence older than ${retentionDays} days while preserving historical speed versions. Recalculated ${updatedTrips.length} affected trip${updatedTrips.length === 1 ? '' : 's'}.`
       : 'Removed expired temporary rules and old learned evidence while preserving historical speed versions, but affected trips could not be recalculated right now.'));
     await refreshRowsAndMap();
   };

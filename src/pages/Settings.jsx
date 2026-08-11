@@ -4,6 +4,7 @@ import {
   SettingsSubheading,
   SettingsSection,
   SettingRow,
+  Toggle,
   numberDraftValue,
   updateOptionalNumberDraft,
   formatLegalNoticeDate,
@@ -12,6 +13,7 @@ import {
 import {
   SETTINGS_SECTIONS,
 } from '@/components/settings/settingsSectionManifest';
+import SavedRoadSpeedsSection from '@/components/settings/SavedRoadSpeedsSection';
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -221,40 +223,6 @@ const exportDataPortabilityBundleFromSettings = (...args) => import('@/lib/dataR
 
 const eraseAllLocalDataAndDownloadReceiptFromSettings = (...args) => import('@/lib/dataRights')
   .then(({ eraseAllLocalDataAndDownloadReceipt }) => eraseAllLocalDataAndDownloadReceipt.apply(null, args));
-
-function Toggle({ value, onChange, disabled = false, ...ariaProps }) {
-  const [optimisticValue, setOptimisticValue] = useState(Boolean(value));
-  const latestValueRef = useRef(Boolean(value));
-  latestValueRef.current = Boolean(value);
-  useEffect(() => setOptimisticValue(Boolean(value)), [value]);
-
-  const change = (event) => {
-    event.stopPropagation();
-    const next = !optimisticValue;
-    setOptimisticValue(next);
-    runAfterVisiblePaint(() => {
-      Promise.resolve(onChange(next)).finally(() => {
-        window.setTimeout(() => setOptimisticValue(latestValueRef.current), 500);
-      });
-    });
-  };
-
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={optimisticValue}
-      disabled={disabled}
-      onClick={change}
-      // The after: pseudo-element lifts the touch target to ~44px without changing how the
-      // 24px-tall switch looks.
-      className={`relative w-12 h-6 rounded-full transition-colors disabled:opacity-50 after:absolute after:content-[''] after:inset-x-0 after:-inset-y-[10px] ${optimisticValue ? 'bg-primary' : 'bg-secondary border border-border'}`}
-      {...ariaProps}
-    >
-      <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${optimisticValue ? 'left-6' : 'left-0.5'}`} />
-    </button>
-  );
-}
 
 function OptimisticCheckbox({ checked, onCheckedChange, ...props }) {
   const [optimisticChecked, setOptimisticChecked] = useState(checked === true);
@@ -5307,6 +5275,16 @@ export default function Settings() {
           </div>
         </div>
 
+        </>)}</SettingsSection>
+
+        <SettingsSection id="settings-saved-road-speeds" activeId={activeSettingsSection}>{() => (<>
+        {/* Saved road speeds — the on-device speed system, so the app never has to ask OSM */}
+        <SectionTitle id="settings-saved-road-speeds">Saved Road Speeds</SectionTitle>
+        <SavedRoadSpeedsSection
+          cfg={cfg}
+          updateCfg={updateCfg}
+          onManageSavedSpeeds={() => navigate('/speed-limits')}
+        />
         </>)}</SettingsSection>
 
         <SettingsSection id="settings-privacy-data" activeId={activeSettingsSection}>{() => (<>

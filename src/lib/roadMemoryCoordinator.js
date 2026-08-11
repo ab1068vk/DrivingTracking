@@ -8,13 +8,19 @@ import { speedLimitLadderUnits } from '@/lib/speed/speedLimitLadder';
 let synchronizationChain = Promise.resolve();
 let historyBackfillPromise = null;
 
-async function synchronize(trips = [], { rescore = true } = {}) {
+async function synchronize(trips = [], { rescore = true, force = false } = {}) {
   const completed = (Array.isArray(trips) ? trips : [])
     .filter((trip) => trip?.status === 'completed' && Array.isArray(trip?.route_points));
   if (!completed.length) return { changed: false, changedCandidates: [] };
 
   const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
   const settings = localSettings.get();
+  // The kill switch covers the automatic path only. `force` is how an explicit
+  // "learn from my trip history" press still works — that is the driver asking
+  // for one pass, not for the background learner to come back on.
+  if (!force && settings?.road_memory_learning_enabled === false) {
+    return { changed: false, changedCandidates: [], skipped: 'learning_disabled' };
+  }
   const result = await knowledge.learnRoadMemoryFromTrips(
     completed,
     getPrivacyZones(settings),
@@ -102,7 +108,7 @@ export function backfillLocalRoadMemoryFromTripHistory({
     // Share the same chain as live trip completion. Otherwise a history import
     // can race a newly completed trip and the two whole-model writes can clobber
     // one another.
-    const result = await synchronizeLocalRoadMemory(trips, { rescore: true });
+    const result = await synchronizeLocalRoadMemory(trips, { rescore: true, force: true });
     return {
       ...result,
       scannedTripCount: trips.length,

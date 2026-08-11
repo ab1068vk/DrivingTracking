@@ -9,7 +9,7 @@
 //     turns every section into eager work on every Settings render.
 //   - SettingRow's `data-setting-label` attribute and the exact label strings
 //     are how e2e/settings-controls.spec.js targets individual controls.
-import { cloneElement, isValidElement, memo, useId } from 'react';
+import { cloneElement, isValidElement, memo, useEffect, useId, useRef, useState } from 'react';
 
 export function SectionTitle({ children, id }) {
   return <div id={id} className="scroll-mt-24 text-xs font-bold uppercase tracking-widest text-muted-foreground px-1 mb-2 mt-6">{children}</div>;
@@ -75,6 +75,49 @@ export function SettingRow({ icon: Icon = null, label, sublabel = '', children =
       </div>
       <div className="flex-shrink-0 max-w-[46%]">{labelledChildren}</div>
     </div>
+  );
+}
+
+/**
+ * The settings switch. It lives here rather than in Settings.jsx so a section
+ * extracted into its own component reuses this one instead of growing a second
+ * switch that drifts from it.
+ *
+ * The optimistic value is what makes the switch feel instant: a settings write
+ * is async, and waiting for it to land before moving the knob made every toggle
+ * feel broken. `latestValueRef` is how it reconciles back to the real value.
+ */
+export function Toggle({ value, onChange, disabled = false, ...ariaProps }) {
+  const [optimisticValue, setOptimisticValue] = useState(Boolean(value));
+  const latestValueRef = useRef(Boolean(value));
+  latestValueRef.current = Boolean(value);
+  useEffect(() => setOptimisticValue(Boolean(value)), [value]);
+
+  const change = (event) => {
+    event.stopPropagation();
+    const next = !optimisticValue;
+    setOptimisticValue(next);
+    runAfterVisiblePaint(() => {
+      Promise.resolve(onChange(next)).finally(() => {
+        window.setTimeout(() => setOptimisticValue(latestValueRef.current), 500);
+      });
+    });
+  };
+
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={optimisticValue}
+      disabled={disabled}
+      onClick={change}
+      // The after: pseudo-element lifts the touch target to ~44px without changing how the
+      // 24px-tall switch looks.
+      className={`relative w-12 h-6 rounded-full transition-colors disabled:opacity-50 after:absolute after:content-[''] after:inset-x-0 after:-inset-y-[10px] ${optimisticValue ? 'bg-primary' : 'bg-secondary border border-border'}`}
+      {...ariaProps}
+    >
+      <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${optimisticValue ? 'left-6' : 'left-0.5'}`} />
+    </button>
   );
 }
 

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 import { SPEED_ALERT_MIN_CONFIDENCE, SPEED_ALERT_RELEASE_KMH, SPEED_ALERT_SUSTAINED_MS } from '@/lib/appConstants';
-import { createSpeedAlertGate } from '@/lib/speed/speedAlertGate';
+import { createSpeedAlertGate, speedAlertSustainedMs } from '@/lib/speed/speedAlertGate';
 
 const over = (gate, speedKmh, nowMs) => gate.evaluate({
   speedKmh,
@@ -71,6 +71,42 @@ describe('speed alert gate', () => {
     over(gate, 70, 0);
     gate.reset();
     expect(over(gate, 70, 5000).sustained).toBe(false);
+  });
+});
+
+describe('driver-configured sustained window', () => {
+  it('uses the shared constant when the setting is absent or unusable', () => {
+    expect(speedAlertSustainedMs({})).toBe(SPEED_ALERT_SUSTAINED_MS);
+    // '' and null both coerce to 0, which would silently mean "no gate at all".
+    expect(speedAlertSustainedMs({ speed_alert_sustained_s: '' })).toBe(SPEED_ALERT_SUSTAINED_MS);
+    expect(speedAlertSustainedMs({ speed_alert_sustained_s: null })).toBe(SPEED_ALERT_SUSTAINED_MS);
+    expect(speedAlertSustainedMs({ speed_alert_sustained_s: -3 })).toBe(SPEED_ALERT_SUSTAINED_MS);
+  });
+
+  it('converts whole seconds to the milliseconds the gate works in', () => {
+    expect(speedAlertSustainedMs({ speed_alert_sustained_s: 8 })).toBe(8000);
+    expect(speedAlertSustainedMs({ speed_alert_sustained_s: 0 })).toBe(0);
+  });
+
+  it('honours a per-call window over the one the gate was built with', () => {
+    // The live gate is a module singleton built before any setting is readable,
+    // so the threshold has to arrive per call rather than at construction.
+    const gate = createSpeedAlertGate();
+    expect(gate.evaluate({ speedKmh: 70, limitKmh: 50, marginKmh: 5, nowMs: 0 }).sustained)
+      .toBe(false);
+    expect(gate.evaluate({
+      speedKmh: 70, limitKmh: 50, marginKmh: 5, nowMs: 2000, sustainedMs: 2000,
+    }).sustained).toBe(true);
+    expect(gate.evaluate({
+      speedKmh: 70, limitKmh: 50, marginKmh: 5, nowMs: 2000, sustainedMs: 10000,
+    }).sustained).toBe(false);
+  });
+
+  it('speaks immediately when the driver sets the window to zero', () => {
+    const gate = createSpeedAlertGate();
+    expect(gate.evaluate({
+      speedKmh: 70, limitKmh: 50, marginKmh: 5, nowMs: 0, sustainedMs: 0,
+    })).toMatchObject({ over: true, sustained: true });
   });
 });
 

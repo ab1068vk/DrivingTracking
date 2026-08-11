@@ -219,6 +219,23 @@ export const SETTINGS_SECTIONS = [
     ],
   },
   {
+    id: 'settings-saved-road-speeds',
+    group: 'coaching-detection',
+    title: 'Saved Road Speeds',
+    icon: Route,
+    detail: 'On-device speed learning, the alert confidence floor, storage, and cleanup.',
+    keywords: 'saved road speeds road memory learn learning local knowledge confidence floor sustained alert ladder metric imperial retention prune cleanup storage native mirror background copy offline private no osm',
+    searchItems: [
+      { label: 'Learn speeds from my drives', keywords: 'road memory auto learn on device local knowledge disable pause' },
+      { label: 'Speed ladder', keywords: 'rungs metric imperial mph kmh snap common limits units' },
+      { label: 'Minimum confidence to speak', keywords: 'alert floor voice threshold uncertain guess estimated' },
+      { label: 'Sustained over the limit before speaking', keywords: 'seconds gps spike debounce voice delay' },
+      { label: 'Keep learned evidence for', keywords: 'retention days prune expire old' },
+      { label: 'Clean up expired evidence now', keywords: 'prune remove expired temporary rules rescore' },
+      { label: 'Background copy for closed-app trips', keywords: 'native mirror android service offline rewrite health' },
+    ],
+  },
+  {
     id: 'settings-privacy-data',
     group: 'privacy-data',
     title: 'Privacy & Data',

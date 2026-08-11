@@ -9,6 +9,9 @@ import {
   MOTION_SAMPLE_RETENTION_DAYS_DEFAULT,
   NIGHT_END_TIME,
   NIGHT_START_TIME,
+  SPEED_ALERT_MIN_CONFIDENCE,
+  SPEED_ALERT_SUSTAINED_MS,
+  SPEED_KNOWLEDGE_RETENTION_DAYS_DEFAULT,
 } from '@/lib/appConstants';
 import {
   CAPTURE_FIDELITY_VALUES,
@@ -393,6 +396,14 @@ export const DEFAULT_SETTINGS = {
   speak_estimated_speed_checks: true,
   estimated_voice_margin_kmh: 12,
   inferred_voice_margin_kmh: 20,
+  // Saved road speeds (the on-device learned limits). These exist so the local
+  // system is tunable without depending on OSM; the two alert keys were already
+  // read by speedConfidencePolicy/speedAlertGate but had no declared default,
+  // so the constant was the only value they could ever take.
+  road_memory_learning_enabled: true,
+  speed_alert_min_confidence: SPEED_ALERT_MIN_CONFIDENCE,
+  speed_alert_sustained_s: SPEED_ALERT_SUSTAINED_MS / 1000,
+  speed_knowledge_retention_days: SPEED_KNOWLEDGE_RETENTION_DAYS_DEFAULT,
   country_code: '',
   configurable_country_defaults: 'global',
   weather_context_enabled: false,
@@ -671,6 +682,11 @@ const SETTING_NUMBER_RANGES = {
   threshold_speeding_kmh: [80, 160],
   estimated_voice_margin_kmh: [0, 60],
   inferred_voice_margin_kmh: [0, 80],
+  // Floored at the profile confidence of a regional default estimate: below
+  // that, every tier would qualify and the floor would stop meaning anything.
+  speed_alert_min_confidence: [0.3, 0.95],
+  speed_alert_sustained_s: [0, 20],
+  speed_knowledge_retention_days: [30, 730],
   threshold_speed_over_kmh: [5, 30],
   threshold_eco_cruise_min_kmh: [0, 160],
   threshold_eco_cruise_max_kmh: [20, 200],

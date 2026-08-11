@@ -13,6 +13,11 @@ import {
   sanitizeImportedSettings,
   validateSettingsPatch,
 } from '@/lib/trackingStore';
+import {
+  SPEED_ALERT_MIN_CONFIDENCE,
+  SPEED_ALERT_SUSTAINED_MS,
+  SPEED_KNOWLEDGE_RETENTION_DAYS_DEFAULT,
+} from '@/lib/appConstants';
 
 // CHANGES (session):
 // - Added validation coverage for blank numeric setting drafts during input editing.
@@ -601,5 +606,30 @@ describe('tracking store default settings', () => {
     expect(migrated.phone_proxy_max_accuracy_m).toBe(20);
     expect(migrated.threshold_overtake_accel_ms2).toBe(3);
     expect(sanitizeImportedSettings({ threshold_overtake_accel_ms2: 2 }).threshold_overtake_accel_ms2).toBe(3);
+  });
+
+  it('declares the saved-road-speed settings the speed policy already reads', () => {
+    // speed_alert_min_confidence was read by speedAlertPolicy and
+    // speed_alert_sustained_s by the alert gate, but neither had a default, so
+    // the shared constant was the only value they could ever take.
+    expect(DEFAULT_SETTINGS.speed_alert_min_confidence).toBe(SPEED_ALERT_MIN_CONFIDENCE);
+    expect(DEFAULT_SETTINGS.speed_alert_sustained_s).toBe(SPEED_ALERT_SUSTAINED_MS / 1000);
+    expect(DEFAULT_SETTINGS.speed_knowledge_retention_days)
+      .toBe(SPEED_KNOWLEDGE_RETENTION_DAYS_DEFAULT);
+    // Learning is on by default: the local speed system is the reason the app
+    // does not have to ask OSM for limits.
+    expect(DEFAULT_SETTINGS.road_memory_learning_enabled).toBe(true);
+  });
+
+  it('rejects saved-road-speed values outside the range the controls offer', () => {
+    expect(validateSettingsPatch({ speed_alert_min_confidence: 0.7 }))
+      .toEqual({ valid: true, errors: [] });
+    expect(validateSettingsPatch({ speed_alert_min_confidence: 0.05 }))
+      .toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ speed_alert_sustained_s: 200 })).toMatchObject({ valid: false });
+    expect(validateSettingsPatch({ speed_knowledge_retention_days: 5 }))
+      .toMatchObject({ valid: false });
+    expect(sanitizeImportedSettings({ speed_knowledge_retention_days: 99999 })
+      .speed_knowledge_retention_days).toBeLessThanOrEqual(730);
   });
 });

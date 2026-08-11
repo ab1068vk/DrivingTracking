@@ -44,6 +44,16 @@ export const SPEED_ALERT_SUSTAINED_MS = 5000;
 export const SPEED_ALERT_MIN_CONFIDENCE = 0.55;
 export const SPEED_ALERT_RELEASE_KMH = 3;
 
+/**
+ * How long learned road-speed evidence is kept before a cleanup pass drops it.
+ *
+ * Shared by the Settings cleanup action and the one on Saved Road Speeds, which
+ * previously hardcoded 180 on its own. Historical versions of a rule the driver
+ * edited are preserved regardless — this window only governs learned evidence
+ * and expired temporary rules.
+ */
+export const SPEED_KNOWLEDGE_RETENTION_DAYS_DEFAULT = 180;
+
 export const MAX_VISIBLE_DANGER_ZONES = 6;
 export const MAX_ROUTE_RISK_SEGMENTS_SHOWN = 3;
 
