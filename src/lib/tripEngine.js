@@ -5006,6 +5006,10 @@ export function getInferredLimitForPoint(routePoints = [], point = null, thresho
 
 /**
  * Calculate speed-limit compliance breakdown by inferred road type.
+ *
+ * Every weight here is elapsed time, not GPS point count — see `secondsForIndex`
+ * for why. `point_count` survives only as a diagnostic.
+ *
  * @param {Array<{lat:number,lng:number,timestamp:string,speed_kmh?:number}>} routePoints - Ordered GPS route points.
  * @param {Object} stats - Trip stats, optionally including speed_zones.
  * @param {Object} thresholds - Driving thresholds for speed-over-limit tolerance.
@@ -5023,10 +5027,27 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
   const zones = speedLimitContexts
     ? []
     : Array.isArray(stats.speed_zones) ? stats.speed_zones : inferSpeedZones(points, thresholds);
+  const newBucket = () => ({
+    totalPoints: 0,
+    overLimitPoints: 0,
+    maxSpeed: 0,
+    limitTotal: 0,
+    actualLimitSeconds: 0,
+    osmMaxspeedSeconds: 0,
+    osmDefaultSeconds: 0,
+    confidenceTotal: 0,
+    tierSeconds: {},
+    totalRawPenalty: 0,
+    totalWeightedPenalty: 0,
+    totalPostedWeight: 0,
+    totalSeconds: 0,
+    overLimitSeconds: 0,
+    penalizedSeconds: 0,
+  });
   const byType = {
-    highway: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0, osmMaxspeedPoints: 0, osmDefaultPoints: 0, confidenceTotal: 0, tierCounts: {}, totalRawPenalty: 0, totalWeightedPenalty: 0, totalPostedWeight: 0, penalizedPoints: 0 },
-    urban: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0, osmMaxspeedPoints: 0, osmDefaultPoints: 0, confidenceTotal: 0, tierCounts: {}, totalRawPenalty: 0, totalWeightedPenalty: 0, totalPostedWeight: 0, penalizedPoints: 0 },
-    residential: { totalPoints: 0, overLimitPoints: 0, maxSpeed: 0, limitTotal: 0, actualLimitPoints: 0, osmMaxspeedPoints: 0, osmDefaultPoints: 0, confidenceTotal: 0, tierCounts: {}, totalRawPenalty: 0, totalWeightedPenalty: 0, totalPostedWeight: 0, penalizedPoints: 0 },
+    highway: newBucket(),
+    urban: newBucket(),
+    residential: newBucket(),
   };
   const speedOver = thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH;
   const zoneForIndex = speedLimitContexts ? null : createZoneLookup(zones);
@@ -5035,6 +5056,31 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
   // this instead of recomputing reliablePointSpeed for every point a second
   // time, which also guarantees the two can never disagree on the denominator.
   const scoredPointIndexes = [];
+
+  /**
+   * Seconds this fix stands for, which is what every weight below is measured in.
+   *
+   * Compliance used to be weighted by GPS point count, and a point is not a unit
+   * of anything a driver experiences: sampling is densest in stop-start traffic
+   * and sparsest at speed, so a minute crawling through town outvoted a minute on
+   * a motorway purely because it produced more fixes. Gaps are clamped to
+   * ROUTE_GAP_SECONDS so a tunnel or a paused recording cannot let one fix stand
+   * for the whole outage, and an unusable timestamp falls back to one second,
+   * which reproduces the old per-point behaviour for that fix alone.
+   */
+  const secondsForIndex = (index) => {
+    // parseTimestampMs, not timestampMs: the latter substitutes Date.now() for an
+    // unreadable value, which past the end of the array made the final fix look
+    // months long and stand for a whole clamped gap on its own.
+    const currentMs = parseTimestampMs(points[index]?.timestamp ?? points[index]?.time);
+    const neighbour = index + 1 < points.length ? points[index + 1] : points[index - 1];
+    const neighbourMs = parseTimestampMs(neighbour?.timestamp ?? neighbour?.time);
+    if (currentMs == null || neighbourMs == null) return 1;
+    // The last fix has no successor, so it mirrors the interval before it.
+    const seconds = Math.abs(neighbourMs - currentMs) / 1000;
+    if (!Number.isFinite(seconds) || seconds <= 0) return 1;
+    return Math.min(seconds, ROUTE_GAP_SECONDS);
+  };
 
   points.forEach((point, index) => {
     const speed = reliablePointSpeed(points, index, thresholds);
@@ -5055,15 +5101,17 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
     );
     const limit = speedLimitContext.effectiveLimitKmh ?? complianceFallbackLimit(roadType, thresholds);
     const bucket = byType[roadType];
+    const seconds = secondsForIndex(index);
     bucket.totalPoints++;
-    bucket.limitTotal += limit;
-    bucket.confidenceTotal += Number(speedLimitContext.confidence) || 0;
+    bucket.totalSeconds += seconds;
+    bucket.limitTotal += limit * seconds;
+    bucket.confidenceTotal += (Number(speedLimitContext.confidence) || 0) * seconds;
     const bucketTier = canonicalSpeedTier(speedLimitContext.tier || 'UNKNOWN');
-    bucket.tierCounts[bucketTier] = (bucket.tierCounts[bucketTier] || 0) + 1;
+    bucket.tierSeconds[bucketTier] = (bucket.tierSeconds[bucketTier] || 0) + seconds;
     if (speedLimitContext.actualLimitKmh != null) {
-      bucket.actualLimitPoints++;
-      if (speedLimitContext.limitSource === 'openstreetmap') bucket.osmMaxspeedPoints++;
-      if (speedLimitContext.limitSource === 'osm_highway_default') bucket.osmDefaultPoints++;
+      bucket.actualLimitSeconds += seconds;
+      if (speedLimitContext.limitSource === 'openstreetmap') bucket.osmMaxspeedSeconds += seconds;
+      if (speedLimitContext.limitSource === 'osm_highway_default') bucket.osmDefaultSeconds += seconds;
     }
     bucket.maxSpeed = Math.max(bucket.maxSpeed, speed);
     // Every evaluated point contributes to the denominator, not just the over-limit ones.
@@ -5072,22 +5120,23 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
     // thousand out of a thousand. Compliant points carry weight with zero penalty, which
     // is what makes extent of speeding — not only its severity — move the score.
     const penaltyWeight = confidenceToPenaltyWeight(speedLimitContext.confidence);
-    bucket.totalPostedWeight += penaltyWeight;
+    bucket.totalPostedWeight += penaltyWeight * seconds;
     if (speed > limit + speedOver) {
       const rawPenalty = Math.min(100, Math.max(0, (speed - (limit + speedOver)) * 2));
       bucket.overLimitPoints++;
-      bucket.penalizedPoints++;
-      bucket.totalRawPenalty += rawPenalty;
-      bucket.totalWeightedPenalty += rawPenalty * penaltyWeight;
+      bucket.overLimitSeconds += seconds;
+      bucket.penalizedSeconds += seconds;
+      bucket.totalRawPenalty += rawPenalty * seconds;
+      bucket.totalWeightedPenalty += rawPenalty * penaltyWeight * seconds;
     }
   });
 
   const build = (bucket) => {
     if (!bucket.totalPoints) return null;
-    const inferredLimit = Math.round(bucket.limitTotal / bucket.totalPoints);
-    const rate = 1 - bucket.overLimitPoints / bucket.totalPoints;
+    const inferredLimit = Math.round(bucket.limitTotal / bucket.totalSeconds);
+    const rate = 1 - bucket.overLimitSeconds / bucket.totalSeconds;
     const maxExcessKmh = Math.max(0, bucket.maxSpeed - inferredLimit);
-    const dominantTier = Object.entries(bucket.tierCounts)
+    const dominantTier = Object.entries(bucket.tierSeconds)
       .sort((a, b) => b[1] - a[1])[0]?.[0] || 'UNKNOWN';
     const limitSource = {
       POSTED: 'posted',
@@ -5097,9 +5146,9 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
       GPS_INFERRED: 'inferred',
       UNKNOWN: 'unknown',
     }[canonicalSpeedTier(dominantTier)] || 'unknown';
-    const averageConfidence = bucket.confidenceTotal / bucket.totalPoints;
-    const rawScore = bucket.totalPoints
-      ? clamp(Math.round(100 - (bucket.totalRawPenalty / bucket.totalPoints)), 0, 100)
+    const averageConfidence = bucket.confidenceTotal / bucket.totalSeconds;
+    const rawScore = bucket.totalSeconds
+      ? clamp(Math.round(100 - (bucket.totalRawPenalty / bucket.totalSeconds)), 0, 100)
       : 100;
     // Zero posted weight means no point in this bucket carried a limit we trust
     // enough to score against — every one resolved below the 0.30 penalty floor.
@@ -5111,11 +5160,11 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
     const score = scoreAvailable
       ? clamp(Math.round(100 - (bucket.totalWeightedPenalty / bucket.totalPostedWeight)), 0, 100)
       : null;
-    // Mean penalty across over-limit points only. Deliberately not the score: it answers
-    // "how hard did they speed when they sped", which says nothing about how much of the
-    // trip was spent over the limit. Kept as a diagnostic alongside `rate`.
-    const overLimitSeverity = bucket.penalizedPoints
-      ? round1(bucket.totalRawPenalty / bucket.penalizedPoints)
+    // Mean penalty across the time spent over the limit. Deliberately not the score: it
+    // answers "how hard did they speed when they sped", which says nothing about how much
+    // of the trip was spent over the limit. Kept as a diagnostic alongside `rate`.
+    const overLimitSeverity = bucket.penalizedSeconds
+      ? round1(bucket.totalRawPenalty / bucket.penalizedSeconds)
       : 0;
     const penaltyWeight = bucket.totalRawPenalty > 0
       ? bucket.totalWeightedPenalty / bucket.totalRawPenalty
@@ -5137,10 +5186,13 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
       inferred_limit_kmh: inferredLimit,
       limit_source: limitSource,
       dominant_tier: dominantTier,
-      actual_limit_coverage: round2(bucket.actualLimitPoints / bucket.totalPoints),
-      osm_maxspeed_coverage: round2(bucket.osmMaxspeedPoints / bucket.totalPoints),
-      osm_highway_default_coverage: round2(bucket.osmDefaultPoints / bucket.totalPoints),
+      actual_limit_coverage: round2(bucket.actualLimitSeconds / bucket.totalSeconds),
+      osm_maxspeed_coverage: round2(bucket.osmMaxspeedSeconds / bucket.totalSeconds),
+      osm_highway_default_coverage: round2(bucket.osmDefaultSeconds / bucket.totalSeconds),
+      // Retained as a diagnostic. It is no longer what anything is weighted by.
       point_count: bucket.totalPoints,
+      duration_seconds: round1(bucket.totalSeconds),
+      over_limit_seconds: round1(bucket.overLimitSeconds),
     };
   };
 
@@ -5151,9 +5203,9 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
   // Only buckets that actually have a trustworthy limit contribute. An
   // unavailable bucket must not pull the average toward a number it never earned.
   const weighted = buckets.filter((item) => item.score != null);
-  const totalPoints = weighted.reduce((sum, item) => sum + item.point_count, 0);
-  const overall = totalPoints
-    ? Math.round(weighted.reduce((sum, item) => sum + item.score * item.point_count, 0) / totalPoints)
+  const totalSeconds = weighted.reduce((sum, item) => sum + item.duration_seconds, 0);
+  const overall = totalSeconds
+    ? Math.round(weighted.reduce((sum, item) => sum + item.score * item.duration_seconds, 0) / totalSeconds)
     : null;
 
   return {
@@ -5164,7 +5216,9 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
     scored_point_indexes: scoredPointIndexes,
     // Diagnostics span every bucket, including the unavailable ones: the raw
     // penalty is what the driving earned before confidence weighting, and it is
-    // the only signal left when no bucket produced a score.
+    // the only signal left when no bucket produced a score. All three are now
+    // penalty-seconds rather than penalty-per-point, so their magnitudes are not
+    // comparable with the same fields on a trip scored before this change.
     speed_penalty_totals: {
       totalRawPenalty: round2(buckets.reduce((sum, item) => sum + (Number(item.total_raw_penalty) || 0), 0)),
       totalWeightedPenalty: round2(buckets.reduce((sum, item) => sum + (Number(item.total_weighted_penalty) || 0), 0)),

@@ -49,8 +49,17 @@ export { SCORING_VERSION };
  *       - Speed-limit confidence has one source (SPEED_LIMIT_SOURCE_PROFILES); the second,
  *         disagreeing table rated OSM at certainty and osm_highway_default at 0.70.
  *       - IMU refinement can downgrade a GPS event the motion stream contradicts.
+ *   4 - speed audit: speed-limit compliance is weighted by elapsed time instead of GPS
+ *       point count, in every bucket total and in the blend across road types. A point
+ *       is not a unit of anything a driver experiences — sampling is densest in
+ *       stop-start traffic and sparsest at speed, so a minute in town outvoted a minute
+ *       on a motorway purely by producing more fixes, and a dense burst of fixes while
+ *       briefly over the limit was charged as if it had lasted proportionally longer.
+ *       Gaps are clamped to MAX_SAMPLE_GAP_SECONDS so a tunnel cannot let one fix stand
+ *       for the whole outage. This moves overall_compliance_score on existing trips in
+ *       both directions, and changes the units of speed_penalty_totals.
  */
-export const SCORING_ALGORITHM_REVISION = 3;
+export const SCORING_ALGORITHM_REVISION = 4;
 
 const scoreMetrics = ['score_overall', 'score_safety', 'score_smoothness'];
 const routeRiskMetrics = ['route_risk_score', 'pre_trip_readiness_score'];

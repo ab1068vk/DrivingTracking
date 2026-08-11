@@ -409,3 +409,110 @@ describe('regression - existing behaviour preserved', () => {
     expect(gpsKey).not.toBe(postedKey);
   });
 });
+
+describe('compliance weighting by elapsed time', () => {
+  // Spaced so the geometry agrees with the reported speed: reliablePointSpeed
+  // cross-checks the two and discards a point whose implied speed contradicts it.
+  const drive = (segments) => {
+    const points = [];
+    let lat = 43.65;
+    let elapsedMs = Date.UTC(2026, 0, 1, 12, 0, 0);
+    segments.forEach(({ speedKmh, gapSeconds, fixes }) => {
+      for (let i = 0; i < fixes; i++) {
+        points.push({
+          lat,
+          lng: -79.38,
+          speed_kmh: speedKmh,
+          timestamp: new Date(elapsedMs).toISOString(),
+        });
+        lat += (speedKmh * gapSeconds / 3600) / 111.32;
+        elapsedMs += gapSeconds * 1000;
+      }
+    });
+    return points;
+  };
+
+  const postedContexts = (points, limitKmh) => points.map(() => ({
+    effectiveLimitKmh: limitKmh,
+    actualLimitKmh: limitKmh,
+    limitSource: 'user_confirmed_posted_sign',
+    tier: 'POSTED',
+    confidence: 0.95,
+  }));
+
+  const complianceFor = (points, limitKmh) => calculateSpeedLimitCompliance(
+    points,
+    {},
+    DEFAULT_THRESHOLDS,
+    {
+      roadTypesByPoint: points.map(() => 'urban'),
+      speedLimitContexts: postedContexts(points, limitKmh),
+    }
+  );
+
+  it('does not let a densely sampled burst outweigh a long compliant stretch', () => {
+    // 20 fixes one second apart while 30 km/h over, then 10 fixes twenty seconds
+    // apart while compliant: two thirds of the points, but under a tenth of the drive.
+    const bucket = complianceFor(
+      drive([
+        { speedKmh: 80, gapSeconds: 1, fixes: 20 },
+        { speedKmh: 45, gapSeconds: 20, fixes: 10 },
+      ]),
+      50
+    ).urban_compliance;
+
+    expect(bucket.point_count).toBe(30);
+    // Weighted by point count this rate would have been about 0.33.
+    expect(bucket.rate).toBeGreaterThan(0.85);
+    expect(bucket.over_limit_seconds).toBeLessThan(bucket.duration_seconds * 0.15);
+  });
+
+  it('charges a long slow-sampled overspeed more than a brief dense one', () => {
+    const brief = complianceFor(
+      drive([
+        { speedKmh: 80, gapSeconds: 1, fixes: 15 },
+        { speedKmh: 45, gapSeconds: 15, fixes: 15 },
+      ]),
+      50
+    ).urban_compliance;
+    const sustained = complianceFor(
+      drive([
+        { speedKmh: 80, gapSeconds: 15, fixes: 15 },
+        { speedKmh: 45, gapSeconds: 1, fixes: 15 },
+      ]),
+      50
+    ).urban_compliance;
+
+    // Identical point counts and identical speeds. Only the time spent differs,
+    // which under point-count weighting made these two drives score the same.
+    expect(brief.point_count).toBe(sustained.point_count);
+    expect(sustained.score).toBeLessThan(brief.score);
+  });
+
+  it('caps a recording outage at one sample gap', () => {
+    // A 30-minute gap must not let the fix before it stand for the whole outage.
+    const bucket = complianceFor(
+      drive([
+        { speedKmh: 80, gapSeconds: 1800, fixes: 1 },
+        { speedKmh: 45, gapSeconds: 1, fixes: 10 },
+      ]),
+      50
+    ).urban_compliance;
+
+    expect(bucket.over_limit_seconds).toBeLessThanOrEqual(120);
+  });
+
+  it('matches point-count weighting when sampling is uniform', () => {
+    // The change must be a no-op for an evenly sampled drive, which is what makes
+    // it a correction to the weighting rather than a change of policy.
+    const bucket = complianceFor(
+      drive([
+        { speedKmh: 80, gapSeconds: 1, fixes: 10 },
+        { speedKmh: 45, gapSeconds: 1, fixes: 10 },
+      ]),
+      50
+    ).urban_compliance;
+
+    expect(bucket.rate).toBeCloseTo(1 - bucket.over_limit_point_count / bucket.point_count, 1);
+  });
+});

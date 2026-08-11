@@ -1,7 +1,7 @@
 {
   "id": "urban_smooth_v2_2_0",
   "description": "Human-verified smooth urban daytime route with no detected events; validates low-confidence score exposure and null unavailable components independently of the test-runner timezone.",
-  "scoring_version": "eb27f8f5",
+  "scoring_version": "9ab21b2b",
   "human_verified": true,
   "thresholds": { "NIGHT_DETECTION_MODE": "fixed" },
   "startTime": "2026-05-24T10:00:00.000",
@@ -51,7 +51,7 @@
       "fatigue_risk": { "value": 0, "evidence": "high", "dataSource": ["gps"], "sampleCount": 1 }
     },
     "score_provenance": {
-      "scoring_version": "eb27f8f5",
+      "scoring_version": "9ab21b2b",
       "components": {
         "overall": "low",
         "safety": "low",

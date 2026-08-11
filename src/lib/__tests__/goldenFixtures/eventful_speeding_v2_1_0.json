@@ -1,7 +1,7 @@
 {
   "id": "eventful_speeding_v2_2_0",
   "description": "Human-verified eventful daytime route with inferred speed-limit speeding events; validates penalties, limited evidence, and provenance component labels independently of the test-runner timezone.",
-  "scoring_version": "eb27f8f5",
+  "scoring_version": "9ab21b2b",
   "human_verified": true,
   "thresholds": { "NIGHT_DETECTION_MODE": "fixed" },
   "startTime": "2026-05-24T10:00:00.000",
@@ -55,7 +55,7 @@
       "fatigue_risk": { "value": 1, "evidence": "high", "dataSource": ["gps"], "sampleCount": 1 }
     },
     "score_provenance": {
-      "scoring_version": "eb27f8f5",
+      "scoring_version": "9ab21b2b",
       "components": {
         "overall": "developing",
         "safety": "developing",
