@@ -57,6 +57,7 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.Locale;
@@ -204,6 +205,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final long SPEED_ALERT_COOLDOWN_MS = 60_000L;
     private static final long SPEED_ALERT_ESTIMATED_COOLDOWN_MS = 90_000L;
     private static final long SPEED_ALERT_INFERRED_COOLDOWN_MS = 180_000L;
+    /** inferSpeedZones' window size, so the inferred road context is drawn from the same span. */
+    private static final int RECENT_SPEED_WINDOW = 30;
+    private static final int MIN_RECENT_SPEED_SAMPLES = 8;
     private static final long TRACKING_READY_ALERT_RETRY_MS = 10_000L;
     private static final long COACH_BRIEF_MIN_DELAY_MS = 12_000L;
     private static final long COACH_BRIEF_MAX_DELAY_MS = 5 * 60_000L;
@@ -303,6 +307,12 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private double maxDriftSinceStopM = 0.0d;
     private final Deque<double[]> recentHeadings = new ArrayDeque<>();
     private final Deque<double[]> nativeHeadingDriftWindow = new ArrayDeque<>();
+    /**
+     * Recent speeds, used only to guess a road context when no saved road speed
+     * matches. 30 samples because that is the window inferSpeedZones uses to pick
+     * a zone from its 85th percentile.
+     */
+    private final Deque<Double> recentSpeedsKmh = new ArrayDeque<>();
     private int nativeMicroSteerCount = 0;
     private long lastPhoneUseNotifyMs = 0L;
     private long lastNativeProxyWindowMs = 0L;
@@ -994,6 +1004,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         candidateNearParked = false;
         candidateConfirmedMs = normalizedStartMs;
         recentHeadings.clear();
+        recentSpeedsKmh.clear();
         nativeHeadingDriftWindow.clear();
         resetMotionState();
         recordTimeline("manual_start", "Native manual trip started.", "manual_button", 0d, 0L, 0d);
@@ -1055,6 +1066,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         candidateNearParked = isInParkingCooldown(triggerLocation);
         candidateConfirmedMs = 0L;
         recentHeadings.clear();
+        recentSpeedsKmh.clear();
         nativeHeadingDriftWindow.clear();
         resetMotionState();
         if (triggerLocation != null) {
@@ -1668,6 +1680,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         checkpointRecoveryEndOverrideMs = 0L;
         resetNativeAlertState();
         recentHeadings.clear();
+        recentSpeedsKmh.clear();
         nativeHeadingDriftWindow.clear();
         resetMotionState();
         DriveSenseActiveTripCheckpointStore.clear(this);
@@ -1827,6 +1840,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         lastActiveCheckpointMs = 0L;
         resetNativeAlertState();
         recentHeadings.clear();
+        recentSpeedsKmh.clear();
         nativeHeadingDriftWindow.clear();
         resetMotionState();
         stopMotionSensors();
@@ -3354,15 +3368,29 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         boolean voiceAlertsEnabled = isSettingEnabled("voice_alerts_enabled", true);
 
         long now = System.currentTimeMillis();
+        recordRecentSpeedSample(speedKmh);
         NativeSpeedLimit localSpeedLimit = resolveLocalSpeedLimit(
             location.getLatitude(),
             location.getLongitude(),
             location.hasBearing() ? location.getBearing() : Double.NaN,
             now
         );
+        double speedingFallbackKmh = getSettingDouble("threshold_speeding_kmh", DetectionConstants.SPEEDING_FALLBACK_KMH);
+        // With nothing saved for this road, a flat 100 km/h was assumed everywhere,
+        // so a background drive through a 50 zone recorded nothing until 112. The
+        // webview instead estimates from the region and the road context it infers
+        // from recent speeds, which is what this mirrors.
+        double regionDefaultKmh = localSpeedLimit != null
+            ? Double.NaN
+            : SpeedRegionDefaults.fallbackLimitKmh(
+                speedDefaultRegionSetting(),
+                recentSpeedP85Kmh(),
+                speedingFallbackKmh
+            );
+        boolean regionDefaultLimit = Double.isFinite(regionDefaultKmh);
         double speedLimitKmh = localSpeedLimit != null
             ? localSpeedLimit.limitKmh
-            : getSettingDouble("threshold_speeding_kmh", DetectionConstants.SPEEDING_FALLBACK_KMH);
+            : regionDefaultLimit ? regionDefaultKmh : speedingFallbackKmh;
         boolean postedLimit = localSpeedLimit != null &&
             "user_confirmed_posted_sign".equals(localSpeedLimit.source);
         boolean estimatedLimit = localSpeedLimit != null && !postedLimit;
@@ -3371,12 +3399,26 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             : postedLimit
                 ? getSettingDouble("threshold_speed_over_kmh", DetectionConstants.SPEED_OVER_KMH)
                 : getSettingDouble("estimated_voice_margin_kmh", 12.0d);
-        boolean sourceVoiceAllowed = postedLimit
+        // Every limit that resolveLocalSpeedLimit returns has already cleared the
+        // floor where it was resolved: corrections are user-authored, road-memory
+        // candidates need 0.64, learned cells need SPEED_ALERT_MIN_CONFIDENCE. A
+        // regional default (0.40) and the flat threshold do not, so they are the
+        // only ones re-checked here. Those two resolution bars are still fixed, so
+        // a floor raised past 0.64 does not yet silence a road-memory limit here.
+        double confidenceFloor = getSettingDouble(
+            "speed_alert_min_confidence",
+            DetectionConstants.SPEED_ALERT_MIN_CONFIDENCE
+        );
+        boolean meetsConfidenceFloor = localSpeedLimit != null || (
+            regionDefaultLimit && SpeedRegionDefaults.REGION_DEFAULT_CONFIDENCE >= confidenceFloor
+        );
+        // Anything that is not a posted sign is an estimate, including the fallback,
+        // so it answers to both estimate switches — speedAlertPolicy's
+        // estimateGuidanceAllowed and speechAllowedForTier read the same pair.
+        boolean sourceVoiceAllowed = meetsConfidenceFloor && (postedLimit
             ? isSettingEnabled("speak_posted_speed_warnings", true)
-            : estimatedLimit
-                ? isSettingEnabled("speed_estimates_enabled", true) &&
-                    isSettingEnabled("speak_estimated_speed_checks", true)
-                : isSettingEnabled("speak_estimated_speed_checks", true);
+            : isSettingEnabled("speed_estimates_enabled", true) &&
+                isSettingEnabled("speak_estimated_speed_checks", true));
         if (isSettingEnabled("speed_warning_enabled", true) &&
             shouldTriggerSpeedAlert(speedKmh, speedLimitKmh, speedMarginKmh)) {
             if (speedingSinceMs == 0L) speedingSinceMs = now;
@@ -3517,6 +3559,34 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 speakNativeAlert(nativeAlertMessage("heading_drift"), false, () -> lastHeadingDriftAlertMs = now);
             }
         }
+    }
+
+    private void recordRecentSpeedSample(double speedKmh) {
+        if (!Double.isFinite(speedKmh) || speedKmh < 0d) return;
+        recentSpeedsKmh.addLast(speedKmh);
+        while (recentSpeedsKmh.size() > RECENT_SPEED_WINDOW) recentSpeedsKmh.pollFirst();
+    }
+
+    /**
+     * 85th percentile of the recent speeds, or NaN before there are enough of them.
+     *
+     * The minimum matters: two or three fixes out of a car park would read as an
+     * urban road and pull the assumed limit down to 50 on a motorway slip road.
+     */
+    private double recentSpeedP85Kmh() {
+        if (recentSpeedsKmh.size() < MIN_RECENT_SPEED_SAMPLES) return Double.NaN;
+        double[] values = new double[recentSpeedsKmh.size()];
+        int index = 0;
+        for (Double sample : recentSpeedsKmh) values[index++] = sample;
+        Arrays.sort(values);
+        return SpeedRegionDefaults.percentileFromSorted(values, 85d);
+    }
+
+    /** Matches speedDefaultRegionFromSettings: the configured region, else the country. */
+    private String speedDefaultRegionSetting() {
+        String configured = getSettingString("configurable_country_defaults", "");
+        if (!configured.isEmpty()) return configured;
+        return getSettingString("country_code", "");
     }
 
     @Nullable
@@ -4799,6 +4869,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             ? 0L
             : checkpoint.optLong("candidate_confirmed_ms", activeStartMs);
         recentHeadings.clear();
+        recentSpeedsKmh.clear();
         nativeHeadingDriftWindow.clear();
         resetNativeAlertState();
         resetMotionState();
