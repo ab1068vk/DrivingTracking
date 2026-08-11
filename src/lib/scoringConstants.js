@@ -58,8 +58,19 @@ export { SCORING_VERSION };
  *       Gaps are clamped to MAX_SAMPLE_GAP_SECONDS so a tunnel cannot let one fix stand
  *       for the whole outage. This moves overall_compliance_score on existing trips in
  *       both directions, and changes the units of speed_penalty_totals.
+ *   5 - speed-limit source confidence is measured rather than assumed. Each source
+ *       carried a fixed confidence from SPEED_LIMIT_SOURCE_PROFILES — policy, not
+ *       measurement, describing no particular driver — while every learned cell's
+ *       audit trail already recorded which source proposed a limit and which limit
+ *       the cell converged on. That hit rate now blends into the confidence the
+ *       resolver returns, shrunk toward the profile so a short lucky streak cannot
+ *       swing it and held at the profile below five observations. A cell's own
+ *       accumulated confidence still wins where it exists: it is a measurement
+ *       too, and a more specific one. Confidence drives penalty weight, alert
+ *       margins and the speech floor, so this moves scores for drivers whose
+ *       sources have been measurably better or worse than the profile assumed.
  */
-export const SCORING_ALGORITHM_REVISION = 4;
+export const SCORING_ALGORITHM_REVISION = 5;
 
 const scoreMetrics = ['score_overall', 'score_safety', 'score_smoothness'];
 const routeRiskMetrics = ['route_risk_score', 'pre_trip_readiness_score'];

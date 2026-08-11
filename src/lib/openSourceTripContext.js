@@ -9,6 +9,7 @@ import { localSettings } from '@/lib/trackingStore';
 import { mapMatchRoute } from '@/lib/mapMatching';
 import { annotateRouteSpeedLimits, speedLimitDefaultCountryKey } from '@/lib/speedLimitSource';
 import { LocalSpeedKnowledge } from '@/lib/localSpeedKnowledge';
+import { summarizeSourceReliability } from '@/lib/scoring/learnedSourceReliability';
 import { setJson } from '@/lib/mobileStorage';
 import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
 import {
@@ -38,6 +39,29 @@ const MANUAL_WEATHER_LOOKUP_TIMEOUT_MS = 20000;
 export const ROAD_CONTEXT_QUEUED_STATUS = isAndroid()
   ? 'Queued privately with a randomized delay; continues after swipe-away'
   : 'Queued privately with a randomized delay';
+
+/**
+ * Resolve local speed knowledge for a route and attach this driver's measured
+ * per-source hit rates to the result.
+ *
+ * The rates ride on the array beside `knowledgeMetadata` rather than becoming a
+ * parameter on every function between here and the resolver. They are what lets
+ * scoring weight a source by what it has actually been worth to this driver
+ * instead of by a fixed profile that describes no one. A failed read leaves the
+ * reference profiles in charge: measurement is an improvement on the assumption,
+ * not a precondition for scoring at all.
+ */
+const prefetchLocalKnowledgeWithReliability = async (points, knowledge) => {
+  const results = await prefetchLocalKnowledge(points, knowledge);
+  if (!Array.isArray(results)) return results;
+  try {
+    const data = await knowledge.exportData();
+    results.sourceReliability = summarizeSourceReliability(Object.values(data?.cells || {}));
+  } catch (error) {
+    console.warn('Learned speed-source reliability unavailable; using reference confidences.', error);
+  }
+  return results;
+};
 
 /**
  * Write the local speed knowledge that scoring just used back onto the route
@@ -340,7 +364,7 @@ export async function buildOpenSourceTripContextPatch(trip, settings = localSett
     zones: privacyZones,
   });
   const scoringRoutePoints = scoreInputPrivacy.routePoints;
-  const localKnowledgeResults = await prefetchLocalKnowledge(scoringRoutePoints, knowledge);
+  const localKnowledgeResults = await prefetchLocalKnowledgeWithReliability(scoringRoutePoints, knowledge);
   const speedKnowledgeMetadata = localKnowledgeResults?.knowledgeMetadata || {};
   stage(onProgress, 'Recalculating trip scores');
   const stats = calculateTripStats(scoringRoutePoints, trip.start_time, trip.end_time, thresholds, {
@@ -562,7 +586,7 @@ export async function buildLocalSpeedKnowledgeScorePatch(trip, settings = localS
     zones: privacyZones,
   });
   const scoringRoutePoints = scoreInputPrivacy.routePoints;
-  const localKnowledgeResults = await prefetchLocalKnowledge(scoringRoutePoints, knowledge);
+  const localKnowledgeResults = await prefetchLocalKnowledgeWithReliability(scoringRoutePoints, knowledge);
   const speedKnowledgeMetadata = localKnowledgeResults?.knowledgeMetadata || {};
   const stats = calculateTripStats(scoringRoutePoints, trip.start_time, trip.end_time, thresholds, {
     ...trip,

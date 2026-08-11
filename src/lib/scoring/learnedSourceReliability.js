@@ -7,11 +7,17 @@
  * carries an audit trail recording which source proposed a limit and which
  * limit the cell converged on, so the real hit rate is derivable.
  *
- * This module only *reports* the learned rate. It is deliberately not wired
- * into penalty weighting: confidence feeds `confidenceToPenaltyWeight`, so
- * substituting learned values would silently restate historical scores. Showing
- * the driver what their own data says is the honest first step; changing what
- * the score does with it is a separate decision.
+ * `confidenceForSource` now blends these rates into the confidence it returns,
+ * so the measurement is what scoring, alert margins and the speech floor act on.
+ * That was held back while there was no way to make the change visible —
+ * substituting learned values would have silently restated historical scores.
+ * SCORING_ALGORITHM_REVISION 5 is what closed that gap: bumping it regenerates
+ * SCORING_VERSION, so the rescore-mismatch machinery flags every stored trip
+ * instead of leaving old assumed-confidence scores sitting beside measured ones.
+ *
+ * Only a source's *profile default* is replaced. A cell carrying its own
+ * accumulated confidence keeps it: that is a measurement too, and a more
+ * specific one than a rate averaged across every cell.
  */
 
 /** Below this, one lucky or unlucky run would dominate, so the fixed profile stands. */

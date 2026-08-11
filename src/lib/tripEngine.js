@@ -4959,7 +4959,7 @@ export function resolveEffectiveSpeedLimitForIndex(points = [], index = 0, thres
     : null;
 
   const tier = tierForSource(source);
-  const confidence = confidenceForSource(source, learnedLocalConfidence);
+  const confidence = confidenceForSource(source, learnedLocalConfidence, options.sourceReliability || null);
   const alertMarginKmh = alertMarginForConfidence(confidence, thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH);
 
   return {
@@ -5051,6 +5051,12 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
   };
   const speedOver = thresholds.SPEED_OVER_KMH ?? DEFAULT_THRESHOLDS.SPEED_OVER_KMH;
   const zoneForIndex = speedLimitContexts ? null : createZoneLookup(zones);
+  // Attached to the prefetch result alongside knowledgeMetadata, so the measured
+  // per-source hit rates reach the resolver without a new parameter on every
+  // function between here and the store.
+  const sourceReliability = options.sourceReliability
+    ?? options.localKnowledgeResults?.sourceReliability
+    ?? null;
 
   // Indices this function actually scored. The frozen inputs snapshot reuses
   // this instead of recomputing reliablePointSpeed for every point a second
@@ -5097,6 +5103,7 @@ export function calculateSpeedLimitCompliance(routePoints, stats = {}, threshold
         roadTypesByPoint: roadTypes,
         localKnowledge: options.localKnowledgeResults?.[index] ?? null,
         settings: options.settings || {},
+        sourceReliability,
       }
     );
     const limit = speedLimitContext.effectiveLimitKmh ?? complianceFallbackLimit(roadType, thresholds);

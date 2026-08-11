@@ -111,8 +111,9 @@ export function inspectSpeedKnowledgeHealth(data = {}, now = Date.now()) {
       candidate?.stage === 'learning' || candidate?.stage === 'suggested'
     )).length,
     roadMemoryIntelligence: intelligence,
-    // Measured agreement per source, from this user's own saved cells. Reported
-    // only; the fixed reference profiles still drive scoring penalty weights.
+    // Measured agreement per source, from this user's own saved cells. Scoring
+    // now blends these into the resolved confidence, so this panel shows the
+    // numbers that are actually in force rather than a parallel diagnostic.
     sourceReliability: summarizeSourceReliability(cells.map(([, cell]) => cell)),
     geometryCount: [
       ...corrections,

@@ -19,6 +19,7 @@
  * module never re-derives it from a source string when a resolved value exists.
  */
 import { SPEED_ALERT_MIN_CONFIDENCE } from '@/lib/appConstants';
+import { learnedSourceConfidence } from '@/lib/scoring/learnedSourceReliability';
 import { speedLimitSourceProfile } from '@/lib/speedLimitConfidence';
 import {
   canonicalSpeedSource,
@@ -49,14 +50,21 @@ const finiteSetting = (value, fallback) => {
  * where one exists: a user-confirmed sign or a learned local limit carries its
  * own accumulated evidence, which is more specific than a source-level default.
  */
-export function confidenceForSource(source, learnedLocalConfidence = null) {
+export function confidenceForSource(source, learnedLocalConfidence = null, reliability = null) {
   const explicitConfidence = learnedLocalConfidence == null ? null : Number(learnedLocalConfidence);
   const canonical = canonicalSpeedSource(source);
   if (SOURCES_WITH_OWN_CONFIDENCE.has(canonical) && Number.isFinite(explicitConfidence)) {
     return explicitConfidence;
   }
   const profileConfidence = Number(speedLimitSourceProfile(canonical)?.confidence);
-  return Number.isFinite(profileConfidence) ? profileConfidence : 0.0;
+  const reference = Number.isFinite(profileConfidence) ? profileConfidence : 0.0;
+  // The profile number is policy: it never moves and it describes no particular
+  // driver. Where this driver's own cells have said often enough what a source
+  // was actually worth, that measurement replaces the assumption. It only ever
+  // supplants the profile default — a cell carrying its own accumulated evidence
+  // returned above is already a measurement, and a more specific one.
+  if (!reliability) return reference;
+  return learnedSourceConfidence(canonical, reliability, reference).confidence;
 }
 
 /** Fraction of a speeding penalty that a limit of this confidence may charge. */

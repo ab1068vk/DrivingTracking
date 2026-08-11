@@ -9,6 +9,7 @@ import {
   resolveEffectiveSpeedLimitForIndex,
 } from '@/lib/tripEngine';
 import { confidenceForSource, confidenceToPenaltyWeight, resolveSpeedLimitWithTier } from '@/lib/speedLimitSource';
+import { summarizeSourceReliability } from '@/lib/scoring/learnedSourceReliability';
 
 // CHANGES (session):
 // - Added Category F confidenceToPenaltyWeight backward compatibility tests.
@@ -514,5 +515,97 @@ describe('compliance weighting by elapsed time', () => {
     ).urban_compliance;
 
     expect(bucket.rate).toBeCloseTo(1 - bucket.over_limit_point_count / bucket.point_count, 1);
+  });
+});
+
+describe('measured source reliability reaches the score', () => {
+  const cellsWhereSourceWasWrong = (source, observations, agreements) => ([{
+    auditTrail: Array.from({ length: observations }, (_, index) => ({
+      pointSource: source,
+      observedLimitKmh: index < agreements ? 50 : 80,
+      limitKmh: 50,
+    })),
+  }]);
+
+  it('leaves the reference profile alone below the observation floor', () => {
+    const reliability = summarizeSourceReliability(cellsWhereSourceWasWrong('osm_highway_default', 4, 0));
+    const reference = confidenceForSource('osm_highway_default');
+
+    expect(confidenceForSource('osm_highway_default', null, reliability)).toBe(reference);
+  });
+
+  it('lowers confidence in a source this driver has found unreliable', () => {
+    const reliability = summarizeSourceReliability(cellsWhereSourceWasWrong('osm_highway_default', 40, 4));
+    const reference = confidenceForSource('osm_highway_default');
+    const measured = confidenceForSource('osm_highway_default', null, reliability);
+
+    expect(measured).toBeLessThan(reference);
+    // Shrunk toward the profile rather than snapping to the 10% raw hit rate.
+    expect(measured).toBeGreaterThan(0.1);
+  });
+
+  it('raises confidence in a source this driver has found dependable', () => {
+    const reliability = summarizeSourceReliability(cellsWhereSourceWasWrong('region_default_estimate', 40, 40));
+
+    expect(confidenceForSource('region_default_estimate', null, reliability))
+      .toBeGreaterThan(confidenceForSource('region_default_estimate'));
+  });
+
+  it('does not override a cell that carries its own accumulated confidence', () => {
+    // A learned cell's own evidence is a measurement too, and a more specific one
+    // than a rate averaged across every cell.
+    const reliability = summarizeSourceReliability(cellsWhereSourceWasWrong('learned_local', 40, 4));
+
+    expect(confidenceForSource('learned_local', 0.8, reliability)).toBe(0.8);
+  });
+
+  it('reaches the resolver through the prefetch result, not only through callers', () => {
+    // The plumbing test: no precomputed contexts, so the resolver derives the
+    // source itself and has to pick the measured confidence up off the array that
+    // prefetchLocalKnowledgeWithReliability attaches it to.
+    const points = Array.from({ length: 12 }, (_, index) => p(index, 40));
+    const run = (reliability) => {
+      const localKnowledgeResults = points.map(() => null);
+      localKnowledgeResults.sourceReliability = reliability;
+      return calculateSpeedLimitCompliance(points, {}, DEFAULT_THRESHOLDS, {
+        roadTypesByPoint: points.map(() => 'urban'),
+        localKnowledgeResults,
+      }).urban_compliance;
+    };
+
+    const reference = run(null);
+    const dependable = run(summarizeSourceReliability([{
+      auditTrail: Array.from({ length: 40 }, () => ({
+        pointSource: reference.limit_source,
+        observedLimitKmh: 50,
+        limitKmh: 50,
+      })),
+    }]));
+
+    expect(dependable.confidence).toBeGreaterThan(reference.confidence);
+  });
+
+  it('carries the measured confidence into the compliance penalty weight', () => {
+    const points = Array.from({ length: 12 }, (_, index) => p(index, 70));
+    const contexts = points.map(() => ({
+      effectiveLimitKmh: 50,
+      actualLimitKmh: 50,
+      limitSource: 'osm_highway_default',
+      tier: 'MAP_ESTIMATED',
+    }));
+    const score = (reliability) => calculateSpeedLimitCompliance(points, {}, DEFAULT_THRESHOLDS, {
+      roadTypesByPoint: points.map(() => 'urban'),
+      speedLimitContexts: contexts.map((context) => ({
+        ...context,
+        confidence: confidenceForSource('osm_highway_default', null, reliability),
+      })),
+    }).urban_compliance;
+
+    const unreliable = score(summarizeSourceReliability(cellsWhereSourceWasWrong('osm_highway_default', 40, 4)));
+    const reference = score(null);
+
+    // A source this driver's own cells keep contradicting must charge less of the
+    // penalty than the fixed profile assumed it was worth.
+    expect(unreliable.penalty_weight).toBeLessThan(reference.penalty_weight);
   });
 });
