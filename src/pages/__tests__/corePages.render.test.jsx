@@ -408,7 +408,10 @@ describe('core page component renders', () => {
     expect(html).toContain('<details');
     expect(html).toContain('Open your supporting weekly goals');
     expect(html).toContain('Open the local evidence assistant');
-  });
+    // Same 10 s allowance as the Dashboard render above. Coach now reaches the
+    // route-risk index for speeding stretches, and pulling that module graph in
+    // cold pushed the first import past the 5 s default.
+  }, 10_000);
 
   it('gates the premium Coaching cards behind the persisted appearance setting', async () => {
     const {

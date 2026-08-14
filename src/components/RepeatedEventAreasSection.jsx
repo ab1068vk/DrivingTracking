@@ -7,6 +7,7 @@ const STANDARD_CARD = 'min-w-0 overflow-hidden rounded-3xl border border-border 
 const eventTypeLabel = (value) => ({
   harsh_brake: 'harsh braking',
   sharp_turn: 'sharp turns',
+  rapid_acceleration: 'rapid acceleration',
   speeding: 'speeding',
 }[value] || String(value || 'mixed events').replaceAll('_', ' '));
 
@@ -96,7 +97,11 @@ export default function RepeatedEventAreasSection({
                 <span className="font-semibold capitalize">{eventTypeLabel(zone.dominantType)}</span>
                 <span className={`rounded-full px-2 py-1 text-xs font-bold uppercase ${zone.riskLevel === 'critical' || zone.riskLevel === 'high' ? 'bg-red-500/10 text-red-600 dark:text-red-300' : 'bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>{zone.riskLevel}</span>
               </div>
-              <div className="mt-2 text-sm text-muted-foreground">{zone.eventCount} events in an approximately {Math.round(zone.radiusM)} m area.</div>
+              <div className="mt-2 text-sm text-muted-foreground">
+                {zone.kind === 'speeding_stretch'
+                  ? `Over the limit on ${zone.tripCount} of ${zone.passes} passes along an approximately ${Math.round(zone.lengthM)} m stretch.`
+                  : `${zone.eventCount} events across ${zone.tripCount} separate drives, in an approximately ${Math.round(zone.radiusM)} m area.`}
+              </div>
             </div>
           ))}
         </div>

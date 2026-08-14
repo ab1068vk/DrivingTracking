@@ -109,6 +109,34 @@ describe('routeRiskIndex', () => {
     expect(buildRouteRiskIndex([maskedTrip]).size).toBe(0);
   });
 
+  it('does not attribute a privacy-masked event to the nearest road', () => {
+    // Masking nulls the coordinates in place. `Number(null)` is 0 and passes
+    // `Number.isFinite`, so the event arrived at the snapper as (0, 0) — and the
+    // snapper had no distance ceiling, so it attached that event to the closest
+    // segment on the trip, thousands of kilometres away.
+    const index = buildRouteRiskIndex([trip([
+      { type: 'harsh_brake', severity: 'high', lat: null, lng: null, masked_for_privacy: true },
+    ])]);
+
+    expect([...index.values()].every((segment) => segment.totalEvents === 0)).toBe(true);
+  });
+
+  it('will not snap an event onto a segment it was never near', () => {
+    const index = buildRouteRiskIndex([trip([
+      { type: 'harsh_brake', severity: 'high', lat: 45.5, lng: -73.6 },
+    ])]);
+
+    expect([...index.values()].every((segment) => segment.totalEvents === 0)).toBe(true);
+  });
+
+  it('still snaps an event that is genuinely on the route', () => {
+    const index = buildRouteRiskIndex([trip([
+      { type: 'harsh_brake', severity: 'high', lat: 43.6537, lng: -79.3832 },
+    ])]);
+
+    expect([...index.values()].some((segment) => segment.totalEvents === 1)).toBe(true);
+  });
+
   it('graduates speed risk instead of using a binary highway-speed bonus', () => {
     expect(speedRiskBonus(99)).toBe(0);
     expect(speedRiskBonus(101)).toBeLessThan(speedRiskBonus(160));

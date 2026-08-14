@@ -11087,6 +11087,10 @@ html[data-mobile-navigation-open="true"] .app-interaction-feedback__bar {
   }
   .premium-event-area-count { margin-top: 0.25rem; font-size: 0.61rem; font-weight: 700; line-height: 1.1; }
   .premium-event-area-size { margin-top: 0.28rem; color: hsl(var(--event-accent-deep)); font-size: 0.5rem; font-weight: 750; line-height: 1.2; }
+  /* What makes the area "repeated" — the drives behind it, or the share of
+     passes for a speeding stretch. Sits directly under the count so the number
+     is never read without its basis. */
+  .premium-event-area-support { margin-top: 0.22rem; max-width: 100%; overflow-wrap: anywhere; color: hsl(var(--event-accent-deep)); font-size: 0.5rem; font-weight: 700; line-height: 1.2; }
   .premium-event-area-location { display: flex; max-width: 100%; min-width: 0; align-items: flex-start; gap: 0.2rem; margin-top: 0.48rem; overflow-wrap: anywhere; color: hsl(218 19% 38%); font-size: 0.52rem; font-variant-numeric: tabular-nums; line-height: 1.23; }
   .premium-event-area-location svg { width: 0.68rem; height: 0.68rem; flex: 0 0 auto; }
   .premium-event-area-copy small { max-width: 100%; margin-top: 0.26rem; overflow-wrap: anywhere; color: hsl(217 17% 45%); font-size: 0.49rem; line-height: 1.2; }
@@ -16703,6 +16707,7 @@ html[data-mobile-navigation-open="true"] .app-interaction-feedback__bar {
 
   .dark .premium-event-area-location,
   .dark .premium-event-area-size,
+  .dark .premium-event-area-support,
   .dark .premium-event-area-copy small,
   .dark .premium-event-area-footer>span:first-child {
     color: #9fabbc;

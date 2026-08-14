@@ -14,7 +14,8 @@ import premiumEventAreasTripMap from '@/assets/premium-event-areas-trip-map-v4.w
 import premiumEventAreaBraking from '@/assets/premium-event-area-braking-v2.webp';
 import premiumEventAreaSpeeding from '@/assets/premium-event-area-speeding-v2.webp';
 import premiumEventAreaTurn from '@/assets/premium-event-area-turn-v2.webp';
-import { DANGER_ZONE_CELL_SIZE_M, DANGER_ZONE_MIN_EVENTS } from '@/lib/dangerZoneEngine';
+import { DANGER_ZONE_ALERT_MIN_EVENTS } from '@/lib/dangerZoneEngine';
+import { DANGER_ZONE_CLUSTER_RADIUS_M, DANGER_ZONE_MIN_TRIPS } from '@/lib/appConstants';
 import { formatDistance } from '@/lib/tripEngine';
 
 const EVENT_PRESENTATIONS = Object.freeze({
@@ -75,6 +76,9 @@ export function buildPremiumEventAreaViewModel(zone = {}, units = 'metric') {
   const rawRiskLevel = String(zone?.riskLevel || 'low').toLowerCase();
   const riskLevel = ['critical', 'high', 'medium', 'low'].includes(rawRiskLevel) ? rawRiskLevel : 'low';
   const evidenceDots = Math.max(1, Math.min(5, eventCount));
+  const isStretch = zone?.kind === 'speeding_stretch';
+  const tripCount = Math.max(0, Math.floor(Number(zone?.tripCount) || 0));
+  const passes = Number.isFinite(Number(zone?.passes)) ? Math.max(0, Math.floor(Number(zone.passes))) : null;
 
   return {
     ...presentation,
@@ -83,9 +87,22 @@ export function buildPremiumEventAreaViewModel(zone = {}, units = 'metric') {
     eventCount,
     eventLabel: `${eventCount} repeated event${eventCount === 1 ? '' : 's'}`,
     evidenceDots,
-    label: EVENT_PRESENTATIONS[zone?.dominantType]?.label || titleCaseEventType(zone?.dominantType),
+    isStretch,
+    label: isStretch
+      ? 'Habitual speeding'
+      : EVENT_PRESENTATIONS[zone?.dominantType]?.label || titleCaseEventType(zone?.dominantType),
+    passes,
     riskLabel: `${riskLevel} event level`,
     riskLevel,
+    // The count on its own never said what made an area "repeated", which is
+    // the whole claim. A stretch reports the share of passes it caught, because
+    // a raw count on a road driven daily means nothing.
+    supportLabel: isStretch
+      ? `Over the limit on ${tripCount} of ${passes ?? tripCount} passes`
+      : tripCount > 0
+        ? `Across ${tripCount} separate drive${tripCount === 1 ? '' : 's'}`
+        : 'Drives supporting this area unavailable',
+    tripCount,
   };
 }
 
@@ -127,16 +144,22 @@ function EvidenceDots({ count }) {
 function EvidenceAudit({
   completedTripCount,
   hiddenAreaCount,
+  minEvents,
+  minTrips,
   state,
   visibleDangerZoneCount,
 }) {
-  const hiddenByPrivacy = hiddenAreaCount > 0;
+  // Only the branch when there is nothing left to show. This used to be tested
+  // before the found branch, and the caller passed the *total* area count as
+  // `hiddenAreaCount`, so a card displaying six perfectly visible areas
+  // announced that six areas were hidden inside the driver's privacy zones.
+  const hiddenByPrivacy = hiddenAreaCount > 0 && visibleDangerZoneCount === 0;
   const noTrips = completedTripCount === 0;
 
   return (
     <div
       className="premium-event-areas-audit"
-      data-kind={state === 'loading' ? 'loading' : hiddenByPrivacy ? 'private' : noTrips ? 'new' : visibleDangerZoneCount ? 'found' : 'clear'}
+      data-kind={state === 'loading' ? 'loading' : visibleDangerZoneCount ? 'found' : hiddenByPrivacy ? 'private' : noTrips ? 'new' : 'clear'}
       role={state === 'loading' ? 'status' : undefined}
       aria-live={state === 'loading' ? 'polite' : undefined}
     >
@@ -153,6 +176,16 @@ function EvidenceAudit({
             <strong>Checking your driving history</strong>
             <p>Looking through completed trips for repeated driving-event locations.</p>
           </>
+        ) : visibleDangerZoneCount > 0 ? (
+          <>
+            <strong>{visibleDangerZoneCount} repeated driving-event area{visibleDangerZoneCount === 1 ? '' : 's'} found.</strong>
+            <p>
+              Each area holds at least <b>{minEvents}</b> scored harsh-braking, sharp-turn or rapid-acceleration events within <b>{DANGER_ZONE_CLUSTER_RADIUS_M} metres</b> of each other, on <b>{minTrips} or more separate drives</b>. Habitual speeding appears as a road stretch instead.
+              {hiddenAreaCount > 0 && (
+                <> A further {hiddenAreaCount} {hiddenAreaCount === 1 ? 'area is' : 'areas are'} hidden inside your privacy zones.</>
+              )}
+            </p>
+          </>
         ) : hiddenByPrivacy ? (
           <>
             <strong>Your privacy zones are working.</strong>
@@ -165,17 +198,10 @@ function EvidenceAudit({
             <strong>Build your private driving pattern.</strong>
             <p>No completed trips with event-location evidence are available yet.</p>
           </>
-        ) : visibleDangerZoneCount > 0 ? (
-          <>
-            <strong>{visibleDangerZoneCount} repeated driving-event area{visibleDangerZoneCount === 1 ? '' : 's'} found.</strong>
-            <p>
-              Each area contains at least <b>{DANGER_ZONE_MIN_EVENTS}</b> scored harsh-braking, speeding, or sharp-turn events grouped into roughly <b>{DANGER_ZONE_CELL_SIZE_M}-metre</b> cells.
-            </p>
-          </>
         ) : (
           <>
             <p>
-              Checked all <b>{completedTripCount}</b> completed trip{completedTripCount === 1 ? '' : 's'}. No small map area has at least <b>{DANGER_ZONE_MIN_EVENTS}</b> scored harsh-braking, speeding, or sharp-turn events. The app groups event coordinates into roughly <b>{DANGER_ZONE_CELL_SIZE_M}-metre</b> cells; driving the same road more than once does not create an event area unless qualifying events also repeat there.
+              Checked all <b>{completedTripCount}</b> completed trip{completedTripCount === 1 ? '' : 's'}. Nowhere has <b>{minEvents}</b> or more scored harsh-braking, sharp-turn or rapid-acceleration events within <b>{DANGER_ZONE_CLUSTER_RADIUS_M} metres</b> of each other on <b>{minTrips} or more separate drives</b>. Driving the same road often does not create an area on its own. Habitual speeding is shown as a road stretch instead, because a speeding event is recorded at whichever point of the run was fastest and so does not repeat in one spot.
             </p>
           </>
         )}
@@ -235,6 +261,8 @@ function EventTypeSummaryGrid({ loading, summaries }) {
  *  hiddenAreaCount: number,
  *  hiddenDangerZoneCount: number,
  *  loading: boolean,
+ *  minEvents?: number,
+ *  minTrips?: number,
  *  onShowAll: () => void,
  *  onShowOnMap: () => void,
  *  relativeTimeFormatter: (value: any) => string,
@@ -253,6 +281,10 @@ export default function PremiumEventAreasCard({
   hiddenAreaCount,
   hiddenDangerZoneCount,
   loading,
+  // Defaulted to the population every surface now builds, so the card can no
+  // longer print a threshold different from the one that produced its list.
+  minEvents = DANGER_ZONE_ALERT_MIN_EVENTS,
+  minTrips = DANGER_ZONE_MIN_TRIPS,
   onShowAll,
   onShowOnMap,
   relativeTimeFormatter,
@@ -394,6 +426,8 @@ export default function PremiumEventAreasCard({
           <EvidenceAudit
             completedTripCount={completedTripCount}
             hiddenAreaCount={hiddenAreaCount}
+            minEvents={minEvents}
+            minTrips={minTrips}
             state={state}
             visibleDangerZoneCount={visibleDangerZoneCount}
           />
@@ -412,7 +446,7 @@ export default function PremiumEventAreasCard({
                 className="premium-event-area-card"
                 data-event={model.tone}
                 data-risk={model.riskLevel}
-                aria-label={`${model.label}. ${model.eventLabel}. ${model.riskLabel}. Near ${model.coordLabel}${zone.lastSeen ? `. Last seen ${relativeTimeFormatter(zone.lastSeen)}` : ''}`}
+                aria-label={`${model.label}. ${model.eventLabel}. ${model.supportLabel}. ${model.riskLabel}. Near ${model.coordLabel}${zone.lastSeen ? `. Last seen ${relativeTimeFormatter(zone.lastSeen)}` : ''}`}
               >
                 <img loading="lazy" className="premium-event-area-art" src={model.asset} alt="" aria-hidden="true" />
                 <div className="premium-event-area-glass" aria-hidden="true" />
@@ -424,6 +458,7 @@ export default function PremiumEventAreasCard({
                   <span className="premium-event-area-type">{model.label}</span>
                   <strong>{model.eventCount}</strong>
                   <span className="premium-event-area-count">repeated event{model.eventCount === 1 ? '' : 's'}</span>
+                  <span className="premium-event-area-support">{model.supportLabel}</span>
                   {isCoachVariant && <span className="premium-event-area-size">{model.areaLabel}</span>}
                   <span className="premium-event-area-location"><MapPin aria-hidden="true" /> {model.coordLabel}</span>
                   {zone.lastSeen && <small>Last seen {relativeTimeFormatter(zone.lastSeen)}</small>}

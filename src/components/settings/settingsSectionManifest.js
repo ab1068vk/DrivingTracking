@@ -109,11 +109,12 @@ export const SETTINGS_SECTIONS = [
     title: 'Notifications',
     icon: Bell,
     detail: 'Quiet hours, trip summaries, coaching, maintenance, and safety alerts.',
-    keywords: 'quiet hours trip summary coaching maintenance nudges alert',
+    keywords: 'quiet hours trip summary coaching maintenance nudges alert predictive hazard horizon ahead',
     searchItems: [
       { label: 'Enable all notifications', keywords: 'master alerts toggle' },
       { label: 'Quiet hours', keywords: 'do not disturb start end time' },
       { label: 'Safety alerts', keywords: 'driving warning phone heading speeding danger zone' },
+      { label: 'Hazard warning lead time', keywords: 'horizon seconds ahead predictive hazard repeated event area' },
       { label: 'Trip started and ended notifications', keywords: 'start finish summary' },
       { label: 'Post-trip smart summary', keywords: 'score change phone use fuel saving' },
       { label: 'Coaching notifications', keywords: 'milestones achievements streak weekly driving summary tips' },

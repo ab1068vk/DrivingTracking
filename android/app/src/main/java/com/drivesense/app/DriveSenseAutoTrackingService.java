@@ -211,8 +211,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private static final long TRACKING_READY_ALERT_RETRY_MS = 10_000L;
     private static final long COACH_BRIEF_MIN_DELAY_MS = 12_000L;
     private static final long COACH_BRIEF_MAX_DELAY_MS = 5 * 60_000L;
-    private static final long DANGER_ZONE_ALERT_COOLDOWN_MS = 60_000L;
-    private static final double DANGER_ZONE_ALERT_RADIUS_M = 300.0d;
+    // The 60 s cooldown and 300 m omnidirectional radius that used to live here are
+    // now DetectionConstants.HAZARD_ALERT_GLOBAL_COOLDOWN_MS and a speed-derived
+    // forward reach, generated from appConstants.js so the webview cannot disagree.
     private static final long MANOEUVRE_ALERT_COOLDOWN_MS = 30_000L;
     private static final long CLOSE_MANOEUVRE_ALERT_COOLDOWN_MS = 120_000L;
     private static final long STOP_START_ALERT_COOLDOWN_MS = 60_000L;
@@ -352,6 +353,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private boolean coachBriefAlertSpoken = false;
     private boolean coachBriefAlertPending = false;
     private long lastDangerZoneAlertMs = 0L;
+    /** Hazards already warned about on this drive. Cleared with the other per-drive alert state. */
+    private final Set<String> alertedHazardIds = new HashSet<>();
     private String nativeAutoStartReason = "";
     private String lastNativeAutoStopReason = "";
     private String nativeTripStartSource = "native_auto";
@@ -3170,36 +3173,93 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         );
     }
 
-    private String nativeRepeatedEventAreaMessage(String dominantType, double distanceM) {
+    /**
+     * Mirrors buildRepeatedEventAreaMessage in voiceAlertMessages.js, including its
+     * preference for seconds-to-arrival over a radial distance. The metres wording
+     * is kept as the fallback for a zone with no usable arrival time.
+     */
+    private String nativeRepeatedEventAreaMessage(String dominantType, double etaSeconds, double distanceM) {
         String eventType = dominantType == null || dominantType.trim().isEmpty()
             ? "risk event"
             : dominantType.trim().replace('_', ' ');
+        boolean hasEta = Double.isFinite(etaSeconds) && etaSeconds > 0d;
+        String lead = hasEta
+            ? String.format(Locale.US, "%d seconds", Math.round(etaSeconds))
+            : String.format(Locale.US, "%d meters", Math.round(distanceM));
         if (isTechnicalVoiceAlertStyle()) {
             return String.format(
                 Locale.US,
-                "Repeated event area ahead: %s, %d meters.",
+                "Repeated event area ahead: %s, %s.",
                 eventType,
-                Math.round(distanceM)
+                lead
             );
         }
         return String.format(
             Locale.US,
-            "Repeated %s area %d meters ahead. Ease off and leave extra room.",
+            "Repeated %s area about %s ahead. Ease off and leave extra room.",
             eventType,
-            Math.round(distanceM)
+            lead
         );
     }
 
-    private void evaluateRepeatedEventAreaAlert(Location location, long now, boolean voiceAlertsEnabled) {
+    /**
+     * Predictive hazard horizon, background half.
+     *
+     * This used to take every stored zone within a fixed 300 m in any direction and
+     * announce the nearest one as being "ahead" — so zones behind the vehicle and on
+     * parallel and crossing roads all spoke, and the warning was worth 36 s at
+     * 30 km/h but only 10 s at 110 km/h.
+     *
+     * It now projects the travel bearing forward and warns on seconds-to-arrival,
+     * matching hazardHorizon.js. Only the geometry is shared: route-risk segments,
+     * the late-braking advisory, and the arc projection stay in the webview, which is
+     * where that data lives. The service has no point buffer suitable for recovering
+     * a heading, so where the webview derives one from recent fixes, this abstains.
+     */
+    private void evaluateRepeatedEventAreaAlert(
+        Location location,
+        @Nullable Location priorLocation,
+        long now,
+        boolean voiceAlertsEnabled
+    ) {
         if (
             !voiceAlertsEnabled ||
             !isNativeVoiceAlertTypeEnabled("repeated_event_area") ||
             !isSettingEnabled("danger_zone_alerts_enabled", true) ||
-            now - lastDangerZoneAlertMs < DANGER_ZONE_ALERT_COOLDOWN_MS ||
+            now - lastDangerZoneAlertMs < DetectionConstants.HAZARD_ALERT_GLOBAL_COOLDOWN_MS ||
             PrivacyZoneChecker.isInsidePrivacyZone(this, location.getLatitude(), location.getLongitude())
         ) {
             return;
         }
+        // A 35 m fix cannot support a claim about which road you are on. This is
+        // deliberately tighter than the trip-level GPS filter.
+        if (location.hasAccuracy() && location.getAccuracy() > DetectionConstants.HAZARD_MAX_ACCURACY_M) return;
+
+        double speedKmh = location.hasSpeed() ? location.getSpeed() * 3.6d : lastKnownSpeedKmh;
+        if (!Double.isFinite(speedKmh) || speedKmh < DetectionConstants.HAZARD_MIN_SPEED_KMH) return;
+        double speedMs = speedKmh / 3.6d;
+
+        double headingDeg = Double.NaN;
+        if (location.hasBearing()) headingDeg = location.getBearing();
+        else if (priorLocation != null) headingDeg = priorLocation.bearingTo(location);
+        if (!Double.isFinite(headingDeg)) return;
+
+        double horizonSeconds = Math.max(
+            DetectionConstants.HAZARD_HORIZON_MIN_SECONDS_SETTING,
+            Math.min(
+                DetectionConstants.HAZARD_HORIZON_MAX_SECONDS,
+                getSettingDouble("hazard_horizon_seconds", DetectionConstants.HAZARD_HORIZON_ALERT_SECONDS)
+            )
+        );
+        // Coarse pre-filter, replacing the fixed radius: how far the vehicle can
+        // travel inside the warning window, with the same slack the webview projects.
+        double reachM = Math.max(
+            DetectionConstants.HAZARD_PROJECTION_MIN_M,
+            Math.min(
+                DetectionConstants.HAZARD_PROJECTION_MAX_M,
+                speedMs * horizonSeconds * DetectionConstants.HAZARD_PROJECTION_SLACK
+            )
+        );
         try {
             String raw = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE)
                 .getString(DANGER_ZONES_KEY, null);
@@ -3222,8 +3282,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 // Legacy plaintext is accepted until the JS lazy migration rewrites it.
                 zones = new JSONArray(trimmed);
             }
-            JSONObject nearest = null;
-            double nearestDistanceM = Double.POSITIVE_INFINITY;
+            JSONObject soonest = null;
+            String soonestId = null;
+            double soonestEtaSeconds = Double.POSITIVE_INFINITY;
+            double soonestDistanceM = Double.POSITIVE_INFINITY;
             for (int i = 0; i < zones.length(); i++) {
                 JSONObject zone = zones.optJSONObject(i);
                 if (zone == null) continue;
@@ -3236,21 +3298,49 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                     zoneLat,
                     zoneLng
                 ) * 1000d;
-                if (distanceM <= DANGER_ZONE_ALERT_RADIUS_M && distanceM < nearestDistanceM) {
-                    nearest = zone;
-                    nearestDistanceM = distanceM;
+                if (distanceM > reachM) continue;
+
+                double deltaDeg = angleDiffDeg(
+                    headingDeg,
+                    bearingDeg(location.getLatitude(), location.getLongitude(), zoneLat, zoneLng)
+                );
+                if (!Double.isFinite(deltaDeg) || deltaDeg > DetectionConstants.HAZARD_FORWARD_CONE_DEG) continue;
+                double deltaRad = Math.toRadians(deltaDeg);
+                double alongTrackM = distanceM * Math.cos(deltaRad);
+                double crossTrackM = distanceM * Math.sin(deltaRad);
+                if (crossTrackM > DetectionConstants.HAZARD_CORRIDOR_MAX_HALF_WIDTH_M) continue;
+
+                double etaSeconds = alongTrackM / speedMs;
+                if (etaSeconds < DetectionConstants.HAZARD_HORIZON_MIN_SECONDS || etaSeconds > horizonSeconds) continue;
+
+                String zoneId = zone.optString("id", "");
+                if (zoneId.isEmpty()) {
+                    zoneId = String.format(Locale.US, "%.5f,%.5f", zoneLat, zoneLng);
+                }
+                if (alertedHazardIds.contains(zoneId)) continue;
+
+                // Soonest to arrive, not nearest as the crow flies: a zone slightly
+                // further along the road matters more than one just off to the side.
+                if (etaSeconds < soonestEtaSeconds) {
+                    soonest = zone;
+                    soonestId = zoneId;
+                    soonestEtaSeconds = etaSeconds;
+                    soonestDistanceM = distanceM;
                 }
             }
-            if (nearest == null) return;
-            String dominantType = nearest.optString("dominantType", "risk event");
-            String message = nativeRepeatedEventAreaMessage(dominantType, nearestDistanceM);
+            if (soonest == null) return;
+            String dominantType = soonest.optString("dominantType", "risk event");
+            String message = nativeRepeatedEventAreaMessage(dominantType, soonestEtaSeconds, soonestDistanceM);
             recordLiveTelemetryEvent(
                 "repeated_event_area",
                 "Repeated event area approached",
-                nearestDistanceM,
-                "m",
+                soonestEtaSeconds,
+                "s",
                 now
             );
+            // One warning per zone per drive, so a route dense with the driver's own
+            // history cannot repeat itself every cooldown.
+            alertedHazardIds.add(soonestId);
             lastDangerZoneAlertMs = now;
             speakNativeAlert(message, false, () -> lastDangerZoneAlertMs = now);
         } catch (Exception error) {
@@ -3469,7 +3559,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         }
 
         speakNativeCoachBriefOnce(now, voiceAlertsEnabled);
-        evaluateRepeatedEventAreaAlert(location, now, voiceAlertsEnabled);
+        evaluateRepeatedEventAreaAlert(location, priorLocation, now, voiceAlertsEnabled);
 
         if (priorLocation == null) return;
         long priorMs = priorLocation.getTime();
@@ -4557,6 +4647,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         coachBriefAlertSpoken = false;
         coachBriefAlertPending = false;
         lastDangerZoneAlertMs = 0L;
+        alertedHazardIds.clear();
     }
 
     static final class StoredSpeedKnowledgeSelection {

@@ -23,8 +23,9 @@ import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
 import { localSettings } from '@/lib/trackingStore';
 import { getCurrentLocation } from '@/lib/trackingService';
 import { useTripSpeedKnowledge } from '@/hooks/useTripSpeedKnowledge';
-import { saveDangerZones } from '@/lib/dangerZoneEngine';
+import { DANGER_ZONE_ALERT_MIN_EVENTS, saveDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip, loadRouteRiskIndex, saveRouteRiskIndex } from '@/lib/routeRiskIndex';
+import { buildSpeedingStretches } from '@/lib/dangerZone/speedingStretches';
 import { buildRiskHotspots, routeKeyForTrip } from '@/lib/mediumInsights';
 import {
   buildRoadDataDisabledMessage,
@@ -39,7 +40,11 @@ import {
   getPrivacyZones,
   isPointInPrivacyZone,
 } from '@/lib/privacyZones';
-import { MAX_VISIBLE_DANGER_ZONES } from '@/lib/appConstants';
+import {
+  DANGER_ZONE_CLUSTER_RADIUS_M,
+  DANGER_ZONE_MIN_TRIPS,
+  MAX_VISIBLE_DANGER_ZONES,
+} from '@/lib/appConstants';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { TRIAGE_DISABLE_MAPS } from '@/lib/performanceTriage';
 import InlineLoadError from '@/components/InlineLoadError';
@@ -283,9 +288,21 @@ export default function MapScreen() {
     () => selectedTripDetail ? [selectedTripDetail, ...overviewMapTrips] : overviewMapTrips,
     [overviewMapTrips, selectedTripDetail]
   );
+  /**
+   * Habitual speeding shown alongside the point areas. It is merged for display
+   * only and deliberately not written to the stored zone set: that set drives
+   * the native proximity alert, and a stretch's radius covers the whole run, so
+   * storing one would have the phone announcing a hazard for a kilometre at a
+   * time. The card explains the two shapes; the live warning stays about points.
+   */
+  const speedingStretches = useMemo(() => buildSpeedingStretches(routeRiskIndex), [routeRiskIndex]);
+  const allEventAreas = useMemo(
+    () => [...dangerZones, ...speedingStretches],
+    [dangerZones, speedingStretches]
+  );
   const visibleDangerZones = useMemo(
-    () => dangerZones.filter((zone) => !isPointInPrivacyZone(zone, privacyZones)),
-    [dangerZones, privacyZones]
+    () => allEventAreas.filter((zone) => !isPointInPrivacyZone(zone, privacyZones)),
+    [allEventAreas, privacyZones]
   );
   const displayedDangerZones = showAllDangerZones
     ? visibleDangerZones
@@ -787,7 +804,7 @@ export default function MapScreen() {
           dangerZones={visibleDangerZones}
           dangerZonesReady={dangerZonesReady}
           displayedDangerZones={displayedDangerZones}
-          hiddenAreaCount={dangerZones.length}
+          hiddenAreaCount={allEventAreas.length - visibleDangerZones.length}
           hiddenDangerZoneCount={hiddenDangerZoneCount}
           loading={tripsLoading}
           onShowAll={() => setShowAllDangerZones((value) => !value)}
@@ -817,15 +834,15 @@ export default function MapScreen() {
           </div>
         ) : visibleDangerZones.length === 0 ? (
           <div className="rounded-2xl bg-secondary/50 p-4 text-sm text-muted-foreground">
-            {dangerZones.length > 0 ? (
+            {allEventAreas.length > 0 ? (
               <>
-                {dangerZones.length} repeated driving-event area{dangerZones.length === 1 ? ' is' : 's are'} hidden because {dangerZones.length === 1 ? 'it is' : 'they are'} inside your privacy zones.
+                {allEventAreas.length} repeated driving-event area{allEventAreas.length === 1 ? ' is' : 's are'} hidden because {allEventAreas.length === 1 ? 'it is' : 'they are'} inside your privacy zones.
               </>
             ) : (
               <>
                 {completedSummaries.length === 0
                   ? 'No completed trips with event-location evidence are available yet.'
-                  : <>Checked all {completedSummaries.length} completed trip{completedSummaries.length === 1 ? '' : 's'}. No small map area has at least two scored harsh-braking, speeding, or sharp-turn events. The app groups event coordinates into roughly 80-metre cells; driving the same road more than once does not create an event area unless qualifying events also repeat there.</>}
+                  : <>Checked all {completedSummaries.length} completed trip{completedSummaries.length === 1 ? '' : 's'}. An area needs at least {DANGER_ZONE_ALERT_MIN_EVENTS} scored harsh-braking, sharp-turn or rapid-acceleration events within {DANGER_ZONE_CLUSTER_RADIUS_M} metres of each other, on at least {DANGER_ZONE_MIN_TRIPS} separate drives. Driving the same road often does not create an area on its own. Habitual speeding is shown as a road stretch instead, because a speeding event is recorded at whichever point of the run was fastest and so does not repeat in one spot.</>}
               </>
             )}
           </div>

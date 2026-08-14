@@ -4,10 +4,27 @@ import {
   setEncryptedJson,
 } from '@/lib/securePayloadCrypto';
 import { calculateSegmentMetrics, cleanRoutePoints, haversineDistance } from '@/lib/tripEngine';
+import { eventPosition } from '@/lib/dangerZone/eventPositions';
 import { scoringValue } from '@/lib/scoringConstants';
 
 export const GRID_PRECISION = 3;
 export const ROUTE_RISK_SNAP_DISTANCE_M = 15;
+/**
+ * How far an event may sit from the nearest segment midpoint and still be
+ * attributed to it.
+ *
+ * There used to be no ceiling at all: `nearestSegmentKey` returned the closest
+ * midpoint however far away it was, so an event with no real position — a
+ * privacy-masked one read as (0, 0), say — was attached to whichever road
+ * happened to be nearest, and the segment's event rate was wrong from then on.
+ *
+ * The 15 m merge distance is far too tight to reuse here. Midpoints sit up to
+ * half a sampling interval from the event's own fix, which at motorway speed
+ * with a 2 s interval is nearly 30 m before any GPS error. 120 m is loose
+ * enough for sparse sampling and still an order of magnitude short of
+ * attributing an event to a road the driver was never on.
+ */
+export const ROUTE_RISK_EVENT_SNAP_DISTANCE_M = 120;
 export const ROUTE_RISK_INDEX_KEY = 'drivesense_route_risk_index';
 export const ROUTE_RISK_PRIVACY_ZONE_GUARD_M = 50;
 /**
@@ -63,10 +80,11 @@ const dominantEventType = (eventTypes = {}) => (
   Object.entries(eventTypes).sort((a, b) => b[1] - a[1])[0]?.[0] || null
 );
 
-const nearestSegmentKey = (lat, lng, midpoints = []) => {
+const nearestSegmentKey = (lat, lng, midpoints = [], ceilingM = ROUTE_RISK_EVENT_SNAP_DISTANCE_M) => {
   let best = null;
   for (const midpoint of midpoints) {
     const distanceM = haversineDistance(lat, lng, midpoint.lat, midpoint.lng) * 1000;
+    if (!Number.isFinite(distanceM) || distanceM > ceilingM) continue;
     if (!best || distanceM < best.distanceM) best = { key: midpoint.key, distanceM };
   }
   return best?.key || null;
@@ -175,9 +193,12 @@ export function buildRouteRiskIndex(trips = [], privacyZones = []) {
 
     for (const event of trip.driving_events || []) {
       if (event?.diagnostic_only === true || EXCLUDED_PROXY_EVENT_TYPES.has(event?.type)) continue;
-      const lat = Number(event.lat);
-      const lng = Number(event.lng);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+      // `Number(null)` is 0 and passes `Number.isFinite`, so the old check let a
+      // privacy-masked event through as a position on the equator. Shared with
+      // the danger-zone clustering so both agree on what counts as a position.
+      const position = eventPosition(event);
+      if (!position) continue;
+      const { lat, lng } = position;
       const key = nearestSegmentKey(lat, lng, midpoints);
       if (!key || !index.has(key)) continue;
       const item = index.get(key);
@@ -247,6 +268,7 @@ export async function saveRouteRiskIndex(index = new Map()) {
       .slice(0, MAX_STORED_SEGMENTS);
   }
   await setEncryptedJson(ROUTE_RISK_INDEX_KEY, entries);
+  await notifyHazardKnowledge('save_route_risk_index');
 }
 
 export async function loadRouteRiskIndex(privacyZones = []) {
@@ -300,4 +322,19 @@ export async function loadRouteRiskIndex(privacyZones = []) {
 
 export async function invalidateRouteRiskIndex() {
   await removeEncryptedJson(ROUTE_RISK_INDEX_KEY);
+  await notifyHazardKnowledge('invalidate_route_risk_index');
+}
+
+/**
+ * The live hazard warning holds a memoized index of these segments for the whole
+ * drive, so every write has to tell it to rebuild. Imported lazily because the
+ * snapshot module imports this one for its guard constants.
+ */
+async function notifyHazardKnowledge(action) {
+  try {
+    const { notifyHazardKnowledgeChanged } = await import('@/lib/hazard/hazardHorizonSnapshot');
+    await notifyHazardKnowledgeChanged(action);
+  } catch {
+    // A stale snapshot is recoverable; failing the write is not.
+  }
 }

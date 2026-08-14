@@ -21,6 +21,11 @@ import {
 import { logError } from '@/lib/errorReporting';
 import { recordSystemEvent } from '@/lib/systemLog';
 import { scoringValue } from '@/lib/scoringConstants';
+import {
+  HAZARD_HORIZON_ALERT_SECONDS,
+  HAZARD_HORIZON_MAX_SECONDS,
+  HAZARD_HORIZON_MIN_SECONDS_SETTING,
+} from '@/lib/appConstants';
 import { ECO_DEFAULTS } from '@/lib/ecoDefaults';
 import { isPublicOsrmDemoUrl } from '@/lib/osrmPrivacy';
 import { describeEndpointValidationError, normalizeHttpsEndpoint } from '@/lib/urlSecurity';
@@ -483,6 +488,7 @@ export const DEFAULT_SETTINGS = {
   notif_quiet_end: '07:00',
   notif_min_score_for_post_trip: 0,
   danger_zone_alerts_enabled: true,
+  hazard_horizon_seconds: HAZARD_HORIZON_ALERT_SECONDS,
   calibration_profile_key: null,
   co2_baseline_kg_per_100km: DEFAULT_CO2_BASELINE_KG_PER_100KM,
   default_ev_kwh_per_100km: DEFAULT_EV_KWH_PER_100KM,
@@ -667,6 +673,7 @@ export function migrateDefaultSettings(parsed = {}) {
  * actually supports; the wider bounds are kept only for keys with no slider.
  */
 const SETTING_NUMBER_RANGES = {
+  hazard_horizon_seconds: [HAZARD_HORIZON_MIN_SECONDS_SETTING, HAZARD_HORIZON_MAX_SECONDS],
   data_retention_days: [0, 3650],
   raw_gps_retention_days: [0, 3650],
   motion_sample_retention_days: [0, 365],

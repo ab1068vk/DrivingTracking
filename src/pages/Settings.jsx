@@ -37,6 +37,9 @@ import { toast } from '@/components/ui/use-toast';
 import { requestAppAlert, requestAppConfirm } from '@/lib/appDialog';
 import { EXPERIENCE_MODES, applyThemeMode, getLastParkedLocation, localSettings, settingRange, validateSettingsPatch } from '@/lib/trackingStore';
 import {
+  HAZARD_HORIZON_ALERT_SECONDS,
+  HAZARD_HORIZON_MAX_SECONDS,
+  HAZARD_HORIZON_MIN_SECONDS_SETTING,
   MOTION_SAMPLE_RETENTION_DAYS_DEFAULT,
   NIGHT_END_TIME,
   NIGHT_START_TIME,
@@ -3911,13 +3914,32 @@ export default function Settings() {
                 { key: 'notif_phone_use_alert_enabled', label: 'Phone activity warning', sub: 'Immediate warning for foreground-app activity detected while moving' },
                 { key: 'notif_heading_drift_alert_enabled', label: 'Attention pattern warning', sub: 'Beta GPS heading patterns and long-drive break alerts' },
                 { key: 'notif_speeding_alert_enabled', label: 'Speeding alert', sub: 'Sustained speeding warnings' },
-                { key: 'danger_zone_alerts_enabled', label: 'Repeated event area alerts', sub: 'Warn when approaching your own repeated driving-event locations' },
+                { key: 'danger_zone_alerts_enabled', label: 'Hazard warnings ahead', sub: 'Warn about your own repeated driving-event locations on the road ahead' },
                 { key: 'live_coaching_enabled', label: 'Live coaching overlay', sub: 'Show real-time coaching feedback during active trips' },
               ].map(({ key, label, sub }) => (
                 <SettingRow key={key} label={label} sublabel={sub}>
                   <Toggle value={cfg[key] !== false} onChange={v => updateNotificationSetting({ [key]: v })} disabled={cfg.notifications_enabled === false || (key !== 'notif_safety_alerts_enabled' && cfg.notif_safety_alerts_enabled === false)} />
                 </SettingRow>
               ))}
+              <div className="px-1 pt-3">
+                <div className="flex justify-between text-xs mb-1.5">
+                  <span className="font-medium">Hazard warning lead time</span>
+                  <span className="text-primary font-semibold">{cfg.hazard_horizon_seconds ?? HAZARD_HORIZON_ALERT_SECONDS}s</span>
+                </div>
+                <input
+                  type="range"
+                  aria-label="Hazard warning lead time"
+                  aria-valuetext={`${cfg.hazard_horizon_seconds ?? HAZARD_HORIZON_ALERT_SECONDS} seconds`}
+                  min={HAZARD_HORIZON_MIN_SECONDS_SETTING}
+                  max={HAZARD_HORIZON_MAX_SECONDS}
+                  step={2}
+                  value={cfg.hazard_horizon_seconds ?? HAZARD_HORIZON_ALERT_SECONDS}
+                  onChange={e => updateNotificationSetting({ hazard_horizon_seconds: Number(e.target.value) })}
+                  disabled={cfg.danger_zone_alerts_enabled === false}
+                  className="w-full accent-primary disabled:opacity-50"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">How far ahead to warn. Longer gives more time to react; shorter means fewer alerts.</p>
+              </div>
             </div>
 
             <div className="rounded-2xl bg-secondary/40 p-3">

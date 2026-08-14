@@ -2,7 +2,7 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { Layers, MapPin, ShieldAlert, Gauge } from 'lucide-react';
 import { tripDetailQueryOptions } from '@/api/trips';
-import { buildRiskHotspots } from '@/lib/mediumInsights';
+import { loadDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip } from '@/lib/routeRiskIndex';
 import { getPrivacyZones } from '@/lib/privacyZones';
 import { LocalSpeedKnowledge } from '@/lib/localSpeedKnowledge';
@@ -90,11 +90,24 @@ export default function LiveTrackingMapPanel({ snapshot, recentTrips = EMPTY_LIS
   // preserved even though the route line only redraws per bucket.
   const currentLocation = useMemo(() => liveCurrentLocation(points), [points]);
 
-  const dangerZones = useMemo(() => buildRiskHotspots(recentTrips), [recentTrips]);
+  // The stored full-history set, not a recomputation from the 30 trips this
+  // panel happens to hold. Repetition is measured across drives, so a truncated
+  // window quietly drops areas the driver is about to be warned about — and the
+  // window was not even filtered to completed trips before being sliced.
+  const [dangerZones, setDangerZones] = useState(EMPTY_LIST);
+  useEffect(() => {
+    let cancelled = false;
+    loadDangerZones()
+      .then((zones) => { if (!cancelled) setDangerZones(zones.length ? zones : EMPTY_LIST); })
+      .catch(() => { if (!cancelled) setDangerZones(EMPTY_LIST); });
+    return () => { cancelled = true; };
+  }, []);
   const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
 
   const riskTripSummaries = useMemo(
-    () => (showRisk ? recentTrips.slice(0, RISK_HISTORY_TRIP_LIMIT) : EMPTY_LIST),
+    () => (showRisk
+      ? recentTrips.filter((trip) => trip?.status === 'completed').slice(0, RISK_HISTORY_TRIP_LIMIT)
+      : EMPTY_LIST),
     [recentTrips, showRisk]
   );
   const riskTripQueries = useQueries({

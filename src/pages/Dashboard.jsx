@@ -120,7 +120,8 @@ import {
   calculateWeeklyDrivingGoals,
   buildDriverSignature,
 } from '@/lib/tripInsights';
-import { checkDangerZoneProximity, invalidateDangerZoneCache, loadDangerZones } from '@/lib/dangerZoneEngine';
+import { buildAlertDangerZones, loadDangerZones, saveDangerZones } from '@/lib/dangerZoneEngine';
+import { useHazardHorizon } from '@/hooks/useHazardHorizon';
 import { computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
 import { buildHabitProfile } from '@/lib/habitProfile';
 import { buildDashboardActivityStats } from '@/lib/dashboardStats';
@@ -332,7 +333,9 @@ export default function Dashboard() {
   const incidentAlertRef = useRef(0);
   const stayAlertSentRef = useRef(false);
   const lastStayAlertAtRef = useRef(0);
-  const lastProximityAlertRef = useRef(0);
+  // Replaces a hand-rolled 60 s cooldown ref: the gate inside this hook owns
+  // cooldown, one-shot-per-drive, and the sustained-approach requirement.
+  const hazardHorizon = useHazardHorizon();
   const inferredSpeedZonesRef = useRef([]);
   const privateTripRuntimeRef = useRef(null);
   const gpsPointWarningLoggedRef = useRef(false);
@@ -446,7 +449,9 @@ export default function Dashboard() {
     if (!tracking) {
       stayAlertSentRef.current = false;
       lastStayAlertAtRef.current = 0;
-      lastProximityAlertRef.current = 0;
+      // A new drive re-arms every hazard, so what was said on the last one
+      // cannot silence this one.
+      hazardHorizon.reset();
       stillSinceRef.current = null;
       stoppedAnchorRef.current = null;
       lastMovingSpeedRef.current = 0;
@@ -461,7 +466,7 @@ export default function Dashboard() {
       setHazardMessage(null);
       sensorFusionRef.current?.stop();
     }
-  }, [tracking]);
+  }, [hazardHorizon, tracking]);
 
   useEffect(() => {
     if (!tracking || !activeTrip || isPrivateTrip(activeTrip) || activeTrip.trip_state === TRIP_STATES.CANDIDATE) {
@@ -1164,47 +1169,25 @@ export default function Dashboard() {
         const latestPrivacyZones = getPrivacyZones(latestSettings);
         const pointInPrivacyZone = isInsidePrivacyZone(point.lat, point.lng, latestPrivacyZones);
         const storedPoint = redactRoutePointForPrivacyStorage(point, latestPrivacyZones);
-        if (!isCandidateTrip && !pointInPrivacyZone && latestSettings.danger_zone_alerts_enabled !== false) {
-          const zones = await loadDangerZones();
-          const nearby = checkDangerZoneProximity(point.lat, point.lng, zones, 300);
-          if (nearby.length > 0 && Date.now() - lastProximityAlertRef.current > 60 * 1000) {
-            const zone = nearby[0];
-            lastProximityAlertRef.current = Date.now();
-            const typeLabel = String(zone.dominantType || 'risk event').replace(/_/g, ' ');
-            const body = `${typeLabel} repeated-event area ${Math.round(zone.distanceM || 0)} m ahead`;
-            setHazardMessage({ body, at: Date.now() });
-            notifyStayAlert({
-              id: 4007,
-              title: 'Repeated event area ahead',
-              body,
-              extra: { type: 'repeated_event_area', zoneId: zone.id },
-            }).catch((error) => {
-              logError('repeated_event_area_notification', error, {
-                zone_id: zone.id,
-                distance_m: Math.round(zone.distanceM || 0),
-              });
-            });
-            if (!webViewVoiceMuted) {
-              speakSafetyAlert(buildVoiceAlertMessage('repeated_event_area', {
-                dominantType: typeLabel,
-                distanceM: zone.distanceM,
-              }, { settings: latestSettings }), latestSettings, {
-                alertKey: 'repeated_event_area',
-              }).catch((error) => {
-                logError('repeated_event_area_voice_alert', error, {
-                  zone_id: zone.id,
-                  distance_m: Math.round(zone.distanceM || 0),
-                });
-              });
-            }
-          }
-        }
+        // Built before the hazard warning rather than after it: when a fix
+        // carries no heading, recovering one from recent points is the only way
+        // to know which way the vehicle is pointing.
         const routePointsForLiveContext = [
           ...(tripBeforePoint?.route_points || []).filter((routePoint) => (
             Number.isFinite(Number(routePoint?.lat)) && Number.isFinite(Number(routePoint?.lng))
           )),
           point,
         ];
+        if (!isCandidateTrip && !pointInPrivacyZone && latestSettings.danger_zone_alerts_enabled !== false) {
+          const hazard = await hazardHorizon.evaluate({
+            point,
+            recentPoints: routePointsForLiveContext,
+            settings: latestSettings,
+            privacyZones: latestPrivacyZones,
+            voiceMuted: webViewVoiceMuted,
+          });
+          if (hazard) setHazardMessage({ body: hazard.body, at: Date.now(), kind: hazard.kind });
+        }
         const thresholds = buildDrivingThresholds(latestSettings);
         // Spike-filtered, matching LiveCoachOverlay. This used to be the raw
         // point speed, so a single bad GPS fix could drive a speed alert here
@@ -1409,7 +1392,7 @@ export default function Dashboard() {
     );
     setTrackingServiceMode(status || null);
     return status || null;
-  }, [discardCandidateTrip, getLocalSpeedKnowledge, handleLocationTrackingError, promoteCandidateTrip]);
+  }, [discardCandidateTrip, getLocalSpeedKnowledge, handleLocationTrackingError, hazardHorizon, promoteCandidateTrip]);
 
   const handleStartTrip = useCallback(async ({
     autoStarted = false,
@@ -2592,7 +2575,28 @@ export default function Dashboard() {
         map_matching_status: mapMatchingContext.status,
       });
     }
-    await invalidateDangerZoneCache();
+    // Rebuild rather than delete. This used to call invalidateDangerZoneCache(),
+    // which removed the stored zones outright — and only MapScreen ever rebuilt
+    // them, so until the driver opened the Map page the live hazard warning had
+    // nothing to warn about. Zones are derived from event coordinates, not route
+    // geometry, so this is a cheap pass over the trip list.
+    try {
+      // Read the whole history rather than reusing `completedTrips`, which is the
+      // 50-trip window this page renders. Rebuilding from that window overwrote
+      // the full-history set MapScreen had written, so every area supported only
+      // by older drives disappeared from the live warning after each trip and
+      // came back only when the Map page was next opened. `analyticsCompletedTrips`
+      // is not enough either: it falls back to the same window until the lazy
+      // full-history query has loaded.
+      const allSummaries = await tripService.listAllSummaries({ sort: '-start_time' });
+      const history = (Array.isArray(allSummaries) ? allSummaries : [])
+        .filter((trip) => trip?.status === 'completed' && trip.id !== completedTrip.id);
+      await saveDangerZones(buildAlertDangerZones([completedTrip, ...history]));
+    } catch (error) {
+      logError('danger_zone_rebuild_after_trip', error, {
+        trip_id: savedTrip?.id || completedTrip.id,
+      });
+    }
     await invalidateRouteRiskIndex();
     const terminalParkingPoints = (Array.isArray(pts) ? pts : []).slice(-32);
     const parkingGpsDriftM = stoppedAnchorRef.current

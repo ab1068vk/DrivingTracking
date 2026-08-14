@@ -143,6 +143,43 @@ final class DetectionConstants {
     /** appConstants.SPEED_ALERT_RELEASE_KMH */
     static final double SPEED_ALERT_RELEASE_KMH = 3.0d;
 
+    /**
+     * Predictive hazard horizon.
+     * 
+     * The repeated-event-area warning was direction-blind on both sides: any stored
+     * zone within a fixed 300 m radius was announced as being "ahead", so zones behind
+     * the vehicle and on parallel and crossing roads all spoke. The radius was also the
+     * wrong unit, buying 36 s of warning at 30 km/h and 10 s at 110 km/h.
+     * 
+     * The service now projects a forward cone and warns on seconds-to-arrival. Only the
+     * geometry constants are shared: route-risk segments, the late-braking advisory and
+     * the corridor graph stay on the JavaScript side, which is where that data lives.
+     */
+    /** appConstants.HAZARD_HORIZON_ALERT_SECONDS */
+    static final double HAZARD_HORIZON_ALERT_SECONDS = 12.0d;
+    /** appConstants.HAZARD_HORIZON_MIN_SECONDS */
+    static final double HAZARD_HORIZON_MIN_SECONDS = 3.0d;
+    /** appConstants.HAZARD_HORIZON_MIN_SECONDS_SETTING */
+    static final double HAZARD_HORIZON_MIN_SECONDS_SETTING = 6.0d;
+    /** appConstants.HAZARD_HORIZON_MAX_SECONDS */
+    static final double HAZARD_HORIZON_MAX_SECONDS = 20.0d;
+    /** appConstants.HAZARD_PROJECTION_SLACK */
+    static final double HAZARD_PROJECTION_SLACK = 1.5d;
+    /** appConstants.HAZARD_PROJECTION_MIN_M */
+    static final double HAZARD_PROJECTION_MIN_M = 120.0d;
+    /** appConstants.HAZARD_PROJECTION_MAX_M */
+    static final double HAZARD_PROJECTION_MAX_M = 900.0d;
+    /** appConstants.HAZARD_FORWARD_CONE_DEG */
+    static final double HAZARD_FORWARD_CONE_DEG = 50.0d;
+    /** appConstants.HAZARD_CORRIDOR_MAX_HALF_WIDTH_M */
+    static final double HAZARD_CORRIDOR_MAX_HALF_WIDTH_M = 70.0d;
+    /** appConstants.HAZARD_MIN_SPEED_KMH */
+    static final double HAZARD_MIN_SPEED_KMH = 15.0d;
+    /** appConstants.HAZARD_MAX_ACCURACY_M */
+    static final float HAZARD_MAX_ACCURACY_M = 35.0f;
+    /** appConstants.HAZARD_ALERT_GLOBAL_COOLDOWN_MS */
+    static final long HAZARD_ALERT_GLOBAL_COOLDOWN_MS = 30000L;
+
     private DetectionConstants() {
     }
 }

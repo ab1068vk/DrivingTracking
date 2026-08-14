@@ -1,6 +1,6 @@
 # Road Sage
 
-Updated: 2026-08-06T01:51:53.683Z
+Updated: 2026-08-12T20:05:21.737Z
 
 Road Sage is a local-first driving tracker built with React, Vite, Capacitor, and Android native services. It records trips, maps routes, detects driving events, scores driving behavior, generates reports, and keeps trip history on the device unless an optional backend is configured.
 

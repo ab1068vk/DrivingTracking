@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, X } from 'lucide-react';
+import { HAZARD_OVERLAY_QUIET_MS } from '@/lib/appConstants';
+import { liveHazardAlertGate } from '@/lib/hazard/hazardAlertGate';
 import {
   buildDrivingThresholds,
   calculateTripStats,
@@ -230,6 +232,12 @@ export default function LiveCoachOverlay({
       const currentTime = new Date().toISOString();
       const now = Date.now();
       const canDisplayAlert = (key, cooldownMs) => {
+        // The hazard horizon runs per GPS fix on the Dashboard; this loop runs
+        // every 15 s, which is longer than the whole warning window, so it can
+        // never evaluate a hazard usefully — only talk over one. Sharing the
+        // gate lets it stay quiet just after a hazard has been announced.
+        const lastHazardMs = liveHazardAlertGate.stats().lastAlertMs;
+        if (lastHazardMs != null && now - lastHazardMs < HAZARD_OVERLAY_QUIET_MS) return false;
         if (!key || !cooldownMs) return true;
         const last = lastDisplayedAlertRef.current[key] || 0;
         if (now - last < cooldownMs) return false;

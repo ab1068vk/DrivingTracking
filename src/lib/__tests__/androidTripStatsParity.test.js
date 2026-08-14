@@ -5,11 +5,7 @@ import fixture from '@/lib/__fixtures__/androidTripStatsParityFixture.json';
 import { calculateSegmentMetrics, calculateTripStats, DEFAULT_THRESHOLDS, reviewManualTripSave } from '@/lib/tripEngine';
 import { scoringValue } from '@/lib/scoringConstants';
 import { STANDARD_GRAVITY_MS2 } from '@/lib/mathUtils';
-import {
-  SPEED_ALERT_MIN_CONFIDENCE,
-  SPEED_ALERT_RELEASE_KMH,
-  SPEED_ALERT_SUSTAINED_MS,
-} from '@/lib/appConstants';
+import * as appConstants from '@/lib/appConstants';
 
 function jsParityResult() {
   const stats = calculateTripStats(
@@ -163,16 +159,22 @@ describe('Android auto-tracking stats parity', () => {
       // Emitted in milliseconds; the JS constant is in seconds.
       'MIN_TRIP_DURATION_SECONDS * 1000': () => scoringValue('MIN_TRIP_DURATION_SECONDS') * 1000,
       'mathUtils.js STANDARD_GRAVITY_MS2': () => STANDARD_GRAVITY_MS2,
-      // Speed-alert gating lives in appConstants, not scoringConstants: it is
-      // alert policy rather than scoring policy, so it must not move
-      // SCORING_VERSION and invalidate historical trips when it is retuned.
-      'appConstants.SPEED_ALERT_SUSTAINED_MS': () => SPEED_ALERT_SUSTAINED_MS,
-      'appConstants.SPEED_ALERT_MIN_CONFIDENCE': () => SPEED_ALERT_MIN_CONFIDENCE,
-      'appConstants.SPEED_ALERT_RELEASE_KMH': () => SPEED_ALERT_RELEASE_KMH,
+    };
+
+    // Alert policy (speed-alert gating, the hazard horizon) lives in
+    // appConstants rather than scoringConstants: it is not scoring policy, so
+    // retuning it must not move SCORING_VERSION and invalidate historical trips.
+    // Resolved from the module namespace so adding one does not mean adding a
+    // line here as well — which is what this table used to require.
+    const resolve = (jsSource) => {
+      if (overrides[jsSource]) return overrides[jsSource]();
+      const fromAppConstants = jsSource.match(/^appConstants\.(\w+)$/);
+      if (fromAppConstants) return appConstants[fromAppConstants[1]];
+      return scoringValue(jsSource);
     };
 
     for (const [, jsSource, , javaName, javaValue] of fields) {
-      const expected = overrides[jsSource] ? overrides[jsSource]() : scoringValue(jsSource);
+      const expected = resolve(jsSource);
       expect(Number.isFinite(expected), `${jsSource} is not a scoring constant`).toBe(true);
       expect(Number(javaValue), `${javaName} drifted from ${jsSource}`).toBe(expected);
     }

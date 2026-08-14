@@ -84,7 +84,12 @@ export default function DashboardRiskPanel({
   const nearbyWatchZones = currentLocation
     ? checkDangerZoneProximity(currentLocation.lat, currentLocation.lng, dangerZones, 750)
     : [];
-  const watchZones = (nearbyWatchZones.length ? nearbyWatchZones : [...(dangerZones || [])])
+  // Nearby only. There used to be a fallback to the entire zone list whenever
+  // nothing was within 750 m, sorted by a distance field those entries do not
+  // carry — so the panel headed "Watch road areas" listed places on the other
+  // side of the city, with no distance shown to give it away. The empty states
+  // below already say the honest thing.
+  const watchZones = [...nearbyWatchZones]
     .sort((a, b) => (
       watchZoneSortDistance(a) - watchZoneSortDistance(b) ||
       (Number(b.severityScore) || 0) - (Number(a.severityScore) || 0)

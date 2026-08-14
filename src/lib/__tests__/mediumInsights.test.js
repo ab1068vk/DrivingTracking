@@ -223,19 +223,27 @@ describe('mediumInsights', () => {
     expect(brief.weakest_context).toBeNull();
   });
 
-  it('builds repeated event areas from repeated harsh or speeding events', () => {
+  it('builds repeated event areas only where separate drives agree', () => {
+    // This used to pass with a single trip, which is what made "repeated" a lie:
+    // two events on one bad approach are one occurrence, not a pattern. Speeding
+    // no longer contributes — its event sits at whichever fix was fastest, so it
+    // never lands in the same place twice (see speedingStretches).
+    const events = [
+      { type: 'harsh_brake', severity: 'high', lat: 43.65, lng: -79.38, timestamp: '2026-05-12T08:40:00.000Z' },
+      { type: 'speeding', severity: 'medium', lat: 43.65, lng: -79.38, timestamp: '2026-05-12T08:41:00.000Z' },
+    ];
+
+    expect(buildRiskHotspots([trip({ id: 'one', driving_events: events })])).toEqual([]);
+
     const hotspots = buildRiskHotspots([
-      trip({
-        driving_events: [
-          { type: 'harsh_brake', severity: 'high', lat: 43.65, lng: -79.38, timestamp: '2026-05-12T08:40:00.000Z' },
-          { type: 'speeding', severity: 'medium', lat: 43.65, lng: -79.38, timestamp: '2026-05-12T08:41:00.000Z' },
-        ],
-      }),
+      trip({ id: 'one', driving_events: events }),
+      trip({ id: 'two', driving_events: events }),
     ]);
 
     expect(hotspots).toHaveLength(1);
     expect(hotspots[0].eventCount).toBe(2);
-    expect(hotspots[0].typeBreakdown.speeding).toBe(1);
+    expect(hotspots[0].tripCount).toBe(2);
+    expect(hotspots[0].typeBreakdown.speeding).toBeUndefined();
   });
 
   it('uses completed vehicle distance for maintenance reminders', () => {

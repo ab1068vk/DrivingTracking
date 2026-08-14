@@ -170,9 +170,72 @@ describe('PremiumEventAreasCard', () => {
     expect(mapHtml).toContain('Harsh braking. 1 learned area, 12 qualifying events.');
     expect(mapHtml).toContain('Speeding. 1 learned area, 4 qualifying events.');
     expect(mapHtml).toContain('Sharp turns. 1 learned area, 2 qualifying events.');
-    expect(mapHtml).toContain('Each area contains at least <b>3</b>');
+    // Was `at least <b>3</b>` while the map builds this list with 2, and named
+    // 80-metre cells that no longer decide anything. The card now states the
+    // threshold it was actually given, and the drives behind it.
+    expect(mapHtml).toContain('Each area holds at least <b>2</b>');
+    expect(mapHtml).toContain('<b>2 or more separate drives</b>');
     expect(mapHtml).not.toContain('premium-event-areas-shield-v3.webp');
     expect(mapHtml).not.toContain('Coordinates stay in the existing private map workflow');
+  });
+
+  it('does not call visible areas private', () => {
+    // The map passed the *total* area count as hiddenAreaCount and the privacy
+    // branch was tested before the found branch, so a card showing three areas
+    // announced that three areas were hidden inside the driver's privacy zones.
+    const html = renderToStaticMarkup(<PremiumEventAreasCard
+      {...baseProps}
+      dangerZones={zones}
+      displayedDangerZones={zones}
+      hiddenAreaCount={0}
+      variant="map"
+      visibleDangerZoneCount={zones.length}
+    />);
+    expect(html).toContain('3 repeated driving-event areas found.');
+    expect(html).not.toContain('Your privacy zones are working.');
+
+    // Some hidden and some visible: report both, not only the hidden ones.
+    const mixedHtml = renderToStaticMarkup(<PremiumEventAreasCard
+      {...baseProps}
+      dangerZones={zones}
+      displayedDangerZones={zones}
+      hiddenAreaCount={2}
+      variant="map"
+      visibleDangerZoneCount={zones.length}
+    />);
+    expect(mixedHtml).toContain('3 repeated driving-event areas found.');
+    expect(mixedHtml).toContain('A further 2 areas are hidden inside your privacy zones.');
+
+    // Everything hidden is still reported as such.
+    const allHiddenHtml = renderToStaticMarkup(<PremiumEventAreasCard
+      {...baseProps}
+      hiddenAreaCount={2}
+      variant="map"
+      visibleDangerZoneCount={0}
+    />);
+    expect(allHiddenHtml).toContain('Your privacy zones are working.');
+  });
+
+  it('says what makes an area repeated, and reads a stretch as a share of passes', () => {
+    const pointArea = buildPremiumEventAreaViewModel({
+      ...zones[0], kind: 'point_area', tripCount: 4,
+    });
+    expect(pointArea.supportLabel).toBe('Across 4 separate drives');
+
+    const stretch = buildPremiumEventAreaViewModel({
+      id: 'stretch',
+      kind: 'speeding_stretch',
+      dominantType: 'speeding',
+      eventCount: 8,
+      tripCount: 8,
+      passes: 10,
+      lat: 43.65,
+      lng: -79.38,
+      riskLevel: 'high',
+    });
+    expect(stretch.label).toBe('Habitual speeding');
+    expect(stretch.supportLabel).toBe('Over the limit on 8 of 10 passes');
+    expect(stretch.isStretch).toBe(true);
   });
 
   it('keeps map and overflow controls wired and disables map access without visible areas', () => {
@@ -201,7 +264,10 @@ describe('PremiumEventAreasCard', () => {
     expect(emptyHtml).toContain('Show on map unavailable. No areas to map.');
     expect(emptyHtml).toContain('<small>No areas to map</small>');
     expect(emptyHtml).toContain('Harsh braking. 0 learned areas, 0 qualifying events.');
-    expect(emptyHtml).toContain('No small map area has at least <b>3</b>');
+    expect(emptyHtml).toContain('Nowhere has <b>2</b> or more');
+    // The empty state has to explain why a driver who only speeds sees nothing
+    // here, or the feature reads as broken to exactly the people it fails.
+    expect(emptyHtml).toContain('Habitual speeding is shown as a road stretch instead');
 
     const loadingHtml = renderToStaticMarkup(<PremiumEventAreasCard {...baseProps} dangerZonesReady={false} loading variant="map" />);
     expect(loadingHtml).toContain('Show on map unavailable. Areas are still loading.');

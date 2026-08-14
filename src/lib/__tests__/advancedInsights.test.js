@@ -27,9 +27,14 @@ const trip = (overrides = {}) => ({
 
 describe('advanced insights', () => {
   it('explains comparable score and normalized event movement', () => {
+    // Split across the two current trips on purpose. Both events used to sit on
+    // one trip, which no longer forms a hotspot: a "repeated event area" now
+    // requires the same place to catch the driver on separate drives.
     const currentEvents = [
       { type: 'harsh_brake', severity: 'high', lat: 43.65, lng: -79.38, timestamp: '2026-07-10T08:05:00.000Z' },
-      { type: 'harsh_brake', severity: 'medium', lat: 43.65, lng: -79.38, timestamp: '2026-07-10T08:06:00.000Z' },
+    ];
+    const laterEvents = [
+      { type: 'harsh_brake', severity: 'medium', lat: 43.65, lng: -79.38, timestamp: '2026-07-11T08:06:00.000Z' },
     ];
     const trips = [
       trip({
@@ -47,6 +52,7 @@ describe('advanced insights', () => {
         score_safety: 64,
         score_smoothness: 78,
         harsh_brakes_count: 1,
+        driving_events: laterEvents,
       }),
       trip({
         id: 'previous-1',

@@ -3,6 +3,8 @@ import { scoringValue } from '@/lib/scoringConstants';
 import { routeKeyForTrip } from '@/lib/mediumInsights';
 import { buildHabitProfile, getTimeBucket } from '@/lib/habitProfile';
 import { computePreTripRisk } from '@/lib/preTripRisk';
+import { checkDangerZoneProximity } from '@/lib/dangerZoneEngine';
+import { ROUTE_RISK_CONSTANTS } from '@/lib/predictiveRouteRisk';
 import { explainTripScoreDrivers } from '@/lib/scoring/scoreExplainer';
 
 const COMPONENTS = [
@@ -346,9 +348,24 @@ export function buildAdvancedInsightIntelligence(analysis, settings = {}, option
     trip.status === 'completed' && isDriverMetricEligible(trip)
   ));
   const habitProfile = buildHabitProfile(driverHistory);
-  const forecast = computePreTripRisk(driverHistory, settings, null, {
+  const currentLocation = options.currentLocation || null;
+  // This used to pass `analysis.hotspots.length` — every repeated event area
+  // anywhere in the driver's history, counted as if it were on the road ahead.
+  // Each one adds 35 risk points, so a driver with three known areas across the
+  // city was told their next drive was high risk from their sofa. Without a
+  // location the count is genuinely unknown, and null keeps it out of the blend
+  // rather than scoring it as zero.
+  const nearbyDangerZoneCount = currentLocation
+    ? checkDangerZoneProximity(
+      currentLocation.lat,
+      currentLocation.lng,
+      analysis.hotspots || [],
+      ROUTE_RISK_CONSTANTS.PROXIMITY_METERS
+    ).length
+    : null;
+  const forecast = computePreTripRisk(driverHistory, settings, currentLocation, {
     now: options.now || new Date(),
-    nearbyDangerZoneCount: analysis.hotspots.length,
+    nearbyDangerZoneCount,
   }, habitProfile);
   return {
     matched: matchTrips(analysis.currentTrips, analysis.previousTrips),

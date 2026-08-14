@@ -37,7 +37,9 @@ import {
 } from '@/lib/tripInsights';
 import { buildOnDeviceDriverModel, scoreTripAnomaly } from '@/lib/driverAnomaly';
 import { buildHabitProfile } from '@/lib/habitProfile';
-import { buildDangerZones } from '@/lib/dangerZoneEngine';
+import { buildAlertDangerZones } from '@/lib/dangerZoneEngine';
+import { getPrivacyZones } from '@/lib/privacyZones';
+import useSpeedingStretches from '@/hooks/useSpeedingStretches';
 import { buildRouteComparisons } from '@/lib/mediumInsights';
 import { isDriverMetricEligible } from '@/lib/phoneUseSummary';
 import { setJson } from '@/lib/mobileStorage';
@@ -480,7 +482,15 @@ export default function DrivingCoach() {
     activeProgram?.focusId || selectedFocus
   );
   const preTripBriefing = useMemo(() => buildPreTripBriefing(activeProgram, driverCompleted), [activeProgram, driverCompleted]);
-  const dangerZones = useMemo(() => buildDangerZones(driverCompleted), [driverCompleted]);
+  // The same population the map writes and the live warning reads. Coach used
+  // the stricter display default, so a driver could be warned about an area on
+  // the road that Coach then told them did not exist.
+  const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
+  const { stretches: speedingStretches } = useSpeedingStretches(privacyZones);
+  const dangerZones = useMemo(
+    () => [...buildAlertDangerZones(driverCompleted), ...speedingStretches],
+    [driverCompleted, speedingStretches]
+  );
   const dangerZonesReady = recentTripsLoaded && (fullHistoryLoaded || fullHistoryError);
   const displayedDangerZones = showAllDangerZones ? dangerZones : dangerZones.slice(0, 6);
   const hiddenDangerZoneCount = Math.max(0, dangerZones.length - displayedDangerZones.length);

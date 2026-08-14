@@ -1,3 +1,4 @@
+import { clusterByProximity } from '@/lib/geo/proximityClusters';
 import { localTripRepository } from '@/lib/localTripRepository';
 import {
   getHydratedPrivacyZones,
@@ -67,67 +68,17 @@ const tripEndpoints = (trips = []) => (
   ))
 );
 
-const clusterEndpoints = (points = []) => {
-  const parents = points.map((_, index) => index);
-  const ranks = points.map(() => 0);
-  const buckets = new Map();
-  const cellSizeM = PRIVACY_ZONE_SUGGESTION_CLUSTER_RADIUS_M;
-  const find = (index) => {
-    let root = index;
-    while (parents[root] !== root) root = parents[root];
-    while (parents[index] !== index) {
-      const next = parents[index];
-      parents[index] = root;
-      index = next;
-    }
-    return root;
-  };
-  const union = (a, b) => {
-    const rootA = find(a);
-    const rootB = find(b);
-    if (rootA === rootB) return;
-    if (ranks[rootA] < ranks[rootB]) parents[rootA] = rootB;
-    else if (ranks[rootA] > ranks[rootB]) parents[rootB] = rootA;
-    else {
-      parents[rootB] = rootA;
-      ranks[rootA] += 1;
-    }
-  };
-  const projectedCell = (point) => {
-    const latitudeRadians = point.lat * Math.PI / 180;
-    return {
-      x: Math.floor((point.lng * 111320 * Math.cos(latitudeRadians)) / cellSizeM),
-      y: Math.floor((point.lat * 111320) / cellSizeM),
-    };
-  };
-
-  points.forEach((point, index) => {
-    const cell = projectedCell(point);
-    for (let xOffset = -1; xOffset <= 1; xOffset += 1) {
-      for (let yOffset = -1; yOffset <= 1; yOffset += 1) {
-        const nearby = buckets.get(`${cell.x + xOffset}:${cell.y + yOffset}`) || [];
-        nearby.forEach((candidateIndex) => {
-          if (
-            privacyZoneDistanceM(point, points[candidateIndex]) <=
-            PRIVACY_ZONE_SUGGESTION_CLUSTER_RADIUS_M
-          ) {
-            union(index, candidateIndex);
-          }
-        });
-      }
-    }
-    const key = `${cell.x}:${cell.y}`;
-    buckets.set(key, [...(buckets.get(key) || []), index]);
-  });
-
-  return Array.from(points.reduce((groups, point, index) => {
-    const root = find(index);
-    const group = groups.get(root) || [];
-    group.push(point);
-    groups.set(root, group);
-    return groups;
-  }, new Map()).values());
-};
+/**
+ * The union-find bucket sweep this used to hold inline now lives in
+ * `@/lib/geo/proximityClusters`, extracted so the repeated-event-area engine
+ * clusters by the same rule instead of by a rounded grid. `privacyZoneDistanceM`
+ * is passed explicitly so the behaviour here is unchanged, not merely similar —
+ * this path decides where privacy zones get suggested.
+ */
+const clusterEndpoints = (points = []) => clusterByProximity(points, {
+  radiusM: PRIVACY_ZONE_SUGGESTION_CLUSTER_RADIUS_M,
+  distanceM: privacyZoneDistanceM,
+});
 
 const clusterCenter = (points) => ({
   lat: points.reduce((sum, point) => sum + point.lat, 0) / points.length,

@@ -1,3 +1,9 @@
+import {
+  buildLateBrakingMessage,
+  buildLateBrakingTechnicalMessage,
+  describeHazardLead,
+} from '@/lib/hazard/hazardAlertMessages';
+
 const UNKNOWN_ALERT_KEY = 'general';
 export const VOICE_ALERT_MESSAGE_STYLES = Object.freeze({
   MODE_DEFAULT: 'mode_default',
@@ -111,6 +117,13 @@ const VOICE_ALERT_MESSAGE_CATALOG = Object.freeze({
       () => 'Repeated event area ahead. Stay alert and give yourself extra space.',
     ]),
   }),
+  late_braking_pattern: Object.freeze({
+    title: 'Braking pattern',
+    messages: Object.freeze([
+      (context) => buildLateBrakingMessage(context),
+      () => 'You have braked hard here before. Ease off early.',
+    ]),
+  }),
   possible_incident: Object.freeze({
     title: 'Possible incident',
     messages: Object.freeze([
@@ -219,6 +232,13 @@ const TECHNICAL_VOICE_ALERT_MESSAGE_CATALOG = Object.freeze({
       () => 'Repeated event area recorded ahead.',
     ]),
   }),
+  late_braking_pattern: Object.freeze({
+    title: 'Braking pattern',
+    messages: Object.freeze([
+      (context) => buildLateBrakingTechnicalMessage(context),
+      () => 'Repeated hard braking recorded at this location.',
+    ]),
+  }),
   possible_incident: Object.freeze({
     title: 'Possible incident signal',
     messages: Object.freeze([
@@ -270,6 +290,13 @@ const ALERT_KEY_ALIASES = Object.freeze({
   repeated_area: 'repeated_event_area',
   repeated_event: 'repeated_event_area',
   hazard_area: 'repeated_event_area',
+  // The horizon names this by what it observed. These aliases exist because
+  // "curve" is the word people reach for, and it is the one claim the evidence
+  // cannot support.
+  curve_entry: 'late_braking_pattern',
+  curve_entry_advisory: 'late_braking_pattern',
+  brake_point: 'late_braking_pattern',
+  late_braking: 'late_braking_pattern',
   crash: 'possible_incident',
   incident: 'possible_incident',
   possible_crash: 'possible_incident',
@@ -400,18 +427,21 @@ export function buildSpeedingMessage(context = {}, fallback = null, options = {}
 
 function buildRepeatedEventAreaMessage(context) {
   const eventType = humanizeEventType(context.eventType || context.type || context.dominantType);
-  const distance = finiteNumber(context.distanceM);
-  if (distance !== null && distance > 0) {
-    return `Repeated ${eventType} area about ${Math.round(distance)} meters ahead. Slow your scan and keep extra space.`;
+  // Seconds when the hazard horizon supplied an arrival time, distance when only
+  // a radial reading is available. The distance branch is the older caller and
+  // stays as the fallback rather than being replaced.
+  const lead = describeHazardLead(context);
+  if (lead) {
+    return `Repeated ${eventType} area ${lead}. Slow your scan and keep extra space.`;
   }
   return `Repeated ${eventType} area ahead. Stay alert and keep extra space.`;
 }
 
 function buildRepeatedEventAreaTechnicalMessage(context) {
   const eventType = humanizeEventType(context.eventType || context.type || context.dominantType);
-  const distance = finiteNumber(context.distanceM);
-  if (distance !== null && distance > 0) {
-    return `Repeated ${eventType} area recorded about ${Math.round(distance)} meters ahead.`;
+  const lead = describeHazardLead(context);
+  if (lead) {
+    return `Repeated ${eventType} area recorded ${lead}.`;
   }
   return `Repeated ${eventType} area recorded ahead.`;
 }

@@ -19,7 +19,7 @@ import {
 } from '@/lib/mapPlaybackInsights';
 import { formatDistance, formatSpeed } from '@/lib/tripEngine';
 import { useTripSpeedKnowledge } from '@/hooks/useTripSpeedKnowledge';
-import { buildRiskHotspots } from '@/lib/mediumInsights';
+import { loadDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip } from '@/lib/routeRiskIndex';
 import {
   getPrivacyZones,
@@ -168,7 +168,20 @@ export default function TrackingMapWorkspace() {
     () => selectedTrip ? [selectedTrip, ...overviewTrips] : overviewTrips,
     [overviewTrips, selectedTrip]
   );
-  const dangerZones = useMemo(() => buildRiskHotspots(overlayTrips), [overlayTrips]);
+  // Read the stored set rather than recomputing from `overlayTrips`. Whenever a
+  // trip is selected that array is exactly one trip, so this was asking "which
+  // places does this driver repeatedly have trouble at" of a single drive — a
+  // question that cannot have an answer now repetition is measured across
+  // drives. The stored set is built from the whole history by the Map page and
+  // after every completed trip.
+  const [dangerZones, setDangerZones] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    loadDangerZones()
+      .then((zones) => { if (!cancelled) setDangerZones(zones); })
+      .catch(() => { if (!cancelled) setDangerZones([]); });
+    return () => { cancelled = true; };
+  }, []);
   const routeRiskIndex = useMemo(() => buildRouteRiskIndex(overlayTrips, privacyZones), [overlayTrips, privacyZones]);
   const routeRiskSegments = useMemo(
     () => selectedTrip ? getSegmentsForTrip(selectedTrip, routeRiskIndex) : [],
@@ -343,7 +356,7 @@ export default function TrackingMapWorkspace() {
                   ? 'unavailable'
                   : `${localKnowledgeResults.filter(Boolean).length} point matches`}
               />
-              <InspectorRow label="Danger zones" value={`${dangerZones.length} computed`} />
+              <InspectorRow label="Danger zones" value={`${dangerZones.length} from saved history`} />
               <InspectorRow label="Route risk segments" value={`${routeRiskSegments.length} visible`} />
 
               <div className="rounded-lg border border-border bg-secondary/30 p-3">

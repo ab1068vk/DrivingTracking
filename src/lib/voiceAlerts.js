@@ -4,6 +4,7 @@ import NativeSpeech from '@/lib/driveSenseNativePlugin';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import {
   buildVoiceAlertMessage,
+  normalizeVoiceAlertMessageKey,
   resolveVoiceAlertMessageStyle,
 } from '@/lib/voiceAlertMessages';
 
@@ -23,7 +24,7 @@ export const VOICE_ALERT_CONTROL_GROUPS = Object.freeze([
   Object.freeze({
     settingKey: 'voice_driving_event_alerts_enabled',
     label: 'Driving event warnings',
-    alerts: 'Harsh braking, rapid acceleration, sharp corners, close manoeuvres, stop/start patterns, and repeated-event areas',
+    alerts: 'Harsh braking, rapid acceleration, sharp corners, close manoeuvres, stop/start patterns, repeated-event areas, and places you brake hard',
   }),
   Object.freeze({
     settingKey: 'voice_attention_incident_alerts_enabled',
@@ -48,6 +49,7 @@ const ALERT_GROUP_SETTING_BY_KEY = Object.freeze({
   stop_start: 'voice_driving_event_alerts_enabled',
   stop_start_pattern: 'voice_driving_event_alerts_enabled',
   repeated_event_area: 'voice_driving_event_alerts_enabled',
+  late_braking_pattern: 'voice_driving_event_alerts_enabled',
   phone_use: 'voice_attention_incident_alerts_enabled',
   heading_drift: 'voice_attention_incident_alerts_enabled',
   heading_drift_beta: 'voice_attention_incident_alerts_enabled',
@@ -86,7 +88,14 @@ export function voiceAlertGroupSettingForKey(key) {
       ? ALERT_GROUP_SETTING_BY_KEY[matchedEventKey]
       : 'voice_coaching_reminder_alerts_enabled';
   }
-  return ALERT_GROUP_SETTING_BY_KEY[normalizedKey] || null;
+  const direct = ALERT_GROUP_SETTING_BY_KEY[normalizedKey];
+  if (direct) return direct;
+  // An alias used to resolve in the message catalog but not here, so it returned
+  // null and isVoiceAlertTypeEnabled read that as "no group governs this" and
+  // allowed it — an alias could speak with its group switched off. Direct keys
+  // are matched first so no existing mapping changes; this only fills gaps.
+  const aliased = normalizeVoiceAlertMessageKey(normalizedKey);
+  return ALERT_GROUP_SETTING_BY_KEY[aliased] || null;
 }
 
 export function isVoiceAlertTypeEnabled(key, settings = {}) {

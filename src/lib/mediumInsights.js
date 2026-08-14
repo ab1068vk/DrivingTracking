@@ -1,4 +1,4 @@
-import { buildDangerZones } from '@/lib/dangerZoneEngine';
+import { buildAlertDangerZones } from '@/lib/dangerZoneEngine';
 import { COACHING_CONTENT } from '@/lib/coachingContent';
 import { routeKeyForTrip } from '@/lib/commuteMatching';
 import { buildVehicleMaintenancePlan } from '@/lib/vehicleMaintenance';
@@ -565,10 +565,9 @@ export function buildRoadTypeBreakdown(trips = []) {
 }
 
 export function buildRiskHotspots(trips = []) {
-  return buildDangerZones(trips, {
-    eventTypes: ['harsh_brake', 'sharp_turn', 'speeding'],
-    minEvents: 2,
-  });
+  // The threshold lives in dangerZoneEngine so the page that writes the stored
+  // zones and the warning that reads them cannot disagree about which set it is.
+  return buildAlertDangerZones(trips);
 }
 
 export function buildVehicleCostSummary(vehicle = {}, trips = []) {

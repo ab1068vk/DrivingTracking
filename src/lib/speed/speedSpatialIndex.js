@@ -14,6 +14,11 @@
  * comes back, so results are identical to the linear scan; only the number of
  * candidates tested changes. `speedSpatialIndex.test.js` asserts that
  * equivalence directly.
+ *
+ * Nothing here is speed-specific — it takes `records`, a `geometryFor` and a
+ * per-record padding — so `src/lib/hazard/hazardHorizonSnapshot.js` builds its
+ * hazard index from this same function rather than growing a second copy that
+ * would drift from the one the live speed resolver depends on. Keep it generic.
  */
 
 const KM_PER_DEG_LAT = 111.32;
