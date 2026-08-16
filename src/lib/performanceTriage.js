@@ -1,4 +1,20 @@
+import {
+  bufferSuppressedDiagnostics,
+  closeP0Span,
+  markP0SpanFailure,
+  openP0Span,
+  recordP0Phase,
+  tagP0DiagnosticsJob,
+} from '@/lib/p0Probe';
+import { suppressDiagnosticsPersistence } from '@/lib/p0ProbeArms';
+
 const TRIAGE_PREFIX = '[perf-triage]';
+
+const p0Now = () => (
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now()
+);
 const MAX_TRIAGE_ENTRIES = 250;
 const MAX_PERSISTED_TRIAGE_ENTRIES = 2500;
 const TRIAGE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
@@ -81,28 +97,86 @@ const sanitizeEntry = (entry = {}) => ({
   context: safeContext(entry.context || entry),
 });
 
-const readPersistedEntries = () => {
+const readPersistedEntries = (p0Span = null) => {
   if (!canUseStorage()) return [];
+  const mark = () => (p0Span ? p0Now() : 0);
   try {
-    const parsed = JSON.parse(localStorage.getItem(TRIAGE_STORAGE_KEY) || '[]');
+    const getStart = mark();
+    const raw = localStorage.getItem(TRIAGE_STORAGE_KEY) || '[]';
+    const getEnd = mark();
+    // Committed before the parse: a parse that throws on a large corrupt store
+    // still consumed the read time, and losing the row would make the failure
+    // look free.
+    if (p0Span) recordP0Phase(p0Span, 'diag_get', getStart, getEnd);
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      if (p0Span) recordP0Phase(p0Span, 'diag_parse', getEnd, p0Now());
+      throw error;
+    }
+    const parseEnd = mark();
+    if (p0Span) recordP0Phase(p0Span, 'diag_parse', getEnd, parseEnd);
     if (!Array.isArray(parsed)) return [];
+    if (p0Span) p0Span.entry_count_before = parsed.length;
     const cutoff = Date.now() - TRIAGE_RETENTION_MS;
-    return parsed
+    const transformed = parsed
       .map(sanitizeEntry)
       .filter((entry) => new Date(entry.at).getTime() >= cutoff)
       .slice(-MAX_PERSISTED_TRIAGE_ENTRIES);
+    if (p0Span) recordP0Phase(p0Span, 'diag_transform', parseEnd, p0Now());
+    return transformed;
   } catch {
+    // Application behaviour is unchanged — a corrupt store still degrades to an
+    // empty list. But the measurement must not call that a success.
+    markP0SpanFailure(p0Span);
     return [];
   }
 };
 
 const persistEntry = (entry) => {
   if (!canUseStorage()) return;
+  // P0 arms B/C short-circuit at job entry, before the first storage read and
+  // before any full-history transform. Suppressing only the write would leave
+  // the expensive parse/sanitize/filter/stringify in place and could produce a
+  // false negative for the diagnostics hypothesis.
+  if (suppressDiagnosticsPersistence()) {
+    // The already-collected entry moves into the bounded volatile buffer rather
+    // than being parsed, pruned, stringified and written.
+    bufferSuppressedDiagnostics('performance_triage_persist', [entry]);
+    return;
+  }
+  const p0Span = openP0Span('diagnostics_job');
+  if (p0Span) tagP0DiagnosticsJob(p0Span, 'performance_triage_persist');
+  let p0Outcome = 'error';
   try {
-    const next = [...readPersistedEntries(), sanitizeEntry(entry)].slice(-MAX_PERSISTED_TRIAGE_ENTRIES);
-    localStorage.setItem(TRIAGE_STORAGE_KEY, JSON.stringify(next));
+    const next = [...readPersistedEntries(p0Span), sanitizeEntry(entry)].slice(-MAX_PERSISTED_TRIAGE_ENTRIES);
+    const stringifyStart = p0Span ? p0Now() : 0;
+    const serialized = JSON.stringify(next);
+    const stringifyEnd = p0Span ? p0Now() : 0;
+    if (p0Span) {
+      recordP0Phase(p0Span, 'diag_stringify', stringifyStart, stringifyEnd);
+      // The string already exists; no encoder or second traversal is added.
+      p0Span.serialized_code_units = serialized.length;
+    }
+    // A quota-exceeded write is a real and expensive failure mode for a store
+    // this size. Its interval is recorded on both paths.
+    try {
+      localStorage.setItem(TRIAGE_STORAGE_KEY, serialized);
+    } catch (error) {
+      if (p0Span) recordP0Phase(p0Span, 'diag_set', stringifyEnd, p0Now());
+      throw error;
+    }
+    if (p0Span) recordP0Phase(p0Span, 'diag_set', stringifyEnd, p0Now());
+    p0Outcome = 'success';
   } catch {
     // Performance history is best-effort and must never disturb measured work.
+    markP0SpanFailure(p0Span);
+  } finally {
+    // A read, parse, stringify or write failure closes the span as `error`.
+    // Closing everything as `success` would have hidden failed persistence
+    // behind a clean-looking measurement.
+    if (p0Span) closeP0Span(p0Span, p0Outcome);
   }
 };
 
@@ -114,8 +188,42 @@ if (canUseStorage()) {
   }
 }
 
+/**
+ * Context fields describing the on-device dataset. A caller may only supply
+ * these once its trip query has resolved — see `setPerformanceTriageContext`.
+ */
+export const DATASET_CONTEXT_FIELDS = Object.freeze([
+  'trip_count',
+  'completed_trip_count',
+  'total_distance_km',
+  'route_point_count',
+  'data_size_bytes',
+]);
+
+/**
+ * I-1: dataset context is written only from a resolved trip query.
+ *
+ * This setter previously ran on the Diagnostics page's first render, while the
+ * trip-profile query was still loading, and persisted `{trip_count: 0, ...}`.
+ * That zeroed context was then stamped onto every measurement app-wide, which is
+ * why no retained sample carried a usable dataset size.
+ *
+ * The gate is structural rather than heuristic: only keys the caller actually
+ * supplies are applied, and the caller supplies dataset keys only once its query
+ * has resolved. Inferring intent from the *values* — treating an all-zero
+ * dataset as "still loading" — would keep stale counts forever on a device whose
+ * trips were genuinely all deleted. A resolved zero is a real measurement and
+ * must be recorded as one.
+ *
+ * The return shape is unchanged from before instrumentation.
+ */
 export function setPerformanceTriageContext(context = {}) {
-  performanceContext = safeContext({ ...performanceContext, ...context });
+  const merged = { ...performanceContext };
+  Object.keys(context).forEach((key) => {
+    if (context[key] !== undefined) merged[key] = context[key];
+  });
+
+  performanceContext = safeContext(merged);
   if (canUseStorage()) {
     try {
       localStorage.setItem(TRIAGE_CONTEXT_KEY, JSON.stringify(performanceContext));

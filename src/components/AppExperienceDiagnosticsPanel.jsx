@@ -22,6 +22,12 @@ import {
   saveImportedAppExperienceReport,
 } from '@/lib/appExperienceDiagnostics';
 import { isNativePlatform } from '@/lib/nativePlatform';
+import { isP0DebugBuild, resolveP0Arm } from '@/lib/p0ProbeArms';
+
+// Resolved once at module scope: the arm is frozen for the process, and the raw
+// export control must not exist at all in a release build.
+const P0_DEBUG_BUILD = isP0DebugBuild();
+const p0Arm = resolveP0Arm();
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { formatDistance } from '@/lib/tripEngine';
@@ -110,6 +116,7 @@ export default function AppExperienceDiagnosticsPanel({
   settings = {},
   buildInfo = {},
   nativeWatchdog = null,
+  tripDataReady = true,
 } = {}) {
   const inputRef = useRef(null);
   const [notice, setNotice] = useState('');
@@ -132,11 +139,37 @@ export default function AppExperienceDiagnosticsPanel({
   const activity = report.activity.counts;
   const units = settings.units || 'metric';
 
-  const exportReport = async () => {
+  /**
+   * I-2: refuse to build an export while the trip-profile query is still
+   * pending. The baseline evidence file was exactly this artifact — it reported
+   * `trip_count: 0` on a 128-trip device because the report was assembled 35 ms
+   * after its own `listAllSummaries` started.
+   *
+   * @param {{ includeP0Raw?: boolean }} [options]
+   */
+  const exportReport = async ({ includeP0Raw = false } = {}) => {
+    if (!tripDataReady) {
+      setNotice('Trip history is still loading. Wait for it to finish so the report is not exported with an empty dataset.');
+      return;
+    }
     setBusy(true);
     setNotice('');
-    const filename = `road-sage-app-experience-${new Date().toISOString().slice(0, 10)}.json`;
-    const text = JSON.stringify(report, null, 2);
+    const suffix = includeP0Raw ? '-p0-raw' : '';
+    const filename = `road-sage-app-experience-${new Date().toISOString().slice(0, 10)}${suffix}.json`;
+    // The default export is byte-identical to the pre-P0 report; the raw P0
+    // section is only built when explicitly requested.
+    const exported = includeP0Raw
+      ? buildAppExperienceReport({
+        trips,
+        performanceEntries,
+        systemEvents: [...historicalEvents, ...trackingEvents],
+        settings,
+        buildInfo,
+        nativeWatchdog,
+        includeP0Raw: true,
+      })
+      : report;
+    const text = JSON.stringify(exported, null, 2);
     try {
       if (isNativePlatform()) {
         const result = await saveExportToDownloads({ filename, data: text, mimeType: 'application/json' });
@@ -212,9 +245,20 @@ export default function AppExperienceDiagnosticsPanel({
           <p className="mt-2 text-sm font-semibold">{report.health.headline}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={exportReport} disabled={busy} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">
-            <Download className="h-4 w-4" /> Export safe report
+          <button type="button" onClick={() => exportReport()} disabled={busy || !tripDataReady} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">
+            <Download className="h-4 w-4" /> {tripDataReady ? 'Export safe report' : 'Loading trip history…'}
           </button>
+          {P0_DEBUG_BUILD && (
+            <button
+              type="button"
+              onClick={() => exportReport({ includeP0Raw: true })}
+              disabled={busy || !tripDataReady}
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold disabled:opacity-50"
+              title={`P0 arm ${p0Arm} — raw measurement rows, debug builds only`}
+            >
+              <Download className="h-4 w-4" /> Export P0 raw ({p0Arm})
+            </button>
+          )}
           <button type="button" onClick={() => inputRef.current?.click()} disabled={busy} className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold disabled:opacity-50">
             <Upload className="h-4 w-4" /> Import comparison
           </button>

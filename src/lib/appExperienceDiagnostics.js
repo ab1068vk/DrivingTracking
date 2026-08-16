@@ -1,4 +1,20 @@
 import { summarizePerformanceTriage } from '@/lib/performanceTriage';
+import {
+  bufferSuppressedDiagnostics,
+  closeP0Span,
+  exportP0Trace,
+  markP0SpanFailure,
+  openP0Span,
+  recordP0Phase,
+  tagP0DiagnosticsJob,
+} from '@/lib/p0Probe';
+import { suppressDiagnosticsPersistence } from '@/lib/p0ProbeArms';
+
+const p0Now = () => (
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now()
+);
 
 export const APP_EXPERIENCE_REPORT_KIND = 'roadsage_app_experience_diagnostics';
 export const APP_EXPERIENCE_REPORT_VERSION = 1;
@@ -312,11 +328,16 @@ export function buildAppExperienceReport({
   settings = {},
   buildInfo = {},
   nativeWatchdog = null,
+  includeP0Raw = false,
 } = {}) {
   const data = buildTripDataProfile(trips);
   const performance = buildPerformanceProfile(performanceEntries);
   const activity = buildAppActivityProfile(systemEvents);
+  // The raw P0 section is opt-in. Without it the report is byte-identical to
+  // the pre-P0 export.
+  const p0 = includeP0Raw ? exportP0Trace() : null;
   return {
+    ...(p0 ? { p0 } : {}),
     report_kind: APP_EXPERIENCE_REPORT_KIND,
     schema_version: APP_EXPERIENCE_REPORT_VERSION,
     generated_at: new Date().toISOString(),
@@ -430,13 +451,28 @@ const canUseStorage = () => {
   }
 };
 
-const readStoredExperienceEvents = (nowMs = Date.now()) => {
+const readStoredExperienceEvents = (nowMs = Date.now(), p0Span = null) => {
   if (!canUseStorage()) return [];
+  const mark = () => (p0Span ? p0Now() : 0);
   try {
-    const parsed = JSON.parse(localStorage.getItem(EXPERIENCE_EVENTS_KEY) || '[]');
+    const getStart = mark();
+    const raw = localStorage.getItem(EXPERIENCE_EVENTS_KEY) || '[]';
+    const getEnd = mark();
+    // Committed before the parse so a throwing parse keeps the read interval.
+    if (p0Span) recordP0Phase(p0Span, 'diag_get', getStart, getEnd);
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      if (p0Span) recordP0Phase(p0Span, 'diag_parse', getEnd, p0Now());
+      throw error;
+    }
+    const parseEnd = mark();
+    if (p0Span) recordP0Phase(p0Span, 'diag_parse', getEnd, parseEnd);
     if (!Array.isArray(parsed)) return [];
+    if (p0Span) p0Span.entry_count_before = parsed.length;
     const cutoff = nowMs - EXPERIENCE_EVENT_RETENTION_MS;
-    return parsed
+    const sanitized = parsed
       .filter((event) => Number.isFinite(new Date(event?.timestamp).getTime()))
       .filter((event) => new Date(event.timestamp).getTime() >= cutoff)
       .slice(0, MAX_EXPERIENCE_EVENTS)
@@ -449,7 +485,10 @@ const readStoredExperienceEvents = (nowMs = Date.now()) => {
         page: safePage(event.page),
         details: safeEventDetail(event.details),
       }));
+    if (p0Span) recordP0Phase(p0Span, 'diag_transform', parseEnd, p0Now());
+    return sanitized;
   } catch {
+    markP0SpanFailure(p0Span);
     return [];
   }
 };
@@ -459,12 +498,41 @@ const flushHistoricalAppExperienceEvents = () => {
   if (!canUseStorage() || !pendingExperienceEvents.length) return;
   const batch = pendingExperienceEvents;
   pendingExperienceEvents = [];
+  // P0 arms B/C short-circuit here, at job entry, before the first storage read
+  // and before re-sanitizing up to MAX_EXPERIENCE_EVENTS rows.
+  if (suppressDiagnosticsPersistence()) {
+    bufferSuppressedDiagnostics('experience_events_flush', batch);
+    return;
+  }
+  const p0Span = openP0Span('diagnostics_job');
+  if (p0Span) tagP0DiagnosticsJob(p0Span, 'experience_events_flush');
+  let p0Outcome = 'error';
   try {
-    localStorage.setItem(EXPERIENCE_EVENTS_KEY, JSON.stringify(
-      [...batch, ...readStoredExperienceEvents()].slice(0, MAX_EXPERIENCE_EVENTS)
-    ));
+    const stored = readStoredExperienceEvents(Date.now(), p0Span);
+    const transformStart = p0Span ? p0Now() : 0;
+    const next = [...batch, ...stored].slice(0, MAX_EXPERIENCE_EVENTS);
+    const transformEnd = p0Span ? p0Now() : 0;
+    const serialized = JSON.stringify(next);
+    const stringifyEnd = p0Span ? p0Now() : 0;
+    if (p0Span) {
+      recordP0Phase(p0Span, 'diag_transform', transformStart, transformEnd);
+      recordP0Phase(p0Span, 'diag_stringify', transformEnd, stringifyEnd);
+      // The string already exists; no encoder or second traversal is added.
+      p0Span.serialized_code_units = serialized.length;
+    }
+    try {
+      localStorage.setItem(EXPERIENCE_EVENTS_KEY, serialized);
+    } catch (error) {
+      if (p0Span) recordP0Phase(p0Span, 'diag_set', stringifyEnd, p0Now());
+      throw error;
+    }
+    if (p0Span) recordP0Phase(p0Span, 'diag_set', stringifyEnd, p0Now());
+    p0Outcome = 'success';
   } catch {
     // Historical diagnostics are best-effort and must not interfere with the app.
+    markP0SpanFailure(p0Span);
+  } finally {
+    if (p0Span) closeP0Span(p0Span, p0Outcome);
   }
 };
 

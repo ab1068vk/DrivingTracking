@@ -1,0 +1,4643 @@
+{
+  "report_kind": "roadsage_app_experience_diagnostics",
+  "schema_version": 1,
+  "generated_at": "2026-08-14T17:04:07.014Z",
+  "privacy": {
+    "precise_locations_included": false,
+    "route_geometry_included": false,
+    "trip_ids_included": false,
+    "trip_dates_included": false,
+    "notes_or_names_included": false,
+    "setting_values_included": false,
+    "crash_messages_or_stacks_included": false,
+    "anonymous_trip_shapes_are_rounded": true
+  },
+  "app": {
+    "version": "1.0.0",
+    "build_hash": "",
+    "experience_mode": "coaching",
+    "tracking_mode": "paused"
+  },
+  "health": {
+    "score": 0,
+    "status": "slow",
+    "headline": "app.bootstrap.tripRepositoryMaintenance is the clearest slowdown (668593 ms p95)."
+  },
+  "data": {
+    "trip_count": 0,
+    "completed_trip_count": 0,
+    "total_distance_km": 0,
+    "median_distance_km": 0,
+    "p95_distance_km": 0,
+    "total_duration_hours": 0,
+    "median_duration_minutes": 0,
+    "total_route_point_count": 0,
+    "p95_route_point_count": 0,
+    "approximate_summary_bytes": 0,
+    "replayable_trip_count": 0,
+    "summary_only_trip_count": 0,
+    "advanced_evidence_trip_count": 0,
+    "automatic_trip_count": 0,
+    "manual_trip_count": 0,
+    "distance_buckets": {
+      "under_1_km": 0,
+      "1_to_5_km": 0,
+      "5_to_20_km": 0,
+      "20_to_50_km": 0,
+      "50_km_plus": 0
+    },
+    "anonymous_trip_shapes": []
+  },
+  "performance": {
+    "sample_count": 1554,
+    "slow_operation_count": 14,
+    "watch_operation_count": 3,
+    "operations": [
+      {
+        "key": "app.bootstrap.tripRepositoryMaintenance",
+        "name": "app.bootstrap.tripRepositoryMaintenance",
+        "pathname": null,
+        "count": 13,
+        "totalMs": 1890932.5,
+        "maxMs": 668592.7,
+        "latestMs": 544734.3,
+        "latestAt": "2026-08-10T01:03:09.523Z",
+        "averageMs": 145456.3,
+        "p50Ms": 70480.3,
+        "p95Ms": 668592.7,
+        "trendPercent": 423,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.nativeTripSync",
+        "name": "app.nativeTripSync",
+        "pathname": null,
+        "count": 59,
+        "totalMs": 4941555.3,
+        "maxMs": 680824.3,
+        "latestMs": 254.9,
+        "latestAt": "2026-08-12T17:36:31.986Z",
+        "averageMs": 83755.2,
+        "p50Ms": 254.9,
+        "p95Ms": 589757.7,
+        "trendPercent": 544,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "limitedTripSummaryQueryOptions.queryFn",
+        "name": "limitedTripSummaryQueryOptions.queryFn",
+        "pathname": null,
+        "count": 23,
+        "totalMs": 3762185.0999999996,
+        "maxMs": 673560.7,
+        "latestMs": 155937.5,
+        "latestAt": "2026-08-10T01:05:45.783Z",
+        "averageMs": 163573.3,
+        "p50Ms": 83780.8,
+        "p95Ms": 588809.9,
+        "trendPercent": 434,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "tripService.listSummaries",
+        "name": "tripService.listSummaries",
+        "pathname": null,
+        "count": 28,
+        "totalMs": 4396257.100000001,
+        "maxMs": 673357.9,
+        "latestMs": 155913.2,
+        "latestAt": "2026-08-10T01:05:45.759Z",
+        "averageMs": 157009.2,
+        "p50Ms": 71938.3,
+        "p95Ms": 588780.6,
+        "trendPercent": 554,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.resume.nativeTripSync",
+        "name": "app.resume.nativeTripSync",
+        "pathname": null,
+        "count": 33,
+        "totalMs": 3343002.6999999993,
+        "maxMs": 655146.7,
+        "latestMs": 261.7,
+        "latestAt": "2026-08-12T17:36:31.992Z",
+        "averageMs": 101303.1,
+        "p50Ms": 469.4,
+        "p95Ms": 586258.6,
+        "trendPercent": -26,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "tripService.listAllSummaries",
+        "name": "tripService.listAllSummaries",
+        "pathname": null,
+        "count": 25,
+        "totalMs": 2969605.5000000005,
+        "maxMs": 633819.4,
+        "latestMs": 137526.2,
+        "latestAt": "2026-08-10T01:13:33.627Z",
+        "averageMs": 118784.2,
+        "p50Ms": 50406.9,
+        "p95Ms": 549690.7,
+        "trendPercent": 478,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "tripService.listForSpeedMap",
+        "name": "tripService.listForSpeedMap",
+        "pathname": null,
+        "count": 3,
+        "totalMs": 644959.1,
+        "maxMs": 469224.1,
+        "latestMs": 99825.9,
+        "latestAt": "2026-08-10T01:14:42.442Z",
+        "averageMs": 214986.4,
+        "p50Ms": 99825.9,
+        "p95Ms": 469224.1,
+        "trendPercent": -63,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "tripSummaryQueryOptions.queryFn",
+        "name": "tripSummaryQueryOptions.queryFn",
+        "pathname": null,
+        "count": 14,
+        "totalMs": 847723,
+        "maxMs": 156118.5,
+        "latestMs": 137537.9,
+        "latestAt": "2026-08-10T01:13:33.639Z",
+        "averageMs": 60551.6,
+        "p50Ms": 46768.9,
+        "p95Ms": 156118.5,
+        "trendPercent": 100,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.resume.rawGpsRetention",
+        "name": "app.resume.rawGpsRetention",
+        "pathname": null,
+        "count": 32,
+        "totalMs": 678736.7,
+        "maxMs": 254810.5,
+        "latestMs": 3676.2,
+        "latestAt": "2026-08-10T01:08:30.360Z",
+        "averageMs": 21210.5,
+        "p50Ms": 489.9,
+        "p95Ms": 126695.2,
+        "trendPercent": 171,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "SpeedLimits.buildMapModel",
+        "name": "SpeedLimits.buildMapModel",
+        "pathname": null,
+        "count": 1,
+        "totalMs": 26525.5,
+        "maxMs": 26525.5,
+        "latestMs": 26525.5,
+        "latestAt": "2026-08-10T01:15:08.994Z",
+        "averageMs": 26525.5,
+        "p50Ms": 26525.5,
+        "p95Ms": 26525.5,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.bootstrap.roadContextQueue",
+        "name": "app.bootstrap.roadContextQueue",
+        "pathname": null,
+        "count": 14,
+        "totalMs": 7270.499999999999,
+        "maxMs": 3801.7,
+        "latestMs": 340.5,
+        "latestAt": "2026-08-12T17:19:24.917Z",
+        "averageMs": 519.3,
+        "p50Ms": 253.4,
+        "p95Ms": 3801.7,
+        "trendPercent": 332,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.bootstrap.keyRotation",
+        "name": "app.bootstrap.keyRotation",
+        "pathname": null,
+        "count": 15,
+        "totalMs": 14242.800000000001,
+        "maxMs": 3795.1,
+        "latestMs": 334.9,
+        "latestAt": "2026-08-12T17:19:24.912Z",
+        "averageMs": 949.5,
+        "p50Ms": 382.5,
+        "p95Ms": 3795.1,
+        "trendPercent": 287,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.resume.roadContextQueue",
+        "name": "app.resume.roadContextQueue",
+        "pathname": null,
+        "count": 40,
+        "totalMs": 24529.5,
+        "maxMs": 3804,
+        "latestMs": 338,
+        "latestAt": "2026-08-12T17:36:32.587Z",
+        "averageMs": 613.2,
+        "p50Ms": 338,
+        "p95Ms": 3111.2,
+        "trendPercent": 28,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.resume.keyRotation",
+        "name": "app.resume.keyRotation",
+        "pathname": null,
+        "count": 80,
+        "totalMs": 60045.80000000001,
+        "maxMs": 7332.8,
+        "latestMs": 274.4,
+        "latestAt": "2026-08-12T17:36:32.005Z",
+        "averageMs": 750.6,
+        "p50Ms": 443,
+        "p95Ms": 2234.9,
+        "trendPercent": 90,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "page.firstPaint:/trips/:id",
+        "name": "page.firstPaint",
+        "pathname": "/trips/:id",
+        "count": 20,
+        "totalMs": 6139.5,
+        "maxMs": 1800.5,
+        "latestMs": 887.8,
+        "latestAt": "2026-08-10T01:11:16.987Z",
+        "averageMs": 307,
+        "p50Ms": 37.8,
+        "p95Ms": 1096.2,
+        "trendPercent": 2337,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "watch"
+      },
+      {
+        "key": "buildSpeedMapSections",
+        "name": "buildSpeedMapSections",
+        "pathname": null,
+        "count": 37,
+        "totalMs": 3757.3999999999996,
+        "maxMs": 863.3,
+        "latestMs": 360.8,
+        "latestAt": "2026-08-10T01:16:29.175Z",
+        "averageMs": 101.6,
+        "p50Ms": 0.3,
+        "p95Ms": 787.4,
+        "trendPercent": 84,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "watch"
+      },
+      {
+        "key": "page.firstPaint:/trips",
+        "name": "page.firstPaint",
+        "pathname": "/trips",
+        "count": 17,
+        "totalMs": 805.9999999999999,
+        "maxMs": 527.8,
+        "latestMs": 13.9,
+        "latestAt": "2026-08-10T00:53:30.938Z",
+        "averageMs": 47.4,
+        "p50Ms": 15,
+        "p95Ms": 527.8,
+        "trendPercent": -88,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "watch"
+      },
+      {
+        "key": "app.coldBootstrap",
+        "name": "app.coldBootstrap",
+        "pathname": null,
+        "count": 31,
+        "totalMs": 4967.800000000001,
+        "maxMs": 313.6,
+        "latestMs": 213.6,
+        "latestAt": "2026-08-14T17:03:35.195Z",
+        "averageMs": 160.3,
+        "p50Ms": 154.5,
+        "p95Ms": 236.9,
+        "trendPercent": 32,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "SpeedLimitEditorMap.layerDraw",
+        "name": "SpeedLimitEditorMap.layerDraw",
+        "pathname": null,
+        "count": 16,
+        "totalMs": 980.0999999999998,
+        "maxMs": 188.9,
+        "latestMs": 188.9,
+        "latestAt": "2026-08-10T01:17:07.928Z",
+        "averageMs": 61.3,
+        "p50Ms": 31.9,
+        "p95Ms": 188.9,
+        "trendPercent": 229,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "TripMap.layerDraw",
+        "name": "TripMap.layerDraw",
+        "pathname": null,
+        "count": 413,
+        "totalMs": 8738.3,
+        "maxMs": 260.1,
+        "latestMs": 1.6,
+        "latestAt": "2026-08-12T17:36:37.550Z",
+        "averageMs": 21.2,
+        "p50Ms": 5.5,
+        "p95Ms": 178,
+        "trendPercent": 720,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "app.bootstrap.settingsHydrate",
+        "name": "app.bootstrap.settingsHydrate",
+        "pathname": null,
+        "count": 31,
+        "totalMs": 1446.2,
+        "maxMs": 137.2,
+        "latestMs": 126.6,
+        "latestAt": "2026-08-14T17:03:35.108Z",
+        "averageMs": 46.7,
+        "p50Ms": 36.2,
+        "p95Ms": 126.6,
+        "trendPercent": -7,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/diagnostics",
+        "name": "page.firstPaint",
+        "pathname": "/diagnostics",
+        "count": 9,
+        "totalMs": 199.3,
+        "maxMs": 116.4,
+        "latestMs": 7.7,
+        "latestAt": "2026-08-14T17:03:44.286Z",
+        "averageMs": 22.1,
+        "p50Ms": 7.7,
+        "p95Ms": 116.4,
+        "trendPercent": -71,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/",
+        "name": "page.firstPaint",
+        "pathname": "/",
+        "count": 35,
+        "totalMs": 959.9000000000001,
+        "maxMs": 108.2,
+        "latestMs": 104.6,
+        "latestAt": "2026-08-14T17:03:35.083Z",
+        "averageMs": 27.4,
+        "p50Ms": 18,
+        "p95Ms": 104.6,
+        "trendPercent": -30,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/parking",
+        "name": "page.firstPaint",
+        "pathname": "/parking",
+        "count": 36,
+        "totalMs": 921.6000000000001,
+        "maxMs": 385.1,
+        "latestMs": 14,
+        "latestAt": "2026-08-12T17:36:37.555Z",
+        "averageMs": 25.6,
+        "p50Ms": 12.8,
+        "p95Ms": 67,
+        "trendPercent": -26,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "TripMap.polylineCreationLoop",
+        "name": "TripMap.polylineCreationLoop",
+        "pathname": null,
+        "count": 257,
+        "totalMs": 1344.7999999999997,
+        "maxMs": 43.3,
+        "latestMs": 35.6,
+        "latestAt": "2026-08-10T01:11:23.646Z",
+        "averageMs": 5.2,
+        "p50Ms": 1.2,
+        "p95Ms": 31.2,
+        "trendPercent": 937,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/trips/:id/speed",
+        "name": "page.firstPaint",
+        "pathname": "/trips/:id/speed",
+        "count": 3,
+        "totalMs": 48,
+        "maxMs": 26.4,
+        "latestMs": 26.4,
+        "latestAt": "2026-08-10T01:10:31.225Z",
+        "averageMs": 16,
+        "p50Ms": 14.2,
+        "p95Ms": 26.4,
+        "trendPercent": 144,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/tracking",
+        "name": "page.firstPaint",
+        "pathname": "/tracking",
+        "count": 1,
+        "totalMs": 17,
+        "maxMs": 17,
+        "latestMs": 17,
+        "latestAt": "2026-08-02T18:50:22.616Z",
+        "averageMs": 17,
+        "p50Ms": 17,
+        "p95Ms": 17,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0
+        },
+        "status": "good"
+      },
+      {
+        "key": "TripMap.fitBounds",
+        "name": "TripMap.fitBounds",
+        "pathname": null,
+        "count": 21,
+        "totalMs": 102.4,
+        "maxMs": 15.8,
+        "latestMs": 14.2,
+        "latestAt": "2026-08-10T01:11:16.923Z",
+        "averageMs": 4.9,
+        "p50Ms": 2.6,
+        "p95Ms": 15.5,
+        "trendPercent": 461,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/speed-limits",
+        "name": "page.firstPaint",
+        "pathname": "/speed-limits",
+        "count": 7,
+        "totalMs": 77.10000000000001,
+        "maxMs": 14.3,
+        "latestMs": 9.7,
+        "latestAt": "2026-08-10T01:11:23.741Z",
+        "averageMs": 11,
+        "p50Ms": 11.5,
+        "p95Ms": 14.3,
+        "trendPercent": -34,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "app.resume.privacyZoneSweep",
+        "name": "app.resume.privacyZoneSweep",
+        "pathname": null,
+        "count": 82,
+        "totalMs": 231.90000000000003,
+        "maxMs": 28.4,
+        "latestMs": 6.7,
+        "latestAt": "2026-08-12T17:36:31.732Z",
+        "averageMs": 2.8,
+        "p50Ms": 0.7,
+        "p95Ms": 14.1,
+        "trendPercent": 24,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/map",
+        "name": "page.firstPaint",
+        "pathname": "/map",
+        "count": 1,
+        "totalMs": 12.4,
+        "maxMs": 12.4,
+        "latestMs": 12.4,
+        "latestAt": "2026-08-02T22:19:03.327Z",
+        "averageMs": 12.4,
+        "p50Ms": 12.4,
+        "p95Ms": 12.4,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 95,
+          "completed_trip_count": 95,
+          "total_distance_km": 752.7,
+          "route_point_count": 40223,
+          "data_size_bytes": 3940345,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/settings",
+        "name": "page.firstPaint",
+        "pathname": "/settings",
+        "count": 4,
+        "totalMs": 33.7,
+        "maxMs": 10.9,
+        "latestMs": 5.9,
+        "latestAt": "2026-08-06T02:05:22.268Z",
+        "averageMs": 8.4,
+        "p50Ms": 8.1,
+        "p95Ms": 10.9,
+        "trendPercent": -29,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "SpeedLimitEditorMap.fitBounds",
+        "name": "SpeedLimitEditorMap.fitBounds",
+        "pathname": null,
+        "count": 9,
+        "totalMs": 31.5,
+        "maxMs": 8.5,
+        "latestMs": 5.3,
+        "latestAt": "2026-08-10T01:17:07.774Z",
+        "averageMs": 3.5,
+        "p50Ms": 3,
+        "p95Ms": 8.5,
+        "trendPercent": -7,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "SpeedLimitEditorMap.mount",
+        "name": "SpeedLimitEditorMap.mount",
+        "pathname": null,
+        "count": 6,
+        "totalMs": 25.999999999999996,
+        "maxMs": 8.4,
+        "latestMs": 4.7,
+        "latestAt": "2026-08-10T01:16:21.404Z",
+        "averageMs": 4.3,
+        "p50Ms": 3.4,
+        "p95Ms": 8.4,
+        "trendPercent": -9,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/vehicles",
+        "name": "page.firstPaint",
+        "pathname": "/vehicles",
+        "count": 1,
+        "totalMs": 8,
+        "maxMs": 8,
+        "latestMs": 8,
+        "latestAt": "2026-08-07T17:09:48.541Z",
+        "averageMs": 8,
+        "p50Ms": 8,
+        "p95Ms": 8,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/system-logs",
+        "name": "page.firstPaint",
+        "pathname": "/system-logs",
+        "count": 1,
+        "totalMs": 5.5,
+        "maxMs": 5.5,
+        "latestMs": 5.5,
+        "latestAt": "2026-08-02T22:18:09.541Z",
+        "averageMs": 5.5,
+        "p50Ms": 5.5,
+        "p95Ms": 5.5,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 95,
+          "completed_trip_count": 95,
+          "total_distance_km": 752.9,
+          "route_point_count": 40223,
+          "data_size_bytes": 3940227,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/achievements",
+        "name": "page.firstPaint",
+        "pathname": "/achievements",
+        "count": 1,
+        "totalMs": 5.1,
+        "maxMs": 5.1,
+        "latestMs": 5.1,
+        "latestAt": "2026-08-06T02:06:09.617Z",
+        "averageMs": 5.1,
+        "p50Ms": 5.1,
+        "p95Ms": 5.1,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "RouteLogger.recordSystemEvent:/",
+        "name": "RouteLogger.recordSystemEvent",
+        "pathname": "/",
+        "count": 35,
+        "totalMs": 37.2,
+        "maxMs": 4.3,
+        "latestMs": 0.5,
+        "latestAt": "2026-08-14T17:03:35.098Z",
+        "averageMs": 1.1,
+        "p50Ms": 1,
+        "p95Ms": 2.2,
+        "trendPercent": -2,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "RouteLogger.recordSystemEvent:/trips",
+        "name": "RouteLogger.recordSystemEvent",
+        "pathname": "/trips",
+        "count": 17,
+        "totalMs": 2.9000000000000004,
+        "maxMs": 0.4,
+        "latestMs": 0.3,
+        "latestAt": "2026-08-10T00:53:30.979Z",
+        "averageMs": 0.2,
+        "p50Ms": 0.1,
+        "p95Ms": 0.4,
+        "trendPercent": -30,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "RouteLogger.recordSystemEvent:/settings",
+        "name": "RouteLogger.recordSystemEvent",
+        "pathname": "/settings",
+        "count": 4,
+        "totalMs": 0.8,
+        "maxMs": 0.4,
+        "latestMs": 0.2,
+        "latestAt": "2026-08-06T02:05:22.362Z",
+        "averageMs": 0.2,
+        "p50Ms": 0.2,
+        "p95Ms": 0.4,
+        "trendPercent": 200,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      }
+    ],
+    "daily_series": [
+      {
+        "day": "2026-08-02",
+        "samples": 700,
+        "median_ms": 4.2,
+        "p95_ms": 31542.7
+      },
+      {
+        "day": "2026-08-03",
+        "samples": 35,
+        "median_ms": 9.9,
+        "p95_ms": 71938.3
+      },
+      {
+        "day": "2026-08-04",
+        "samples": 220,
+        "median_ms": 8.1,
+        "p95_ms": 17678.3
+      },
+      {
+        "day": "2026-08-06",
+        "samples": 170,
+        "median_ms": 12.7,
+        "p95_ms": 90173.5
+      },
+      {
+        "day": "2026-08-07",
+        "samples": 85,
+        "median_ms": 108.7,
+        "p95_ms": 655146.7
+      },
+      {
+        "day": "2026-08-09",
+        "samples": 13,
+        "median_ms": 9.2,
+        "p95_ms": 2234.9
+      },
+      {
+        "day": "2026-08-10",
+        "samples": 220,
+        "median_ms": 175.8,
+        "p95_ms": 220123.9
+      },
+      {
+        "day": "2026-08-12",
+        "samples": 106,
+        "median_ms": 4.5,
+        "p95_ms": 721.8
+      },
+      {
+        "day": "2026-08-14",
+        "samples": 5,
+        "median_ms": 104.6,
+        "p95_ms": 213.6
+      }
+    ]
+  },
+  "activity": {
+    "event_count": 1649,
+    "error_count": 15,
+    "warning_count": 738,
+    "counts": {
+      "crashes_and_failures": 37,
+      "freezes_and_anrs": 0,
+      "resource_pressure": 17,
+      "trip_deletions": 0,
+      "settings_changes": 76,
+      "imports_and_exports": 2,
+      "network_responses": 9,
+      "coaching_experience": 0,
+      "advanced_tracking": 303
+    },
+    "top_operations": [
+      {
+        "operation": "browser_long_task",
+        "count": 704
+      },
+      {
+        "operation": "android_native_completed_trips_loaded",
+        "count": 203
+      },
+      {
+        "operation": "route_changed",
+        "count": 134
+      },
+      {
+        "operation": "permission_status_checked",
+        "count": 100
+      },
+      {
+        "operation": "document_visibility",
+        "count": 88
+      },
+      {
+        "operation": "native_completed_trips_synced",
+        "count": 59
+      },
+      {
+        "operation": "settings_changed",
+        "count": 38
+      },
+      {
+        "operation": "settings_update_verified",
+        "count": 38
+      },
+      {
+        "operation": "notification_batch_scheduled",
+        "count": 32
+      },
+      {
+        "operation": "device_integrity_threat_detected",
+        "count": 30
+      },
+      {
+        "operation": "notification_channels_configured",
+        "count": 30
+      },
+      {
+        "operation": "android_native_auto_tracking_started",
+        "count": 20
+      },
+      {
+        "operation": "android_memory_pressure",
+        "count": 17
+      },
+      {
+        "operation": "trip_3d_playback_available",
+        "count": 15
+      },
+      {
+        "operation": "android_process_exit",
+        "count": 14
+      },
+      {
+        "operation": "android_native_completed_trips_acknowledged",
+        "count": 10
+      },
+      {
+        "operation": "speed_knowledge_road_memory_learned",
+        "count": 9
+      },
+      {
+        "operation": "armed_location_watch",
+        "count": 8
+      },
+      {
+        "operation": "candidate_started",
+        "count": 8
+      },
+      {
+        "operation": "diagnostics_refresh_started",
+        "count": 8
+      },
+      {
+        "operation": "speed_knowledge_indexeddb_read",
+        "count": 8
+      },
+      {
+        "operation": "service_armed",
+        "count": 6
+      },
+      {
+        "operation": "diagnostics_refresh_completed",
+        "count": 5
+      },
+      {
+        "operation": "speed_knowledge_trip_rescored",
+        "count": 5
+      },
+      {
+        "operation": "trip_discarded",
+        "count": 5
+      }
+    ],
+    "recent_important_events": [
+      {
+        "timestamp": "2026-08-14T17:03:40.206Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/",
+        "details": {
+          "duration_ms": 459
+        }
+      },
+      {
+        "timestamp": "2026-08-14T17:03:37.015Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/",
+        "details": {
+          "trip_count": 4
+        }
+      },
+      {
+        "timestamp": "2026-08-14T17:03:35.227Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_auto_tracking_started",
+        "page": "/",
+        "details": {}
+      },
+      {
+        "timestamp": "2026-08-14T17:03:35.144Z",
+        "severity": "warn",
+        "category": "security",
+        "source": "web",
+        "operation": "device_integrity_threat_detected",
+        "page": "/",
+        "details": {}
+      },
+      {
+        "timestamp": "2026-08-14T17:03:35.144Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T17:03:35.144Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/",
+        "details": {
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T17:03:35.080Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/",
+        "details": {
+          "duration_ms": 86
+        }
+      },
+      {
+        "timestamp": "2026-08-14T16:38:52.044Z",
+        "severity": "info",
+        "category": "app",
+        "source": "android",
+        "operation": "voice_alert_tracking_ready",
+        "page": "",
+        "details": {
+          "source": "android",
+          "critical": false,
+          "memory_low": false
+        }
+      },
+      {
+        "timestamp": "2026-08-14T16:38:50.912Z",
+        "severity": "info",
+        "category": "app",
+        "source": "android",
+        "operation": "auto_start",
+        "page": "",
+        "details": {
+          "source": "android",
+          "critical": false,
+          "memory_low": false
+        }
+      },
+      {
+        "timestamp": "2026-08-13T03:15:30.400Z",
+        "severity": "info",
+        "category": "app",
+        "source": "android",
+        "operation": "voice_alert_tracking_ready",
+        "page": "",
+        "details": {
+          "source": "android",
+          "critical": false,
+          "memory_low": false
+        }
+      },
+      {
+        "timestamp": "2026-08-13T03:15:29.919Z",
+        "severity": "info",
+        "category": "app",
+        "source": "android",
+        "operation": "auto_start",
+        "page": "",
+        "details": {
+          "source": "android",
+          "critical": false,
+          "memory_low": false
+        }
+      },
+      {
+        "timestamp": "2026-08-12T18:31:26.107Z",
+        "severity": "info",
+        "category": "app",
+        "source": "android",
+        "operation": "voice_alert_tracking_ready",
+        "page": "",
+        "details": {
+          "source": "android",
+          "critical": false,
+          "memory_low": false
+        }
+      },
+      {
+        "timestamp": "2026-08-12T18:31:26.008Z",
+        "severity": "info",
+        "category": "app",
+        "source": "android",
+        "operation": "auto_start",
+        "page": "",
+        "details": {
+          "source": "android",
+          "critical": false,
+          "memory_low": false
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:43:02.378Z",
+        "severity": "info",
+        "category": "app",
+        "source": "android",
+        "operation": "voice_alert_tracking_ready",
+        "page": "",
+        "details": {
+          "source": "android",
+          "critical": false,
+          "memory_low": false
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:43:02.008Z",
+        "severity": "info",
+        "category": "app",
+        "source": "android",
+        "operation": "auto_start",
+        "page": "",
+        "details": {
+          "source": "android",
+          "critical": false,
+          "memory_low": false
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:36:36.666Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 124
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:36:31.992Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/parking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:36:31.985Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/parking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:36:31.605Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 706
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:32:37.747Z",
+        "severity": "info",
+        "category": "app",
+        "source": "android",
+        "operation": "android_memory_pressure",
+        "page": "",
+        "details": {
+          "source": "android",
+          "trim_level": 40,
+          "critical": false,
+          "memory_available_bytes": 3468820480,
+          "memory_total_bytes": 11653349376,
+          "memory_low": false,
+          "heap_used_bytes": 9040480,
+          "heap_max_bytes": 268435456,
+          "pss_kb": 123779,
+          "storage_usable_bytes": 4306714624,
+          "storage_total_bytes": 108116574208,
+          "thermal_status": 0,
+          "thermal_label": "none",
+          "battery_temperature_c": 30.4
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:20:35.188Z",
+        "severity": "info",
+        "category": "app",
+        "source": "android",
+        "operation": "android_memory_pressure",
+        "page": "",
+        "details": {
+          "source": "android",
+          "trim_level": 40,
+          "critical": false,
+          "memory_available_bytes": 3136987136,
+          "memory_total_bytes": 11653349376,
+          "memory_low": false,
+          "heap_used_bytes": 52302176,
+          "heap_max_bytes": 268435456,
+          "pss_kb": 184167,
+          "storage_usable_bytes": 4303425536,
+          "storage_total_bytes": 108116574208,
+          "thermal_status": 0,
+          "thermal_label": "none",
+          "battery_temperature_c": 33.2
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:20:34.371Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 1064
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:20:22.428Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 527
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:20:16.644Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 883
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:20:10.677Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 789
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:20:04.725Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 313
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:19:59.714Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 480
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:19:54.565Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 1476
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:19:47.008Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 912
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:19:41.054Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 156
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:19:35.433Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 563
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:19:30.411Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 455
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:19:24.893Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/parking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:19:24.886Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/parking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:19:24.488Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 396
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:12:25.309Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 1418
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:11:59.862Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 317
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:11:43.426Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 1306
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:11:08.269Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 993
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:10:59.766Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 282
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:10:38.258Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 552
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:10:28.247Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 721
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:10:15.191Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 922
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:10:08.773Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 810
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:10:03.722Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 628
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:09:39.568Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 285
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:09:25.825Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 882
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:09:18.074Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 647
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:08:58.233Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 1207
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:08:24.316Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 1083
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:07:41.674Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 369
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:07:02.184Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 458
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:06:50.642Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 339
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:06:34.901Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 287
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:06:29.882Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/parking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:06:29.880Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 299
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:05:20.835Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/parking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:05:20.829Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/parking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:05:20.829Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_auto_tracking_started",
+        "page": "/parking",
+        "details": {}
+      },
+      {
+        "timestamp": "2026-08-12T17:05:20.594Z",
+        "severity": "warn",
+        "category": "security",
+        "source": "web",
+        "operation": "device_integrity_threat_detected",
+        "page": "/parking",
+        "details": {}
+      },
+      {
+        "timestamp": "2026-08-12T17:05:20.594Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/parking",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-12T17:05:20.593Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/parking",
+        "details": {
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:34:33.502Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 225
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:34:28.340Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 193
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:34:23.073Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 237
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:34:17.814Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 2313
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:32:53.306Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 593
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:32:47.871Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 633
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:32:42.642Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 1121
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:32:37.024Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 1160
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:32:31.732Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 1543
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:32:25.664Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 903
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:32:19.802Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 782
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:32:14.229Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 447
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:32:09.110Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 217
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:32:03.896Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 226
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:31:58.790Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 410
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:31:53.265Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 109
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:31:48.166Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 535
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:31:42.669Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 1073
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:31:36.682Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 214
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:31:31.602Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 2970
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:31:24.333Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 214
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:31:19.143Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 915
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:31:12.688Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 569
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:31:07.366Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 521
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:29:54.834Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 400
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:29:49.213Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 230
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:29:43.868Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 103
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:29:38.677Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 240
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:29:33.342Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 580
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:29:27.783Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 241
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:29:22.679Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 142
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:29:17.479Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 617
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:29:12.159Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 424
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:29:06.987Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 412
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:29:01.852Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 142
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:28:56.748Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 129
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:28:54.011Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/parking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:28:50.032Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 3236
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:28:44.278Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 580
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:28:44.277Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/parking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:28:41.793Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_acknowledged",
+        "page": "/parking",
+        "details": {}
+      },
+      {
+        "timestamp": "2026-08-12T16:28:38.770Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/parking",
+        "details": {
+          "duration_ms": 139
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:28:38.554Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/parking",
+        "details": {
+          "trip_count": 1
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:28:38.008Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_auto_tracking_started",
+        "page": "/parking",
+        "details": {}
+      },
+      {
+        "timestamp": "2026-08-12T16:28:37.855Z",
+        "severity": "warn",
+        "category": "security",
+        "source": "web",
+        "operation": "device_integrity_threat_detected",
+        "page": "/parking",
+        "details": {}
+      },
+      {
+        "timestamp": "2026-08-12T16:28:37.855Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/parking",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:28:37.855Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/parking",
+        "details": {
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:17:02.488Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/parking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:17:02.474Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/parking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:17:02.474Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_auto_tracking_started",
+        "page": "/parking",
+        "details": {}
+      },
+      {
+        "timestamp": "2026-08-12T16:17:00.647Z",
+        "severity": "warn",
+        "category": "security",
+        "source": "web",
+        "operation": "device_integrity_threat_detected",
+        "page": "/parking",
+        "details": {}
+      },
+      {
+        "timestamp": "2026-08-12T16:17:00.647Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/parking",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:17:00.647Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/parking",
+        "details": {
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:16:37.087Z",
+        "severity": "info",
+        "category": "permission",
+        "source": "web",
+        "operation": "permission_request_foreground_location",
+        "page": "/parking",
+        "details": {
+          "result": "granted"
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:16:34.109Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/parking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:16:34.090Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/parking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:16:34.090Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_auto_tracking_started",
+        "page": "/parking",
+        "details": {}
+      },
+      {
+        "timestamp": "2026-08-12T16:16:33.129Z",
+        "severity": "warn",
+        "category": "security",
+        "source": "web",
+        "operation": "device_integrity_threat_detected",
+        "page": "/parking",
+        "details": {}
+      },
+      {
+        "timestamp": "2026-08-12T16:16:33.129Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/parking",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-12T16:16:33.129Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/parking",
+        "details": {
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:17:07.806Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 188
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:16:35.146Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 325
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:16:29.677Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 845
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:16:21.395Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 335
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:15:09.480Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 460
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:14:37.866Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 112
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:14:32.860Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 474
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:14:27.213Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 285
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:14:21.855Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 254
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:14:16.615Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 330
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:14:11.109Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 311
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:14:06.081Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 180
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:14:00.841Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 145
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:13:55.763Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 352
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:13:50.644Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 384
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:13:45.491Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 321
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:13:40.038Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 495
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:13:34.325Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 620
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:13:29.297Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 280
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:13:23.767Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 95
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:13:18.152Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 183
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:13:12.680Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 195
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:13:07.279Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1551
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:13:02.972Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/speed-limits",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:13:01.008Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 2987
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:12:55.093Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 2096
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:12:49.192Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 5647
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:12:40.026Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1283
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:12:33.682Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1783
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:12:26.810Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 5634
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:12:15.125Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1426
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:12:08.833Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1631
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:12:02.311Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1575
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:11:55.107Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1842
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:11:47.752Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1886
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:11:40.528Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1896
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:11:32.945Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1885
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:11:25.653Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/speed-limits",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:11:25.639Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1875
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:11:21.308Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:11:17.021Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 1958
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:11:11.171Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id/speed",
+        "details": {
+          "duration_ms": 1653
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:11:05.181Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id/speed",
+        "details": {
+          "duration_ms": 1405
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:10:59.492Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id/speed",
+        "details": {
+          "duration_ms": 1426
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:10:53.752Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id/speed",
+        "details": {
+          "duration_ms": 1453
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:10:46.371Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id/speed",
+        "details": {
+          "duration_ms": 4950
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:10:34.089Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id/speed",
+        "details": {
+          "duration_ms": 1443
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:10:31.600Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/trips/:id/speed",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:10:31.600Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/trips/:id/speed",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:10:28.223Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 1347
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:10:21.584Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 1899
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:10:13.848Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 1796
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:10:06.726Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 1849
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:09:59.339Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 1791
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:09:51.982Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 1742
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:09:45.786Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 2159
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:09:38.009Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 1874
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:09:31.542Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 1409
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:09:23.638Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 1427
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:09:16.018Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1459
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:09:10.086Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1432
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:09:04.071Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1436
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:08:58.081Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1398
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:08:51.982Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1395
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:08:46.013Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1450
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:08:40.045Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1450
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:08:34.068Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1420
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:08:31.495Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/speed-limits",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:08:28.641Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:08:28.635Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:08:26.682Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:08:26.660Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 14291
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:08:07.425Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 2612
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:08:00.886Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1422
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:07:55.110Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1171
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:07:50.006Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1181
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:07:44.567Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1217
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:07:39.140Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 138
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:07:33.965Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 301
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:07:28.843Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 575
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:07:22.579Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 388
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:07:17.129Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 130
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:07:12.087Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 559
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:07:06.896Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 489
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:07:01.223Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 160
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:06:53.103Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/speed-limits",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:06:52.845Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 5091
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:06:47.702Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1903
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:06:42.884Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/speed-limits",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:06:42.160Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 102
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:06:25.770Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 637
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:06:19.523Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 1319
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:05:43.059Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 88
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:05:37.748Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 159
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:05:35.536Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:05:35.530Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:05:32.635Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 146
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:05:27.620Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 108
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:05:22.455Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 15920
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:05:01.994Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 725
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:56.483Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 287
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:53.568Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:53.557Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:51.326Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 873
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:46.528Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:46.520Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:45.064Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 815
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:40.033Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 750
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:34.665Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 946
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:28.453Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 369
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:22.939Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 252
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:17.695Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 359
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:12.528Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 217
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:07.903Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:07.405Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:04:07.365Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 5277
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:59.420Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 128
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:56.507Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:54.487Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:54.382Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 1391
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:47.813Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 2718
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:43.626Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:42.186Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 977
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:36.901Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 2083
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:31.718Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 248
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:31.425Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:26.396Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 4433
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:20.555Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips/:id",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:17.416Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 7065
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:10.184Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 232
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:09.857Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/trips",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:09.849Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:09.846Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/trips",
+        "details": {
+          "trip_count": 4
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:09.833Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/trips",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:09.824Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:09.809Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/trips",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:09.799Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:09.787Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/trips",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:09.773Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:09.705Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/trips",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:03:05.148Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 150
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:02:59.831Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 139
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:02:54.309Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 137
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:02:48.686Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 138
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:02:43.667Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 140
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:02:38.194Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 141
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:02:32.614Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 13198
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:02:19.104Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 12873
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:02:05.293Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 810
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:01:59.481Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 362
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:01:54.160Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 167
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:01:48.870Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 383
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:01:43.625Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 215
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:01:38.428Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 273
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:01:33.329Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 159
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:01:28.153Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 127
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:01:22.995Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 344
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:01:17.581Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 470
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:01:11.682Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 649
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:01:05.906Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 865
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:01:00.900Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 1607
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:00:53.700Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 413
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:00:48.368Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 424
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:00:42.889Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 156
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:00:37.722Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 89
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:00:32.689Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 104
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:00:27.546Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 81
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:00:22.417Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 96
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:00:17.295Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 196
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:00:11.859Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 949
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:00:05.727Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 3025
+        }
+      },
+      {
+        "timestamp": "2026-08-10T01:00:00.599Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 391
+        }
+      },
+      {
+        "timestamp": "2026-08-10T00:59:55.305Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 900
+        }
+      },
+      {
+        "timestamp": "2026-08-10T00:59:49.863Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 215
+        }
+      },
+      {
+        "timestamp": "2026-08-10T00:59:44.775Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 182
+        }
+      },
+      {
+        "timestamp": "2026-08-10T00:59:39.673Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 270
+        }
+      },
+      {
+        "timestamp": "2026-08-10T00:59:34.628Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 200
+        }
+      },
+      {
+        "timestamp": "2026-08-10T00:59:29.593Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 490
+        }
+      }
+    ]
+  },
+  "runtime": {
+    "available": true,
+    "memory_available_bytes": 3432284160,
+    "memory_total_bytes": 11653349376,
+    "memory_threshold_bytes": 226492416,
+    "heap_used_bytes": 32772288,
+    "heap_max_bytes": 268435456,
+    "pss_kb": 263127,
+    "storage_usable_bytes": 3335606272,
+    "storage_free_bytes": 3469824000,
+    "storage_total_bytes": 108116574208,
+    "thermal_status": 0,
+    "battery_temperature_c": 35.2,
+    "last_main_heartbeat_age_ms": 267,
+    "last_heartbeat_at": 1786727044753,
+    "memory_low": false,
+    "foreground": true,
+    "ui_stall_active": false,
+    "thermal_label": "none",
+    "last_state": "resumed",
+    "last_operation": {
+      "operation": "tripService.listAllSummaries",
+      "phase": "start",
+      "pathname": "/diagnostics",
+      "timestamp": "2026-08-14T17:04:06.979Z"
+    }
+  }
+}

@@ -18,6 +18,7 @@ import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { APP_LOCK_SETTING_EVENT } from '@/lib/appConstants';
 import { Lock, Route as RouteIcon } from 'lucide-react';
 import { beginMeasure, measureAsync, measureSync } from '@/lib/performanceTriage';
+import { recordP0Lifecycle } from '@/lib/p0Probe';
 
 import Layout from '@/components/Layout';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
@@ -383,6 +384,11 @@ const AuthenticatedApp = () => {
     let appStateListener;
 
     CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      // P0 lifecycle ledger. Raw source events are recorded separately and
+      // unmerged so the duplicated resume work stays visible; the effective
+      // foreground epoch advances only when visibility AND native activity
+      // together change, so one physical transition yields one epoch.
+      recordP0Lifecycle('appStateChange', isActive ? 'active' : 'inactive');
       if (isActive) {
         localSettings.hydrateFromNative()
           .then((settings) => applyThemeMode(settings.dark_mode))
@@ -419,6 +425,7 @@ const AuthenticatedApp = () => {
 
   useEffect(() => {
     const onVisibilityChange = () => {
+      recordP0Lifecycle('visibilitychange', document.visibilityState === 'visible' ? 'visible' : 'hidden');
       if (document.visibilityState === 'visible') {
         localSettings.hydrateFromNative()
           .then((settings) => applyThemeMode(settings.dark_mode))

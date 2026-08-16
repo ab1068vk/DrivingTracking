@@ -1,0 +1,6028 @@
+{
+  "report_kind": "roadsage_app_experience_diagnostics",
+  "schema_version": 1,
+  "generated_at": "2026-08-14T19:39:41.650Z",
+  "privacy": {
+    "precise_locations_included": false,
+    "route_geometry_included": false,
+    "trip_ids_included": false,
+    "trip_dates_included": false,
+    "notes_or_names_included": false,
+    "setting_values_included": false,
+    "crash_messages_or_stacks_included": false,
+    "anonymous_trip_shapes_are_rounded": true
+  },
+  "app": {
+    "version": "1.0.0",
+    "build_hash": "",
+    "experience_mode": "coaching",
+    "tracking_mode": "background_auto"
+  },
+  "health": {
+    "score": 0,
+    "status": "slow",
+    "headline": "app.bootstrap.tripRepositoryMaintenance is the clearest slowdown (668593 ms p95)."
+  },
+  "data": {
+    "trip_count": 128,
+    "completed_trip_count": 128,
+    "total_distance_km": 1140.2,
+    "median_distance_km": 2.1,
+    "p95_distance_km": 67.6,
+    "total_duration_hours": 29.7,
+    "median_duration_minutes": 7,
+    "total_route_point_count": 59520,
+    "p95_route_point_count": 3659,
+    "approximate_summary_bytes": 5546978,
+    "replayable_trip_count": 112,
+    "summary_only_trip_count": 0,
+    "advanced_evidence_trip_count": 70,
+    "automatic_trip_count": 128,
+    "manual_trip_count": 0,
+    "distance_buckets": {
+      "under_1_km": 5,
+      "1_to_5_km": 94,
+      "5_to_20_km": 18,
+      "20_to_50_km": 2,
+      "50_km_plus": 9
+    },
+    "anonymous_trip_shapes": [
+      {
+        "distance_km": 0.2,
+        "duration_minutes": 1,
+        "route_point_count": 18,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 0.2,
+        "duration_minutes": 4,
+        "route_point_count": 15,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 0.3,
+        "duration_minutes": 3,
+        "route_point_count": 26,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 0.8,
+        "duration_minutes": 5,
+        "route_point_count": 61,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 0.9,
+        "duration_minutes": 2,
+        "route_point_count": 38,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1,
+        "duration_minutes": 4,
+        "route_point_count": 50,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.1,
+        "duration_minutes": 1,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.1,
+        "duration_minutes": 2,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.1,
+        "duration_minutes": 3,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.1,
+        "duration_minutes": 3,
+        "route_point_count": 60,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.1,
+        "duration_minutes": 4,
+        "route_point_count": 57,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.1,
+        "duration_minutes": 4,
+        "route_point_count": 79,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.1,
+        "duration_minutes": 7,
+        "route_point_count": 53,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 3,
+        "route_point_count": 53,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 3,
+        "route_point_count": 58,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 3,
+        "route_point_count": 61,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 4,
+        "route_point_count": 51,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 4,
+        "route_point_count": 56,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 4,
+        "route_point_count": 59,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 4,
+        "route_point_count": 61,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 4,
+        "route_point_count": 66,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 4,
+        "route_point_count": 67,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 5,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 5,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 5,
+        "route_point_count": 57,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 6,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 6,
+        "route_point_count": 66,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 7,
+        "route_point_count": 66,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 7,
+        "route_point_count": 66,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 8,
+        "route_point_count": 66,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.2,
+        "duration_minutes": 10,
+        "route_point_count": 57,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.3,
+        "duration_minutes": 4,
+        "route_point_count": 56,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.3,
+        "duration_minutes": 4,
+        "route_point_count": 57,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.3,
+        "duration_minutes": 4,
+        "route_point_count": 80,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.3,
+        "duration_minutes": 5,
+        "route_point_count": 44,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.3,
+        "duration_minutes": 5,
+        "route_point_count": 59,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.3,
+        "duration_minutes": 5,
+        "route_point_count": 66,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.3,
+        "duration_minutes": 6,
+        "route_point_count": 61,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.3,
+        "duration_minutes": 8,
+        "route_point_count": 65,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.4,
+        "duration_minutes": 3,
+        "route_point_count": 58,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.4,
+        "duration_minutes": 4,
+        "route_point_count": 51,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.4,
+        "duration_minutes": 4,
+        "route_point_count": 53,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.4,
+        "duration_minutes": 4,
+        "route_point_count": 63,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.4,
+        "duration_minutes": 4,
+        "route_point_count": 69,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.4,
+        "duration_minutes": 4,
+        "route_point_count": 71,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.5,
+        "duration_minutes": 5,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.5,
+        "duration_minutes": 5,
+        "route_point_count": 59,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.6,
+        "duration_minutes": 3,
+        "route_point_count": 83,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.6,
+        "duration_minutes": 4,
+        "route_point_count": 82,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.6,
+        "duration_minutes": 10,
+        "route_point_count": 93,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.7,
+        "duration_minutes": 4,
+        "route_point_count": 89,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.8,
+        "duration_minutes": 4,
+        "route_point_count": 64,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.8,
+        "duration_minutes": 5,
+        "route_point_count": 81,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.8,
+        "duration_minutes": 9,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.8,
+        "duration_minutes": 9,
+        "route_point_count": 77,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.9,
+        "duration_minutes": 4,
+        "route_point_count": 81,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.9,
+        "duration_minutes": 5,
+        "route_point_count": 88,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.9,
+        "duration_minutes": 5,
+        "route_point_count": 92,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 1.9,
+        "duration_minutes": 6,
+        "route_point_count": 68,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 1.9,
+        "duration_minutes": 9,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 2,
+        "duration_minutes": 4,
+        "route_point_count": 76,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 2,
+        "duration_minutes": 4,
+        "route_point_count": 83,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 2.1,
+        "duration_minutes": 4,
+        "route_point_count": 85,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 2.1,
+        "duration_minutes": 5,
+        "route_point_count": 82,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 2.2,
+        "duration_minutes": 6,
+        "route_point_count": 172,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 2.2,
+        "duration_minutes": 7,
+        "route_point_count": 182,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 2.2,
+        "duration_minutes": 8,
+        "route_point_count": 156,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 2.2,
+        "duration_minutes": 10,
+        "route_point_count": 94,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 2.2,
+        "duration_minutes": 12,
+        "route_point_count": 128,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 2.3,
+        "duration_minutes": 6,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 2.3,
+        "duration_minutes": 7,
+        "route_point_count": 101,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 2.3,
+        "duration_minutes": 11,
+        "route_point_count": 172,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 2.4,
+        "duration_minutes": 6,
+        "route_point_count": 109,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 2.4,
+        "duration_minutes": 6,
+        "route_point_count": 113,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 2.4,
+        "duration_minutes": 7,
+        "route_point_count": 111,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 2.4,
+        "duration_minutes": 7,
+        "route_point_count": 113,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 2.4,
+        "duration_minutes": 7,
+        "route_point_count": 127,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 2.4,
+        "duration_minutes": 9,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 2.5,
+        "duration_minutes": 10,
+        "route_point_count": 99,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 2.6,
+        "duration_minutes": 7,
+        "route_point_count": 110,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 2.7,
+        "duration_minutes": 6,
+        "route_point_count": 133,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 2.7,
+        "duration_minutes": 7,
+        "route_point_count": 119,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 2.9,
+        "duration_minutes": 6,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 2.9,
+        "duration_minutes": 7,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 3,
+        "duration_minutes": 7,
+        "route_point_count": 0,
+        "route_replay_available": false,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 3.2,
+        "duration_minutes": 8,
+        "route_point_count": 149,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 3.2,
+        "duration_minutes": 10,
+        "route_point_count": 148,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 3.2,
+        "duration_minutes": 13,
+        "route_point_count": 148,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 3.4,
+        "duration_minutes": 13,
+        "route_point_count": 263,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 3.5,
+        "duration_minutes": 12,
+        "route_point_count": 168,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 3.5,
+        "duration_minutes": 14,
+        "route_point_count": 199,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 3.6,
+        "duration_minutes": 7,
+        "route_point_count": 145,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 3.6,
+        "duration_minutes": 10,
+        "route_point_count": 151,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 3.6,
+        "duration_minutes": 11,
+        "route_point_count": 163,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 3.8,
+        "duration_minutes": 8,
+        "route_point_count": 160,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 3.9,
+        "duration_minutes": 12,
+        "route_point_count": 190,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 3.9,
+        "duration_minutes": 12,
+        "route_point_count": 332,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 4.4,
+        "duration_minutes": 9,
+        "route_point_count": 181,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 4.8,
+        "duration_minutes": 11,
+        "route_point_count": 216,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 5,
+        "duration_minutes": 13,
+        "route_point_count": 360,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 6,
+        "duration_minutes": 14,
+        "route_point_count": 425,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 6.6,
+        "duration_minutes": 11,
+        "route_point_count": 545,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 6.9,
+        "duration_minutes": 13,
+        "route_point_count": 295,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 7,
+        "duration_minutes": 12,
+        "route_point_count": 294,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 7.7,
+        "duration_minutes": 19,
+        "route_point_count": 620,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 7.9,
+        "duration_minutes": 16,
+        "route_point_count": 291,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 7.9,
+        "duration_minutes": 20,
+        "route_point_count": 307,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 8.1,
+        "duration_minutes": 17,
+        "route_point_count": 610,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 8.6,
+        "duration_minutes": 17,
+        "route_point_count": 691,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 8.7,
+        "duration_minutes": 15,
+        "route_point_count": 347,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 8.7,
+        "duration_minutes": 15,
+        "route_point_count": 687,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 8.8,
+        "duration_minutes": 17,
+        "route_point_count": 682,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 9,
+        "duration_minutes": 17,
+        "route_point_count": 390,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 9.7,
+        "duration_minutes": 16,
+        "route_point_count": 382,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 11.1,
+        "duration_minutes": 22,
+        "route_point_count": 466,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 13.1,
+        "duration_minutes": 24,
+        "route_point_count": 854,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 17.3,
+        "duration_minutes": 18,
+        "route_point_count": 971,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 26.7,
+        "duration_minutes": 36,
+        "route_point_count": 1243,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 28,
+        "duration_minutes": 36,
+        "route_point_count": 1344,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 54.1,
+        "duration_minutes": 69,
+        "route_point_count": 3299,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 66.9,
+        "duration_minutes": 79,
+        "route_point_count": 3688,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 67.6,
+        "duration_minutes": 58,
+        "route_point_count": 2762,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 67.8,
+        "duration_minutes": 92,
+        "route_point_count": 4143,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 68.2,
+        "duration_minutes": 71,
+        "route_point_count": 3659,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 77,
+        "duration_minutes": 90,
+        "route_point_count": 4470,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 82.5,
+        "duration_minutes": 83,
+        "route_point_count": 4323,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": false
+      },
+      {
+        "distance_km": 109.5,
+        "duration_minutes": 87,
+        "route_point_count": 4660,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      },
+      {
+        "distance_km": 144.7,
+        "duration_minutes": 173,
+        "route_point_count": 8557,
+        "route_replay_available": true,
+        "summary_only": false,
+        "collection_mode": "automatic",
+        "advanced_evidence": true
+      }
+    ]
+  },
+  "performance": {
+    "sample_count": 1914,
+    "slow_operation_count": 16,
+    "watch_operation_count": 1,
+    "operations": [
+      {
+        "key": "app.bootstrap.tripRepositoryMaintenance",
+        "name": "app.bootstrap.tripRepositoryMaintenance",
+        "pathname": null,
+        "count": 15,
+        "totalMs": 2395193.9,
+        "maxMs": 668592.7,
+        "latestMs": 260599.1,
+        "latestAt": "2026-08-14T19:03:56.098Z",
+        "averageMs": 159679.6,
+        "p50Ms": 71100.2,
+        "p95Ms": 668592.7,
+        "trendPercent": 494,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "limitedTripSummaryQueryOptions.queryFn",
+        "name": "limitedTripSummaryQueryOptions.queryFn",
+        "pathname": null,
+        "count": 34,
+        "totalMs": 5841312.899999999,
+        "maxMs": 673560.7,
+        "latestMs": 133502.7,
+        "latestAt": "2026-08-14T19:35:46.736Z",
+        "averageMs": 171803.3,
+        "p50Ms": 90173.5,
+        "p95Ms": 588809.9,
+        "trendPercent": 14,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.resume.nativeTripSync",
+        "name": "app.resume.nativeTripSync",
+        "pathname": null,
+        "count": 39,
+        "totalMs": 3895889.3999999994,
+        "maxMs": 655146.7,
+        "latestMs": 326.2,
+        "latestAt": "2026-08-14T19:39:08.117Z",
+        "averageMs": 99894.6,
+        "p50Ms": 623.6,
+        "p95Ms": 586258.6,
+        "trendPercent": -58,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.nativeTripSync",
+        "name": "app.nativeTripSync",
+        "pathname": null,
+        "count": 67,
+        "totalMs": 6087542.3999999985,
+        "maxMs": 680824.3,
+        "latestMs": 315.8,
+        "latestAt": "2026-08-14T19:39:08.107Z",
+        "averageMs": 90858.8,
+        "p50Ms": 397.6,
+        "p95Ms": 586242.5,
+        "trendPercent": 46,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "tripService.listSummaries",
+        "name": "tripService.listSummaries",
+        "pathname": null,
+        "count": 41,
+        "totalMs": 6864805.800000001,
+        "maxMs": 673357.9,
+        "latestMs": 133469.8,
+        "latestAt": "2026-08-14T19:35:46.703Z",
+        "averageMs": 167434.3,
+        "p50Ms": 86655.3,
+        "p95Ms": 578534.2,
+        "trendPercent": 19,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "tripService.listAllSummaries",
+        "name": "tripService.listAllSummaries",
+        "pathname": null,
+        "count": 33,
+        "totalMs": 4788967.4,
+        "maxMs": 633819.4,
+        "latestMs": 94093.8,
+        "latestAt": "2026-08-14T19:29:05.695Z",
+        "averageMs": 145120.2,
+        "p50Ms": 67321.3,
+        "p95Ms": 549690.7,
+        "trendPercent": 148,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "tripSummaryQueryOptions.queryFn",
+        "name": "tripSummaryQueryOptions.queryFn",
+        "pathname": null,
+        "count": 18,
+        "totalMs": 1749325.2,
+        "maxMs": 514754.8,
+        "latestMs": 94122.4,
+        "latestAt": "2026-08-14T19:29:05.723Z",
+        "averageMs": 97184.7,
+        "p50Ms": 55081.3,
+        "p95Ms": 514754.8,
+        "trendPercent": 331,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "tripService.listForSpeedMap",
+        "name": "tripService.listForSpeedMap",
+        "pathname": null,
+        "count": 4,
+        "totalMs": 1091052.3,
+        "maxMs": 469224.1,
+        "latestMs": 446093.2,
+        "latestAt": "2026-08-14T19:13:23.740Z",
+        "averageMs": 272763.1,
+        "p50Ms": 99825.9,
+        "p95Ms": 469224.1,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "tripService.list",
+        "name": "tripService.list",
+        "pathname": null,
+        "count": 1,
+        "totalMs": 135571.2,
+        "maxMs": 135571.2,
+        "latestMs": 135571.2,
+        "latestAt": "2026-08-14T19:33:58.514Z",
+        "averageMs": 135571.2,
+        "p50Ms": 135571.2,
+        "p95Ms": 135571.2,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.resume.rawGpsRetention",
+        "name": "app.resume.rawGpsRetention",
+        "pathname": null,
+        "count": 39,
+        "totalMs": 981578.2999999998,
+        "maxMs": 254810.5,
+        "latestMs": 343.3,
+        "latestAt": "2026-08-14T19:39:08.160Z",
+        "averageMs": 25168.7,
+        "p50Ms": 547.8,
+        "p95Ms": 126695.2,
+        "trendPercent": 13,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "SpeedLimits.buildMapModel",
+        "name": "SpeedLimits.buildMapModel",
+        "pathname": null,
+        "count": 1,
+        "totalMs": 26525.5,
+        "maxMs": 26525.5,
+        "latestMs": 26525.5,
+        "latestAt": "2026-08-10T01:15:08.994Z",
+        "averageMs": 26525.5,
+        "p50Ms": 26525.5,
+        "p95Ms": 26525.5,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.bootstrap.roadContextQueue",
+        "name": "app.bootstrap.roadContextQueue",
+        "pathname": null,
+        "count": 16,
+        "totalMs": 8373.099999999999,
+        "maxMs": 3801.7,
+        "latestMs": 477.7,
+        "latestAt": "2026-08-14T19:01:00.582Z",
+        "averageMs": 523.3,
+        "p50Ms": 322.9,
+        "p95Ms": 3801.7,
+        "trendPercent": 348,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.bootstrap.keyRotation",
+        "name": "app.bootstrap.keyRotation",
+        "pathname": null,
+        "count": 17,
+        "totalMs": 14831.800000000001,
+        "maxMs": 3795.1,
+        "latestMs": 576.3,
+        "latestAt": "2026-08-14T19:00:52.679Z",
+        "averageMs": 872.5,
+        "p50Ms": 382.5,
+        "p95Ms": 3795.1,
+        "trendPercent": 31,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.resume.roadContextQueue",
+        "name": "app.resume.roadContextQueue",
+        "pathname": null,
+        "count": 47,
+        "totalMs": 29468.700000000004,
+        "maxMs": 3804,
+        "latestMs": 334.9,
+        "latestAt": "2026-08-14T19:39:08.151Z",
+        "averageMs": 627,
+        "p50Ms": 347.9,
+        "p95Ms": 3111.2,
+        "trendPercent": 40,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "app.resume.keyRotation",
+        "name": "app.resume.keyRotation",
+        "pathname": null,
+        "count": 94,
+        "totalMs": 70838.70000000001,
+        "maxMs": 7332.8,
+        "latestMs": 347.5,
+        "latestAt": "2026-08-14T19:39:08.138Z",
+        "averageMs": 753.6,
+        "p50Ms": 447.2,
+        "p95Ms": 2234.9,
+        "trendPercent": 88,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "page.firstPaint:/trips/:id",
+        "name": "page.firstPaint",
+        "pathname": "/trips/:id",
+        "count": 23,
+        "totalMs": 9760.5,
+        "maxMs": 2727.4,
+        "latestMs": 883.9,
+        "latestAt": "2026-08-14T19:11:33.402Z",
+        "averageMs": 424.4,
+        "p50Ms": 50.3,
+        "p95Ms": 1800.5,
+        "trendPercent": 3794,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "slow"
+      },
+      {
+        "key": "buildSpeedMapSections",
+        "name": "buildSpeedMapSections",
+        "pathname": null,
+        "count": 48,
+        "totalMs": 7270.3,
+        "maxMs": 863.3,
+        "latestMs": 0.3,
+        "latestAt": "2026-08-14T19:15:25.548Z",
+        "averageMs": 151.5,
+        "p50Ms": 0.3,
+        "p95Ms": 787.4,
+        "trendPercent": 274,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "watch"
+      },
+      {
+        "key": "app.coldBootstrap",
+        "name": "app.coldBootstrap",
+        "pathname": null,
+        "count": 32,
+        "totalMs": 5135.500000000001,
+        "maxMs": 313.6,
+        "latestMs": 167.7,
+        "latestAt": "2026-08-14T18:59:21.210Z",
+        "averageMs": 160.5,
+        "p50Ms": 154.5,
+        "p95Ms": 236.9,
+        "trendPercent": 38,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      },
+      {
+        "key": "TripMap.layerDraw",
+        "name": "TripMap.layerDraw",
+        "pathname": null,
+        "count": 492,
+        "totalMs": 18066.6,
+        "maxMs": 473.2,
+        "latestMs": 239.5,
+        "latestAt": "2026-08-14T19:31:39.507Z",
+        "averageMs": 36.7,
+        "p50Ms": 6.1,
+        "p95Ms": 233.1,
+        "trendPercent": 1742,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "SpeedLimitEditorMap.layerDraw",
+        "name": "SpeedLimitEditorMap.layerDraw",
+        "pathname": null,
+        "count": 20,
+        "totalMs": 1310.8,
+        "maxMs": 188.9,
+        "latestMs": 6.9,
+        "latestAt": "2026-08-14T19:15:25.646Z",
+        "averageMs": 65.5,
+        "p50Ms": 31.9,
+        "p95Ms": 159.6,
+        "trendPercent": 152,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      },
+      {
+        "key": "app.bootstrap.settingsHydrate",
+        "name": "app.bootstrap.settingsHydrate",
+        "pathname": null,
+        "count": 32,
+        "totalMs": 1466.6000000000001,
+        "maxMs": 137.2,
+        "latestMs": 20.4,
+        "latestAt": "2026-08-14T18:59:21.063Z",
+        "averageMs": 45.8,
+        "p50Ms": 35.9,
+        "p95Ms": 126.6,
+        "trendPercent": -5,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/diagnostics",
+        "name": "page.firstPaint",
+        "pathname": "/diagnostics",
+        "count": 10,
+        "totalMs": 210.8,
+        "maxMs": 116.4,
+        "latestMs": 11.5,
+        "latestAt": "2026-08-14T19:25:54.150Z",
+        "averageMs": 21.1,
+        "p50Ms": 7.7,
+        "p95Ms": 116.4,
+        "trendPercent": -68,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/",
+        "name": "page.firstPaint",
+        "pathname": "/",
+        "count": 36,
+        "totalMs": 966.8000000000001,
+        "maxMs": 108.2,
+        "latestMs": 6.9,
+        "latestAt": "2026-08-14T18:59:21.049Z",
+        "averageMs": 26.9,
+        "p50Ms": 16.4,
+        "p95Ms": 104.6,
+        "trendPercent": -28,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/parking",
+        "name": "page.firstPaint",
+        "pathname": "/parking",
+        "count": 37,
+        "totalMs": 932.1000000000001,
+        "maxMs": 385.1,
+        "latestMs": 10.5,
+        "latestAt": "2026-08-14T18:59:55.761Z",
+        "averageMs": 25.2,
+        "p50Ms": 12.8,
+        "p95Ms": 67,
+        "trendPercent": -29,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/3d-replay",
+        "name": "page.firstPaint",
+        "pathname": "/3d-replay",
+        "count": 3,
+        "totalMs": 92.6,
+        "maxMs": 43.9,
+        "latestMs": 43.9,
+        "latestAt": "2026-08-14T19:24:16.951Z",
+        "averageMs": 30.9,
+        "p50Ms": 35.7,
+        "p95Ms": 43.9,
+        "trendPercent": 80,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/trips",
+        "name": "page.firstPaint",
+        "pathname": "/trips",
+        "count": 20,
+        "totalMs": 839.1999999999999,
+        "maxMs": 527.8,
+        "latestMs": 8.5,
+        "latestAt": "2026-08-14T19:28:53.895Z",
+        "averageMs": 42,
+        "p50Ms": 13.9,
+        "p95Ms": 43.1,
+        "trendPercent": -84,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/tracking/replay",
+        "name": "page.firstPaint",
+        "pathname": "/tracking/replay",
+        "count": 1,
+        "totalMs": 42,
+        "maxMs": 42,
+        "latestMs": 42,
+        "latestAt": "2026-08-14T19:31:42.895Z",
+        "averageMs": 42,
+        "p50Ms": 42,
+        "p95Ms": 42,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/tracking/recorder",
+        "name": "page.firstPaint",
+        "pathname": "/tracking/recorder",
+        "count": 1,
+        "totalMs": 40.8,
+        "maxMs": 40.8,
+        "latestMs": 40.8,
+        "latestAt": "2026-08-14T19:28:41.521Z",
+        "averageMs": 40.8,
+        "p50Ms": 40.8,
+        "p95Ms": 40.8,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "TripMap.polylineCreationLoop",
+        "name": "TripMap.polylineCreationLoop",
+        "pathname": null,
+        "count": 307,
+        "totalMs": 2891.3999999999996,
+        "maxMs": 98.6,
+        "latestMs": 35.6,
+        "latestAt": "2026-08-14T19:31:39.486Z",
+        "averageMs": 9.4,
+        "p50Ms": 1.3,
+        "p95Ms": 38.2,
+        "trendPercent": 1925,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/reports",
+        "name": "page.firstPaint",
+        "pathname": "/reports",
+        "count": 1,
+        "totalMs": 36,
+        "maxMs": 36,
+        "latestMs": 36,
+        "latestAt": "2026-08-14T19:21:11.069Z",
+        "averageMs": 36,
+        "p50Ms": 36,
+        "p95Ms": 36,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/settings",
+        "name": "page.firstPaint",
+        "pathname": "/settings",
+        "count": 7,
+        "totalMs": 89.7,
+        "maxMs": 30.5,
+        "latestMs": 14.4,
+        "latestAt": "2026-08-14T19:39:23.983Z",
+        "averageMs": 12.8,
+        "p50Ms": 10.9,
+        "p95Ms": 30.5,
+        "trendPercent": 122,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/tracking/map",
+        "name": "page.firstPaint",
+        "pathname": "/tracking/map",
+        "count": 1,
+        "totalMs": 28.9,
+        "maxMs": 28.9,
+        "latestMs": 28.9,
+        "latestAt": "2026-08-14T19:29:29.973Z",
+        "averageMs": 28.9,
+        "p50Ms": 28.9,
+        "p95Ms": 28.9,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/trips/:id/speed",
+        "name": "page.firstPaint",
+        "pathname": "/trips/:id/speed",
+        "count": 4,
+        "totalMs": 62.6,
+        "maxMs": 26.4,
+        "latestMs": 14.6,
+        "latestAt": "2026-08-14T19:09:47.697Z",
+        "averageMs": 15.7,
+        "p50Ms": 14.2,
+        "p95Ms": 26.4,
+        "trendPercent": 90,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/tracking",
+        "name": "page.firstPaint",
+        "pathname": "/tracking",
+        "count": 2,
+        "totalMs": 31,
+        "maxMs": 17,
+        "latestMs": 14,
+        "latestAt": "2026-08-14T19:27:31.535Z",
+        "averageMs": 15.5,
+        "p50Ms": 14,
+        "p95Ms": 17,
+        "trendPercent": -18,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "TripMap.fitBounds",
+        "name": "TripMap.fitBounds",
+        "pathname": null,
+        "count": 58,
+        "totalMs": 198.0999999999999,
+        "maxMs": 19.2,
+        "latestMs": 15.4,
+        "latestAt": "2026-08-14T19:31:36.076Z",
+        "averageMs": 3.4,
+        "p50Ms": 1,
+        "p95Ms": 15.8,
+        "trendPercent": 43,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/tracking/alerts",
+        "name": "page.firstPaint",
+        "pathname": "/tracking/alerts",
+        "count": 1,
+        "totalMs": 15.3,
+        "maxMs": 15.3,
+        "latestMs": 15.3,
+        "latestAt": "2026-08-14T19:34:09.744Z",
+        "averageMs": 15.3,
+        "p50Ms": 15.3,
+        "p95Ms": 15.3,
+        "trendPercent": 0,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/speed-limits",
+        "name": "page.firstPaint",
+        "pathname": "/speed-limits",
+        "count": 9,
+        "totalMs": 100.8,
+        "maxMs": 15.1,
+        "latestMs": 15.1,
+        "latestAt": "2026-08-14T19:15:20.408Z",
+        "averageMs": 11.2,
+        "p50Ms": 11.5,
+        "p95Ms": 15.1,
+        "trendPercent": -1,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/map",
+        "name": "page.firstPaint",
+        "pathname": "/map",
+        "count": 2,
+        "totalMs": 27.1,
+        "maxMs": 14.7,
+        "latestMs": 14.7,
+        "latestAt": "2026-08-14T19:00:00.960Z",
+        "averageMs": 13.6,
+        "p50Ms": 12.4,
+        "p95Ms": 14.7,
+        "trendPercent": 19,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      },
+      {
+        "key": "app.resume.privacyZoneSweep",
+        "name": "app.resume.privacyZoneSweep",
+        "pathname": null,
+        "count": 96,
+        "totalMs": 289.20000000000005,
+        "maxMs": 29.9,
+        "latestMs": 0.1,
+        "latestAt": "2026-08-14T19:39:07.791Z",
+        "averageMs": 3,
+        "p50Ms": 0.7,
+        "p95Ms": 14.2,
+        "trendPercent": 49,
+        "latestContext": {
+          "trip_count": 0,
+          "completed_trip_count": 0,
+          "total_distance_km": 0,
+          "route_point_count": 0,
+          "data_size_bytes": 0,
+          "experience_mode": "coaching",
+          "tracking_mode": "background_auto"
+        },
+        "status": "good"
+      },
+      {
+        "key": "page.firstPaint:/achievements",
+        "name": "page.firstPaint",
+        "pathname": "/achievements",
+        "count": 2,
+        "totalMs": 17.4,
+        "maxMs": 12.3,
+        "latestMs": 12.3,
+        "latestAt": "2026-08-14T19:21:22.881Z",
+        "averageMs": 8.7,
+        "p50Ms": 5.1,
+        "p95Ms": 12.3,
+        "trendPercent": 141,
+        "latestContext": {
+          "trip_count": 126,
+          "completed_trip_count": 126,
+          "total_distance_km": 1121.2,
+          "route_point_count": 58747,
+          "data_size_bytes": 5437992,
+          "experience_mode": "coaching",
+          "tracking_mode": "paused"
+        },
+        "status": "good"
+      }
+    ],
+    "daily_series": [
+      {
+        "day": "2026-08-02",
+        "samples": 700,
+        "median_ms": 4.2,
+        "p95_ms": 31542.7
+      },
+      {
+        "day": "2026-08-03",
+        "samples": 35,
+        "median_ms": 9.9,
+        "p95_ms": 71938.3
+      },
+      {
+        "day": "2026-08-04",
+        "samples": 220,
+        "median_ms": 8.1,
+        "p95_ms": 17678.3
+      },
+      {
+        "day": "2026-08-06",
+        "samples": 170,
+        "median_ms": 12.7,
+        "p95_ms": 90173.5
+      },
+      {
+        "day": "2026-08-07",
+        "samples": 85,
+        "median_ms": 108.7,
+        "p95_ms": 655146.7
+      },
+      {
+        "day": "2026-08-09",
+        "samples": 13,
+        "median_ms": 9.2,
+        "p95_ms": 2234.9
+      },
+      {
+        "day": "2026-08-10",
+        "samples": 220,
+        "median_ms": 175.8,
+        "p95_ms": 220123.9
+      },
+      {
+        "day": "2026-08-12",
+        "samples": 106,
+        "median_ms": 4.5,
+        "p95_ms": 721.8
+      },
+      {
+        "day": "2026-08-14",
+        "samples": 365,
+        "median_ms": 21.5,
+        "p95_ms": 241715.9
+      }
+    ]
+  },
+  "activity": {
+    "event_count": 2244,
+    "error_count": 15,
+    "warning_count": 1109,
+    "counts": {
+      "crashes_and_failures": 43,
+      "freezes_and_anrs": 0,
+      "resource_pressure": 17,
+      "trip_deletions": 0,
+      "settings_changes": 130,
+      "imports_and_exports": 4,
+      "network_responses": 9,
+      "coaching_experience": 0,
+      "advanced_tracking": 382
+    },
+    "top_operations": [
+      {
+        "operation": "browser_long_task",
+        "count": 1072
+      },
+      {
+        "operation": "android_native_completed_trips_loaded",
+        "count": 268
+      },
+      {
+        "operation": "route_changed",
+        "count": 171
+      },
+      {
+        "operation": "permission_status_checked",
+        "count": 107
+      },
+      {
+        "operation": "document_visibility",
+        "count": 103
+      },
+      {
+        "operation": "native_completed_trips_synced",
+        "count": 67
+      },
+      {
+        "operation": "settings_changed",
+        "count": 65
+      },
+      {
+        "operation": "settings_update_verified",
+        "count": 65
+      },
+      {
+        "operation": "device_integrity_threat_detected",
+        "count": 33
+      },
+      {
+        "operation": "notification_batch_scheduled",
+        "count": 33
+      },
+      {
+        "operation": "notification_channels_configured",
+        "count": 31
+      },
+      {
+        "operation": "android_native_auto_tracking_started",
+        "count": 21
+      },
+      {
+        "operation": "trip_3d_playback_available",
+        "count": 18
+      },
+      {
+        "operation": "android_memory_pressure",
+        "count": 17
+      },
+      {
+        "operation": "android_process_exit",
+        "count": 15
+      },
+      {
+        "operation": "speed_knowledge_trip_rescored",
+        "count": 13
+      },
+      {
+        "operation": "android_native_completed_trips_acknowledged",
+        "count": 12
+      },
+      {
+        "operation": "speed_knowledge_road_memory_learned",
+        "count": 11
+      },
+      {
+        "operation": "diagnostics_refresh_started",
+        "count": 10
+      },
+      {
+        "operation": "speed_knowledge_indexeddb_read",
+        "count": 8
+      },
+      {
+        "operation": "voice_alert_spoken",
+        "count": 8
+      },
+      {
+        "operation": "diagnostics_refresh_completed",
+        "count": 7
+      },
+      {
+        "operation": "armed_location_watch",
+        "count": 6
+      },
+      {
+        "operation": "candidate_started",
+        "count": 6
+      },
+      {
+        "operation": "trip_ended",
+        "count": 6
+      }
+    ],
+    "recent_important_events": [
+      {
+        "timestamp": "2026-08-14T19:39:34.655Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/settings",
+        "details": {
+          "duration_ms": 245
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:39:29.449Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/settings",
+        "details": {
+          "duration_ms": 375
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:39:26.137Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/settings",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "experience_mode"
+          ],
+          "applied_keys": [
+            "experience_mode"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:39:26.137Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/settings",
+        "details": {
+          "changed_keys": [
+            "experience_mode"
+          ],
+          "applied_keys": [
+            "experience_mode"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:39:23.998Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/settings",
+        "details": {
+          "duration_ms": 182
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:39:18.675Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/reports",
+        "details": {
+          "duration_ms": 346
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:39:18.673Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/reports",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:39:13.499Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/privacy",
+        "details": {
+          "duration_ms": 459
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:39:08.117Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/tracking/privacy",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:39:08.106Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/privacy",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:39:07.763Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/privacy",
+        "details": {
+          "duration_ms": 17289
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:38:45.608Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/privacy",
+        "details": {
+          "duration_ms": 379
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:38:39.990Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/privacy",
+        "details": {
+          "duration_ms": 274
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:38:34.827Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/privacy",
+        "details": {
+          "duration_ms": 537
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:38:29.006Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/privacy",
+        "details": {
+          "duration_ms": 150
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:38:23.807Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/privacy",
+        "details": {
+          "duration_ms": 202
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:38:18.610Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/privacy",
+        "details": {
+          "duration_ms": 219
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:38:13.390Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/privacy",
+        "details": {
+          "duration_ms": 249
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:38:08.177Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/privacy",
+        "details": {
+          "duration_ms": 121
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:38:07.603Z",
+        "severity": "warn",
+        "category": "security",
+        "source": "web",
+        "operation": "device_integrity_threat_detected",
+        "page": "/tracking/privacy",
+        "details": {}
+      },
+      {
+        "timestamp": "2026-08-14T19:38:07.603Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/privacy",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:38:07.603Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/privacy",
+        "details": {
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:38:07.603Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/privacy",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:38:02.830Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 234
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:37:57.781Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 93
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:37:52.686Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 268
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:37:47.668Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 298
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:37:42.219Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 128
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:37:36.269Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 456
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:37:30.963Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 319
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:37:25.628Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 175
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:37:20.574Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 398
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:37:15.383Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 463
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:37:09.824Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 304
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:37:04.784Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 383
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:36:59.243Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 140
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:36:53.729Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/speed",
+        "details": {
+          "duration_ms": 589
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:36:53.099Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/speed",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:36:33.212Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/evidence",
+        "details": {
+          "duration_ms": 5673
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:36:26.131Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/evidence",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:36:23.433Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/evidence",
+        "details": {
+          "duration_ms": 245
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:36:23.137Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/evidence",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:36:11.866Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "native_completed_trips_synced",
+        "page": "/tracking/alerts",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:36:11.836Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/alerts",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:35:46.225Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 342
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:35:39.072Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 632
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:35:33.605Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 796
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:35:28.238Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 334
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:35:22.346Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 254
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:35:17.305Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 167
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:35:11.853Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 367
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:35:06.331Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 224
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:35:00.955Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 19253
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:34:36.840Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 406
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:34:31.108Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 295
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:34:26.069Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 428
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:34:20.613Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 259
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:34:15.325Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 389
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:34:10.320Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/alerts",
+        "details": {
+          "duration_ms": 156
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:34:05.091Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/events",
+        "details": {
+          "duration_ms": 625
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:33:59.794Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/events",
+        "details": {
+          "duration_ms": 133
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:33:54.567Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/events",
+        "details": {
+          "duration_ms": 4980
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:33:48.077Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/events",
+        "details": {
+          "duration_ms": 431
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:33:48.075Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/events",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:33:39.725Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/events",
+        "details": {
+          "duration_ms": 194
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:33:34.468Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/events",
+        "details": {
+          "duration_ms": 237
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:33:33.183Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/events",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:33:29.115Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 80
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:33:23.852Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 117
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:33:18.810Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 14045
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:33:00.403Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 389
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:32:55.006Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 228
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:32:49.809Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 245
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:32:44.488Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 222
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:32:39.312Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 269
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:32:33.934Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 355
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:32:28.421Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 152
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:32:23.159Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 367
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:32:17.975Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 320
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:32:12.623Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 361
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:32:07.428Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 91
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:32:02.288Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 301
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:56.793Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 271
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:51.731Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 553
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:46.469Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/replay",
+        "details": {
+          "duration_ms": 111
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:42.963Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/replay",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:41.331Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/map",
+        "details": {
+          "duration_ms": 248
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:35.004Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/map",
+        "details": {
+          "duration_ms": 1279
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:34.809Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:34.809Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:32.008Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:32.008Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:28.095Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/map",
+        "details": {
+          "duration_ms": 566
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:28.068Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:28.068Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:27.386Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:27.386Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:23.001Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/map",
+        "details": {
+          "duration_ms": 451
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:21.268Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/map",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:20.008Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:20.008Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:19.908Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:19.908Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:18.304Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:18.304Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:18.228Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:18.228Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:18.166Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:18.166Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:18.055Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:18.055Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:17.441Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/map",
+        "details": {
+          "duration_ms": 94
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:17.437Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:17.437Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:17.360Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:17.360Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:17.178Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:17.178Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:15.458Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:15.458Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:15.433Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:15.433Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:15.379Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:31:15.379Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:39.946Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:39.946Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:37.836Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:37.836Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:37.309Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/map",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:37.288Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:37.288Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:37.193Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:37.193Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:35.050Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/tracking/map",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:35.050Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/tracking/map",
+        "details": {
+          "changed_keys": [
+            "last_map_center"
+          ],
+          "applied_keys": [
+            "last_map_center"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:34.941Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/map",
+        "details": {
+          "duration_ms": 221
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:29.788Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/map",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:30:29.649Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/map",
+        "details": {
+          "duration_ms": 236
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:29:30.354Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/map",
+        "details": {
+          "duration_ms": 269
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:29:30.032Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/map",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:29:05.134Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 283
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:28:58.357Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 202
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:28:52.911Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/recorder",
+        "details": {
+          "duration_ms": 148
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:28:47.557Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/recorder",
+        "details": {
+          "duration_ms": 895
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:28:41.744Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/recorder",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:28:41.646Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking/recorder",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:28:41.541Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking/recorder",
+        "details": {
+          "duration_ms": 80
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:28:35.913Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking",
+        "details": {
+          "duration_ms": 121
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:28:30.611Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking",
+        "details": {
+          "duration_ms": 14097
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:28:11.252Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking",
+        "details": {
+          "duration_ms": 479
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:28:05.341Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking",
+        "details": {
+          "duration_ms": 185
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:28:00.013Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking",
+        "details": {
+          "duration_ms": 100
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:27:54.989Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking",
+        "details": {
+          "duration_ms": 281
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:27:49.724Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking",
+        "details": {
+          "duration_ms": 223
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:27:44.170Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking",
+        "details": {
+          "duration_ms": 225
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:27:38.713Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking",
+        "details": {
+          "duration_ms": 87
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:27:31.893Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/tracking",
+        "details": {
+          "duration_ms": 131
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:27:31.681Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:27:31.607Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/tracking",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:27:23.451Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/settings",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "experience_mode"
+          ],
+          "applied_keys": [
+            "experience_mode"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:27:23.451Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/settings",
+        "details": {
+          "changed_keys": [
+            "experience_mode"
+          ],
+          "applied_keys": [
+            "experience_mode"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:27:11.918Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/system-logs",
+        "details": {
+          "duration_ms": 163
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:27:06.715Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/system-logs",
+        "details": {
+          "duration_ms": 134
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:27:01.511Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/system-logs",
+        "details": {
+          "duration_ms": 141
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:26:56.018Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/system-logs",
+        "details": {
+          "duration_ms": 125
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:26:50.607Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/system-logs",
+        "details": {
+          "duration_ms": 14111
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:26:34.067Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/system-logs",
+        "details": {
+          "duration_ms": 287
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:26:29.003Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/system-logs",
+        "details": {
+          "duration_ms": 414
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:26:23.832Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/diagnostics",
+        "details": {
+          "duration_ms": 369
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:26:18.485Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/diagnostics",
+        "details": {
+          "duration_ms": 341
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:26:13.233Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/diagnostics",
+        "details": {
+          "duration_ms": 349
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:26:07.977Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/diagnostics",
+        "details": {
+          "duration_ms": 189
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:26:02.895Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/diagnostics",
+        "details": {
+          "duration_ms": 227
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:25:57.756Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/diagnostics",
+        "details": {
+          "duration_ms": 87
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:25:54.331Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/diagnostics",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:25:19.423Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/privacy-intelligence",
+        "details": {
+          "duration_ms": 391
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:25:13.995Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/privacy-intelligence",
+        "details": {
+          "duration_ms": 352
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:25:08.964Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/privacy-intelligence",
+        "details": {
+          "duration_ms": 217
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:25:03.233Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/privacy-intelligence",
+        "details": {
+          "duration_ms": 240
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:24:57.914Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/privacy-intelligence",
+        "details": {
+          "duration_ms": 168
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:24:52.741Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/privacy-intelligence",
+        "details": {
+          "duration_ms": 124
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:24:47.492Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/privacy-intelligence",
+        "details": {
+          "duration_ms": 205
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:24:42.445Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/privacy-intelligence",
+        "details": {
+          "duration_ms": 81
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:24:41.980Z",
+        "severity": "warn",
+        "category": "security",
+        "source": "web",
+        "operation": "device_integrity_threat_detected",
+        "page": "/privacy-intelligence",
+        "details": {}
+      },
+      {
+        "timestamp": "2026-08-14T19:24:41.980Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_update_verified",
+        "page": "/privacy-intelligence",
+        "details": {
+          "result": "applied",
+          "persisted_matches_request": true,
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:24:41.979Z",
+        "severity": "info",
+        "category": "settings",
+        "source": "web",
+        "operation": "settings_changed",
+        "page": "/privacy-intelligence",
+        "details": {
+          "changed_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "applied_keys": [
+            "rasp_threats",
+            "rasp_checked_at"
+          ],
+          "failed_keys": []
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:24:41.976Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/privacy-intelligence",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:23:06.550Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/3d-replay",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:23:06.447Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 141
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:22:43.528Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 131
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:22:38.496Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 208
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:22:33.280Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 109
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:22:28.154Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 109
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:22:22.884Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 13657
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:22:08.661Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 491
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:22:02.856Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 348
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:21:57.363Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 318
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:21:52.125Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 280
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:21:47.115Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 236
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:21:42.062Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 133
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:21:36.871Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 185
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:21:31.787Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/3d-replay",
+        "details": {
+          "duration_ms": 84
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:21:27.894Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/3d-replay",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:21:09.620Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 106
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:20:56.587Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 174
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:20:51.259Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 135
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:20:45.820Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 89
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:20:40.448Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 167
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:20:34.892Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 13866
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:20:15.791Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 633
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:20:10.591Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 337
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:20:05.362Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 181
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:20:00.054Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 205
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:19:54.894Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 303
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:19:49.578Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 372
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:19:44.115Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 238
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:19:38.891Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 127
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:19:33.098Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 200
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:19:27.230Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 6316
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:19:20.366Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 5120
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:19:09.406Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 739
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:19:03.574Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/insights",
+        "details": {
+          "duration_ms": 214
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:19:03.273Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/insights",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:18:57.025Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 137
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:18:51.498Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 137
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:18:46.419Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 98
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:18:41.386Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 107
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:18:36.373Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 16778
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:18:13.697Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 504
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:18:08.672Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 253
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:18:03.625Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 372
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:18:03.624Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/vehicles",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:17:58.018Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 209
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:17:52.927Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 168
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:17:47.693Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 109
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:17:42.462Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 85
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:17:37.388Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 103
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:17:31.518Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 179
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:17:26.260Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 219
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:17:21.147Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 108
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:17:15.951Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 178
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:17:10.886Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 7600
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:17:02.738Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 724
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:16:57.558Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 436
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:16:52.311Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 777
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:16:46.606Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 6694
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:16:39.317Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 3259
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:16:32.831Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 755
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:16:26.724Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 335
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:16:21.250Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 234
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:16:15.966Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 823
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:16:10.519Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/vehicles",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:16:09.849Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 254
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:16:04.796Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 390
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:15:59.666Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 441
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:15:54.471Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 187
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:15:48.951Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 186
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:15:43.885Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/vehicles",
+        "details": {
+          "duration_ms": 102
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:15:39.261Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/vehicles",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:15:28.975Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 870
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:15:21.606Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/speed-limits",
+        "details": {
+          "duration_ms": 1129
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:15:07.445Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 193
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:15:02.108Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 105
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:14:56.794Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 83
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:14:51.533Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 122
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:14:46.445Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 123
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:14:41.134Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 19220
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:14:21.187Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 697
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:14:15.148Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 263
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:14:09.784Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 543
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:14:08.644Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/coach",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:14:03.682Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 234
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:13:58.297Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 322
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:13:53.247Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 254
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:13:47.748Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 233
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:13:42.331Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 237
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:13:37.002Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 732
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:13:31.239Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 317
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:13:26.107Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 150
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:13:18.799Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 214
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:13:13.671Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 306
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:13:08.360Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 187
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:13:02.971Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 224
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:12:57.950Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 93
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:12:52.798Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 88
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:12:47.797Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 252
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:12:42.294Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 418
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:12:36.968Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/coach",
+        "details": {
+          "duration_ms": 289
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:12:32.698Z",
+        "severity": "info",
+        "category": "background",
+        "source": "android",
+        "operation": "android_native_completed_trips_loaded",
+        "page": "/coach",
+        "details": {
+          "trip_count": 0
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:12:31.900Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 315
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:12:26.422Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 93
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:12:21.235Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 129
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:12:16.187Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 172
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:12:10.474Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 107
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:12:05.182Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 221
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:12:00.080Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips",
+        "details": {
+          "duration_ms": 1481
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:11:53.264Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 6196
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:11:39.384Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 988
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:11:33.419Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id",
+        "details": {
+          "duration_ms": 1803
+        }
+      },
+      {
+        "timestamp": "2026-08-14T19:11:24.442Z",
+        "severity": "warn",
+        "category": "performance",
+        "source": "web",
+        "operation": "browser_long_task",
+        "page": "/trips/:id/speed",
+        "details": {
+          "duration_ms": 2276
+        }
+      }
+    ]
+  },
+  "runtime": {
+    "available": true,
+    "memory_available_bytes": 2295263232,
+    "memory_total_bytes": 11653349376,
+    "memory_threshold_bytes": 226492416,
+    "heap_used_bytes": 48315296,
+    "heap_max_bytes": 268435456,
+    "pss_kb": 457040,
+    "storage_usable_bytes": 3000729600,
+    "storage_free_bytes": 3134947328,
+    "storage_total_bytes": 108116574208,
+    "thermal_status": 2,
+    "battery_temperature_c": 42.1,
+    "last_main_heartbeat_age_ms": 923,
+    "last_heartbeat_at": 1786736367919,
+    "memory_low": false,
+    "foreground": true,
+    "ui_stall_active": false,
+    "thermal_label": "moderate",
+    "last_state": "resumed",
+    "last_operation": {
+      "operation": "page.firstPaint",
+      "phase": "painted",
+      "pathname": "/diagnostics",
+      "timestamp": "2026-08-14T19:39:36.784Z"
+    }
+  }
+}

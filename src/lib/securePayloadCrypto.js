@@ -1,6 +1,14 @@
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { getNativePlatform, isAndroid, isNativePlatform } from '@/lib/nativePlatform';
 import { secureCall } from '@/lib/secureBridge';
+import { closeP0Span, openP0Span, recordP0Phase, tagP0PayloadKind } from '@/lib/p0Probe';
+import { payloadKindForContext } from '@/lib/p0Schema';
+
+const p0Now = () => (
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now()
+);
 
 const ENCRYPTION_VERSION = 1;
 const DEFAULT_KEY_VERSION = 1;
@@ -146,77 +154,174 @@ export async function deleteEncryptionKeyVersion(version) {
 }
 
 export async function encryptSensitiveValue(value, context = 'drivesense', options = {}) {
-  const plaintext = JSON.stringify(value);
-  const keyVersion = Math.max(
-    DEFAULT_KEY_VERSION,
-    Number(options.keyVersion || await getActiveEncryptionKeyVersion()) || DEFAULT_KEY_VERSION
-  );
-  if (isAndroid()) {
-    const result = await secureCall('SecureBridge', 'encryptSensitivePayload', {
-      plaintext,
-      context,
-      keyVersion,
-    });
+  // P0: the logical payload span. `payload_kind` is derived from the context and
+  // the raw context is then discarded — contexts embed trip ids and storage keys
+  // and must never reach a trace.
+  const p0Span = openP0Span('logical_payload');
+  const payloadKind = p0Span ? payloadKindForContext(context) : '';
+  if (p0Span) tagP0PayloadKind(p0Span, payloadKind);
+  const p0Mark = () => (p0Span ? p0Now() : 0);
+  const p0Meta = p0Span ? { parentOpId: p0Span.call_id, payloadKind } : undefined;
+  let p0Outcome = 'error';
+
+  try {
+    const stringifyStart = p0Mark();
+    let plaintext;
+    try {
+      plaintext = JSON.stringify(value);
+    } catch (error) {
+      // A failed stringify still consumed synchronous main-thread time — on a
+      // large cyclic or getter-bearing value, potentially a lot of it. Keep the
+      // partial interval rather than dropping the measurement with the error.
+      if (p0Span) recordP0Phase(p0Span, 'logical_stringify', stringifyStart, p0Now());
+      throw error;
+    }
+    if (p0Span) recordP0Phase(p0Span, 'logical_stringify', stringifyStart, p0Now());
+
+    const keyVersion = Math.max(
+      DEFAULT_KEY_VERSION,
+      Number(options.keyVersion || await getActiveEncryptionKeyVersion()) || DEFAULT_KEY_VERSION
+    );
+    if (isAndroid()) {
+      const result = await secureCall('SecureBridge', 'encryptSensitivePayload', {
+        plaintext,
+        context,
+        keyVersion,
+      }, p0Meta);
+      if (p0Span && typeof result?.ciphertext === 'string') {
+        // Only the base64 character count is free here. `at_rest_plaintext_bytes`
+        // and `at_rest_ciphertext_bytes` stay unavailable (exported as `null`)
+        // on the Android path: obtaining them would mean adding a payload pass
+        // purely to produce a number, which the contract forbids.
+        p0Span.at_rest_ciphertext_b64_chars = result.ciphertext.length;
+      }
+      p0Outcome = 'success';
+      return {
+        encrypted: true,
+        version: ENCRYPTION_VERSION,
+        key_version: keyVersion,
+        algorithm: 'AES-256-GCM',
+        key_provider: 'android-keystore',
+        ciphertext: result.ciphertext,
+      };
+    }
+    assertSupportedNativeCrypto();
+
+    const api = cryptoApi();
+    const key = await getWebKey(keyVersion);
+    const iv = api.getRandomValues(new Uint8Array(12));
+    const additionalData = new TextEncoder().encode(context);
+    const encodedPlaintext = new TextEncoder().encode(plaintext);
+    const ciphertext = await api.subtle.encrypt(
+      { name: 'AES-GCM', iv, additionalData },
+      key,
+      encodedPlaintext
+    );
+    // IV is encoded before the ciphertext, matching the original property
+    // evaluation order in the returned object. Both helpers are pure today, but
+    // the order-equivalence rule is absolute: instrumentation does not get to
+    // reorder observable work.
+    const ivBase64 = bytesToBase64(iv);
+    const ciphertextBase64 = bytesToBase64(new Uint8Array(ciphertext));
+    if (p0Span) {
+      // All three are free: the encoder result, the ciphertext buffer and the
+      // base64 string already exist. No extra pass is added.
+      p0Span.at_rest_plaintext_bytes = encodedPlaintext.byteLength;
+      p0Span.at_rest_ciphertext_bytes = ciphertext.byteLength;
+      p0Span.at_rest_ciphertext_b64_chars = ciphertextBase64.length;
+    }
+    p0Outcome = 'success';
     return {
       encrypted: true,
       version: ENCRYPTION_VERSION,
       key_version: keyVersion,
       algorithm: 'AES-256-GCM',
-      key_provider: 'android-keystore',
-      ciphertext: result.ciphertext,
+      key_provider: 'webcrypto-nonextractable',
+      iv: ivBase64,
+      ciphertext: ciphertextBase64,
     };
+  } finally {
+    // A key lookup, secure-call or WebCrypto failure closes the span as `error`.
+    // Closing everything as `success` would have made the error path invisible
+    // in exactly the measurements meant to explain slow paths.
+    if (p0Span) closeP0Span(p0Span, p0Outcome);
   }
-  assertSupportedNativeCrypto();
-
-  const api = cryptoApi();
-  const key = await getWebKey(keyVersion);
-  const iv = api.getRandomValues(new Uint8Array(12));
-  const additionalData = new TextEncoder().encode(context);
-  const ciphertext = await api.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData },
-    key,
-    new TextEncoder().encode(plaintext)
-  );
-  return {
-    encrypted: true,
-    version: ENCRYPTION_VERSION,
-    key_version: keyVersion,
-    algorithm: 'AES-256-GCM',
-    key_provider: 'webcrypto-nonextractable',
-    iv: bytesToBase64(iv),
-    ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
-  };
 }
 
 export async function decryptSensitiveValue(payload, context = 'drivesense') {
   if (!isEncryptedPayload(payload)) return payload;
 
-  if (isAndroid()) {
-    const keyVersion = Number.isInteger(Number(payload.key_version))
-      ? Number(payload.key_version)
-      : LEGACY_ANDROID_KEY_VERSION;
-    const result = await secureCall('SecureBridge', 'decryptSensitivePayload', {
-      ciphertext: payload.ciphertext,
-      context,
-      keyVersion,
-    });
-    return JSON.parse(result.plaintext);
+  const p0Span = openP0Span('logical_payload');
+  const payloadKind = p0Span ? payloadKindForContext(context) : '';
+  if (p0Span) {
+    tagP0PayloadKind(p0Span, payloadKind);
+    if (typeof payload?.ciphertext === 'string') {
+      p0Span.at_rest_ciphertext_b64_chars = payload.ciphertext.length;
+    }
   }
-  assertSupportedNativeCrypto();
+  const p0Mark = () => (p0Span ? p0Now() : 0);
+  const p0Meta = p0Span ? { parentOpId: p0Span.call_id, payloadKind } : undefined;
+  let p0Outcome = 'error';
 
-  const api = cryptoApi();
-  const keyVersion = Math.max(DEFAULT_KEY_VERSION, Number(payload.key_version) || DEFAULT_KEY_VERSION);
-  const key = await getWebKey(keyVersion);
-  const plaintext = await api.subtle.decrypt(
-    {
-      name: 'AES-GCM',
-      iv: base64ToBytes(payload.iv),
-      additionalData: new TextEncoder().encode(context),
-    },
-    key,
-    base64ToBytes(payload.ciphertext)
-  );
-  return JSON.parse(new TextDecoder().decode(plaintext));
+  try {
+    if (isAndroid()) {
+      const keyVersion = Number.isInteger(Number(payload.key_version))
+        ? Number(payload.key_version)
+        : LEGACY_ANDROID_KEY_VERSION;
+      const result = await secureCall('SecureBridge', 'decryptSensitivePayload', {
+        ciphertext: payload.ciphertext,
+        context,
+        keyVersion,
+      }, p0Meta);
+      const parseStart = p0Mark();
+      let parsed;
+      try {
+        parsed = JSON.parse(result.plaintext);
+      } catch (error) {
+        // A parse that throws on a multi-megabyte plaintext is precisely the
+        // kind of long synchronous block P0 exists to find. Keep the interval.
+        if (p0Span) recordP0Phase(p0Span, 'logical_parse', parseStart, p0Now());
+        throw error;
+      }
+      if (p0Span) recordP0Phase(p0Span, 'logical_parse', parseStart, p0Now());
+      p0Outcome = 'success';
+      return parsed;
+    }
+    assertSupportedNativeCrypto();
+
+    const api = cryptoApi();
+    const keyVersion = Math.max(DEFAULT_KEY_VERSION, Number(payload.key_version) || DEFAULT_KEY_VERSION);
+    const key = await getWebKey(keyVersion);
+    const plaintext = await api.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: base64ToBytes(payload.iv),
+        additionalData: new TextEncoder().encode(context),
+      },
+      key,
+      base64ToBytes(payload.ciphertext)
+    );
+    const decoded = new TextDecoder().decode(plaintext);
+    const parseStart = p0Mark();
+    let parsed;
+    try {
+      parsed = JSON.parse(decoded);
+    } catch (error) {
+      if (p0Span) {
+        recordP0Phase(p0Span, 'logical_parse', parseStart, p0Now());
+        p0Span.at_rest_plaintext_bytes = plaintext.byteLength;
+      }
+      throw error;
+    }
+    if (p0Span) {
+      recordP0Phase(p0Span, 'logical_parse', parseStart, p0Now());
+      p0Span.at_rest_plaintext_bytes = plaintext.byteLength;
+    }
+    p0Outcome = 'success';
+    return parsed;
+  } finally {
+    if (p0Span) closeP0Span(p0Span, p0Outcome);
+  }
 }
 
 export async function getEncryptedJson(key, fallback) {

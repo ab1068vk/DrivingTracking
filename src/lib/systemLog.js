@@ -1,4 +1,19 @@
 import { recordHistoricalAppExperienceEvent } from '@/lib/appExperienceDiagnostics';
+import {
+  bufferSuppressedDiagnostics,
+  closeP0Span,
+  markP0SpanFailure,
+  openP0Span,
+  recordP0Phase,
+  tagP0DiagnosticsJob,
+} from '@/lib/p0Probe';
+import { suppressDiagnosticsPersistence } from '@/lib/p0ProbeArms';
+
+const p0Now = () => (
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now()
+);
 
 const SYSTEM_LOG_KEY = 'drivesense_system_logs_v1';
 const SETTINGS_KEY = 'drivesense_settings';
@@ -59,18 +74,29 @@ const canUseStorage = () => {
   }
 };
 
-const parseLogs = (raw) => {
+const parseLogs = (raw, p0Span = null) => {
   try {
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch {
+    // Same rule as the other stores: the empty-list degradation is preserved,
+    // the false `success` measurement is not.
+    markP0SpanFailure(p0Span);
     return [];
   }
 };
 
-const readStoredLogs = () => {
+const readStoredLogs = (p0Span = null) => {
   if (!canUseStorage()) return [];
-  return parseLogs(localStorage.getItem(SYSTEM_LOG_KEY));
+  if (!p0Span) return parseLogs(localStorage.getItem(SYSTEM_LOG_KEY));
+  const getStart = p0Now();
+  const raw = localStorage.getItem(SYSTEM_LOG_KEY);
+  const getEnd = p0Now();
+  const parsed = parseLogs(raw, p0Span);
+  recordP0Phase(p0Span, 'diag_get', getStart, getEnd);
+  recordP0Phase(p0Span, 'diag_parse', getEnd, p0Now());
+  p0Span.entry_count_before = parsed.length;
+  return parsed;
 };
 
 const eventTimestamp = (event) => {
@@ -106,15 +132,52 @@ export function pruneExpiredSystemLogs(logs = readStoredLogs(), nowMs = Date.now
     .slice(0, MAX_STORED_LOGS);
 }
 
-const writeStoredLogs = (logs, { notify = true } = {}) => {
+/**
+ * @param {any[]} logs
+ * @param {{ notify?: boolean, p0Job?: string | null, p0Span?: any }} [options]
+ *   `p0Job` marks this as an *implicit* recurring/rewrite-on-read write, which
+ *   P0 arms B/C suppress. Explicit user actions (clearing logs) pass no job and
+ *   always write — suppressing those would be a functional change, not a
+ *   measurement one.
+ */
+const writeStoredLogs = (logs, { notify = true, p0Job = null, p0Span = null } = {}) => {
   if (!canUseStorage()) return;
+  if (p0Job && suppressDiagnosticsPersistence()) {
+    // `logs` is the batch this write would have persisted; it moves into the
+    // bounded volatile buffer instead of being pruned, stringified and written.
+    bufferSuppressedDiagnostics(p0Job, logs);
+    return;
+  }
   try {
+    const pruneStart = p0Span ? p0Now() : 0;
     const pruned = pruneExpiredSystemLogs(logs);
-    localStorage.setItem(SYSTEM_LOG_KEY, JSON.stringify(pruned));
+    const pruneEnd = p0Span ? p0Now() : 0;
+    const serialized = JSON.stringify(pruned);
+    const stringifyEnd = p0Span ? p0Now() : 0;
+    // Phases are committed before the write, and the write interval is recorded
+    // on both paths: a quota-exceeded `setItem` is one of the more expensive
+    // things this function can do, and it must not measure as free.
+    if (p0Span) {
+      recordP0Phase(p0Span, 'diag_prune_b', pruneStart, pruneEnd);
+      recordP0Phase(p0Span, 'diag_stringify', pruneEnd, stringifyEnd);
+      // The string already exists; no encoder or second traversal is added.
+      p0Span.serialized_code_units = serialized.length;
+    }
+    try {
+      localStorage.setItem(SYSTEM_LOG_KEY, serialized);
+    } catch (error) {
+      if (p0Span) recordP0Phase(p0Span, 'diag_set', stringifyEnd, p0Now());
+      throw error;
+    }
+    if (p0Span) recordP0Phase(p0Span, 'diag_set', stringifyEnd, p0Now());
     if (notify && typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
       window.dispatchEvent?.(new CustomEvent(SYSTEM_LOG_EVENT, { detail: { count: pruned.length } }));
     }
   } catch {
+    // The half-size retry is existing application behaviour and is preserved.
+    // The measurement is not: the intended write failed, and that stays true
+    // even when the retry succeeds.
+    markP0SpanFailure(p0Span);
     try {
       localStorage.setItem(SYSTEM_LOG_KEY, JSON.stringify(pruneExpiredSystemLogs(logs).slice(0, Math.floor(MAX_STORED_LOGS / 2))));
     } catch {}
@@ -261,8 +324,29 @@ const flushPendingLogs = () => {
   if (!pendingLogs.length) return;
   const batch = pendingLogs;
   pendingLogs = [];
-  const next = pruneExpiredSystemLogs([...batch, ...readStoredLogs()]);
-  writeStoredLogs(next);
+  // P0 arms B/C short-circuit here, at job entry, before the first storage read
+  // and before any full-history transform. The already-collected batch is
+  // dropped into the volatile counter rather than parsed, pruned twice, sorted
+  // and stringified. Suppressing only the write would leave all of that in place.
+  if (suppressDiagnosticsPersistence()) {
+    bufferSuppressedDiagnostics('system_log_flush', batch);
+    return;
+  }
+  const p0Span = openP0Span('diagnostics_job');
+  if (p0Span) tagP0DiagnosticsJob(p0Span, 'system_log_flush');
+  let p0Outcome = 'error';
+  try {
+    const stored = readStoredLogs(p0Span);
+    const pruneStart = p0Span ? p0Now() : 0;
+    const next = pruneExpiredSystemLogs([...batch, ...stored]);
+    if (p0Span) recordP0Phase(p0Span, 'diag_prune_a', pruneStart, p0Now());
+    writeStoredLogs(next, { p0Job: 'system_log_flush', p0Span });
+    p0Outcome = 'success';
+  } finally {
+    // A read/parse/prune failure must surface as an error span rather than a
+    // clean-looking measurement of work that did not complete.
+    if (p0Span) closeP0Span(p0Span, p0Outcome);
+  }
 };
 
 const scheduleFlush = () => {
@@ -276,7 +360,10 @@ export function recordSystemLog(event = {}) {
   const category = event.category || 'app';
   const privacySensitive = isPrivacySensitiveLog({ ...event, category });
   if (privacySensitive && getPrivacyLogRetentionMs() <= 0) {
-    writeStoredLogs(readStoredLogs());
+    // Zero-hour privacy retention: the rewrite is what enforces immediate
+    // expiry. It is an implicit recurring write, so arms B/C suppress it — the
+    // retention *policy* itself is untouched, only the storage write.
+    writeStoredLogs(readStoredLogs(), { p0Job: 'system_log_write' });
     return null;
   }
 
@@ -334,9 +421,22 @@ export function logSystemFailure(operation, error, details = {}) {
 }
 
 export function getSystemLogs() {
-  const logs = pruneExpiredSystemLogs(readStoredLogs());
-  writeStoredLogs(logs, { notify: false });
-  return logs;
+  // Rewrite-on-read: the explicitly requested display read still happens in every
+  // arm, but arms B/C cannot write. Callers see identical data either way.
+  const p0Span = openP0Span('diagnostics_job');
+  if (p0Span) tagP0DiagnosticsJob(p0Span, 'system_log_get');
+  let p0Outcome = 'error';
+  try {
+    const stored = readStoredLogs(p0Span);
+    const pruneStart = p0Span ? p0Now() : 0;
+    const logs = pruneExpiredSystemLogs(stored);
+    if (p0Span) recordP0Phase(p0Span, 'diag_prune_a', pruneStart, p0Now());
+    writeStoredLogs(logs, { notify: false, p0Job: 'system_log_get', p0Span });
+    p0Outcome = 'success';
+    return logs;
+  } finally {
+    if (p0Span) closeP0Span(p0Span, p0Outcome);
+  }
 }
 
 export function clearSystemLogs() {

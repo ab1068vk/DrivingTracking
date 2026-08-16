@@ -206,7 +206,11 @@ export default function Diagnostics() {
     queryFn: () => tripService.listSummaries({ sort: '-start_time', limit: 20 }),
     staleTime: 2 * 60 * 1000,
   });
-  const { data: allTripSummaries = [], refetch: refetchAllTripSummaries } = useQuery({
+  const {
+    data: allTripSummaries = [],
+    refetch: refetchAllTripSummaries,
+    isSuccess: tripDataProfileLoaded,
+  } = useQuery({
     queryKey: ['diagnostics-trip-data-profile'],
     queryFn: () => tripService.listAllSummaries({ sort: '-start_time' }),
     staleTime: 5 * 60 * 1000,
@@ -314,16 +318,29 @@ export default function Diagnostics() {
   const tripDataProfile = useMemo(() => buildTripDataProfile(allTripSummaries), [allTripSummaries]);
 
   useEffect(() => {
+    // I-1: dataset fields are sent only once the trip query has resolved. On the
+    // first render this effect used to publish `trip_count: 0` from an empty
+    // loading result, and that zeroed context was then stamped onto every
+    // measurement app-wide. Mode fields do not depend on the query and are
+    // always sent.
     setPerformanceTriageContext({
-      trip_count: tripDataProfile.trip_count,
-      completed_trip_count: tripDataProfile.completed_trip_count,
-      total_distance_km: tripDataProfile.total_distance_km,
-      route_point_count: tripDataProfile.total_route_point_count,
-      data_size_bytes: tripDataProfile.approximate_summary_bytes,
+      ...(tripDataProfileLoaded ? {
+        trip_count: tripDataProfile.trip_count,
+        completed_trip_count: tripDataProfile.completed_trip_count,
+        total_distance_km: tripDataProfile.total_distance_km,
+        route_point_count: tripDataProfile.total_route_point_count,
+        data_size_bytes: tripDataProfile.approximate_summary_bytes,
+      } : {}),
       experience_mode: settings.experience_mode,
       tracking_mode: settings.tracking_paused ? 'paused' : settings.tracking_mode,
     });
-  }, [tripDataProfile, settings.experience_mode, settings.tracking_mode, settings.tracking_paused]);
+  }, [
+    tripDataProfile,
+    tripDataProfileLoaded,
+    settings.experience_mode,
+    settings.tracking_mode,
+    settings.tracking_paused,
+  ]);
 
   const clearLogs = async () => {
     clearTrackingDiagnostics();
@@ -417,6 +434,7 @@ export default function Diagnostics() {
       </div>
 
       <AppExperienceDiagnosticsPanel
+        tripDataReady={tripDataProfileLoaded}
         trips={allTripSummaries}
         performanceEntries={performanceEntries}
         trackingEvents={combinedEvents}

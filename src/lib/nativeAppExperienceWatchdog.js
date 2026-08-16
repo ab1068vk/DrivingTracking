@@ -1,6 +1,8 @@
 import { PERFORMANCE_CHECKPOINT_EVENT } from '@/lib/performanceTriage';
 import { isAndroid } from '@/lib/nativePlatform';
 import ActivityRecognition from '@/lib/driveSenseNativePlugin';
+import { bufferSuppressedDiagnostics, closeP0Span, openP0Span } from '@/lib/p0Probe';
+import { suppressWatchdogCheckpoints } from '@/lib/p0ProbeArms';
 
 let initialized = false;
 let flushing = false;
@@ -13,10 +15,19 @@ const flushCheckpoint = async () => {
     while (pendingCheckpoint) {
       const checkpoint = pendingCheckpoint;
       pendingCheckpoint = null;
+      // P0 arm C suppresses the per-measurement checkpoint bridge call so its
+      // cost can be isolated. Every other arm behaves exactly as before.
+      if (suppressWatchdogCheckpoints()) {
+        bufferSuppressedDiagnostics('watchdog_checkpoint');
+        continue;
+      }
+      const span = openP0Span('watchdog_checkpoint');
       try {
         await ActivityRecognition.recordAppExperienceCheckpoint(checkpoint);
+        if (span) closeP0Span(span, 'success');
       } catch {
         // The watchdog is optional and must never interfere with app startup.
+        if (span) closeP0Span(span, 'error');
       }
     }
   } finally {
