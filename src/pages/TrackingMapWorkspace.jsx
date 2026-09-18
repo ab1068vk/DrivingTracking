@@ -1,5 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
   EyeOff,
@@ -10,7 +11,8 @@ import {
   Route,
   ShieldCheck,
 } from 'lucide-react';
-import { limitedTripSummaryQueryOptions, tripDetailQueryOptions } from '@/api/trips';
+import { p7DetailQueryOptions } from '@/api/trips';
+import { mapScreenGeometryQuery } from '@/hooks/useMapScreenGeometry';
 import TripMap from '@/components/TripMap';
 import TripPlayback from '@/components/TripPlayback';
 import {
@@ -26,9 +28,11 @@ import {
   maskEventsForPrivacy,
   maskRoutePointsForPrivacy,
 } from '@/lib/privacyZones';
+import {
+  readRequestedTripId, resolveTrackingTripSubject, trackingTripPickerOptions, trackingTripSubjectState,
+} from '@/lib/trackingTripSubject';
 import useLocalSettings from '@/hooks/useLocalSettings';
 
-const SUMMARY_LIMIT = 50;
 const OVERVIEW_ROUTE_LIMIT = 6;
 const EVENT_FILTERS = ['harsh_brake', 'rapid_acceleration', 'sharp_turn', 'speeding', 'phone_use', 'possible_crash'];
 
@@ -73,6 +77,7 @@ const progressStyle = (start, end, color) => ({
 });
 
 export default function TrackingMapWorkspace() {
+  const [searchParams] = useSearchParams();
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
   const privacyZones = useMemo(() => getPrivacyZones(settings), [settings]);
@@ -91,10 +96,13 @@ export default function TrackingMapWorkspace() {
   const deferredShowRouteRisk = useDeferredValue(showRouteRisk);
   const deferredShowDangerZones = useDeferredValue(showDangerZones);
 
-  const { data: summaries = [], isLoading: summariesLoading } = useQuery({
-    ...limitedTripSummaryQueryOptions(SUMMARY_LIMIT),
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
-  });
+  // P7 Stage 7 (ledger entry #14): one bounded Q8 page replaces a `(50)` list
+  // plus a six-deep Q2 detail fan-out. The fan-out decrypted six full trip
+  // payloads to draw six overview polylines; the Q8 batch hydrates the whole
+  // page from the D2 owner in one crossing, decimated to a preview cap.
+  const geometryQuery = useQuery(mapScreenGeometryQuery());
+  const summariesLoading = geometryQuery.isPending;
+  const summaries = useMemo(() => geometryQuery.data?.trips ?? [], [geometryQuery.data]);
 
   const filteredSummaries = useMemo(() => summaries.filter((trip) => {
     if (deferredSavedFilter === 'night') return trip.night_driving;
@@ -108,7 +116,14 @@ export default function TrackingMapWorkspace() {
     return true;
   }), [deferredSavedFilter, summaries]);
 
-  const effectiveSelectedTripId = selectedTripId || (filteredSummaries[0]?.id ? String(filteredSummaries[0].id) : '');
+  // HPR-017: an explicit `?trip=` names this workspace's subject. The Q8 geometry
+  // page is the selector's option list; it is not the authority on identity, and
+  // a trip outside it resolves by id rather than becoming the page's first row.
+  const requestedTrip = readRequestedTripId(searchParams);
+  const subject = resolveTrackingTripSubject({
+    requested: requestedTrip, selectedTripId, summaries: filteredSummaries,
+  });
+  const effectiveSelectedTripId = subject.tripId;
   const deferredSelectedTripId = useDeferredValue(effectiveSelectedTripId);
   const workspacePending = deferredSavedFilter !== savedFilter ||
     deferredEventFilters !== eventFilters ||
@@ -117,8 +132,23 @@ export default function TrackingMapWorkspace() {
     deferredShowRouteRisk !== showRouteRisk ||
     deferredShowDangerZones !== showDangerZones ||
     deferredSelectedTripId !== effectiveSelectedTripId;
-  const { data: selectedTripRaw, isLoading: selectedTripLoading } = useQuery(tripDetailQueryOptions(deferredSelectedTripId));
-  const selectedTrip = selectedTripRaw || filteredSummaries.find((trip) => String(trip.id) === String(deferredSelectedTripId)) || null;
+  // Q2, full fidelity, for the one selected trip. Q3's stride-sampled track
+  // carries no `driving_events`, and this workspace renders them, so the
+  // selected read stays on the detail path — fixed by UX, never by N.
+  const detailQuery = useQuery(p7DetailQueryOptions(deferredSelectedTripId));
+  const selectedTripLoading = detailQuery.isLoading;
+  const subjectState = trackingTripSubjectState({
+    subject: { ...subject, tripId: deferredSelectedTripId },
+    summaries: filteredSummaries,
+    detail: detailQuery,
+  });
+  const selectedTrip = subjectState.trip || subjectState.summary;
+  const tripSelectorOptions = trackingTripPickerOptions({
+    summaries: filteredSummaries.slice(0, 28),
+    tripId: effectiveSelectedTripId,
+    subjectTrip: selectedTrip,
+    formatLabel: (trip) => formatDate(trip?.start_time),
+  });
   const {
     results: localKnowledgeResults,
     failed: localKnowledgeFailed,
@@ -128,10 +158,11 @@ export default function TrackingMapWorkspace() {
     () => effectiveSelectedTripId ? [] : filteredSummaries.slice(0, OVERVIEW_ROUTE_LIMIT),
     [effectiveSelectedTripId, filteredSummaries]
   );
-  const overviewQueries = useQueries({
-    queries: overviewTripSummaries.map((trip) => tripDetailQueryOptions(trip.id)),
-  });
-  const overviewTrips = overviewQueries.map((query) => query.data).filter(hasRoute);
+  // The overview routes are already on the Q8 page. No fan-out remains.
+  const overviewTrips = useMemo(
+    () => overviewTripSummaries.filter(hasRoute),
+    [overviewTripSummaries]
+  );
 
   const visibleEvents = useMemo(() => {
     const rawEvents = settings.phone_use_show_on_map === false
@@ -291,20 +322,27 @@ export default function TrackingMapWorkspace() {
                   {!summariesLoading && filteredSummaries.length === 0 && (
                     <div className="rounded-md border border-border p-3 text-xs text-muted-foreground">No completed trips match the selected filter.</div>
                   )}
-                  {filteredSummaries.slice(0, 28).map((trip) => (
-                    <button
-                      key={trip.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedTripId(String(trip.id));
-                        setSelectedEvent(null);
-                      }}
-                      className={`rounded-md border px-2 py-2 text-left text-xs ${String(effectiveSelectedTripId) === String(trip.id) ? 'border-primary bg-primary/10' : 'border-border hover:bg-secondary/70'}`}
-                    >
-                      <div className="font-semibold">{formatDate(trip.start_time)}</div>
-                      <div className="mt-1 text-muted-foreground">{formatDistance(Number(trip.distance_km) || 0, units)} / {trip.route_data_expired_at ? 'route expired' : 'route retained'}</div>
-                    </button>
-                  ))}
+                  {tripSelectorOptions.map((option) => {
+                    const trip = option.trip || {};
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => {
+                          setSelectedTripId(option.value);
+                          setSelectedEvent(null);
+                        }}
+                        className={`rounded-md border px-2 py-2 text-left text-xs ${String(effectiveSelectedTripId) === option.value ? 'border-primary bg-primary/10' : 'border-border hover:bg-secondary/70'}`}
+                      >
+                        <div className="font-semibold">{formatDate(trip.start_time)}</div>
+                        <div className="mt-1 text-muted-foreground">
+                          {option.outsideWindow
+                            ? 'Linked trip'
+                            : `${formatDistance(Number(trip.distance_km) || 0, units)} / ${trip.route_data_expired_at ? 'route expired' : 'route retained'}`}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -312,7 +350,12 @@ export default function TrackingMapWorkspace() {
         </aside>
 
         <main className="relative min-h-[32rem] min-w-0 bg-secondary/30">
-          {selectedTripLoading && !selectedTrip ? (
+          {subjectState.status === 'unavailable' ? (
+            <WorkspaceEmpty
+              title={subject.mode === 'explicit' ? 'Linked trip unavailable' : 'Trip unavailable'}
+              detail={subjectState.notice}
+            />
+          ) : selectedTripLoading && !selectedTrip ? (
             <WorkspaceEmpty title="Loading selected trip" detail="Reading local route detail." />
           ) : selectedTrip && hasRoute(selectedTrip) ? (
             deferredSurfaceMode === 'playback' ? (

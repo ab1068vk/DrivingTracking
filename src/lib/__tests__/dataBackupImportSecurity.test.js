@@ -41,11 +41,46 @@ import { analyzeRoadMemoryIntelligence } from '@/lib/roadMemoryIntelligence';
 import { speedKnowledgeCellEligibility } from '@/lib/speedKnowledgeCellPolicy';
 import { loadTransmissionLog } from '@/lib/transmissionLog';
 
+// Restore-time rescore now finds affected trips with a bounded cursor scan
+// that streams one payload at a time, so this fake serves the same paging and
+// payload-stream surface the real repositories do.
+const importedTrips = [];
 vi.mock('@/api/trips', () => ({
   tripService: {
-    upsertMany: vi.fn(async (trips) => trips),
-    listAll: vi.fn(async () => []),
-    getById: vi.fn(async () => null),
+    upsertMany: vi.fn(async (trips) => {
+      importedTrips.splice(0, importedTrips.length, ...trips);
+      return trips;
+    }),
+    restoreBatch: vi.fn(async (trips) => {
+      importedTrips.splice(0, importedTrips.length, ...trips);
+      return {
+        attemptedTrips: trips.length,
+        survivingTrips: trips,
+        removedByRetention: 0,
+        failedWrites: 0,
+        retentionPending: 0,
+        status: 'complete',
+      };
+    }),
+    stepRetentionReconciliation: vi.fn(async () => ({
+      enabled: true,
+      deletedTrips: 0,
+      processed: 0,
+      examined: 0,
+      hasMore: false,
+    })),
+    queryHistoryPage: vi.fn(async ({ status = '' } = {}) => ({
+      rows: importedTrips.filter((trip) => !status || trip.status === status),
+      nextCursor: null,
+      hasMore: false,
+    })),
+    getPayloadStream: vi.fn(async (id) => {
+      const trip = importedTrips.find((item) => String(item.id) === String(id));
+      return (async function* points() {
+        for (const point of trip?.route_points || []) yield point;
+      })();
+    }),
+    getById: vi.fn(async (id) => importedTrips.find((item) => String(item.id) === String(id)) || null),
     update: vi.fn(async (id, patch) => ({ id, ...patch })),
   },
 }));
@@ -675,7 +710,7 @@ describe('backup trip import sanitization', () => {
     };
 
     await expect(importDriveSenseBackup(file)).resolves.toMatchObject({ trips: 10 });
-    expect(tripService.upsertMany.mock.calls.map(([batch]) => batch.length)).toEqual([4, 4, 2]);
+    expect(tripService.restoreBatch.mock.calls.map(([batch]) => batch.length)).toEqual([4, 4, 2]);
   });
 
   it('sanitizes active trips from backup imports', () => {
@@ -976,6 +1011,68 @@ describe('backup trip import sanitization', () => {
 
     const imported = await importDriveSenseBackup(file, { acknowledgeTruncation: true });
     expect(imported.trips).toBe(1);
+  });
+
+  // AUD-008 — route-point truncation must be disclosed, not silent.
+  // Export writes route points uncapped; import caps them at
+  // MAX_IMPORTED_TRIP_ROUTE_POINTS. That cap is legitimate hostile-input protection,
+  // but the loss must be counted, acknowledged and reported — exactly as trip notes
+  // already are. Silently returning a shortened route as a complete restore is the
+  // defect.
+  const longRouteBackup = (pointCount) => ({
+    app: 'Road Sage',
+    version: BACKUP_VERSION,
+    trips: [{
+      id: 'long-route',
+      start_time: '2026-01-01T00:00:00.000Z',
+      route_points: Array.from({ length: pointCount }, (_, index) => ({
+        lat: 51.5 + index / 1_000_000,
+        lng: -0.12 + index / 1_000_000,
+        timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, 0) + index * 1000).toISOString(),
+      })),
+    }],
+  });
+
+  it('discloses route-point truncation in parse warnings', () => {
+    const parsed = parseDriveSenseBackup(JSON.stringify(
+      longRouteBackup(MAX_IMPORTED_TRIP_ROUTE_POINTS + 1)
+    ));
+    expect(parsed.trips[0].route_points).toHaveLength(MAX_IMPORTED_TRIP_ROUTE_POINTS);
+    expect(parsed.warnings.join(' ')).toMatch(/route/i);
+  });
+
+  it('requires acknowledgement before importing truncated trip route points', async () => {
+    const file = {
+      size: 100,
+      text: vi.fn(async () => JSON.stringify(
+        longRouteBackup(MAX_IMPORTED_TRIP_ROUTE_POINTS + 1)
+      )),
+    };
+    const pending = await importDriveSenseBackup(file);
+    expect(pending).toMatchObject({
+      requiresAcknowledgement: true,
+      truncatedRouteTripCount: 1,
+    });
+    expect(pending.droppedRoutePointCount).toBe(1);
+
+    const imported = await importDriveSenseBackup(file, { acknowledgeTruncation: true });
+    expect(imported.trips).toBe(1);
+    // The acknowledged import must still REPORT what it dropped.
+    expect(imported.truncatedRouteTripCount).toBe(1);
+    expect(imported.droppedRoutePointCount).toBe(1);
+  });
+
+  it('does not demand acknowledgement when no route exceeds the cap', async () => {
+    const file = {
+      size: 100,
+      text: vi.fn(async () => JSON.stringify(
+        longRouteBackup(MAX_IMPORTED_TRIP_ROUTE_POINTS)
+      )),
+    };
+    const imported = await importDriveSenseBackup(file);
+    expect(imported.requiresAcknowledgement).toBeUndefined();
+    expect(imported.trips).toBe(1);
+    expect(imported.truncatedRouteTripCount ?? 0).toBe(0);
   });
 
   it('imports encrypted backups through the existing sanitizer without leaking plaintext', async () => {
@@ -1434,7 +1531,7 @@ describe('backup trip import sanitization', () => {
       ],
     };
     let updatedTrip = null;
-    tripService.listAll.mockResolvedValueOnce([staleTrip]);
+    tripService.queryHistoryPage.mockResolvedValueOnce({ rows: [staleTrip], nextCursor: null, hasMore: false });
     tripService.update.mockImplementationOnce(async (id, scorePatch) => {
       updatedTrip = { ...staleTrip, id, ...scorePatch };
       return updatedTrip;
@@ -1475,7 +1572,7 @@ describe('backup trip import sanitization', () => {
   it('keeps restored knowledge committed and warns truthfully when post-import rescoring cannot start', async () => {
     const { tripService } = await import('@/api/trips');
     const restoredSpeedKnowledge = captureRestoredSpeedKnowledge();
-    tripService.listAll.mockRejectedValueOnce(new Error('trip index unavailable'));
+    tripService.queryHistoryPage.mockRejectedValueOnce(new Error('trip index unavailable'));
     const file = {
       size: 100,
       text: vi.fn(async () => JSON.stringify(roadMemoryBackupPayload())),

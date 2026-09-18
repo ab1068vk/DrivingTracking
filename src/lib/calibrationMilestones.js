@@ -36,8 +36,20 @@ const milestone = (id, title, body) => ({ id, title, body });
  */
 export function summarizeCalibrationProgress(trips = []) {
   const completed = (Array.isArray(trips) ? trips : []).filter((trip) => trip?.status === 'completed');
-  const tripsAnalyzed = completed.length;
-  const kmAnalyzed = completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  return summarizeCalibrationProgressFromCounters({
+    tripsAnalyzed: completed.length,
+    kmAnalyzed: completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0),
+  });
+}
+
+/**
+ * Calibration progress from the two counters it actually depends on.
+ *
+ * Calibration only ever needed a completed-trip count and a distance total, so
+ * durable aggregates can supply it without a history scan. The array entry
+ * point above delegates here so both paths cannot diverge.
+ */
+export function summarizeCalibrationProgressFromCounters({ tripsAnalyzed = 0, kmAnalyzed = 0 } = {}) {
   const tripsNeeded = Math.max(0, CALIBRATION_TRIPS_TARGET - tripsAnalyzed);
   const kmNeeded = Math.max(0, Math.ceil(CALIBRATION_KM_TARGET - kmAnalyzed));
   const percent = Math.min(100, Math.round(Math.max(

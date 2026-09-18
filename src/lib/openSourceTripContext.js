@@ -55,7 +55,9 @@ const prefetchLocalKnowledgeWithReliability = async (points, knowledge) => {
   const results = await prefetchLocalKnowledge(points, knowledge);
   if (!Array.isArray(results)) return results;
   try {
-    const data = await knowledge.exportData();
+    // Reliability is summarised over the cells this trip actually crossed, so
+    // the work is independent of geography learned anywhere else.
+    const data = await knowledge.exportDataForPoints(points);
     results.sourceReliability = summarizeSourceReliability(Object.values(data?.cells || {}));
   } catch (error) {
     console.warn('Learned speed-source reliability unavailable; using reference confidences.', error);

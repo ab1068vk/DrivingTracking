@@ -13,7 +13,15 @@ import {
 import {
   SPEED_KNOWLEDGE_SCHEMA_VERSION,
   SPEED_KNOWLEDGE_STORAGE_KEY,
+  isP6BrowserSpeedV2Authority,
+  p6EvidenceMembershipToken,
 } from '@/lib/speedKnowledgeRepository';
+import { isNativePlatform } from '@/lib/nativePlatform';
+import {
+  P6_PROVENANCE_DISPOSITIONS,
+  applyP6EvidenceDisposition,
+  composeP6CandidateEvidence,
+} from '@/lib/p6RoadEvidence';
 import {
   buildRoadMemoryObservations,
   consolidateRoadMemoryCandidates,
@@ -55,17 +63,31 @@ export { SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/speed/speedResolverSnapshot
 export const STORAGE_KEY = SPEED_KNOWLEDGE_STORAGE_KEY;
 export const CELL_PRECISION = 6;
 export const FALLBACK_PRECISION = 5;
+export const P6_SPEED_CALLER_REFUSALS = Object.freeze({
+  POINT_SCOPE_REQUIRED: 'P6_SPEED_POINT_SCOPE_REQUIRED',
+  SCOPED_RESOLVER_REQUIRED: 'P6_SPEED_SCOPED_RESOLVER_REQUIRED',
+  LEGACY_LEARNER_RETIRED: 'P6_SPEED_LEGACY_WHOLE_MODEL_LEARNER_RETIRED',
+  EXPLICIT_EXPORT_UNAVAILABLE: 'P6_SPEED_EXPLICIT_EXPORT_UNAVAILABLE',
+});
 const CACHEABLE_SOURCES = new Set(['openstreetmap', 'user_confirmed_posted_sign']);
 const NULL_ISLAND_EPSILON = 0.001;
 const ROAD_SECTION_MATCH_RADIUS_KM = 0.045;
 const LEGACY_CELL_MATCH_RADIUS_KM = 0.35;
 const DIRECTION_MATCH_TOLERANCE_DEG = 60;
 const HISTORY_LIMIT = 20;
+const NATIVE_HISTORY_MAX_BYTES = 512 * 1024;
+const NATIVE_HISTORY_ENTRY_MAX_BYTES = 256 * 1024;
 const ROAD_MEMORY_MAX_PROCESSED_TRIPS = 1500;
 const ROAD_MEMORY_MAX_CANDIDATES = 2500;
 const ROAD_MEMORY_STALE_MS = 120 * 86400000;
 const ROAD_MEMORY_CHRONOLOGY_VERSION = 1;
 const fallbackMutationTails = new WeakMap();
+
+const p6CallerRefusal = (code) => {
+  const error = new Error(code);
+  error.code = code;
+  return error;
+};
 
 const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
 
@@ -750,6 +772,93 @@ const snapshotData = (data) => {
   return snapshot;
 };
 
+const nativeEntityId = (kind, value, fallback = '') => String(
+  kind === 'correction'
+    ? value?.id || value?.ruleId || value?.correctionId || value?.sectionKey || value?.geohash || fallback
+    : kind === 'exclusion'
+      ? value?.exclusionId || value?.exclusionKey || value?.id || value?.sectionKey || value?.geohash || fallback
+      : value?.id || value?.candidateId || value?.sectionKey || value?.geohash || fallback
+);
+
+const nativeBucketForEntity = (value, fallback = 'zzzz') => {
+  const explicit = String(value?._bucketId || '').slice(0, 4).toLowerCase();
+  if (/^[0-9bcdefghjkmnpqrstuvwxyz]{4}$/.test(explicit)) return explicit;
+  const geohash = String(value?.geohash || '').slice(0, 4).toLowerCase();
+  return /^[0-9bcdefghjkmnpqrstuvwxyz]{4}$/.test(geohash) ? geohash : fallback;
+};
+
+const nativeEntityMap = (data = {}) => {
+  const map = new Map();
+  Object.entries(data.cells || {}).forEach(([id, value]) => map.set(`cell:${id}`, {
+    kind: 'cell', id, bucketId: id.slice(0, 4).toLowerCase(), value: cloneData(value),
+  }));
+  for (const [kind, values] of [
+    ['correction', data.corrections || []],
+    ['exclusion', data.excludedSections || []],
+    ['candidate', data.roadMemory?.candidates || []],
+  ]) for (const value of values) {
+    const id = nativeEntityId(kind, value);
+    if (id) map.set(`${kind}:${id}`, { kind, id, bucketId: nativeBucketForEntity(value), value: cloneData(value) });
+  }
+  return map;
+};
+
+const buildNativeHistoryDelta = (before, after, action) => {
+  const prior = nativeEntityMap(before);
+  const next = nativeEntityMap(after);
+  const changes = [];
+  for (const key of new Set([...prior.keys(), ...next.keys()])) {
+    const left = prior.get(key) || null;
+    const right = next.get(key) || null;
+    if (JSON.stringify(left?.value ?? null) === JSON.stringify(right?.value ?? null) &&
+        left?.bucketId === right?.bucketId) continue;
+    const item = left || right;
+    changes.push({
+      kind: item.kind,
+      id: item.id,
+      beforeBucketId: left?.bucketId || null,
+      afterBucketId: right?.bucketId || null,
+      before: left?.value ?? null,
+      after: right?.value ?? null,
+    });
+  }
+  const entry = { action, changedAt: new Date().toISOString(), changes };
+  return new TextEncoder().encode(JSON.stringify(entry)).byteLength <= NATIVE_HISTORY_ENTRY_MAX_BYTES
+    ? entry : null;
+};
+
+const applyNativeHistoryEntry = (data, entry, direction) => {
+  const targetKey = direction === 'undo' ? 'before' : 'after';
+  for (const change of entry?.changes || []) {
+    const target = change[targetKey];
+    if (change.kind === 'cell') {
+      data.cells ??= {};
+      if (target == null) delete data.cells[change.id];
+      else data.cells[change.id] = cloneData(target);
+      continue;
+    }
+    const owner = change.kind === 'correction'
+      ? data : change.kind === 'exclusion' ? data : (data.roadMemory ??= { version: 3, candidates: [], processedTrips: {}, intelligence: null });
+    const property = change.kind === 'correction'
+      ? 'corrections' : change.kind === 'exclusion' ? 'excludedSections' : 'candidates';
+    const current = Array.isArray(owner[property]) ? owner[property] : [];
+    owner[property] = current.filter((value) => nativeEntityId(change.kind, value) !== change.id);
+    if (target != null) owner[property].push(cloneData(target));
+  }
+  return data;
+};
+
+const boundedNativeHistory = (history = {}) => {
+  const undo = (history.undo || []).filter((entry) => Array.isArray(entry?.changes)).slice(-HISTORY_LIMIT);
+  const redo = (history.redo || []).filter((entry) => Array.isArray(entry?.changes)).slice(-HISTORY_LIMIT);
+  while (new TextEncoder().encode(JSON.stringify({ undo, redo })).byteLength > NATIVE_HISTORY_MAX_BYTES) {
+    if (undo.length >= redo.length && undo.length) undo.shift();
+    else if (redo.length) redo.shift();
+    else break;
+  }
+  return { undo, redo };
+};
+
 const FULL_ROAD_MEMORY_HISTORY_ACTIONS = new Set([
   'restore_speed_backup',
   'restore_backup',
@@ -1320,6 +1429,20 @@ function runFallbackStoreMutationExclusive(store, operation) {
   });
 }
 
+/**
+ * Whether two saved-road records describe the same thing.
+ *
+ * Stable ids win; older records without one fall back to their geohash and
+ * direction, which is the same identity rule the rescore diff applies.
+ */
+const sameRecordIdentity = (a, b) => {
+  const idA = a?.id || a?.ruleId || a?.sectionKey || a?.correctionId;
+  const idB = b?.id || b?.ruleId || b?.sectionKey || b?.correctionId;
+  if (idA && idB) return String(idA) === String(idB);
+  return String(a?.geohash || '') === String(b?.geohash || '') &&
+    String(a?.directionMode || 'both') === String(b?.directionMode || 'both');
+};
+
 export class LocalSpeedKnowledge {
   constructor(store) {
     this._store = store;
@@ -1329,6 +1452,50 @@ export class LocalSpeedKnowledge {
     return normalizeData((await this._store.get(STORAGE_KEY)) ?? defaultData());
   }
 
+  async _loadForPoints(points = []) {
+    if (typeof this._store?.getForGeohashes !== 'function') return this._load();
+    const bucketGeohashes = [];
+    for (const point of points) {
+      const lat = Number(point?.lat);
+      const lng = Number(point?.lng);
+      if (!isUsableCoordinate(lat, lng)) continue;
+      for (const dLat of [-0.01, 0, 0.01]) for (const dLng of [-0.01, 0, 0.01]) {
+        bucketGeohashes.push(geohashEncode(lat + dLat, lng + dLng, 4));
+      }
+    }
+    const data = normalizeData((await this._store.getForGeohashes(bucketGeohashes)) ?? defaultData());
+    Object.defineProperty(data, '_nativeBucketIds', { value: [...new Set(bucketGeohashes)], enumerable: false, configurable: true });
+    return data;
+  }
+
+  async _partitionedAuthorityReady() {
+    return typeof this._store?.isNativeAuthorityReady === 'function' &&
+      await this._store.isNativeAuthorityReady();
+  }
+
+  async _editorPage(kind, options = {}) {
+    if (typeof this._store?.queryEditorItems !== 'function') return null;
+    return this._store.queryEditorItems({
+      kind,
+      cursor: options.cursor || '',
+      maxItems: options.maxItems || 50,
+      maxBytes: options.maxBytes || 128 * 1024,
+      filter: options.filter || '',
+      activeOnly: options.activeOnly === true,
+    });
+  }
+
+  async _findEditorItem(kind, selector) {
+    if (typeof this._store?.getEditorItem === 'function') {
+      const indexed = await this._store.getEditorItem(kind, String(selector || ''));
+      if (indexed !== undefined) return indexed;
+    }
+    if (typeof this._store?.queryEditorItems !== 'function') return undefined;
+    const page = await this._editorPage(kind, { maxItems: 50, filter: String(selector || '') });
+    if (page == null) return undefined;
+    return (page.items || []).find((item) => correctionMatchesSelector(item, selector)) || null;
+  }
+
   _runMutation(operation) {
     if (typeof this._store?.runExclusive === 'function') {
       return this._store.runExclusive(STORAGE_KEY, operation);
@@ -1336,7 +1503,106 @@ export class LocalSpeedKnowledge {
     return runFallbackStoreMutationExclusive(this._store, operation);
   }
 
-  async _write(data, previous = null) {
+  /**
+   * Record what a write changed, for the rescore diff.
+   *
+   * Callers used to bracket a mutation with two `exportData()` snapshots and
+   * diff them. That reads the whole model twice, which native authority
+   * refuses outright — so under native the diff silently produced nothing and
+   * affected trips were never rescored. Capturing the change here instead is
+   * both bounded and exact: the write already holds the before and after
+   * documents for precisely the buckets it touched.
+   */
+  _recordChangeScope(data, previous) {
+    if (!this._changeCaptures?.size) return;
+    const scoped = (document) => ({
+      schemaVersion: document?.schemaVersion,
+      knowledgeRevision: document?.knowledgeRevision,
+      cells: { ...(document?.cells || {}) },
+      corrections: [...(document?.corrections || [])],
+      excludedSections: [...(document?.excludedSections || [])],
+      roadMemory: { candidates: [...(document?.roadMemory?.candidates || [])] },
+    });
+    const before = scoped(previous);
+    const after = scoped(data);
+    for (const capture of this._changeCaptures.values()) {
+      // The first observation of a key is the true "before"; later writes in
+      // the same capture must not overwrite it with an intermediate state.
+      for (const [geohash, cell] of Object.entries(before.cells)) {
+        if (!(geohash in capture.before.cells)) capture.before.cells[geohash] = cell;
+      }
+      Object.assign(capture.after.cells, after.cells);
+      for (const key of ['corrections', 'excludedSections']) {
+        capture.before[key].push(...before[key]);
+        capture.after[key] = capture.after[key]
+          .filter((item) => !after[key].some((next) => sameRecordIdentity(item, next)))
+          .concat(after[key]);
+      }
+      capture.before.roadMemory.candidates.push(...before.roadMemory.candidates);
+      capture.after.roadMemory.candidates = capture.after.roadMemory.candidates
+        .filter((item) => !after.roadMemory.candidates.some((next) => sameRecordIdentity(item, next)))
+        .concat(after.roadMemory.candidates);
+      capture.after.knowledgeRevision = after.knowledgeRevision;
+      capture.after.schemaVersion = after.schemaVersion;
+      capture.before.knowledgeRevision ??= before.knowledgeRevision;
+      capture.before.schemaVersion ??= before.schemaVersion;
+    }
+  }
+
+  /**
+   * Run `mutate` and return exactly what it changed.
+   *
+   * The returned `before`/`after` pair has the same shape the whole-model
+   * snapshots had, so it drops straight into
+   * `refreshTripsForLocalSpeedKnowledgeChanges` — but it covers only the
+   * records the mutation actually touched, and costs no extra reads.
+   */
+  async captureChanges(mutate) {
+    const token = this.beginChangeCapture();
+    try {
+      const result = await mutate();
+      const { before, after } = this.endChangeCapture(token);
+      return { result, before, after };
+    } finally {
+      this._changeCaptures?.delete(token);
+    }
+  }
+
+  /**
+   * Start recording changes. Pair with `endChangeCapture`.
+   *
+   * Captures nest and overlap safely: each token accumulates independently, so
+   * concurrent editor flows cannot steal one another's diffs.
+   */
+  beginChangeCapture() {
+    this._changeCaptures ??= new Map();
+    const token = Symbol('speed-knowledge-change-capture');
+    const empty = () => ({
+      schemaVersion: undefined,
+      knowledgeRevision: undefined,
+      cells: {},
+      corrections: [],
+      excludedSections: [],
+      roadMemory: { candidates: [] },
+    });
+    this._changeCaptures.set(token, { before: empty(), after: empty() });
+    return token;
+  }
+
+  /**
+   * Finish a capture and return the `{ before, after }` pair.
+   *
+   * Returns nulls for an unknown or already-ended token so a caller that has
+   * been unmounted or raced simply skips its rescore rather than throwing.
+   */
+  endChangeCapture(token) {
+    const capture = this._changeCaptures?.get(token);
+    if (!capture) return { before: null, after: null };
+    this._changeCaptures.delete(token);
+    return { before: capture.before, after: capture.after };
+  }
+
+  async _write(data, previous = null, { p6Automatic = false } = {}) {
     const previousRevision = Number(previous?.knowledgeRevision);
     const dataRevision = Number(data?.knowledgeRevision);
     data.schemaVersion = SPEED_KNOWLEDGE_SCHEMA_VERSION;
@@ -1345,7 +1611,12 @@ export class LocalSpeedKnowledge {
       Number.isSafeInteger(dataRevision) && dataRevision >= 0 ? dataRevision : 0
     ) + 1;
     data.knowledgeUpdatedAt = new Date().toISOString();
-    await this._store.set(STORAGE_KEY, data);
+    if (Array.isArray(data?._nativeBucketIds) && typeof this._store?.setForGeohashes === 'function') {
+      await this._store.setForGeohashes(data, data._nativeBucketIds, { p6Automatic });
+    } else {
+      await this._store.set(STORAGE_KEY, data);
+    }
+    this._recordChangeScope(data, previous);
     // Drop the resolver snapshot before anything can read it again, so a lookup
     // can never be served from knowledge this write just superseded.
     invalidateSpeedResolverSnapshot();
@@ -1414,6 +1685,30 @@ export class LocalSpeedKnowledge {
   async _commit(data, previous, action, historyGroup = null, {
     roadMemoryDecisionChanges = [],
   } = {}) {
+    const nativeAuthority = typeof this._store?.isNativeAuthorityReady === 'function' &&
+      await this._store.isNativeAuthorityReady();
+    if (nativeAuthority) {
+      const history = boundedNativeHistory(normalizeData(data).history);
+      const delta = buildNativeHistoryDelta(previous, data, action);
+      const last = history.undo.at(-1);
+      if (delta && (!historyGroup || last?.historyGroup !== historyGroup)) {
+        history.undo.push({ ...delta, historyGroup });
+      } else if (delta && historyGroup && last?.historyGroup === historyGroup) {
+        const priorChanges = new Map((last.changes || []).map((change) => [`${change.kind}:${change.id}`, change]));
+        for (const change of delta.changes) {
+          const key = `${change.kind}:${change.id}`;
+          const existing = priorChanges.get(key);
+          priorChanges.set(key, existing ? { ...change, before: existing.before, beforeBucketId: existing.beforeBucketId } : change);
+        }
+        last.changes = [...priorChanges.values()];
+        last.changedAt = delta.changedAt;
+      }
+      history.undo = boundedNativeHistory(history).undo;
+      history.redo = [];
+      data.history = history;
+      await this._write(data, previous);
+      return;
+    }
     const history = normalizeData(data).history;
     const last = history.undo.at(-1);
     if (!historyGroup || last?.historyGroup !== historyGroup) {
@@ -1436,11 +1731,92 @@ export class LocalSpeedKnowledge {
     await this._write(data, previous);
   }
 
+  /**
+   * The complete saved-road model.
+   *
+   * This is an explicit whole-geography export operation. Under partitioned
+   * native or browser-v2 authority it goes through the legal paged bucket
+   * stream; routine callers that only need edited geography must use
+   * `exportDataForPoints`.
+   */
   async exportData() {
+    if (await this._partitionedAuthorityReady()) {
+      const streamed = await this.exportDataStreamed();
+      return streamed == null ? null : snapshotData(streamed);
+    }
     return snapshotData(await this._load());
   }
 
+  /**
+   * The complete saved-road model, assembled from bucket pages.
+   *
+   * User-initiated export and backup are inherently whole-geography, so this
+   * is the one place a complete document is legitimate. Reads are still
+   * bounded — one prefix-4 bucket at a time — and it is explicit: no read,
+   * lookup, learning or page-open path may call it.
+   */
+  async exportDataStreamed({ signal = null, onProgress = null } = {}) {
+    if (typeof this._store?.streamBuckets !== 'function') {
+      if (await this._partitionedAuthorityReady()) {
+        throw p6CallerRefusal(P6_SPEED_CALLER_REFUSALS.EXPLICIT_EXPORT_UNAVAILABLE);
+      }
+      return snapshotData(await this._load());
+    }
+    const merged = defaultData();
+    const { native, cancelled } = await this._store.streamBuckets({
+      signal,
+      onBucket: (bucketId, bucket) => {
+        Object.assign(merged.cells, bucket?.cells || {});
+        merged.corrections.push(...(bucket?.corrections || []));
+        merged.excludedSections.push(...(bucket?.excludedSections || []));
+        merged.roadMemory.candidates.push(...(bucket?.roadMemory?.candidates || []));
+        if (bucket?.global) {
+          merged.schemaVersion = Number(bucket.global.schemaVersion) || merged.schemaVersion;
+          merged.knowledgeRevision = Math.max(
+            merged.knowledgeRevision,
+            Number(bucket.global.knowledgeRevision) || 0
+          );
+          merged.knowledgeUpdatedAt = bucket.global.knowledgeUpdatedAt || merged.knowledgeUpdatedAt;
+          merged.roadMemory.processedTrips = bucket.global.processedTrips || {};
+          merged.roadMemory.intelligence = bucket.global.intelligence || null;
+        }
+        onProgress?.({ bucketId });
+      },
+    });
+    if (cancelled) return null;
+    // Without native authority there are no buckets to stream, so the browser
+    // backend answers from its single document exactly as before.
+    return native ? normalizeData(merged) : snapshotData(await this._load());
+  }
+
+  /**
+   * A bucket-scoped snapshot covering the geography around `points`.
+   *
+   * This is what before/after comparisons want: an edit touches a known
+   * section of road, so the diff only has to cover the buckets that section
+   * falls in. Work is independent of geography learned elsewhere.
+   *
+   * On the browser backend, where there are no buckets, this is the whole
+   * model — which keeps existing behaviour there exactly as it was.
+   */
+  async exportDataForPoints(points = []) {
+    const usable = (Array.isArray(points) ? points : []).filter((point) => (
+      isUsableCoordinate(Number(point?.lat), Number(point?.lng))
+    ));
+    if (!usable.length) {
+      if (await this._partitionedAuthorityReady()) {
+        throw p6CallerRefusal(P6_SPEED_CALLER_REFUSALS.POINT_SCOPE_REQUIRED);
+      }
+      return snapshotData(await this._load());
+    }
+    return snapshotData(await this._loadForPoints(usable));
+  }
+
   async getMetadata() {
+    if (typeof this._store?.getMetadata === 'function') {
+      const native = await this._store.getMetadata();
+      if (native) return native;
+    }
     const data = await this._load();
     return {
       schemaVersion: data.schemaVersion,
@@ -1457,8 +1833,53 @@ export class LocalSpeedKnowledge {
     return true;
   }
 
+  /**
+   * Replace only the geography around `points`.
+   *
+   * Editor operations that rewrite a section — splitting a rule in two, for
+   * example — used to read the whole model, edit a copy and write it all back.
+   * Native authority refuses both halves of that, and rightly: the edit is
+   * confined to one stretch of road. This commits the same edit against the
+   * buckets that stretch falls in, leaving every other bucket untouched.
+   */
+  async replaceDataForPoints(value, points = [], action = 'replace_scoped') {
+    const usable = (Array.isArray(points) ? points : []).filter((point) => (
+      isUsableCoordinate(Number(point?.lat), Number(point?.lng))
+    ));
+    if (!usable.length) return this.replaceData(value, action);
+    return this._runMutation(async () => {
+      const current = await this._loadForPoints(usable);
+      const next = normalizeData(value);
+      // Carry the loaded bucket scope onto the document being written so the
+      // commit targets exactly those buckets and nothing else.
+      if (Array.isArray(current?._nativeBucketIds)) {
+        Object.defineProperty(next, '_nativeBucketIds', {
+          value: current._nativeBucketIds,
+          enumerable: false,
+          configurable: true,
+        });
+      }
+      await this._commit(next, snapshotData(current), action);
+      emitSpeedKnowledgeChanged({ action });
+      return true;
+    });
+  }
+
   async repairSavedSpeedData() {
     try {
+      if (typeof this._store?.runMaintenance === 'function' &&
+          await this._store.isNativeAuthorityReady?.()) {
+        const status = await this._store.runMaintenance('REPAIR');
+        emitSpeedKnowledgeChanged({ action: 'repair_saved_speed_data', nativeJob: true });
+        return {
+          changed: Number(status?.changedBuckets) > 0,
+          removedExpired: 0,
+          removedDuplicates: Number(status?.removedItems) || 0,
+          keptCorrections: null,
+          jobId: status?.jobId,
+          processedBuckets: Number(status?.processedBuckets) || 0,
+        };
+      }
       const data = await this._load();
       const previous = snapshotData(data);
       const corrections = Array.isArray(data.corrections) ? data.corrections : [];
@@ -1518,6 +1939,17 @@ export class LocalSpeedKnowledge {
   }
 
   async getHistoryState() {
+    if (typeof this._store?.isNativeAuthorityReady === 'function' &&
+        await this._store.isNativeAuthorityReady()) {
+      const current = normalizeData(await this._store.getForGeohashes([]));
+      const history = boundedNativeHistory(current.history);
+      return {
+        canUndo: history.undo.length > 0,
+        canRedo: history.redo.length > 0,
+        undoLabel: history.undo.at(-1)?.action || '',
+        redoLabel: history.redo.at(-1)?.action || '',
+      };
+    }
     const data = await this._load();
     return {
       canUndo: data.history.undo.length > 0,
@@ -1528,6 +1960,21 @@ export class LocalSpeedKnowledge {
   }
 
   async undo() {
+    if (typeof this._store?.isNativeAuthorityReady === 'function' &&
+        await this._store.isNativeAuthorityReady()) {
+      const global = normalizeData(await this._store.getForGeohashes([]));
+      const history = boundedNativeHistory(global.history);
+      const entry = history.undo.pop();
+      if (!entry) return false;
+      const bucketIds = [...new Set((entry.changes || []).flatMap((change) => [change.beforeBucketId, change.afterBucketId]).filter(Boolean))];
+      const current = normalizeData(await this._store.getForGeohashes(bucketIds));
+      Object.defineProperty(current, '_nativeBucketIds', { value: bucketIds, enumerable: false, configurable: true });
+      applyNativeHistoryEntry(current, entry, 'undo');
+      current.history = boundedNativeHistory({ undo: history.undo, redo: [...history.redo, entry] });
+      await this._write(current, current);
+      emitSpeedKnowledgeChanged({ action: 'undo', originalAction: entry.action });
+      return true;
+    }
     const current = await this._load();
     const entry = current.history.undo.pop();
     if (!entry?.data) return false;
@@ -1555,6 +2002,21 @@ export class LocalSpeedKnowledge {
   }
 
   async redo() {
+    if (typeof this._store?.isNativeAuthorityReady === 'function' &&
+        await this._store.isNativeAuthorityReady()) {
+      const global = normalizeData(await this._store.getForGeohashes([]));
+      const history = boundedNativeHistory(global.history);
+      const entry = history.redo.pop();
+      if (!entry) return false;
+      const bucketIds = [...new Set((entry.changes || []).flatMap((change) => [change.beforeBucketId, change.afterBucketId]).filter(Boolean))];
+      const current = normalizeData(await this._store.getForGeohashes(bucketIds));
+      Object.defineProperty(current, '_nativeBucketIds', { value: bucketIds, enumerable: false, configurable: true });
+      applyNativeHistoryEntry(current, entry, 'redo');
+      current.history = boundedNativeHistory({ undo: [...history.undo, entry], redo: history.redo });
+      await this._write(current, current);
+      emitSpeedKnowledgeChanged({ action: 'redo', originalAction: entry.action });
+      return true;
+    }
     const current = await this._load();
     const entry = current.history.redo.pop();
     if (!entry?.data) return false;
@@ -1822,7 +2284,10 @@ export class LocalSpeedKnowledge {
    * The prepared, indexed resolver document. Built once per knowledge change
    * rather than once per lookup — see speedResolverSnapshot.js for why.
    */
-  _resolverSnapshot() {
+  async _resolverSnapshot() {
+    if (await this._partitionedAuthorityReady()) {
+      throw p6CallerRefusal(P6_SPEED_CALLER_REFUSALS.SCOPED_RESOLVER_REQUIRED);
+    }
     return getSpeedResolverSnapshot(
       this._store,
       async () => this._prepareResolverData(await this._load())
@@ -1830,12 +2295,16 @@ export class LocalSpeedKnowledge {
   }
 
   async getForPoint(lat, lng, timestampMs = null, options = {}) {
-    const data = await this._resolverSnapshot();
+    const data = typeof this._store?.getForGeohashes === 'function'
+      ? this._prepareResolverData(await this._loadForPoints([{ lat, lng }]))
+      : await this._resolverSnapshot();
     return this._resolveForPoint(data, lat, lng, timestampMs, options);
   }
 
   async getForPoints(points = []) {
-    const data = await this._resolverSnapshot();
+    const data = typeof this._store?.getForGeohashes === 'function'
+      ? this._prepareResolverData(await this._loadForPoints(points))
+      : await this._resolverSnapshot();
     const results = (Array.isArray(points) ? points : [])
       .map((point) => this._resolveForPointOrSection(data, point));
     Object.defineProperty(results, 'knowledgeMetadata', {
@@ -1850,10 +2319,31 @@ export class LocalSpeedKnowledge {
     return results;
   }
 
-  async listRoadMemoryCandidates({ activeOnly = false } = {}) {
+  async listRoadMemoryCandidatesPage({ activeOnly = false, cursor = '', maxItems = 50, filter = '' } = {}) {
+    const nativePage = await this._editorPage('candidate', { activeOnly, cursor, maxItems, filter });
+    if (nativePage) {
+      const items = (nativePage.items || [])
+        .map((candidate) => {
+          const evidence = assessSpeedLimitEvidence({ ...candidate, confidence: candidate.confidence });
+          return {
+            ...candidate,
+            ...evidence,
+            confidence: Math.min(evidence.confidence, candidate.confidence),
+            roadMemoryCandidate: true,
+            saved: false,
+          };
+        })
+        .sort((a, b) => (
+          Number(b.canAffectScoreAndAlerts) - Number(a.canAffectScoreAndAlerts) ||
+          String(a.usageStage).localeCompare(String(b.usageStage)) ||
+          Number(b.tripCount) - Number(a.tripCount) ||
+          Number(b.confidence) - Number(a.confidence)
+        ));
+      return { ...nativePage, items };
+    }
     const data = await this._load();
     const model = decorateRoadMemoryCandidates(data.roadMemory?.candidates || []);
-    return model.candidates
+    const items = model.candidates
       .map((candidate) => {
         const evidence = assessSpeedLimitEvidence({
           ...candidate,
@@ -1875,10 +2365,24 @@ export class LocalSpeedKnowledge {
         Number(b.tripCount) - Number(a.tripCount) ||
         Number(b.confidence) - Number(a.confidence)
       ));
+    return { items, nextCursor: null, itemCount: items.length, bounded: false };
+  }
+
+  async listRoadMemoryCandidates(options = {}) {
+    const page = await this.listRoadMemoryCandidatesPage(options);
+    const items = page.items || [];
+    Object.defineProperty(items, 'nextCursor', { value: page.nextCursor || null, enumerable: false });
+    return items;
   }
 
   async getSpeedLimitsSnapshot() {
-    const data = await this._load();
+    if (typeof this._store?.isNativeAuthorityReady === 'function' &&
+        await this._store.isNativeAuthorityReady()) {
+      return this.getSpeedLimitsSnapshotPage();
+    }
+    const data = typeof this._store?.getSample === 'function'
+      ? normalizeData(await this._store.getSample(8))
+      : await this._load();
     const model = decorateRoadMemoryCandidates(data.roadMemory?.candidates || []);
     const suppressedSuggestionCount = model.candidates.filter((candidate) => (
       unresolvedCandidateCoveredByConfirmedCorrection(candidate, data.corrections)
@@ -1928,6 +2432,51 @@ export class LocalSpeedKnowledge {
     };
   }
 
+  async getSpeedLimitsSnapshotPage({ cursors = {}, maxItems = 50, filter = '' } = {}) {
+    if (typeof this._store?.isNativeAuthorityReady !== 'function' ||
+        !await this._store.isNativeAuthorityReady()) return this.getSpeedLimitsSnapshot();
+    const [corrections, candidates, exclusions, conflicts, metadata, history] = await Promise.all([
+      this._editorPage('correction', { cursor: cursors.corrections, maxItems, filter }),
+      this._editorPage('candidate', { cursor: cursors.candidates, maxItems, filter }),
+      this._editorPage('exclusion', { cursor: cursors.exclusions, maxItems, filter }),
+      this._editorPage('conflict', { cursor: cursors.conflicts, maxItems, filter }),
+      this.getMetadata(),
+      this.getHistoryState(),
+    ]);
+    const candidateRows = (candidates?.items || []).map((candidate) => {
+      const evidence = assessSpeedLimitEvidence({ ...candidate, confidence: candidate.confidence });
+      return {
+        ...candidate,
+        ...evidence,
+        confidence: Math.min(evidence.confidence, candidate.confidence),
+        roadMemoryCandidate: true,
+        saved: false,
+      };
+    });
+    const rows = (corrections?.items || []).map(userCorrectionView);
+    const confirmedCorridorCount = rows.filter((correction) => (
+      correctionSource(correction) === 'user_confirmed_posted_sign' &&
+      !isHistoricalCorrectionVersion(correction) &&
+      Array.isArray(correction.sectionPoints) && correction.sectionPoints.length >= 2
+    )).length;
+    return {
+      rows,
+      candidates: candidateRows,
+      exclusions: exclusions?.items || [],
+      conflicts: conflicts?.items || [],
+      history,
+      protection: { confirmedCorridorCount, suppressedSuggestionCount: 0 },
+      rawKnowledge: { ...defaultData(), ...metadata },
+      cursors: {
+        corrections: corrections?.nextCursor || null,
+        candidates: candidates?.nextCursor || null,
+        exclusions: exclusions?.nextCursor || null,
+        conflicts: conflicts?.nextCursor || null,
+      },
+      bounded: true,
+    };
+  }
+
   async getDashboardSpeedSnapshot({
     lat = null,
     lng = null,
@@ -1935,8 +2484,14 @@ export class LocalSpeedKnowledge {
     headingDeg = null,
     utcOffsetMinutes = null,
   } = {}) {
-    const data = this._prepareResolverData(await this._load());
     const hasPoint = isUsableCoordinate(Number(lat), Number(lng));
+    const data = this._prepareResolverData(
+      hasPoint && typeof this._store?.getForGeohashes === 'function'
+        ? await this._loadForPoints([{ lat: Number(lat), lng: Number(lng) }])
+        : typeof this._store?.getSample === 'function'
+          ? normalizeData(await this._store.getSample(8))
+          : await this._load()
+    );
     return {
       activeDecision: hasPoint
         ? this._resolveForPoint(data, Number(lat), Number(lng), timestampMs, {
@@ -1949,15 +2504,25 @@ export class LocalSpeedKnowledge {
   }
 
   async listExcludedSpeedSections() {
+    const page = await this.listExcludedSpeedSectionsPage();
+    const items = page.items || [];
+    Object.defineProperty(items, 'nextCursor', { value: page.nextCursor || null, enumerable: false });
+    return items;
+  }
+
+  async listExcludedSpeedSectionsPage({ cursor = '', maxItems = 50, filter = '' } = {}) {
+    const nativePage = await this._editorPage('exclusion', { cursor, maxItems, filter });
+    if (nativePage) return nativePage;
     const data = await this._load();
-    return (data.excludedSections || []).map((section) => ({ ...section }));
+    const items = (data.excludedSections || []).map((section) => ({ ...section }));
+    return { items, nextCursor: null, itemCount: items.length, bounded: false };
   }
 
   async excludeSpeedSection(section = {}, reason = 'parking_private') {
     const exclusion = normalizeExcludedSection(section, reason);
     if (!exclusion) return false;
     try {
-      const data = await this._load();
+      const data = await this._loadForPoints(recordPoints(exclusion));
       const previous = snapshotData(data);
       data.excludedSections = Array.isArray(data.excludedSections) ? data.excludedSections : [];
       data.corrections = Array.isArray(data.corrections) ? data.corrections : [];
@@ -2007,7 +2572,11 @@ export class LocalSpeedKnowledge {
 
   async restoreExcludedSpeedSections(selector = null) {
     try {
-      const data = await this._load();
+      const nativeItem = selector == null ? null : await this._findEditorItem('exclusion', selector);
+      if (selector != null && nativeItem === null) {
+        return { restoredCount: 0 };
+      }
+      const data = nativeItem ? await this._loadForPoints(recordPoints(nativeItem)) : await this._load();
       const previous = snapshotData(data);
       const exclusions = Array.isArray(data.excludedSections) ? data.excludedSections : [];
       const matchesSelector = (record) => {
@@ -2049,7 +2618,11 @@ export class LocalSpeedKnowledge {
   } = {}) {
     const id = String(candidateId || '');
     if (!id) return false;
-    const data = await this._load();
+    const nativeCandidate = await this._findEditorItem('candidate', id);
+    if (nativeCandidate === null) return false;
+    const data = nativeCandidate
+      ? await this._loadForPoints(recordPoints(nativeCandidate))
+      : await this._load();
     const candidate = (data.roadMemory?.candidates || []).find((item) => String(item?.id) === id);
     if (!candidate) return false;
     const beforeUsageById = new Map(
@@ -2135,7 +2708,9 @@ export class LocalSpeedKnowledge {
       if (!saved) return false;
     }
 
-    const refreshed = await this._load();
+    const refreshed = nativeCandidate
+      ? await this._loadForPoints(recordPoints(candidate))
+      : await this._load();
     const candidateIndex = (refreshed.roadMemory?.candidates || [])
       .findIndex((item) => String(item?.id) === id);
     if (candidateIndex < 0) return false;
@@ -2230,6 +2805,13 @@ export class LocalSpeedKnowledge {
    *   learner snaps observations onto. Defaults to metric.
    */
   async learnRoadMemoryFromTrips(trips = [], privacyZones = [], options = {}) {
+    // Retired production path. P6 J2/E2 publish scoped observations through
+    // applyP6RoadMemoryObservations; this legacy whole-model learner remains
+    // available only to pre-E4 browser fixtures and cannot be reactivated once
+    // partitioned authority owns saved speeds.
+    if (await this._partitionedAuthorityReady()) {
+      throw p6CallerRefusal(P6_SPEED_CALLER_REFUSALS.LEGACY_LEARNER_RETIRED);
+    }
     try {
       const data = await this._load();
       data.roadMemory ??= { version: 3, candidates: [], processedTrips: {}, intelligence: null };
@@ -2404,9 +2986,155 @@ export class LocalSpeedKnowledge {
     }
   }
 
+  /**
+   * P6 scoped observation publication. The shared extractor has already
+   * produced bounded road windows, so this path never reloads a trip or the
+   * whole speed model. A source token is the exactly-once evidence identity;
+   * several road windows from one trip may update different candidates while
+   * each candidate counts that trip at most once.
+   */
+  async applyP6RoadMemoryObservations(observations = [], source = {}) {
+    const rows = (Array.isArray(observations) ? observations : []).filter(Boolean);
+    const sourceDescriptor = typeof source === 'string'
+      ? { sourceAuthority: 'legacy', tripId: source, sourceRevision: '' }
+      : source || {};
+    const sourceIdentity = `${String(sourceDescriptor.sourceAuthority || 'unknown')}:${String(sourceDescriptor.tripId || '')}`;
+    if (!rows.length || !sourceDescriptor.tripId) return { changed: false, changedCandidates: [] };
+    const points = rows.flatMap((row) => row.sectionPoints || []).slice(0, 512);
+    const data = await this._loadForPoints(points);
+    data.roadMemory ??= { version: 3, candidates: [], processedTrips: {}, intelligence: null };
+    data.roadMemory.candidates = Array.isArray(data.roadMemory.candidates) ? data.roadMemory.candidates : [];
+    const changed = new Set();
+    const preparedRows = await Promise.all(rows.map(async (row, index) => {
+      const observationOrdinal = Math.max(0, Number(row?.p6ObservationOrdinal ?? index) || 0);
+      return {
+        ...row,
+        tripId: sourceIdentity,
+        p6Receipt: {
+          receiptId: `${sourceIdentity}:${String(sourceDescriptor.sourceRevision)}:${observationOrdinal}`,
+          sourceIdentity,
+          tripId: String(sourceDescriptor.tripId),
+          sourceRevision: String(sourceDescriptor.sourceRevision),
+          observationOrdinal,
+          membershipToken: await p6EvidenceMembershipToken({ ...sourceDescriptor, observationOrdinal }),
+          overlapKnown: true,
+        },
+      };
+    }));
+    preparedRows.forEach((observation, index) => {
+      const matched = findRoadMemoryCandidateMatch(observation, data.roadMemory.candidates);
+      const id = matched?.id || createRoadMemoryCandidateId(observation, index);
+      const merged = mergeRoadMemoryObservation(matched, observation, id);
+      merged.geohash = geohashEncode(merged.lat, merged.lng, CELL_PRECISION);
+      if (matched) {
+        const position = data.roadMemory.candidates.findIndex((item) => item.id === matched.id);
+        if (position >= 0) data.roadMemory.candidates[position] = merged;
+      } else data.roadMemory.candidates.push(merged);
+      changed.add(id);
+    });
+    const model = decorateRoadMemoryCandidates(consolidateRoadMemoryCandidates(data.roadMemory.candidates));
+    data.roadMemory.candidates = model.candidates.map((item) => ({ ...item, intelligenceVersion: model.calibration.version }));
+    const { feedback: _feedback, ...calibration } = model.calibration;
+    data.roadMemory.intelligence = { ...calibration, updatedAt: new Date().toISOString() };
+    await this._write(data, data, { p6Automatic: true });
+    return { changed: true, changedCandidates: data.roadMemory.candidates.filter((item) => changed.has(item.id)) };
+  }
+
+  /** One bounded privacy-owner page. FREEZE removes every source identity,
+   * coordinate and timestamp from automatic evidence before trip retention
+   * may remove its canonical route. SUBTRACT also removes matching frozen
+   * membership tokens for tombstone/identity erasure. */
+  async applyP6ProvenanceDispositionPage({
+    sourceAuthority = 'browser', tripId = '', disposition = P6_PROVENANCE_DISPOSITIONS.FREEZE,
+    membershipTokens = [], cursor = '', maxItems = 50,
+  } = {}) {
+    const sourceIdentity = `${String(sourceAuthority)}:${String(tripId)}`;
+    const page = await this._store.queryEditorItems?.({
+      kind: 'evidence', cursor, maxItems: Math.max(1, Math.min(100, Number(maxItems) || 50)),
+      filter: sourceIdentity, activeOnly: false,
+    });
+    if (page == null) {
+      // Before E4 the browser v1 authority cannot contain the P6
+      // frozenBaseline/receiptedEvidence envelope, so absence of the scoped-v2
+      // query is an exact no-evidence result. Once v2 (or native) owns data,
+      // losing that query remains a fail-closed conversion error.
+      if (!isNativePlatform() && !await isP6BrowserSpeedV2Authority()) {
+        return { state: 'COMPLETE', changed: 0, nextCursor: null, hasMore: false,
+          itemsWorked: 1, bytesWorked: 0, reason: 'NO_P6_EVIDENCE_BEFORE_E4' };
+      }
+      return { state: 'CONVERSION_REQUIRED', changed: 0, nextCursor: null, hasMore: false, itemsWorked: 1, bytesWorked: 0 };
+    }
+    const matches = (page.items || []).filter((candidate) => (
+      candidate?.p6AutomaticEvidence?.receiptedEvidence || []
+    ).some((receipt) => String(receipt?.sourceIdentity || '') === sourceIdentity));
+    const bucketIds = [...new Set(matches.map((item) => String(item?._bucketId || item?.geohash || '').slice(0, 4)).filter(Boolean))];
+    if (!bucketIds.length) return { state: 'COMPLETE', changed: 0, nextCursor: page.nextCursor || null, hasMore: Boolean(page.nextCursor), itemsWorked: Number(page.examinedCount || page.scannedBucketCount) || 1, bytesWorked: 0 };
+    const resolved = page.resolvedBuckets instanceof Map
+      ? [...page.resolvedBuckets.entries()].filter(([bucketId]) => bucketIds.includes(bucketId))
+      : null;
+    const data = normalizeData(resolved ? resolved.reduce((merged, [, bucket]) => ({
+      cells: { ...merged.cells, ...(bucket?.cells || {}) },
+      corrections: [...merged.corrections, ...(bucket?.corrections || [])],
+      excludedSections: [...merged.excludedSections, ...(bucket?.excludedSections || [])],
+      roadMemory: {
+        ...merged.roadMemory,
+        ...(bucket?.roadMemory || {}),
+        candidates: [...merged.roadMemory.candidates, ...(bucket?.roadMemory?.candidates || [])],
+      },
+    }), normalizeData({})) : await this._store.getForGeohashes(bucketIds));
+    Object.defineProperty(data, '_nativeBucketIds', { value: bucketIds, enumerable: false, configurable: true });
+    let changed = 0;
+    data.roadMemory.candidates = (data.roadMemory?.candidates || []).map((candidate) => {
+      const evidence = applyP6EvidenceDisposition(candidate.p6AutomaticEvidence, {
+        disposition, sourceIdentity, membershipTokens,
+        operational: roadMemoryCandidateOperationalState(candidate).active,
+        algorithmVersion: 1,
+      });
+      if (!evidence.changed) return candidate;
+      changed += 1;
+      const liveIdentity = sourceIdentity;
+      const tripVotes = { ...(candidate.tripVotes || {}) }; delete tripVotes[liveIdentity];
+      const tripVoteOrder = (candidate.tripVoteOrder || []).filter((value) => String(value) !== liveIdentity);
+      const recentObservations = (candidate.recentObservations || []).filter((value) => String(value?.tripId || '') !== liveIdentity);
+      const timeBuckets = Object.fromEntries(Object.entries(candidate.timeBuckets || {}).map(([key, bucket]) => {
+        const votes = { ...(bucket?.tripVotes || {}) }; delete votes[liveIdentity];
+        return [key, { ...bucket, tripVotes: votes }];
+      }));
+      const totals = composeP6CandidateEvidence(evidence);
+      const updated = {
+        ...candidate, p6AutomaticEvidence: { version: 1, ...evidence }, tripVotes, tripVoteOrder,
+        tripIds: tripVoteOrder, recentObservations, timeBuckets,
+        tripCount: totals.supportCount, evidenceCount: totals.supportCount, sampleCount: totals.sampleCount,
+        limitVotes: totals.limitVotes, agreement: totals.agreement,
+        evidenceConfidence: totals.confidence, confidence: totals.confidence,
+      };
+      return { ...updated, ...roadMemoryCandidateOperationalState(updated) };
+    });
+    if (changed) await this._write(data, data);
+    return { state: page.nextCursor ? 'PARTIAL' : 'COMPLETE', changed, nextCursor: page.nextCursor || null, hasMore: Boolean(page.nextCursor), itemsWorked: (Number(page.examinedCount || page.scannedBucketCount) || 0) + changed, bytesWorked: JSON.stringify(matches).length };
+  }
+
+  async repairP6ComponentCandidate(candidateId) {
+    const seed = await this._store.getEditorItem?.('candidate', String(candidateId || ''));
+    if (!seed) return { changedCandidates: [], discoveredCandidateIds: [], itemsWorked: 1, bytesWorked: 0 };
+    const data = await this._loadForPoints(seed.sectionPoints || [seed]);
+    const before = data.roadMemory?.candidates || [];
+    const repaired = consolidateRoadMemoryCandidates(before).map((candidate) => ({
+      ...candidate, ...roadMemoryCandidateOperationalState(candidate), chronologyRepairPending: false,
+    }));
+    data.roadMemory.candidates = repaired;
+    await this._write(data, data);
+    return {
+      changedCandidates: repaired,
+      discoveredCandidateIds: repaired.map((candidate) => candidate.id).filter(Boolean),
+      itemsWorked: before.length + repaired.length + 1,
+      bytesWorked: JSON.stringify(repaired).length,
+    };
+  }
+
   async learnFromTrip(confirmedPoints, privacyZones = [], options = {}) {
     try {
-      const data = await this._load();
+      const data = await this._loadForPoints(confirmedPoints);
       data.cells ??= {};
       data.corrections ??= [];
 
@@ -2605,7 +3333,10 @@ export class LocalSpeedKnowledge {
     ) return false;
 
     try {
-      const data = await this._load();
+      const data = await this._loadForPoints([
+        { lat: latitude, lng: longitude },
+        ...requestedSectionPoints,
+      ]);
       const previous = snapshotData(data);
       data.cells ??= {};
       data.corrections ??= [];
@@ -2728,11 +3459,28 @@ export class LocalSpeedKnowledge {
   }
 
   async listUserCorrections() {
+    const page = await this.listUserCorrectionsPage();
+    const items = page.items || [];
+    Object.defineProperty(items, 'nextCursor', { value: page.nextCursor || null, enumerable: false });
+    return items;
+  }
+
+  async listUserCorrectionsPage({ cursor = '', maxItems = 50, filter = '' } = {}) {
     try {
+      const nativePage = await this._editorPage('correction', { cursor, maxItems, filter });
+      if (nativePage) {
+        return {
+          ...nativePage,
+          items: (nativePage.items || [])
+            .map(userCorrectionView)
+            .sort((a, b) => new Date(b.appliedAt || 0).getTime() - new Date(a.appliedAt || 0).getTime()),
+        };
+      }
       const data = await this._load();
-      return (data.corrections || [])
+      const items = (data.corrections || [])
         .map(userCorrectionView)
         .sort((a, b) => new Date(b.appliedAt || 0).getTime() - new Date(a.appliedAt || 0).getTime());
+      return { items, nextCursor: null, itemCount: items.length, bounded: false };
     } catch (error) {
       logSpeedKnowledgeFailure('list_corrections', error);
       throw error;
@@ -2751,7 +3499,17 @@ export class LocalSpeedKnowledge {
       !validTimeRule(metadata.timeRule, { allowClockStrings: true })
     ) return false;
     try {
-      const data = await this._load();
+      const nativeCorrection = await this._findEditorItem('correction', selector);
+      if (nativeCorrection === null) return false;
+      const affectedPoints = nativeCorrection ? recordPoints(nativeCorrection) : [];
+      if (isUsableCoordinate(Number(metadata.lat), Number(metadata.lng))) {
+        affectedPoints.push({ lat: Number(metadata.lat), lng: Number(metadata.lng) });
+      }
+      affectedPoints.push(...(Array.isArray(metadata.sectionPoints) ? metadata.sectionPoints : []));
+      if (resolvesConflictGeohash) {
+        try { affectedPoints.push(geohashCenter(resolvesConflictGeohash)); } catch { /* validation below */ }
+      }
+      const data = nativeCorrection ? await this._loadForPoints(affectedPoints) : await this._load();
       const previous = snapshotData(data);
       data.cells ??= {};
       data.corrections ??= [];
@@ -2977,7 +3735,11 @@ export class LocalSpeedKnowledge {
   async removeUserCorrection(selector, options = {}) {
     if (!selector) return false;
     try {
-      const data = await this._load();
+      const nativeCorrection = await this._findEditorItem('correction', selector);
+      if (nativeCorrection === null) return false;
+      const data = nativeCorrection
+        ? await this._loadForPoints(recordPoints(nativeCorrection))
+        : await this._load();
       const previous = snapshotData(data);
       data.corrections ??= [];
       const before = data.corrections.length;
@@ -3005,6 +3767,19 @@ export class LocalSpeedKnowledge {
 
   async prune(maxAgeDays = 180) {
     try {
+      if (typeof this._store?.runMaintenance === 'function' &&
+          await this._store.isNativeAuthorityReady?.()) {
+        const status = await this._store.runMaintenance('PRUNE', { maxAgeDays });
+        const removed = Number(status?.removedItems) || 0;
+        emitSpeedKnowledgeChanged({ action: 'prune', nativeJob: true, removed });
+        return {
+          changed: removed > 0,
+          cellsRemoved: removed,
+          correctionsRemoved: 0,
+          jobId: status?.jobId,
+          processedBuckets: Number(status?.processedBuckets) || 0,
+        };
+      }
       const data = await this._load();
       const previous = snapshotData(data);
       data.cells ??= {};
@@ -3036,10 +3811,20 @@ export class LocalSpeedKnowledge {
   }
 
   async getConflictedCells() {
+    const page = await this.getConflictedCellsPage();
+    const items = page.items || [];
+    Object.defineProperty(items, 'nextCursor', { value: page.nextCursor || null, enumerable: false });
+    return items;
+  }
+
+  async getConflictedCellsPage({ cursor = '', maxItems = 50 } = {}) {
+    const nativePage = await this._editorPage('conflict', { cursor, maxItems });
+    if (nativePage) return nativePage;
     const data = await this._load();
-    return Object.entries(data.cells || {})
+    const items = Object.entries(data.cells || {})
       .filter(([, cell]) => cell?.conflict === true)
       .map(([geohash, cell]) => ({ geohash, ...cell }));
+    return { items, nextCursor: null, itemCount: items.length, bounded: false };
   }
 
   async resolveConflict(geohash, confirmedLimitKmh, source = 'user_confirmed_posted_sign', note = '', metadata = {}) {

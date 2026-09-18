@@ -46,10 +46,30 @@ const titleCase = (value) => String(value || 'event')
   .replace(/_/g, ' ')
   .replace(/\b\w/g, (char) => char.toUpperCase());
 
+/**
+ * How many replayable points a row has, **without decrypting it**.
+ *
+ * P7 ledger entry #17 (B6.7) freezes this substitution: a picker row is a
+ * bounded projection, and its retained point count is `route_points_map_count`
+ * — the same field MapScreen and `tripSummary` already use. A full record
+ * still carries `route_points`, so a detail read keeps counting them exactly.
+ * Without this the picker saw zero points on every projection row and offered
+ * nothing to replay.
+ */
+export function replayablePointCount(trip = {}) {
+  if (Array.isArray(trip?.route_points)) return validRoutePoints(trip).length;
+  const mapped = Number(trip?.route_points_map_count);
+  return Number.isFinite(mapped) ? mapped : 0;
+}
+
 export function isReplayTripAvailable(trip = {}) {
-  return trip?.privacy_mode !== 'summary_only' &&
-    !trip?.route_data_expired_at &&
-    validRoutePoints(trip).length >= REPLAYABLE_POINT_MIN;
+  if (trip?.privacy_mode === 'summary_only' || trip?.route_data_expired_at) return false;
+  // `route_replay_available` answers a **different** question — it asks for at
+  // least 20 points and a non-zero speed, which is the map/playback bar, not
+  // this picker's two-point one. It is read as a positive signal only; using
+  // it as a veto would hide trips the picker has always offered.
+  if (trip?.route_replay_available === true) return true;
+  return replayablePointCount(trip) >= REPLAYABLE_POINT_MIN;
 }
 
 export function replayUnavailableReason(trip = {}) {
@@ -67,7 +87,7 @@ export function buildReplayTripOptions(trips = []) {
       label: trip.nickname || trip.tag || trip.id || 'Completed trip',
       startTime: trip.start_time || null,
       distanceKm: finiteNumber(trip.distance_km),
-      routePointCount: validRoutePoints(trip).length,
+      routePointCount: replayablePointCount(trip),
       available: isReplayTripAvailable(trip),
       unavailableReason: isReplayTripAvailable(trip) ? '' : replayUnavailableReason(trip),
     }))

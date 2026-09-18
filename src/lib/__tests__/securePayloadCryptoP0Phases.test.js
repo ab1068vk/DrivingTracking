@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 /** @type {Map<string, string>} */
 let storage;
 
-const loadWithProbe = async ({ android = true, secureCall } = {}) => {
+const loadWithProbe = async ({ android = true, probe = true, secureCall } = {}) => {
   vi.resetModules();
-  vi.stubEnv('VITE_SHOW_DEBUG_ROUTES', 'true');
-  vi.stubEnv('DEV', 'true');
+  vi.stubEnv('VITE_SHOW_DEBUG_ROUTES', probe ? 'true' : 'false');
+  vi.stubEnv('DEV', probe ? 'true' : '');
   storage.set('roadsage_p0_arm', 'A');
 
   vi.doMock('@/lib/nativePlatform', () => ({
@@ -14,7 +14,11 @@ const loadWithProbe = async ({ android = true, secureCall } = {}) => {
     isAndroid: () => android,
     isNativePlatform: () => android,
   }));
-  if (secureCall) vi.doMock('@/lib/secureBridge', () => ({ secureCall }));
+  if (secureCall) vi.doMock('@/lib/secureBridge', () => ({
+    secureCall,
+    withSecureBulkAdmission: (task) => task(),
+    yieldSecureBulkTurn: async () => {},
+  }));
 
   const p0 = await import('@/lib/p0Probe');
   p0.initializeP0Probe({ buildHash: 'test' });
@@ -101,6 +105,64 @@ describe('logical payload phase timing', () => {
     const trace = p0.exportP0Trace();
     const logicalSpan = trace.spans.at(-1);
     expect(captured.parentOpId).toBe(logicalSpan.call_id);
+  });
+
+  it('creates one homogeneous logical parent per physical batch with one joined secure call', async () => {
+    const calls = [];
+    const secureCall = vi.fn(async (_plugin, _method, data, p0Meta) => {
+      calls.push({ data, p0Meta });
+      return {
+        batchVersion: 1,
+        results: data.items.map((item) => ({
+          ordinal: item.ordinal,
+          ok: true,
+          ciphertext: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+          keyVersion: item.keyVersion,
+        })),
+      };
+    });
+    const { p0, crypto, schema } = await loadWithProbe({ android: true, secureCall });
+
+    await crypto.encryptSensitiveValues([
+      { value: { id: 1 }, context: 'trip:1' },
+      { value: { id: 2 }, context: 'trip:2' },
+      { value: { id: 3 }, context: 'trip-summary:3' },
+    ], { keyVersion: 1 });
+
+    const trace = p0.exportP0Trace();
+    const logicalSpans = trace.spans.filter((span) => schema.SPAN_KINDS[span.kind] === 'logical_payload');
+    expect(calls).toHaveLength(2);
+    expect(logicalSpans).toHaveLength(2);
+    calls.forEach((call, index) => {
+      expect(call.p0Meta.parentOpId).toBe(logicalSpans[index].call_id);
+      expect(call.data.items).toHaveLength(index === 0 ? 2 : 1);
+    });
+    expect(calls.map((call) => call.p0Meta.payloadKind)).toEqual(['trip_detail', 'trip_summary']);
+  });
+
+  it('keeps physical batch shape identical while Arm D allocates no P0 spans or metadata', async () => {
+    const calls = [];
+    const secureCall = vi.fn(async (_plugin, _method, data, p0Meta) => {
+      calls.push({ data, p0Meta });
+      return {
+        batchVersion: 1,
+        results: data.items.map((item) => ({
+          ordinal: item.ordinal,
+          ok: true,
+          ciphertext: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+          keyVersion: item.keyVersion,
+        })),
+      };
+    });
+    const { p0, crypto } = await loadWithProbe({ android: true, probe: false, secureCall });
+    await crypto.encryptSensitiveValues(Array.from({ length: 9 }, (_, index) => ({
+      value: { id: index },
+      context: `trip:${index}`,
+    })), { keyVersion: 1 });
+
+    expect(calls.map((call) => call.data.items.length)).toEqual([8, 1]);
+    expect(calls.every((call) => call.p0Meta === undefined)).toBe(true);
+    expect(p0.exportP0Trace()).toBeNull();
   });
 
   it('maps every payload kind without exporting the context', async () => {

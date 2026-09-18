@@ -14,10 +14,13 @@ import {
   SETTINGS_SECTIONS,
 } from '@/components/settings/settingsSectionManifest';
 import SavedRoadSpeedsSection from '@/components/settings/SavedRoadSpeedsSection';
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import P6ExplicitOperationControl from '@/components/P6ExplicitOperationControl';
+import PrivacyAuditStorage from '@/components/settings/PrivacyAuditStorage';
+import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { tripService } from '@/api/trips';
+import { p7TripQueries, tripService } from '@/api/trips';
+import { useScoreMigrationSummary } from '@/hooks/useScoreMigrationSummary';
 import { vehicleService } from '@/api/vehicles';
 import { calibrationLabelService } from '@/api/calibrationLabels';
 import {
@@ -46,21 +49,21 @@ import {
   SAVED_FILTERS_KEY,
 } from '@/lib/appConstants';
 import { CAPTURE_FIDELITY_OPTIONS, DEFAULT_CAPTURE_FIDELITY } from '@/lib/captureFidelity';
-import { tripsToCSV, downloadCSV } from '@/lib/tripEngine';
+import { downloadCSV } from '@/lib/tripEngine';
 import { buildDrivingThresholds, phoneSensitivityPresetThreshold, SCORING_VERSION } from '@/lib/tripEngine';
 import {
   AUTO_RESCORE_OUTDATED_PROVENANCE_RATIO,
   AUTO_RESCORE_RECENT_WINDOW_DAYS,
   enforceTripDataRetention,
-  enforceRawGpsRetention,
   getRawGpsLifecycleStatus,
+  runLegacyBrowserRawGpsRetention,
+  stepRawGpsRetention,
   TRIP_EVENT_MIGRATION_KEY,
   TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY,
   TRIP_EVENT_MIGRATION_VERSION,
 } from '@/lib/localTripRepository';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
 import { getJson, setJson } from '@/lib/mobileStorage';
-import { useQuery } from '@tanstack/react-query';
 import {
   getPermissionExplanation,
   getPermissionStatus,
@@ -70,6 +73,9 @@ import {
   requestNotificationPermission,
 } from '@/lib/permissions';
 import { isAndroid, openNativeSettings } from '@/lib/nativePlatform';
+import { resolveBackupCapabilities } from '@/lib/backupCapabilities';
+import { P6_EXPLICIT_OPERATION_TYPES } from '@/lib/p6Contracts';
+import { nativeTripArchive } from '@/lib/nativeTripArchive';
 import {
   armMountedSpeedSignScanner,
   getSpeedSignScannerStatus,
@@ -98,7 +104,6 @@ import { isExternalContextAutoFetchEnabled } from '@/lib/openSourceTripContext';
 import {
   applyCalibrationProfile,
   clearCalibrationProfile,
-  computeCalibrationProfile,
   loadCalibrationProfile,
   saveCalibrationProfile,
   summarizeCalibrationSurveyLabels,
@@ -107,7 +112,6 @@ import {
 import { CALIBRATION_KM_TARGET, CALIBRATION_TRIPS_TARGET } from '@/lib/calibrationMilestones';
 import { getCurrentLocation } from '@/lib/trackingService';
 import {
-  countTripsAffectedByPrivacyZone,
   corridorWaypointsFromRoute,
   findOverlappingZones,
   getPrivacyZones,
@@ -121,8 +125,9 @@ import {
   PRIVACY_CORRIDOR_MAX_WAYPOINTS,
   PRIVACY_CORRIDOR_MIN_WAYPOINTS,
   purgeExistingGpsForHeightenedPrivacy,
-  purgeGpsWithinPrivacyZone,
   removePrivacyZone,
+  purgePrivacyZoneAcrossArchive,
+  scanTripsAffectedByPrivacyZone,
   tripIdsAffectedByPrivacyZone,
   upsertPrivacyZone,
 } from '@/lib/privacyZones';
@@ -175,7 +180,6 @@ import {
   buildHeightenedPrivacyCleanupPresentation,
   buildPrivacyCleanupPresentation,
 } from '@/lib/privacyCleanupPresentation';
-import { purgeLocalSpeedKnowledgeForPrivacyZones } from '@/lib/speedKnowledgePrivacy';
 import {
   invalidateSelfTestCache,
   selfTestPrivacyZoneProtection,
@@ -220,6 +224,9 @@ const exportDriveSenseBackupFromSettings = (...args) => import('@/lib/dataBackup
 
 const importDriveSenseBackupFromSettings = (...args) => import('@/lib/dataBackup')
   .then(({ importDriveSenseBackup }) => importDriveSenseBackup(...args));
+
+const restoreNativeBackupFromDocumentFromSettings = (...args) => import('@/lib/nativeBackupRestore')
+  .then(({ restoreNativeBackupFromDocument }) => restoreNativeBackupFromDocument(...args));
 
 const exportDataPortabilityBundleFromSettings = (...args) => import('@/lib/dataRights')
   .then(({ exportDataPortabilityBundle }) => exportDataPortabilityBundle.apply(null, args));
@@ -419,7 +426,10 @@ const DRIVING_PATTERN_DEFINITIONS = [
   },
 ];
 
-const SETTINGS_HEAVY_QUERY_STALE_MS = 30_000;
+/** The bounded candidate page the corridor helper scans, newest first. */
+const PRIVACY_CORRIDOR_CANDIDATE_TRIPS = 20;
+
+const _SETTINGS_HEAVY_QUERY_STALE_MS = 30_000;
 const PROVISIONAL_SCORING_CONSTANTS = getProvisionalScoringConstants();
 const PENALTY_SCALE_CALIBRATION = Object.freeze({
   key: 'PENALTY_SCALE_FACTOR',
@@ -496,6 +506,7 @@ function validatePrivacyRadius(value) {
 export default function Settings() {
   const navigate = useNavigate();
   const location = useLocation();
+  const backupCapabilities = resolveBackupCapabilities();
   const [saved, setSaved] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [speedSignCameraStatus, setSpeedSignCameraStatus] = useState(null);
@@ -506,6 +517,9 @@ export default function Settings() {
   const [patternGuideOpen, setPatternGuideOpen] = useState(false);
   const [calibProfile, setCalibProfile] = useState(null);
   const [calibLoading, setCalibLoading] = useState(false);
+  // Trips analysed so far, so a long bounded calibration pass shows progress
+  // instead of an indefinite spinner.
+  const [calibProgress, setCalibProgress] = useState(0);
   const [calibrationLabels, setCalibrationLabels] = useState([]);
   const [calibrationMarkers, setCalibrationMarkers] = useState({});
   const [calibrationLabelStatus, setCalibrationLabelStatus] = useState('');
@@ -561,6 +575,7 @@ export default function Settings() {
   const [backupImportProgress, setBackupImportProgress] = useState({ percent: 0, label: '' });
   const [backupImportPasswordVisible, setBackupImportPasswordVisible] = useState(false);
   const [pendingBackupImportFile, setPendingBackupImportFile] = useState(null);
+  const [pendingNativeBackupImport, setPendingNativeBackupImport] = useState(false);
   const [tripExportBusy, setTripExportBusy] = useState(false);
   const [portabilityExportBusy, setPortabilityExportBusy] = useState(false);
   const [erasureBusy, setErasureBusy] = useState(false);
@@ -572,6 +587,8 @@ export default function Settings() {
   const [auditVerifying, setAuditVerifying] = useState(false);
   const [rawGpsLifecycleStatus, setRawGpsLifecycleStatus] = useState(null);
   const [rawGpsLifecycleBusy, setRawGpsLifecycleBusy] = useState(false);
+  const [journalBootstrapBusy, setJournalBootstrapBusy] = useState(false);
+  const [journalBootstrapStatus, setJournalBootstrapStatus] = useState(null);
   const [dataRetentionBusy, setDataRetentionBusy] = useState(false);
   const [heightenedPrivacyBusy, setHeightenedPrivacyBusy] = useState(false);
   const [tripDeleteBusy, setTripDeleteBusy] = useState(false);
@@ -740,39 +757,55 @@ export default function Settings() {
     mismatch_rescore_eligible_count: 0,
     mismatch_rescore_ineligible_count: 0,
     event_migration_version: 0,
-    trips: [],
-  } } = useQuery({
-    queryKey: ['score-migration-summary'],
-    queryFn: () => tripService.getScoreMigrationSummary(),
+    has_unknown_legacy_unrescored: false,
+    mismatch_preview: [],
+  }, scoreMigrationExact } = useScoreMigrationSummary({
     enabled: activeSettingsSection === 'settings-detection-thresholds',
-    staleTime: SETTINGS_HEAVY_QUERY_STALE_MS,
   });
-
-  // Stable so effects can depend on it without refetching on every render.
-  const getSettingsTrips = useCallback(() => qc.fetchQuery({
-    queryKey: ['settings-trips'],
-    queryFn: () => tripService.listAll({ sort: '-start_time' }),
-    staleTime: SETTINGS_HEAVY_QUERY_STALE_MS,
-  }), [qc]);
 
   const getSettingsTripsForExport = (options = {}) => tripService.listAllForExport({ sort: '-start_time', ...options });
 
-  const getSettingsVehicles = () => qc.fetchQuery({
-    queryKey: ['settings-vehicles'],
-    queryFn: () => vehicleService.list({ sort: '-created_date', limit: 200 }),
-    staleTime: SETTINGS_HEAVY_QUERY_STALE_MS,
-  });
+  // HPR-003/HPR-010. A backup is an explicit export, not a display read: it
+  // takes the authoritative active + retired snapshot so a fleet over 200 is not
+  // silently truncated and a retired profile a trip still references survives
+  // the round trip. It must not depend on a cached UI query population.
+  const getSettingsVehicles = () => vehicleService.snapshotForBackup();
 
+  /**
+   * Queue a rescore for every trip a zone touches.
+   *
+   * When the caller already holds trips (the array path) it is used directly;
+   * otherwise the archive is scanned one trip at a time and matches are
+   * enqueued in batches, so no whole-history array is built. Same-reason jobs
+   * merge in the queue, so batching produces one job.
+   */
   const enqueuePrivacyZoneRescore = async (reason, zones, trips = null) => {
     const zoneList = (Array.isArray(zones) ? zones : [zones]).filter((zone) => zone?.id);
     if (!zoneList.length) return null;
-    const sourceTrips = Array.isArray(trips) ? trips : await getSettingsTrips();
-    const tripIds = Array.from(new Set(zoneList.flatMap((zone) => tripIdsAffectedByPrivacyZone(sourceTrips, zone))));
-    return enqueueRescoreJob({
+    const enqueue = (tripIds) => enqueueRescoreJob({
       reason,
       zoneId: zoneList[0].id,
       tripIds,
     }, { rescoreTrip: rescoreTripForQueue });
+
+    if (Array.isArray(trips)) {
+      const tripIds = Array.from(new Set(zoneList.flatMap((zone) => tripIdsAffectedByPrivacyZone(trips, zone))));
+      return enqueue(tripIds);
+    }
+
+    let job = null;
+    let matched = false;
+    for (const zone of zoneList) {
+      await scanTripsAffectedByPrivacyZone(zone, {
+        onMatch: async (tripIds) => {
+          matched = true;
+          job = await enqueue(tripIds);
+        },
+      });
+    }
+    // Record the reason even when nothing matched, so the queue reflects that
+    // this change has been fully considered.
+    return matched ? job : enqueue([]);
   };
 
   useEffect(() => {
@@ -819,13 +852,11 @@ export default function Settings() {
 
     let active = true;
     setPrivacyDeleteImpact({ loading: true, tripCount: null });
-    getSettingsTrips()
-      .then((trips) => {
-        if (!active) return;
-        setPrivacyDeleteImpact({
-          loading: false,
-          tripCount: countTripsAffectedByPrivacyZone(trips, privacyDeleteZone),
-        });
+    const controller = new AbortController();
+    scanTripsAffectedByPrivacyZone(privacyDeleteZone, { signal: controller.signal })
+      .then(({ tripCount, cancelled }) => {
+        if (!active || cancelled) return;
+        setPrivacyDeleteImpact({ loading: false, tripCount });
       })
       .catch((error) => {
         if (!active) return;
@@ -837,8 +868,9 @@ export default function Settings() {
 
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [privacyDeleteZone, getSettingsTrips]);
+  }, [privacyDeleteZone]);
 
   const updateCfg = (patch) => {
     const currentCfg = cfgRef.current;
@@ -1402,19 +1434,26 @@ export default function Settings() {
 
   const runCalibration = async () => {
     setCalibLoading(true);
+    setCalibProgress(0);
     try {
-      const [trips, surveyLabels] = await Promise.all([
-        tripService.listAll({ sort: '-start_time' }),
-        calibrationLabelService.listLocalLabels(),
-      ]);
+      const surveyLabels = await calibrationLabelService.listLocalLabels();
+      // Explicit bounded job: one trip at a time into fixed-size histograms,
+      // never the whole archive in one array.
+      const { runCalibrationJob } = await import('@/lib/calibrationJob');
+      const jobResult = await runCalibrationJob({
+        currentThresholds: buildDrivingThresholds(cfg),
+        surveyLabels,
+        onProgress: ({ processed }) => setCalibProgress(processed),
+      });
+      if (jobResult.cancelled || !jobResult.profile) return;
       const profile = {
-        ...computeCalibrationProfile(trips, buildDrivingThresholds(cfg), { surveyLabels }),
+        ...jobResult.profile,
         analyzedAt: new Date().toISOString(),
       };
       await saveCalibrationProfile(profile);
       setCalibProfile(profile);
       recordSystemEvent('calibration_profile_analyzed', {
-        trip_count: Array.isArray(trips) ? trips.length : 0,
+        trip_count: jobResult.processed,
         survey_label_count: Array.isArray(surveyLabels) ? surveyLabels.length : 0,
         insufficient: profile.insufficient === true,
         confidence: profile.confidence || profile.surveySummary?.confidence || null,
@@ -1757,6 +1796,10 @@ export default function Settings() {
       previous_days: currentDays,
       retention_days: days,
     }, { category: 'settings', title: 'Raw GPS retention changed' });
+    if (isAndroid() && import.meta.env.VITE_P35_NATIVE_AUTHORITY === 'true') {
+      const { admitP5ReviewedWork, P5_LIFECYCLE_JOB_KEYS } = await import('@/lib/appLifecycleWork');
+      admitP5ReviewedWork(P5_LIFECYCLE_JOB_KEYS.NATIVE_RAW_GPS_RETENTION);
+    }
     toast({
       title: 'Raw GPS retention updated',
       description: days === 0
@@ -1781,7 +1824,66 @@ export default function Settings() {
       if (!confirmed) return;
       setRawGpsLifecycleBusy(true);
       await yieldToPaint();
-      const result = await enforceRawGpsRetention({ force: true });
+      /** @type {any} */
+      let result;
+      if (isAndroid() && import.meta.env.VITE_P35_NATIVE_AUTHORITY === 'true') {
+        let turns = 0;
+        let purgedTrips = 0;
+        let bytesWorked = 0;
+        do {
+          result = await nativeTripArchive.runP5RawGpsRetentionNow({
+            retentionDays,
+            motionRetentionDays: Number(cfg.motion_sample_retention_days || 0),
+            now: Date.now(),
+          });
+          purgedTrips += Number(result.changedItems) || 0;
+          bytesWorked += Number(result.bytesWorked) || 0;
+          turns += 1;
+          if (turns % 4 === 0) await yieldToPaint();
+          if (turns > 100000) throw new Error('RAW_GPS_RETENTION_PROGRESS_LIMIT');
+          if (result.state?.startsWith('BLOCKED_')) break;
+        } while (result.hasMore === true || (['COMPLETE', 'OBSOLETE_COMPLETE'].includes(result.state) && result.jobId));
+        const receiptDebt = await nativeTripArchive.p5PrivacyReceipts();
+        const { admitP5ReviewedWork, P5_LIFECYCLE_JOB_KEYS } = await import('@/lib/appLifecycleWork');
+        admitP5ReviewedWork(P5_LIFECYCLE_JOB_KEYS.NATIVE_RAW_GPS_RETENTION);
+        result = { ...result, enabled: true, purgedTrips, purgedPoints: 0, turns, bytesWorked,
+          privacyReceiptPending: receiptDebt.privacyReceiptPending !== false };
+      } else {
+        let turns = 0;
+        let purgedTrips = 0;
+        let purgedPoints = 0;
+        let purgedMotionSamples = 0;
+        const now = Date.now();
+        do {
+          result = await stepRawGpsRetention({ force: true, now });
+          turns += 1;
+          purgedTrips += Number(result.purgedTrips) || 0;
+          purgedPoints += Number(result.purgedPoints) || 0;
+          purgedMotionSamples += Number(result.purgedMotionSamples) || 0;
+          if (result.legacyRawGpsDebt && result.legacyTripId) {
+            const legacy = await runLegacyBrowserRawGpsRetention({
+              tripId: result.legacyTripId,
+              retentionDays,
+              motionRetentionDays: Number(cfg.motion_sample_retention_days || 0),
+              now,
+            });
+            if (legacy.state !== 'COMPLETE') {
+              result = { ...result, legacyCompatibility: legacy, hasMore: false };
+              break;
+            }
+            purgedTrips += Number(legacy.purgedTrips) || 0;
+            purgedPoints += Number(legacy.purgedPoints) || 0;
+            purgedMotionSamples += Number(legacy.purgedMotionSamples) || 0;
+            // One explicit action admits one predecessor ciphertext. A later
+            // Run now may admit the next; never hide whole-history legacy work.
+            result = { ...result, legacyCompatibility: legacy, hasMore: false };
+            break;
+          }
+          if (turns % 4 === 0) await yieldToPaint();
+          if (turns > 100000) throw new Error('RAW_GPS_RETENTION_PROGRESS_LIMIT');
+        } while (result.hasMore === true);
+        result = { ...result, enabled: true, purgedTrips, purgedPoints, purgedMotionSamples, turns };
+      }
       setRawGpsLifecycleStatus(result);
       await qc.invalidateQueries();
       recordSystemEvent('raw_gps_retention_run_completed', {
@@ -1792,7 +1894,7 @@ export default function Settings() {
       toast({
         title: 'Route retention enforced',
         description: result.enabled
-          ? `Expired route data was removed from ${result.purgedTrips || 0} trip${result.purgedTrips === 1 ? '' : 's'}.`
+          ? `Expired route data was removed from ${result.purgedTrips || 0} trip${result.purgedTrips === 1 ? '' : 's'}.${result.privacyReceiptPending ? ' Privacy receipt delivery remains pending; check Privacy Audit Storage.' : ''}`
           : 'Raw GPS expiration is currently off.',
       });
     } catch (error) {
@@ -1805,6 +1907,52 @@ export default function Settings() {
     } finally {
       setRawGpsLifecycleBusy(false);
       unlockDialogAction('raw-gps-retention');
+    }
+  };
+
+  const runJournalRegistryBootstrap = async () => {
+    if (journalBootstrapBusy || !lockDialogAction('journal-registry-bootstrap')) return;
+    try {
+      const confirmed = await requestAppConfirm({
+        title: 'Index older completed trips?',
+        message: 'Road Sage found a completed-trip journal created before bounded maintenance indexing was available. Keep the app open while it streams the journal once. Trip data remains in the native encrypted journal and is not copied into the index.',
+        confirmLabel: 'Start indexing',
+      });
+      if (!confirmed) return;
+      setJournalBootstrapBusy(true);
+      await yieldToPaint();
+      const result = await nativeTripArchive.runP5JournalRegistryBootstrap();
+      setJournalBootstrapStatus(result);
+      const { admitP5ReviewedWork, P5_LIFECYCLE_JOB_KEYS } = await import('@/lib/appLifecycleWork');
+      admitP5ReviewedWork(P5_LIFECYCLE_JOB_KEYS.JOURNAL_MANIFEST_RECONCILE, {
+        wake: { type: 'journal_state', key: 'repairable' },
+      });
+      toast({
+        title: 'Completed-trip index ready',
+        description: `${Number(result.itemsWorked) || 0} journal entr${Number(result.itemsWorked) === 1 ? 'y' : 'ies'} indexed.`,
+      });
+    } catch (error) {
+      const cancelled = String(error?.message || error).includes('JOURNAL_BOOTSTRAP_CANCELLED');
+      if (!cancelled) logSystemFailure('settings_journal_registry_bootstrap', error);
+      setJournalBootstrapStatus({ state: cancelled ? 'CANCELLED' : 'FAILED' });
+      toast({
+        title: cancelled ? 'Indexing cancelled' : 'Indexing failed',
+        description: cancelled
+          ? 'No partial index was published. Start again to retry from the beginning.'
+          : 'The older journal remains fail-closed. No trip was discarded.',
+        ...(cancelled ? {} : { variant: 'destructive' }),
+      });
+    } finally {
+      setJournalBootstrapBusy(false);
+      unlockDialogAction('journal-registry-bootstrap');
+    }
+  };
+
+  const cancelJournalRegistryBootstrap = async () => {
+    try {
+      await nativeTripArchive.cancelP5JournalRegistryBootstrap();
+    } catch (error) {
+      logSystemFailure('settings_journal_registry_bootstrap_cancel', error);
     }
   };
 
@@ -2204,12 +2352,24 @@ export default function Settings() {
   };
 
   const useRecentTripForCorridor = async () => {
-    const trips = await getSettingsTrips();
-    const sourceTrip = trips.find((trip) => (
-      Array.isArray(trip?.route_points) &&
-      trip.route_points.filter((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng)).length >= 2
-    ));
-    const waypoints = corridorWaypointsFromRoute(sourceTrip?.route_points || []);
+    // P7 Stage 8 (B5): `tripService.list({limit:20})` read and decrypted every
+    // trip in the store to look at twenty. One bounded Q1 page answers the
+    // same question; the per-trip overview reads below are the capped Q3 step
+    // and stop at the first usable route.
+    const page = await p7TripQueries.historyPage({
+      sort: '-start_time', status: 'completed', limit: PRIVACY_CORRIDOR_CANDIDATE_TRIPS,
+    }).catch(() => null);
+    const recent = page?.unavailable ? [] : (page?.data ?? []);
+    let sourcePoints = [];
+    for (const trip of recent) {
+      const overview = await tripService.getOverview(trip.id, PRIVACY_CORRIDOR_MAX_WAYPOINTS);
+      const points = overview?.points || [];
+      if (points.filter((point) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng)).length >= 2) {
+        sourcePoints = points;
+        break;
+      }
+    }
+    const waypoints = corridorWaypointsFromRoute(sourcePoints);
     if (waypoints.length < PRIVACY_CORRIDOR_MIN_WAYPOINTS) {
       toast({
         title: 'No local route available',
@@ -2265,26 +2425,20 @@ export default function Settings() {
       if (!await requireSensitiveAuthentication('Verify to delete this privacy zone')) return;
       let purgeResult = null;
       let speedKnowledgeCleanup = null;
-      const tripsBeforeDelete = await getSettingsTrips();
       if (privacyDeletePurge) {
-        speedKnowledgeCleanup = await purgeLocalSpeedKnowledgeForPrivacyZones([privacyDeleteZone]);
-        purgeResult = await purgeGpsWithinPrivacyZone(
-          tripsBeforeDelete,
-          privacyDeleteZone,
-          (id, patch) => tripService.update(id, patch)
-        );
-        qc.invalidateQueries({ queryKey: ['settings-trips'] });
+        // The streamed purge owns its own speed-knowledge cleanup, trip
+        // writes and rescore enqueue, one trip at a time.
+        purgeResult = await purgePrivacyZoneAcrossArchive(privacyDeleteZone);
+        speedKnowledgeCleanup = purgeResult?.speedKnowledgeCleanup || null;
+        qc.invalidateQueries({ queryKey: ['trip-summaries'] });
       }
 
       await removePrivacyZoneFromSettings(privacyDeleteZone.id);
-      const rescoreTripIds = privacyDeletePurge
-        ? purgeResult?.tripIdsAffected || []
-        : tripIdsAffectedByPrivacyZone(tripsBeforeDelete, privacyDeleteZone);
-      void enqueueRescoreJob({
-        reason: privacyDeletePurge ? 'privacy_zone_purged' : 'privacy_zone_deleted',
-        zoneId: privacyDeleteZone.id,
-        tripIds: rescoreTripIds,
-      }, { rescoreTrip: rescoreTripForQueue });
+      if (!privacyDeletePurge) {
+        // Without a purge nothing has scanned the archive yet, so find the
+        // affected trips with a bounded pass and queue them in batches.
+        await enqueuePrivacyZoneRescore('privacy_zone_deleted', privacyDeleteZone);
+      }
       recordSystemEvent('privacy_zone_deleted', {
         zone_id: privacyDeleteZone.id,
         label: privacyDeleteZone.label,
@@ -2484,17 +2638,11 @@ export default function Settings() {
       });
       if (!confirmed) return;
       setTripDeleteBusy(true);
-      setTripDeleteProgress({ percent: 2, label: 'Reading saved trips' });
+      setTripDeleteProgress({ percent: 10, label: 'Securing trip erasure' });
       await yieldToPaint();
-      const trips = await getSettingsTrips();
-      const totalTrips = trips.length;
-      for (let index = 0; index < totalTrips; index += 1) {
-        await tripService.delete(trips[index].id);
-        setTripDeleteProgress({
-          percent: Math.round(5 + ((index + 1) / Math.max(1, totalTrips)) * 80),
-          label: `Deleting trips (${index + 1} of ${totalTrips})`,
-        });
-      }
+      const eraseResult = await tripService.eraseAll();
+      if (eraseResult?.verified !== true) throw new Error('Trip erasure did not verify');
+      const deletedTripCount = Number(eraseResult?.removedTripCount) || 0;
       setTripDeleteProgress({ percent: 88, label: 'Clearing trip-related data' });
       await Promise.all([
         setJson(SAVED_FILTERS_KEY, []),
@@ -2511,7 +2659,7 @@ export default function Settings() {
       setCalibrationMarkers({});
       setCalibProfile(null);
       recordSystemEvent('trip_history_deleted', {
-        deleted_trip_count: trips.length,
+        deleted_trip_count: deletedTripCount,
         cleared_saved_filters: true,
         cleared_trip_calibration: true,
         cleared_external_context_caches: true,
@@ -2521,7 +2669,7 @@ export default function Settings() {
       setTripDeleteProgress({ percent: 100, label: 'Trip deletion complete' });
       toast({
         title: 'Trips deleted',
-        description: 'Trip records and local trip-derived caches were removed from this device.',
+        description: `${deletedTripCount} trip${deletedTripCount === 1 ? '' : 's'} and local trip-derived caches were removed from this device.`,
       });
     } catch (error) {
       logSystemFailure('settings_delete_all_trips', error);
@@ -2541,9 +2689,30 @@ export default function Settings() {
     if (tripExportBusy) return;
     setTripExportBusy(true);
     try {
-      const trips = await getSettingsTripsForExport();
-      const completed = trips.filter(t => t.status === 'completed');
-      const csv = tripsToCSV(completed, { includeTelemetry: false });
+      // Streamed export: one trip at a time into CSV lines, never the whole
+      // archive in one array.
+      const { createTripCsvWriter } = await import('@/lib/tripEngine');
+      const { runBoundedTripJob, clearBoundedJobCheckpoint } = await import('@/lib/boundedTripJob');
+      const writer = createTripCsvWriter({ includeTelemetry: false });
+      const lines = writer.headerLines();
+      let completedCount = 0;
+      const jobKey = 'settings_csv_export';
+      const jobOutcome = await runBoundedTripJob({
+        jobKey,
+        fingerprint: 'csv-export-v1',
+        status: 'completed',
+        loadFullTrip: true,
+        resume: false,
+        initialState: () => ({}),
+        onTrip: ({ trip }) => {
+          lines.push(writer.rowLine(trip));
+          completedCount += 1;
+        },
+      });
+      if (jobOutcome.cancelled) return;
+      await clearBoundedJobCheckpoint(jobKey);
+      const csv = lines.join('\n');
+      const completed = { length: completedCount };
       const result = await downloadCSV(csv, `road-sage-all-trips-${new Date().toISOString().split('T')[0]}.csv`);
       recordSystemEvent('all_trips_export_completed', {
         trip_count: completed.length,
@@ -2664,7 +2833,10 @@ export default function Settings() {
   const backupExportPassphraseStrong = Object.values(backupExportPassphraseChecks).every(Boolean);
   const backupExportPassphraseReady = backupExportPassphraseStrong &&
     backupExportPassphrase === backupExportConfirm;
-  const backupExportReady = backupExportPlaintext || backupExportPassphraseReady;
+  const backupExportReady = (
+    (backupCapabilities.readableExportAvailable && backupExportPlaintext)
+    || backupExportPassphraseReady
+  );
 
   const showBackupExportToast = (result) => {
     recordSystemEvent('backup_export_user_notified', {
@@ -2694,6 +2866,7 @@ export default function Settings() {
     setBackupExportOpen(true);
     recordSystemEvent('backup_export_dialog_opened', {
       default_output_format: 'encrypted',
+      backup_authority: backupCapabilities.authority,
     }, { category: 'storage', title: 'Backup export dialog opened' });
   };
 
@@ -2784,13 +2957,15 @@ export default function Settings() {
         title: backupExportPlaintext ? 'Readable backup export confirmed' : 'Encrypted backup export confirmed',
       });
       updateBackupExportProgress({ phase: 'loading' });
-      const [trips, vehicles] = await Promise.all([
-        getSettingsTripsForExport({
-          signal: controller.signal,
-          onProgress: (progress) => updateBackupExportProgress({ phase: 'loading', ...progress }),
-        }),
-        getSettingsVehicles(),
-      ]);
+      const [trips, vehicles] = backupCapabilities.browserJsonExportAvailable
+        ? await Promise.all([
+          getSettingsTripsForExport({
+            signal: controller.signal,
+            onProgress: (progress) => updateBackupExportProgress({ phase: 'loading', ...progress }),
+          }),
+          getSettingsVehicles(),
+        ])
+        : [undefined, undefined];
       const result = await exportDriveSenseBackupFromSettings({
         trips,
         vehicles,
@@ -2852,6 +3027,9 @@ export default function Settings() {
         span: 29,
         label: total > 0 ? `Restoring trips (${completed} of ${total})` : 'Restoring trips',
       },
+      staging_input: { start: 5, span: 30, label: 'Reading encrypted backup through Android' },
+      importing: { start: 59, span: 39, label: 'Restoring native archive' },
+      complete: { start: 99, span: 0, label: 'Verifying native cutover' },
     };
     const view = progressByPhase[phase] || { start: 1, span: 0, label: 'Preparing import' };
     setBackupImportProgress({
@@ -2864,8 +3042,25 @@ export default function Settings() {
     backupImportAbortRef.current?.abort();
     setBackupImportOpen(false);
     setPendingBackupImportFile(null);
+    setPendingNativeBackupImport(false);
     setBackupImportPassphrase('');
     setBackupImportError('');
+  };
+
+  const handleNativeImportBackup = async () => {
+    if (!backupCapabilities.nativeUriRestoreAvailable) return;
+    const confirmed = await requestAppConfirm({
+      title: 'Restore native backup?',
+      message: 'Native backup restore requires an empty Road Sage trip archive and does not merge with existing history. After entering the backup password, choose the .rsb2 file to restore.',
+      confirmLabel: 'Continue',
+    });
+    if (!confirmed) return;
+    setPendingBackupImportFile(null);
+    setPendingNativeBackupImport(true);
+    setBackupImportPassphrase('');
+    setBackupImportError(BACKUP_PASSWORD_REQUIRED_CODE);
+    setBackupImportPasswordVisible(false);
+    setBackupImportOpen(true);
   };
 
   /**
@@ -2890,10 +3085,27 @@ export default function Settings() {
       onProgress,
     });
     if (result.requiresAcknowledgement) {
-      const affected = result.truncatedNoteTripCount;
+      // AUD-008: route geometry can be truncated as well as notes, and the two are
+      // not interchangeable - acknowledging "truncated notes" while silently losing
+      // GPS points would be the same false-completeness defect in a new place. Each
+      // loss is named separately, with its own count.
+      const noteTrips = Number(result.truncatedNoteTripCount) || 0;
+      const routeTrips = Number(result.truncatedRouteTripCount) || 0;
+      const droppedPoints = Number(result.droppedRoutePointCount) || 0;
+      const losses = [];
+      if (noteTrips > 0) {
+        losses.push(`notes will be shortened on ${noteTrips} trip${noteTrips === 1 ? '' : 's'}`);
+      }
+      if (routeTrips > 0) {
+        losses.push(
+          `${droppedPoints.toLocaleString()} GPS route point${droppedPoints === 1 ? '' : 's'} `
+          + `across ${routeTrips} trip${routeTrips === 1 ? '' : 's'} will not be restored`
+        );
+      }
       const confirmed = await requestAppConfirm({
-        title: 'Import with truncated notes?',
-        message: `This backup contains notes longer than the supported limit. Importing will truncate notes on ${affected} trip${affected === 1 ? '' : 's'}. Continue?`,
+        title: routeTrips > 0 ? 'Import with missing route data?' : 'Import with truncated notes?',
+        message: `This backup exceeds the supported import limits. If you continue, ${losses.join(', and ')}. `
+          + 'The rest of the backup restores normally. Continue?',
         confirmLabel: 'Continue import',
       });
       if (!confirmed) return null;
@@ -2935,7 +3147,8 @@ export default function Settings() {
   };
 
   const handleImportPassphraseSubmit = async () => {
-    if (!pendingBackupImportFile || backupImportPassphrase.length < BACKUP_PASSPHRASE_MIN_LENGTH || backupImportBusy || !lockDialogAction('backup-import')) return;
+    const nativeRestore = pendingNativeBackupImport && backupCapabilities.nativeUriRestoreAvailable;
+    if ((!pendingBackupImportFile && !nativeRestore) || backupImportPassphrase.length < BACKUP_PASSPHRASE_MIN_LENGTH || backupImportBusy || !lockDialogAction('backup-import')) return;
     const controller = new AbortController();
     backupImportAbortRef.current = controller;
     setBackupImportBusy(true);
@@ -2943,15 +3156,44 @@ export default function Settings() {
     try {
       recordSystemEvent('backup_import_password_submitted', {
         encrypted: true,
+        backup_authority: backupCapabilities.authority,
         byte_count: Number(pendingBackupImportFile?.size) || 0,
       }, { category: 'storage', title: 'Backup password submitted' });
       await yieldToPaint();
+      if (nativeRestore) {
+        const result = await restoreNativeBackupFromDocumentFromSettings({
+          passphrase: backupImportPassphrase,
+          signal: controller.signal,
+          onProgress: updateBackupImportProgress,
+        });
+        const restoredSettings = await localSettings.hydrateFromNative();
+        setCfg(restoredSettings);
+        applyThemeMode(restoredSettings.dark_mode);
+        await qc.invalidateQueries();
+        toast({
+          title: 'Native backup restored',
+          description: `${Number(result?.tripCount) || 0} trip${Number(result?.tripCount) === 1 ? '' : 's'} restored after verified native cutover.`,
+        });
+        setBackupImportOpen(false);
+        setPendingNativeBackupImport(false);
+        setBackupImportPassphrase('');
+        setBackupImportError('');
+        setBackupImportPasswordVisible(false);
+        recordSystemEvent('native_backup_restore_user_notified', {
+          trip_count: Number(result?.tripCount) || 0,
+          speed_bucket_count: Number(result?.speedBucketCount) || 0,
+          portable_domain_count: Number(result?.portableDomainCount) || 0,
+          verified: result?.verified === true,
+          authority_state: result?.authorityState || '',
+        }, { category: 'storage', title: 'Native backup restore notification shown' });
+        return;
+      }
       await finishImportBackup(pendingBackupImportFile, {
         passphrase: backupImportPassphrase,
         signal: controller.signal,
       });
     } catch (error) {
-      if (error?.name === 'AbortError') return;
+      if (error?.name === 'AbortError' || error?.code === 'native_backup_restore_cancelled') return;
       if (error?.code === BACKUP_WRONG_PASSWORD_CODE) {
         setBackupImportError(BACKUP_WRONG_PASSWORD_CODE);
         recordSystemEvent('backup_import_wrong_password_notice_shown', {
@@ -2996,6 +3238,7 @@ export default function Settings() {
   };
 
   const handleImportBackup = async (event) => {
+    if (!backupCapabilities.browserJsonRestoreAvailable) return;
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
@@ -4258,7 +4501,9 @@ export default function Settings() {
               disabled={calibLoading}
               className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-60"
             >
-              {calibLoading ? 'Analysing...' : calibProfile?.appliedAt ? 'Re-analyze' : 'Analyse my driving'}
+              {calibLoading
+                ? (calibProgress ? `Analysing... (${calibProgress} trips)` : 'Analysing...')
+                : calibProfile?.appliedAt ? 'Re-analyze' : 'Analyse my driving'}
             </button>
           </div>
           {calibProfile?.analyzedAt && (
@@ -4382,6 +4627,20 @@ export default function Settings() {
             </button>
             {rescoreStatus && <span className="text-xs text-muted-foreground">{rescoreStatus}</span>}
           </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2" aria-label="Trip data maintenance">
+            <P6ExplicitOperationControl
+              operationType={P6_EXPLICIT_OPERATION_TYPES.DERIVED_REPAIR}
+              title="Repair trip analytics and route previews"
+              description="Rebuild derived analytics and map-ready route data from retained trips. Canonical trips and saved road speeds are not replaced."
+              startLabel="Start repair"
+            />
+            <P6ExplicitOperationControl
+              operationType={P6_EXPLICIT_OPERATION_TYPES.AFFECTED_TRIP_RESCORE}
+              title="Finish affected-trip score updates"
+              description="Process the durable affected-trip selections created by saved-road and privacy changes, then hand matching trips to the existing score queue."
+              startLabel="Update affected trips"
+            />
+          </div>
           {rescoreResult && (
             <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100">
               <div className="font-semibold">Historical score update complete</div>
@@ -4437,17 +4696,26 @@ export default function Settings() {
                 <>
                   <div className="font-semibold">Scoring model update available</div>
                   <div className="mt-1">
-                    {scoreMigrationSummary.mismatch_count} completed trip{scoreMigrationSummary.mismatch_count === 1 ? '' : 's'} {scoreMigrationSummary.trips.some((item) => item.status === 'unknown_legacy_unrescored') ? 'are marked unknown legacy until re-scored for' : 'used a different scoring model than'} version {scoreMigrationSummary.scoring_version || SCORING_VERSION}. Re-score only when you want those stored scores updated.
+                    {/* O61: while the tally is short of terminal EOF the count
+                        is a floor, and says so. The old summary carried an
+                        unbounded `trips` array; the reducer carries a fixed
+                        four-slot preview and a count. */}
+                    {scoreMigrationExact ? '' : 'At least '}{scoreMigrationSummary.mismatch_count} completed trip{scoreMigrationSummary.mismatch_count === 1 ? '' : 's'} {scoreMigrationSummary.has_unknown_legacy_unrescored ? 'are marked unknown legacy until re-scored for' : 'used a different scoring model than'} version {scoreMigrationSummary.scoring_version || SCORING_VERSION}. Re-score only when you want those stored scores updated.
                   </div>
                   <div className="mt-2 space-y-1">
-                    {scoreMigrationSummary.trips.slice(0, 4).map((item) => (
+                    {(scoreMigrationSummary.mismatch_preview || []).map((item) => (
                       <div key={item.id} className="flex items-center justify-between gap-2 rounded-lg bg-card/70 px-2 py-1">
                         <span className="truncate">{item.nickname || new Date(item.start_time).toLocaleDateString()}</span>
                         <span className="shrink-0 text-amber-700 dark:text-amber-200">v{item.scoring_version || 'unknown'}</span>
                       </div>
                     ))}
-                    {scoreMigrationSummary.trips.length > 4 && (
-                      <div className="text-amber-700 dark:text-amber-200">+{scoreMigrationSummary.trips.length - 4} more</div>
+                    {/* "+N more" is `mismatch_count - preview.length`, and is
+                        only presented as exact when the scan reached its end. */}
+                    {scoreMigrationSummary.mismatch_count > (scoreMigrationSummary.mismatch_preview || []).length && (
+                      <div className="text-amber-700 dark:text-amber-200">
+                        +{scoreMigrationSummary.mismatch_count - (scoreMigrationSummary.mismatch_preview || []).length} more
+                        {scoreMigrationExact ? '' : ' so far'}
+                      </div>
                     )}
                   </div>
                 </>
@@ -6042,8 +6310,12 @@ export default function Settings() {
           <SettingRow
             icon={Upload}
             label="Import Backup"
-            sublabel="Restore an encrypted or JSON Road Sage backup into local storage"
-            onClick={() => importInputRef.current?.click()}
+            sublabel={backupCapabilities.nativeUriRestoreAvailable
+              ? 'Restore an encrypted .rsb2 backup into an empty native archive'
+              : 'Restore an encrypted or readable JSON Road Sage backup into browser-authoritative storage'}
+            onClick={backupCapabilities.nativeUriRestoreAvailable
+              ? handleNativeImportBackup
+              : () => importInputRef.current?.click()}
           >
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
           </SettingRow>
@@ -6138,6 +6410,31 @@ export default function Settings() {
               </span>
             </div>
           </SettingRow>
+          {isAndroid() && import.meta.env.VITE_P35_NATIVE_AUTHORITY === 'true' && (
+            <SettingRow
+              icon={Shield}
+              label="Older Trip Journal Index"
+              sublabel="Explicit compatibility pass for completed trips saved before bounded journal indexing"
+            >
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={journalBootstrapBusy ? cancelJournalRegistryBootstrap : runJournalRegistryBootstrap}
+                  className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold"
+                >
+                  {journalBootstrapBusy ? 'Cancel' : 'Start indexing'}
+                </button>
+                <span className="w-full text-right text-[11px] text-muted-foreground">
+                  {journalBootstrapStatus?.state === 'COMPLETE'
+                    ? 'Index ready.'
+                    : journalBootstrapStatus?.state === 'CANCELLED'
+                      ? 'Cancelled; restart begins from the first journal file.'
+                      : 'Runs only when you start it; never during lifecycle maintenance.'}
+                </span>
+              </div>
+            </SettingRow>
+          )}
+          <PrivacyAuditStorage />
           <SettingRow
             icon={Check}
             label="Verify Audit Log"
@@ -6222,13 +6519,13 @@ export default function Settings() {
         </div>
       </div>
 
-      <input
-        ref={importInputRef}
-        type="file"
-        accept={BACKUP_IMPORT_ACCEPT}
-        className="hidden"
-        onChange={handleImportBackup}
-      />
+      {backupCapabilities.browserJsonRestoreAvailable && <input
+          ref={importInputRef}
+          type="file"
+          accept={backupCapabilities.importAccept || BACKUP_IMPORT_ACCEPT}
+          className="hidden"
+          onChange={handleImportBackup}
+        />}
 
       <Dialog open={rescoreConfirmOpen} onOpenChange={(open) => {
         if (!rescoreBusy) setRescoreConfirmOpen(open);
@@ -6505,7 +6802,7 @@ export default function Settings() {
                 ))}
               </div>
             )}
-            <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+            {backupCapabilities.readableExportAvailable && <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
               <OptimisticCheckbox
                 checked={backupExportPlaintext}
                 onCheckedChange={(checked) => {
@@ -6523,7 +6820,7 @@ export default function Settings() {
                 className="mt-0.5"
               />
               <span>Export readable JSON instead. Anyone with the file can read trip and route data.</span>
-            </label>
+            </label>}
             {backupExportBusy && (
               <div className="rounded-xl border border-border bg-secondary/30 p-3" role="status" aria-live="polite">
                 <div className="flex items-center justify-between gap-3 text-xs font-medium">
@@ -6573,8 +6870,10 @@ export default function Settings() {
           recordSystemEvent('backup_import_unlock_dialog_closed', {
             completed: false,
             had_pending_file: Boolean(pendingBackupImportFile),
+            native_restore: pendingNativeBackupImport,
           }, { category: 'storage', title: 'Backup unlock dialog closed' });
           setPendingBackupImportFile(null);
+          setPendingNativeBackupImport(false);
           setBackupImportPassphrase('');
           setBackupImportError('');
           setBackupImportPasswordVisible(false);
@@ -6585,8 +6884,12 @@ export default function Settings() {
             <DialogTitle>{backupImportBusy ? 'Importing Backup' : 'Unlock Backup'}</DialogTitle>
             <DialogDescription>
               {backupImportBusy
-                ? 'Road Sage is checking and restoring this backup in small, memory-safe batches.'
-                : 'Enter the password used when this backup was exported.'}
+                ? (pendingNativeBackupImport
+                  ? 'Android is streaming, verifying, and restoring this backup under native archive ownership.'
+                  : 'Road Sage is checking and restoring this backup in small, memory-safe batches.')
+                : (pendingNativeBackupImport
+                  ? 'Enter the password, then choose the encrypted .rsb2 backup from Android documents.'
+                  : 'Enter the password used when this backup was exported.')}
             </DialogDescription>
           </DialogHeader>
           {backupImportBusy ? (
@@ -6602,7 +6905,9 @@ export default function Settings() {
                 />
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                Keep Road Sage open during import. If cancelled after restoring starts, retrying the same backup safely completes the remaining trips.
+                {pendingNativeBackupImport
+                  ? 'Keep Road Sage open until native verification and cutover complete. A started operation is not reported as restored.'
+                  : 'Keep Road Sage open during import. If cancelled after restoring starts, retrying the same backup safely completes the remaining trips.'}
               </p>
             </div>
           ) : (

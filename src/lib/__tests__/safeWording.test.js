@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import {
   DASHBOARD_EXTRACTION_DIRS,
   SETTINGS_EXTRACTION_DIRS,
@@ -43,6 +44,33 @@ function readProjectFile(relativePath) {
   return readFileSync(join(rootDir, relativePath), 'utf8');
 }
 
+function potentialUserVisibleText(relativePath, source) {
+  if (relativePath.endsWith('.md')) return source;
+  const scriptKind = relativePath.endsWith('.jsx') ? ts.ScriptKind.JSX : ts.ScriptKind.JS;
+  const sourceFile = ts.createSourceFile(
+    relativePath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind
+  );
+  const text = [];
+  const visit = (node) => {
+    if (
+      ts.isStringLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node) ||
+      ts.isJsxText(node)
+    ) {
+      text.push(node.text);
+    } else if (ts.isTemplateExpression(node)) {
+      text.push(node.head.text, ...node.templateSpans.map((span) => span.literal.text));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return text.join('\n');
+}
+
 // Pages whose content is being split into component directories. The banned
 // wording scan below is entirely negative, so it would keep passing while
 // scanning nothing once copy moves out of the page. Bundling the extraction
@@ -61,7 +89,7 @@ describe('safe Privacy Intelligence wording', () => {
   it('keeps UI, report, README, and Privacy Intelligence docs free of overclaim wording', () => {
     const failures = [];
     for (const relativePath of checkedFiles) {
-      const source = readCheckedSource(relativePath);
+      const source = potentialUserVisibleText(relativePath, readCheckedSource(relativePath));
       for (const banned of bannedWording) {
         if (banned.pattern.test(source)) {
           failures.push(`${relativePath}: ${banned.label}`);
@@ -70,6 +98,18 @@ describe('safe Privacy Intelligence wording', () => {
     }
 
     expect(failures).toEqual([]);
+  });
+
+  it('still detects prohibited claims in potential user-visible text', () => {
+    const source = potentialUserVisibleText(
+      'wording-canary.jsx',
+      "const message = 'This proves privacy'; export const Canary = () => <p>tamper-proof</p>;"
+    );
+    const detected = bannedWording
+      .filter((banned) => banned.pattern.test(source))
+      .map((banned) => banned.label);
+    expect(detected).toContain('proves/prove');
+    expect(detected).toContain('tamper-proof');
   });
 
   it('keeps unknown protections visually and verbally distinct from ok protections', () => {

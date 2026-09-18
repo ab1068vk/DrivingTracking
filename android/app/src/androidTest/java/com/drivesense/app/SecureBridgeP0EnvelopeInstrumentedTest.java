@@ -599,6 +599,120 @@ public class SecureBridgeP0EnvelopeInstrumentedTest {
     }
 
     @Test
+    public void sensitivePayloadBatchPreservesPerItemAadAndEncryptsThePlaintextResponse() throws Exception {
+        JSObject ensurePayload = new JSObject();
+        ensurePayload.put("keyVersion", TEST_KEY_VERSION);
+        client.callDirect("ensureSensitivePayloadKey", ensurePayload, defaultP0Block());
+
+        JSONArray encryptItems = new JSONArray();
+        for (int ordinal = 0; ordinal < 2; ordinal += 1) {
+            JSONObject item = new JSONObject();
+            item.put("ordinal", ordinal);
+            item.put("plaintext", "{\"ordinal\":" + ordinal + ",\"secret\":\"batch-" + ordinal + "\"}");
+            item.put("context", "instrumented-batch:" + ordinal);
+            item.put("keyVersion", TEST_KEY_VERSION);
+            encryptItems.put(item);
+        }
+        JSObject encryptPayload = new JSObject();
+        encryptPayload.put("batchVersion", 1);
+        encryptPayload.put("items", encryptItems);
+        JSObject encrypted = client.callDirect("encryptSensitivePayload", encryptPayload, defaultP0Block());
+        JSONArray encryptedResults = encrypted.getJSONArray("results");
+        assertEquals(2, encryptedResults.length());
+
+        JSONArray decryptItems = new JSONArray();
+        for (int ordinal = 0; ordinal < encryptedResults.length(); ordinal += 1) {
+            JSONObject encryptedItem = encryptedResults.getJSONObject(ordinal);
+            assertTrue(encryptedItem.getBoolean("ok"));
+            JSONObject item = new JSONObject();
+            item.put("ordinal", ordinal);
+            item.put("ciphertext", encryptedItem.getString("ciphertext"));
+            item.put("context", "instrumented-batch:" + ordinal);
+            item.put("keyVersion", TEST_KEY_VERSION);
+            decryptItems.put(item);
+        }
+        JSObject decryptPayload = new JSObject();
+        decryptPayload.put("batchVersion", 1);
+        decryptPayload.put("items", decryptItems);
+        JSObject encryptedResponse = client.callEncrypted(
+            "decryptSensitivePayload",
+            decryptPayload,
+            hostileP0Block()
+        );
+        JSONObject decrypted = client.decryptResponse(encryptedResponse, "decryptSensitivePayload");
+        JSONArray results = decrypted.getJSONArray("results");
+        assertEquals(2, results.length());
+        for (int ordinal = 0; ordinal < results.length(); ordinal += 1) {
+            JSONObject item = results.getJSONObject(ordinal);
+            assertEquals(ordinal, item.getInt("ordinal"));
+            assertTrue(item.getBoolean("ok"));
+            assertEquals(
+                "{\"ordinal\":" + ordinal + ",\"secret\":\"batch-" + ordinal + "\"}",
+                item.getString("plaintext")
+            );
+        }
+        assertFalse(decrypted.has("_p0"));
+    }
+
+    @Test
+    public void sensitivePayloadBatchReturnsOnlyFixedFailureIdentityForACorruptItem() throws Exception {
+        JSObject ensurePayload = new JSObject();
+        ensurePayload.put("keyVersion", TEST_KEY_VERSION);
+        client.callDirect("ensureSensitivePayloadKey", ensurePayload, null);
+
+        JSONArray encryptItems = new JSONArray();
+        for (int ordinal = 0; ordinal < 2; ordinal += 1) {
+            JSONObject item = new JSONObject();
+            item.put("ordinal", ordinal);
+            item.put("plaintext", "{\"secret\":\"never-log-" + ordinal + "\"}");
+            item.put("context", "instrumented-corrupt:" + ordinal);
+            item.put("keyVersion", TEST_KEY_VERSION);
+            encryptItems.put(item);
+        }
+        JSObject encryptPayload = new JSObject();
+        encryptPayload.put("batchVersion", 1);
+        encryptPayload.put("items", encryptItems);
+        JSONArray encrypted = client.callDirect(
+            "encryptSensitivePayload",
+            encryptPayload,
+            null
+        ).getJSONArray("results");
+
+        byte[] corruptBytes = Base64.decode(encrypted.getJSONObject(1).getString("ciphertext"), Base64.NO_WRAP);
+        corruptBytes[corruptBytes.length - 1] ^= 0x20;
+        JSONArray decryptItems = new JSONArray();
+        for (int ordinal = 0; ordinal < 2; ordinal += 1) {
+            JSONObject item = new JSONObject();
+            item.put("ordinal", ordinal);
+            item.put(
+                "ciphertext",
+                ordinal == 0
+                    ? encrypted.getJSONObject(ordinal).getString("ciphertext")
+                    : Base64.encodeToString(corruptBytes, Base64.NO_WRAP)
+            );
+            item.put("context", "instrumented-corrupt:" + ordinal);
+            item.put("keyVersion", TEST_KEY_VERSION);
+            decryptItems.put(item);
+        }
+        JSObject decryptPayload = new JSObject();
+        decryptPayload.put("batchVersion", 1);
+        decryptPayload.put("items", decryptItems);
+        JSONObject decrypted = client.decryptResponse(
+            client.callEncrypted("decryptSensitivePayload", decryptPayload, null),
+            "decryptSensitivePayload"
+        );
+        JSONArray results = decrypted.getJSONArray("results");
+        assertTrue(results.getJSONObject(0).getBoolean("ok"));
+        assertFalse(results.getJSONObject(1).getBoolean("ok"));
+        assertEquals("AUTHENTICATION_FAILED", results.getJSONObject(1).getString("errorCode"));
+        assertEquals(
+            new HashSet<>(Arrays.asList("ordinal", "ok", "errorCode")),
+            jsonKeys(results.getJSONObject(1))
+        );
+        assertFalse(decrypted.toString().contains("never-log"));
+    }
+
+    @Test
     public void aTamperedEnvelopeStillFailsClosedWithP0Present() throws Exception {
         JSObject payload = new JSObject();
         payload.put("canary", 5L);
@@ -683,6 +797,13 @@ public class SecureBridgeP0EnvelopeInstrumentedTest {
             String key = iterator.next();
             if (!"_p0".equals(key)) keys.add(key);
         }
+        return keys;
+    }
+
+    private static Set<String> jsonKeys(JSONObject value) {
+        Set<String> keys = new HashSet<>();
+        Iterator<String> iterator = value.keys();
+        while (iterator.hasNext()) keys.add(iterator.next());
         return keys;
     }
 

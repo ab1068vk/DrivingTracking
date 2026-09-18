@@ -1,5 +1,5 @@
 // @ts-check
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import {
@@ -38,6 +38,7 @@ import {
 import { activeTripStore } from '@/lib/trackingStore';
 import { syncNativeCompletedTrips } from '@/lib/localTripRepository';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { useDiagnosticsPageData } from '@/hooks/useDiagnosticsPageData';
 import { formatDateTime, formatDistance, formatSpeed } from '@/lib/tripEngine';
 import { buildLocalFeatureTestTrips, LOCAL_TEST_TRIP_PREFIX } from '@/lib/localTestTrips';
 import {
@@ -56,6 +57,7 @@ import {
   setPerformanceTriageContext,
 } from '@/lib/performanceTriage';
 import { buildTripDataProfile } from '@/lib/appExperienceDiagnostics';
+import { createLatestAsyncRequestGuard } from '@/lib/latestAsyncRequest';
 import AppExperienceDiagnosticsPanel from '@/components/AppExperienceDiagnosticsPanel';
 
 const statusStyle = {
@@ -199,40 +201,43 @@ export default function Diagnostics() {
   const [motionPermissionBusy, setMotionPermissionBusy] = useState(false);
   const [testDataBusy, setTestDataBusy] = useState(false);
   const [testDataNotice, setTestDataNotice] = useState('');
-  const [performanceEntries, setPerformanceEntries] = useState(() => getPerformanceTriageEntries());
+  const [performanceEntries, setPerformanceEntries] = useState([]);
+  const [performanceHistoryReady, setPerformanceHistoryReady] = useState(false);
+  const refreshGuard = useRef(null);
+  refreshGuard.current ??= createLatestAsyncRequestGuard();
 
-  const { data: trips = [], refetch } = useQuery({
-    queryKey: ['diagnostics-trips'],
-    queryFn: () => tripService.listSummaries({ sort: '-start_time', limit: 20 }),
-    staleTime: 2 * 60 * 1000,
-  });
+  // P7: one canonical top-level composition. It replaces the two *identical*
+  // `listSummaries({limit:20})` queries this page used to run under different
+  // keys, which meant neither shared the other's cache and every open paid for
+  // the same page twice. The rows below and the data profile are now the same
+  // fetch, and the selected trip's detail keeps its own canonical key family.
   const {
-    data: allTripSummaries = [],
-    refetch: refetchAllTripSummaries,
-    isSuccess: tripDataProfileLoaded,
-  } = useQuery({
-    queryKey: ['diagnostics-trip-data-profile'],
-    queryFn: () => tripService.listAllSummaries({ sort: '-start_time' }),
-    staleTime: 5 * 60 * 1000,
+    trips,
+    localTestTrips: storedTestTrips,
+    unavailable: tripPageUnavailable,
+    ready: tripDataProfileLoaded,
+    refetch: refetchPageData,
+  } = useDiagnosticsPageData({
+    localTestTripPrefix: LOCAL_TEST_TRIP_PREFIX,
+    includeLocalTestTrips: import.meta.env.DEV,
   });
-  const { data: storedTestTrips = [], refetch: refetchStoredTestTrips } = useQuery({
-    queryKey: ['diagnostics-local-test-trips'],
-    queryFn: async () => {
-      const storedTrips = await tripService.listAllSummaries({ sort: '-start_time' });
-      return storedTrips.filter((trip) => String(trip.id || '').startsWith(LOCAL_TEST_TRIP_PREFIX));
-    },
-    enabled: import.meta.env.DEV,
-  });
+  const allTripSummaries = trips;
   const latestTripSummary = trips.find((trip) => trip.status === 'completed') || null;
   const { data: latestTripDetail } = useQuery(tripDetailQueryOptions(latestTripSummary?.id));
   const latestTrip = latestTripDetail || latestTripSummary;
   const localTestTripCount = storedTestTrips.length;
 
   const refresh = async () => {
+    const generation = refreshGuard.current.begin();
     setRefreshing(true);
     recordSystemEvent('diagnostics_refresh_started', {}, { category: 'diagnostics', title: 'Diagnostics refresh started' });
     setWebDiagnostics(getTrackingDiagnostics());
-    setPerformanceEntries(getPerformanceTriageEntries());
+    getPerformanceTriageEntries().then((entries) => {
+      if (refreshGuard.current.isCurrent(generation)) {
+        setPerformanceEntries(entries);
+        setPerformanceHistoryReady(true);
+      }
+    });
     setActiveTrip(activeTripStore.get());
     try {
       if (isAndroid()) {
@@ -260,11 +265,9 @@ export default function Diagnostics() {
       setBatteryStatus(battery);
       setNativeDiagnostics(nativeLog || { enabled: false, events: [], watchdog: null });
       setActiveTrip(activeTripStore.get());
-      await Promise.all([
-        refetch(),
-        refetchAllTripSummaries(),
-        import.meta.env.DEV ? refetchStoredTestTrips() : Promise.resolve(),
-      ]);
+      // One composition, so one refetch: the refresh no longer fans out into
+      // three overlapping history reads.
+      await refetchPageData();
       recordSystemEvent('diagnostics_refresh_completed', {
         native_event_count: nativeLog?.events?.length || 0,
         web_event_count: getTrackingDiagnostics().events?.length || 0,
@@ -272,8 +275,12 @@ export default function Diagnostics() {
     } catch (error) {
       logSystemFailure('diagnostics_refresh', error);
     } finally {
-      setPerformanceEntries(getPerformanceTriageEntries());
-      setRefreshing(false);
+      const entries = await getPerformanceTriageEntries();
+      if (refreshGuard.current.isCurrent(generation)) {
+        setPerformanceEntries(entries);
+        setPerformanceHistoryReady(true);
+        setRefreshing(false);
+      }
     }
   };
 
@@ -281,6 +288,7 @@ export default function Diagnostics() {
     refresh();
     // One refresh per mount. `refresh` is re-created every render and sets
     // state, so depending on it would re-trigger itself in a loop.
+    return () => { refreshGuard.current.invalidate(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -435,6 +443,8 @@ export default function Diagnostics() {
 
       <AppExperienceDiagnosticsPanel
         tripDataReady={tripDataProfileLoaded}
+        tripDataUnavailable={tripPageUnavailable}
+        diagnosticsHistoryReady={performanceHistoryReady}
         trips={allTripSummaries}
         performanceEntries={performanceEntries}
         trackingEvents={combinedEvents}

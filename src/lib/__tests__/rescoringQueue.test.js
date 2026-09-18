@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getJson, setJson } from '@/lib/mobileStorage';
+import { setJson } from '@/lib/mobileStorage';
 import {
   enqueueRescoreJob,
+  getRescoringQueue,
   getRescoringQueueStatus,
   processRescoringQueue,
+  RESCORING_QUEUE_CONVERSION_STORAGE_KEY,
   RESCORING_QUEUE_KEY,
+  RESCORING_QUEUE_META_STORAGE_KEY,
+  RESCORING_QUEUE_RECENT_STORAGE_KEY,
+  RESCORING_QUEUE_RECORD_PREFIXES,
 } from '@/lib/rescoringQueue';
 
 const speedKnowledgeRepositoryMocks = vi.hoisted(() => ({
@@ -25,7 +30,26 @@ vi.mock('@capacitor/core', () => ({
 
 describe('rescoringQueue', () => {
   afterEach(async () => {
-    await setJson(RESCORING_QUEUE_KEY, []);
+    // P4-C-F06-B: the queue is an index of records now, so a reset retires each
+    // job's own records before clearing the metadata, the reporting ring, the
+    // conversion marker and the index pages.
+    const [pagePrefix, idsPrefix, queuePagePrefix, recordPrefix, dedupePrefix] =
+      RESCORING_QUEUE_RECORD_PREFIXES;
+    for (const job of await getRescoringQueue()) {
+      for (let index = 0; index < 4; index += 1) {
+        await setJson(`${pagePrefix}${job.id}_${index}`, null);
+      }
+      await setJson(`${idsPrefix}${job.id}`, null);
+      await setJson(`${recordPrefix}${job.id}`, null);
+      if (job.dedupeKey) await setJson(`${dedupePrefix}${job.dedupeKey}`, null);
+    }
+    await setJson(RESCORING_QUEUE_KEY, null);
+    await setJson(RESCORING_QUEUE_META_STORAGE_KEY, null);
+    await setJson(RESCORING_QUEUE_RECENT_STORAGE_KEY, null);
+    await setJson(RESCORING_QUEUE_CONVERSION_STORAGE_KEY, null);
+    for (let index = 0; index < 4; index += 1) {
+      await setJson(`${queuePagePrefix}${index}`, null);
+    }
     // Cancel any idle callback token retained by the module before the next
     // test replaces timer globals. This mirrors a runtime queue drain and
     // keeps scheduling assertions independent of the preceding test.
@@ -43,7 +67,7 @@ describe('rescoringQueue', () => {
       tripIds: ['trip-1', 'trip-1', 'trip-2'],
     });
     const processed = await processRescoringQueue({ rescoreTrip });
-    const queue = await getJson(RESCORING_QUEUE_KEY, []);
+    const queue = await getRescoringQueue();
 
     expect(job.total).toBe(2);
     expect(rescoreTrip).toHaveBeenCalledTimes(2);
@@ -84,7 +108,7 @@ describe('rescoringQueue', () => {
       reason: 'speed_knowledge_rules_changed',
       tripIds: ['trip-1', 'trip-2'],
     });
-    const queue = await getJson(RESCORING_QUEUE_KEY, []);
+    const queue = await getRescoringQueue();
     const status = await getRescoringQueueStatus({ knowledgeRevisionOnly: true });
 
     expect(speedKnowledgeRepositoryMocks.readSpeedKnowledgeMetadata).toHaveBeenCalledTimes(2);
@@ -95,7 +119,8 @@ describe('rescoringQueue', () => {
       targetKnowledgeRevision: 37,
       knowledgeSchemaVersion: 2,
       total: 2,
-      remainingTripIds: ['trip-1', 'trip-2'],
+      // P4-C-F06: ids live in the job's pages; the document keeps scalars.
+      pending: 2,
     });
     expect(status.latest?.knowledgeRevision).toBe(37);
   });
@@ -135,7 +160,7 @@ describe('rescoringQueue', () => {
     callbacks.shift()();
     await vi.waitFor(() => expect(rescoreTrip).toHaveBeenCalledTimes(2));
 
-    const queue = await getJson(RESCORING_QUEUE_KEY, []);
+    const queue = await getRescoringQueue();
     expect(queue.map((job) => job.status)).toEqual(['complete', 'complete']);
   });
 

@@ -490,12 +490,29 @@ export async function getAndroidPhoneUsageSummary(startMs, endMs) {
   }
 }
 
-export async function getNativeCompletedTrips() {
+/**
+ * AUD-005. `maxItems` is the page the caller can afford this turn. Without it the bridge
+ * published every pending completed trip as one payload and JavaScript held the whole
+ * array, so intake cost grew with whatever had accumulated while the app was closed.
+ */
+export async function getNativeCompletedTrips(options = {}) {
   if (!isAndroid()) return [];
+  const maxItems = Math.max(0, Math.floor(Number(options?.maxItems) || 0));
   try {
-    const result = await ActivityRecognition.getNativeCompletedTrips();
+    const result = await ActivityRecognition.getNativeCompletedTrips(
+      maxItems > 0 ? { maxItems } : {},
+    );
     const trips = Array.isArray(result?.trips) ? result.trips : [];
     const queueReadable = result?.queueStatus?.queueReadable;
+    const summaryState = String(result?.queueStatus?.summaryState || '').toUpperCase();
+    if (summaryState === 'BOOTSTRAP_REQUIRED') {
+      window.dispatchEvent(new CustomEvent('roadsage:p5-journal-bootstrap-required'));
+    } else if (['DIRTY', 'UNKNOWN', 'REPAIR_REQUIRED'].includes(summaryState)) {
+      const { admitP5ReviewedWork, P5_LIFECYCLE_JOB_KEYS } = await import('@/lib/appLifecycleWork');
+      admitP5ReviewedWork(P5_LIFECYCLE_JOB_KEYS.JOURNAL_MANIFEST_RECONCILE, {
+        wake: { type: 'journal_state', key: 'repairable' },
+      });
+    }
     recordSystemEvent('android_native_completed_trips_loaded', {
       trip_count: trips.length,
       queue_readable: queueReadable !== false,
@@ -514,6 +531,61 @@ export async function getNativeCompletedTrips() {
     logSystemFailure('android_native_completed_trips_load', error);
     throw error;
   }
+}
+
+/**
+ * AUD-005 round 2. The page WITH the journal's own verdict on it.
+ *
+ * `getNativeCompletedTrips()` returns only the trips, so the caller had to infer whether
+ * the queue was drained from how many came back. That inference is wrong in exactly the
+ * case that matters: a queue holding one preserved-unreadable entry and nothing readable
+ * returns zero trips, and "zero" read as "drained" quietly abandons it. Continuation and
+ * blocked state are the journal's answer, and this returns them unchanged.
+ *
+ * @returns {Promise<{trips: any[], hasMore: boolean, blocked: boolean,
+ *   oversizedTripIds: string[], unreadableTripIds: string[], queueStatus: any}>}
+ */
+export async function getNativeCompletedTripPage(options = {}) {
+  if (!isAndroid()) {
+    return {
+      trips: [], hasMore: false, blocked: false,
+      oversizedTripIds: [], unreadableTripIds: [], queueStatus: null,
+    };
+  }
+  const maxItems = Math.max(0, Math.floor(Number(options?.maxItems) || 0));
+  const result = await ActivityRecognition.getNativeCompletedTrips(
+    maxItems > 0 ? { maxItems } : {},
+  );
+  const queueStatus = result?.queueStatus ?? null;
+  const trips = Array.isArray(result?.trips) ? result.trips : [];
+  const oversizedTripIds = Array.isArray(result?.oversizedTripIds) ? result.oversizedTripIds : [];
+  const unreadableTripIds = Array.isArray(result?.unreadableTripIds)
+    ? result.unreadableTripIds
+    : [];
+  const unreadableCount = Math.max(
+    0,
+    Number(queueStatus?.unreadableCount) || 0,
+    Number(result?.preservedUnreadableCount) || 0,
+  );
+  const blocked = result?.blocked === true
+    || oversizedTripIds.length > 0
+    || unreadableTripIds.length > 0
+    || unreadableCount > 0;
+
+  return {
+    trips,
+    queueStatus,
+    oversizedTripIds,
+    unreadableTripIds,
+    preservedUnreadableCount: unreadableCount,
+    blocked,
+    // AUD-005 round 3. `blocked: true` with `hasMore: false` is a contradiction, and the
+    // native side can produce it honestly: an index holding only unreadable rows yields no
+    // page entries, so the page's own counters look empty. Preserved work of ANY class —
+    // readable pending, unreadable, oversized, unknown — is unresolved work, and
+    // unresolved work is not a drained queue. The boolean never outranks that.
+    hasMore: result?.hasMore === true || blocked,
+  };
 }
 
 export async function acknowledgeNativeCompletedTrips(tripIds = []) {

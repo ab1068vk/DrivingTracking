@@ -205,15 +205,43 @@ function buildSourceSummary(rows = []) {
     .sort((a, b) => b.count - a.count || a.sourceLabel.localeCompare(b.sourceLabel));
 }
 
+/**
+ * **O37** — per-trip speed coverage over a bounded candidate set.
+ *
+ * A candidate the geometry owner cannot cover is reported as **unknown**, not
+ * as zero. Those are different facts: 0% coverage means the trip was measured
+ * and no speed source matched, while unknown means the owner has not built a
+ * preview for it. Rendering the second as the first invents a finding.
+ */
 function buildTripCoverageRows(trips = []) {
   return trips
-    .filter((trip) => Array.isArray(trip?.route_points) && trip.route_points.length > 0)
     .map((trip) => {
-      const summary = summarizeTripSpeedLimitIntelligence(trip);
-      return {
+      const covered = Array.isArray(trip?.route_points) && trip.route_points.length > 0;
+      const base = {
         tripId: trip.id || '',
         tripLabel: trip.nickname || trip.tag || trip.id || 'Completed trip',
         startTime: trip.start_time || null,
+        reviewHref: trip.id ? `/trips/${trip.id}?review=speed-limit-conflicts` : '/speed-limits?view=review',
+        analysisHref: trip.id ? `/trips/${trip.id}/speed` : '/speed-limits?view=review',
+      };
+      if (!covered) {
+        return {
+          ...base,
+          coverageKnown: false,
+          coveragePercent: null,
+          verifiedCoveragePercent: null,
+          estimatedCoveragePercent: null,
+          lowConfidencePointCount: null,
+          thresholdExceededPointCount: null,
+          maxOverKmh: null,
+          sources: [],
+          recommendation: 'Coverage for this trip has not been prepared yet.',
+        };
+      }
+      const summary = summarizeTripSpeedLimitIntelligence(trip);
+      return {
+        ...base,
+        coverageKnown: true,
         coveragePercent: summary.coveragePercent,
         verifiedCoveragePercent: summary.verifiedCoveragePercent,
         estimatedCoveragePercent: Math.max(0, summary.coveragePercent - summary.verifiedCoveragePercent),
@@ -222,8 +250,6 @@ function buildTripCoverageRows(trips = []) {
         maxOverKmh: summary.maxOverKmh,
         sources: summary.sources,
         recommendation: neutralizeSpeedRecommendation(summary.recommendations[0]),
-        reviewHref: trip.id ? `/trips/${trip.id}?review=speed-limit-conflicts` : '/speed-limits?view=review',
-        analysisHref: trip.id ? `/trips/${trip.id}/speed` : '/speed-limits?view=review',
       };
     })
     .sort((a, b) => new Date(b.startTime || 0).getTime() - new Date(a.startTime || 0).getTime());

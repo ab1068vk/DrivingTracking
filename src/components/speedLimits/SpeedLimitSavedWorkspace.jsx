@@ -212,8 +212,12 @@ export default function SpeedLimitSavedWorkspace({
                 <span className="rounded-lg bg-background/80 px-2 py-1.5">
                   <strong>{health?.learningRoadMemoryCount || 0}</strong> learning
                 </span>
+                {/* O36: a bounded scan can state a floor, never a total. The
+                    old `N/total` read "12/81" no matter how much history
+                    existed, because the total was synthesized from the page. */}
                 <span className="rounded-lg bg-background/80 px-2 py-1.5">
-                  <strong>{geometryIndexState.indexedTripCount || 0}/{geometryIndexState.totalAvailable || 0}</strong> trip routes indexed
+                  <strong>{geometryIndexState.indexedTripCount || 0}</strong>
+                  {geometryIndexState.exact ? ' trip routes indexed' : ' trip routes indexed so far, more available'}
                 </span>
               </div>
             </div>

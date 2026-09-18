@@ -48,6 +48,7 @@ import {
   getPremiumTripScorePresentation,
   getPremiumTripTimePresentation,
 } from '@/lib/premiumTripPresentation';
+import { formatMeasurement, tripDistanceKm, tripDurationSeconds } from '@/lib/measurementAvailability';
 
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const SCORE_UNAVAILABLE_MESSAGE = 'Score unavailable for this trip – re-score to update';
@@ -211,11 +212,11 @@ export default function PremiumTripCard({
         <div className="premium-trip-metrics" aria-label="Trip metrics">
           <div className="premium-trip-metric" data-metric="distance">
             <span className="premium-trip-metric-icon"><Navigation /></span>
-            <span><strong>{formatDistance(trip.distance_km || 0, units)}</strong><small>Distance</small></span>
+            <span><strong>{formatMeasurement(tripDistanceKm(trip), (km) => formatDistance(km, units))}</strong><small>Distance</small></span>
           </div>
           <div className="premium-trip-metric" data-metric="duration">
             <span className="premium-trip-metric-icon"><Clock3 /></span>
-            <span><strong>{formatDuration(trip.duration_seconds)}</strong><small>Duration</small></span>
+            <span><strong>{formatMeasurement(tripDurationSeconds(trip), formatDuration)}</strong><small>Duration</small></span>
           </div>
           <div className="premium-trip-metric" data-metric="speed">
             <span className="premium-trip-metric-icon"><Gauge /></span>

@@ -21,6 +21,7 @@ import {
 import {
   RETENTION_MS,
   buildDiagnosticStores,
+  buildDiagnosticsIndexedDbFixture,
   retentionSafeTimestamps,
 } from '../../../scripts/p0-seed-dataset.mjs';
 
@@ -666,6 +667,32 @@ describe('deterministic fixture behaviour', () => {
     expect(stores.roadsage_performance_history_v1).toEqual([]);
     expect(stores.drivesense_system_logs_v1).toEqual([]);
     expect(stores.roadsage_app_experience_events_v1).toEqual([]);
+  });
+
+  it('emits a restorable completed P1 diagnostics IndexedDB artifact', () => {
+    const epochMs = Date.UTC(2026, 7, 15, 8, 0, 0);
+    const fixture = buildDiagnosticsIndexedDbFixture(true, epochMs);
+
+    expect(fixture).toMatchObject({
+      format: 'roadsage_diagnostics_indexeddb_v1',
+      restore: {
+        database: 'roadsage_diagnostics',
+        version: 1,
+        mode: 'replace_named_stores',
+        required_stores: ['events', 'meta'],
+      },
+    });
+    expect(fixture.stores.events).toHaveLength(9000);
+    expect(fixture.stores.meta).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'diagnostics_storage_v1_complete' }),
+      expect.objectContaining({ key: 'migration:performance', value: expect.objectContaining({ state: 'complete' }) }),
+      expect.objectContaining({ key: 'migration:system_log', value: expect.objectContaining({ state: 'complete' }) }),
+      expect.objectContaining({ key: 'migration:app_experience', value: expect.objectContaining({ state: 'complete' }) }),
+    ]));
+    const expiryKinds = new Set(fixture.stores.events
+      .filter((row) => Number.isFinite(row.expiresAtMs))
+      .map((row) => row.kind));
+    expect(expiryKinds).toEqual(new Set(['performance', 'system_log', 'app_experience']));
   });
 });
 

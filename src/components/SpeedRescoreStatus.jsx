@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, RefreshCw, TriangleAlert } from 'lucide-react';
 import { getRescoringQueueStatus } from '@/lib/rescoringQueue';
-import { readSpeedKnowledgeData } from '@/lib/speedKnowledgeRepository';
+import { readSpeedKnowledgeMetadata } from '@/lib/speedKnowledgeRepository';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
+import { P6_EXPLICIT_OPERATION_STATES, P6_EXPLICIT_OPERATION_TYPES } from '@/lib/p6Contracts';
 
 const EMPTY_QUEUE = {
   activeJobs: 0,
@@ -16,6 +17,7 @@ const EMPTY_QUEUE = {
 const EMPTY = {
   queue: EMPTY_QUEUE,
   knowledge: null,
+  selectionOperation: null,
 };
 
 const finiteRevision = (...values) => {
@@ -27,7 +29,7 @@ const finiteRevision = (...values) => {
   return null;
 };
 
-export function buildSpeedRescoreView(queue = EMPTY_QUEUE, knowledge = null) {
+export function buildSpeedRescoreView(queue = EMPTY_QUEUE, knowledge = null, selectionOperation = null) {
   const latest = queue?.latest || null;
   const active = Number(queue?.activeJobs) > 0;
   const knowledgeRevision = finiteRevision(
@@ -49,7 +51,11 @@ export function buildSpeedRescoreView(queue = EMPTY_QUEUE, knowledge = null) {
     historicalRevision < knowledgeRevision;
   const revisionCurrent = !active && completedAt > 0 && knowledgeRevision != null &&
     historicalRevision != null && historicalRevision >= knowledgeRevision && latestFailed === 0;
-  const tone = latestFailed || waitingForRevision
+  const selectionPending = Boolean(selectionOperation
+    && ![P6_EXPLICIT_OPERATION_STATES.COMPLETED, P6_EXPLICIT_OPERATION_STATES.CANCELLED]
+      .includes(selectionOperation.state)
+    && selectionOperation.details?.selectionPending === true);
+  const tone = latestFailed || waitingForRevision || selectionPending
     ? 'warning'
     : active
       ? 'running'
@@ -58,7 +64,9 @@ export function buildSpeedRescoreView(queue = EMPTY_QUEUE, knowledge = null) {
         : 'idle';
 
   let title = 'No historical score update is pending';
-  if (active) {
+  if (selectionPending) {
+    title = 'Affected-trip selection is pending';
+  } else if (active) {
     title = `Updating historical scores - ${Number(queue?.completedTrips) || 0} of ${Number(queue?.totalTrips) || 0}`;
   } else if (latestFailed) {
     title = `Historical score update has ${latestFailed} unresolved trip${latestFailed === 1 ? '' : 's'}`;
@@ -94,20 +102,28 @@ export function buildSpeedRescoreView(queue = EMPTY_QUEUE, knowledge = null) {
     tone,
     updatedAt,
     waitingForRevision,
+    selectionPending,
+    selectionReason: selectionOperation?.details?.spatialSelectionReason || null,
   };
 }
 
 export default function SpeedRescoreStatus({ compact = false }) {
   const [snapshot, setSnapshot] = useState(EMPTY);
   const load = useCallback(async () => {
-    const [queue, knowledge] = await Promise.all([
+    const [queue, knowledge, operations] = await Promise.all([
       getRescoringQueueStatus({
         reasonPrefix: 'speed_knowledge',
         knowledgeRevisionOnly: true,
       }).catch(() => EMPTY_QUEUE),
-      readSpeedKnowledgeData().catch(() => null),
+      readSpeedKnowledgeMetadata().catch(() => null),
+      import('@/lib/p6ExplicitOperations')
+        .then(({ listP6ExplicitOperations }) => listP6ExplicitOperations())
+        .catch(() => []),
     ]);
-    setSnapshot({ queue, knowledge });
+    const selectionOperation = operations
+      .filter((operation) => operation?.type === P6_EXPLICIT_OPERATION_TYPES.AFFECTED_TRIP_RESCORE)
+      .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0))[0] || null;
+    setSnapshot({ queue, knowledge, selectionOperation });
   }, []);
 
   useEffect(() => {
@@ -123,8 +139,9 @@ export default function SpeedRescoreStatus({ compact = false }) {
     };
   }, [load]);
 
-  const view = buildSpeedRescoreView(snapshot.queue, snapshot.knowledge);
-  if (!view.active && !view.latestFailed && !view.completedAt && view.knowledgeRevision == null && compact) return null;
+  const view = buildSpeedRescoreView(snapshot.queue, snapshot.knowledge, snapshot.selectionOperation);
+  if (!view.active && !view.selectionPending && !view.latestFailed
+    && !view.completedAt && view.knowledgeRevision == null && compact) return null;
 
   const toneClass = view.tone === 'warning'
     ? 'border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/20'
@@ -167,6 +184,7 @@ export default function SpeedRescoreStatus({ compact = false }) {
           {!compact && (
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
               {view.revisionDetail}
+              {view.selectionPending ? ` Spatial selection is waiting for D3 recovery${view.selectionReason ? ` (${view.selectionReason})` : ''}.` : ''}
               {' '}Speed changes are saved first, then affected completed trips are recalculated in a persistent queue that resumes after the app reopens.
               {view.completedAt ? ` Last queue completion ${new Date(view.completedAt).toLocaleString()}.` : ''}
             </p>

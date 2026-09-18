@@ -36,6 +36,9 @@ export function ubiGrade(score) {
   return 'D';
 }
 
+/** The frozen UBI disclaimer, shared by both entry points. */
+const ubiDisclaimer = (optimalAnnualKm) => `Estimated score only. This UBI-style report uses internal GPS-derived approximations and is not an insurer-validated insurance rating, eligibility decision, or pricing estimate. Mileage scoring assumes an optimal ${optimalAnnualKm.toLocaleString()} km/year; adjust this in Settings if your region or use case differs.`;
+
 const category = (score, label, value) => ({
   score,
   grade: ubiGrade(score),
@@ -49,6 +52,116 @@ const unavailableCategory = (label, value) => ({
   label,
   value,
 });
+
+/**
+ * The same UBI-style report, computed from the `p7.ubi.terms@1` terms instead
+ * of from a fetched trip array (P7 Stage 6.7, Annex C **O26**).
+ *
+ * The arithmetic below is `computeUBIReport`'s, term for term and branch for
+ * branch. Only the inputs change: the eight declared scalars, the rolling
+ * 12-month mileage window (a different window, read separately), and the
+ * observed bounds of the report period (two bounded edge rows). That matters
+ * because the report has a period selector, and folding a 200-row page meant a
+ * long period scored the newest 200 drives while claiming to score the period.
+ *
+ * @param {object|null} terms the reducer output, or `null` when not yet read
+ * @param {object} settings
+ * @param {{mileageWindowKm?: number, periodStart?: string|null, periodEnd?: string|null}} window
+ */
+export function computeUBIReportFromTerms(terms, settings = {}, window = {}) {
+  const num = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+  const tripCount = num(terms?.trip_count);
+  const totalKm = num(terms?.distance_km);
+  const totalDrivingMinutes = num(terms?.driving_minutes);
+  const periodStart = window.periodStart ?? null;
+  const periodEnd = window.periodEnd ?? null;
+  const generatedAt = new Date();
+
+  const insufficient = (mileageValue) => ({
+    generatedAt: generatedAt.toISOString(),
+    periodStart,
+    periodEnd,
+    tripCount,
+    totalKm: Math.round(totalKm * 10) / 10,
+    totalDrivingMinutes: Math.round(totalDrivingMinutes),
+    ubiScore: null,
+    ubiGrade: null,
+    ubiTier: null,
+    insufficientData: true,
+    minimumDistanceKm: MIN_UBI_REPORT_DISTANCE_KM,
+    categories: {
+      mileage: unavailableCategory('Total mileage', mileageValue),
+      timeOfDay: unavailableCategory('Time of day', 'Insufficient data'),
+      hardBraking: unavailableCategory('Hard braking', 'Insufficient data'),
+      acceleration: unavailableCategory('Rapid acceleration', 'Insufficient data'),
+      cornering: unavailableCategory('Cornering', 'Insufficient data'),
+      speedCompliance: unavailableCategory('Speed compliance', 'Insufficient data'),
+    },
+    disclaimer: `Complete at least ${MIN_UBI_REPORT_DISTANCE_KM} km before generating a UBI-style score.`,
+  });
+
+  if (!tripCount) return insufficient('0.0 km');
+  if (totalKm < MIN_UBI_REPORT_DISTANCE_KM) return insufficient(`${totalKm.toFixed(1)} km`);
+
+  const nightRatio = totalDrivingMinutes > 0
+    ? num(terms?.night_driving_minutes) / totalDrivingMinutes
+    : 0;
+  const per100 = (count) => (count / totalKm) * 100;
+  const brakesPer100Km = per100(num(terms?.harsh_brakes));
+  const accelPer100Km = per100(num(terms?.rapid_accels));
+  const turnsPer100Km = per100(num(terms?.sharp_turns));
+  const speedingPer100Km = per100(num(terms?.speeding_events));
+
+  // The mileage window is a rolling 12 months, not the report period, so it is
+  // supplied by its own bounded read rather than derived from these terms.
+  const mileageWindowKm = num(window.mileageWindowKm);
+
+  const optimalAnnualKm = Number.isFinite(Number(settings.ubi_optimal_annual_km)) && Number(settings.ubi_optimal_annual_km) > 0
+    ? Number(settings.ubi_optimal_annual_km)
+    : DEFAULT_OPTIMAL_ANNUAL_KM;
+  const mileageScoreSpreadKm = Number.isFinite(Number(settings.ubi_mileage_score_spread_km)) && Number(settings.ubi_mileage_score_spread_km) > 0
+    ? Number(settings.ubi_mileage_score_spread_km)
+    : DEFAULT_MILEAGE_SCORE_SPREAD_KM;
+  const mileageScore = clamp(Math.round(
+    100 * Math.exp(-0.5 * ((mileageWindowKm - optimalAnnualKm) / mileageScoreSpreadKm) ** 2)
+  ), 0, 100);
+  const timeOfDayScore = Math.round(Math.max(0, 100 - nightRatio * TIME_OF_DAY_NIGHT_MULTIPLIER));
+  const brakingScore = Math.max(0, Math.round(100 - brakesPer100Km * BRAKING_PENALTY_PER_100KM));
+  const accelScore = Math.max(0, Math.round(100 - accelPer100Km * ACCEL_PENALTY_PER_100KM));
+  const corneringScore = Math.max(0, Math.round(100 - turnsPer100Km * CORNERING_PENALTY_PER_100KM));
+  const speedScore = Math.max(0, Math.round(100 - speedingPer100Km * SPEED_PENALTY_PER_100KM));
+  const ubiScore = Math.round(
+    mileageScore * UBI_CATEGORY_WEIGHTS.mileage +
+    timeOfDayScore * UBI_CATEGORY_WEIGHTS.timeOfDay +
+    brakingScore * UBI_CATEGORY_WEIGHTS.hardBraking +
+    accelScore * UBI_CATEGORY_WEIGHTS.acceleration +
+    corneringScore * UBI_CATEGORY_WEIGHTS.cornering +
+    speedScore * UBI_CATEGORY_WEIGHTS.speedCompliance
+  );
+
+  return {
+    generatedAt: generatedAt.toISOString(),
+    periodStart,
+    periodEnd,
+    tripCount,
+    totalKm: Math.round(totalKm * 10) / 10,
+    totalDrivingMinutes: Math.round(totalDrivingMinutes),
+    ubiScore,
+    ubiGrade: ubiGrade(ubiScore),
+    ubiTier: ubiScore >= 85 ? 'Preferred' : ubiScore >= 70 ? 'Standard' : 'Non-preferred',
+    insufficientData: false,
+    categories: {
+      mileage: category(mileageScore, '12-month mileage', `${mileageWindowKm.toFixed(1)} km`),
+      timeOfDay: category(timeOfDayScore, 'Time of day', `${(nightRatio * 100).toFixed(0)}% night`),
+      hardBraking: category(brakingScore, 'Hard braking', `${brakesPer100Km.toFixed(1)}/100 km`),
+      acceleration: category(accelScore, 'Rapid acceleration', `${accelPer100Km.toFixed(1)}/100 km`),
+      cornering: category(corneringScore, 'Cornering', `${turnsPer100Km.toFixed(1)}/100 km`),
+      speedCompliance: category(speedScore, 'Speed compliance', `${speedingPer100Km.toFixed(1)}/100 km`),
+    },
+    assumptions: { optimalAnnualKm, mileageScoreSpreadKm },
+    disclaimer: ubiDisclaimer(optimalAnnualKm),
+  };
+}
 
 export function computeUBIReport(trips = [], settings = {}, _vehicles = []) {
   const completed = (trips || []).filter((trip) => trip?.status === 'completed');
@@ -176,6 +289,6 @@ export function computeUBIReport(trips = [], settings = {}, _vehicles = []) {
       optimalAnnualKm,
       mileageScoreSpreadKm,
     },
-    disclaimer: `Estimated score only. This UBI-style report uses internal GPS-derived approximations and is not an insurer-validated insurance rating, eligibility decision, or pricing estimate. Mileage scoring assumes an optimal ${optimalAnnualKm.toLocaleString()} km/year; adjust this in Settings if your region or use case differs.`,
+    disclaimer: ubiDisclaimer(optimalAnnualKm),
   };
 }

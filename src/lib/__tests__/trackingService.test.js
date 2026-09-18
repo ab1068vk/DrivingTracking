@@ -21,6 +21,7 @@ vi.mock('@capacitor/geolocation', () => ({
 }));
 
 vi.mock('@/lib/nativePlatform', () => ({
+  isAndroid: () => false,
   isNativePlatform: () => false,
 }));
 

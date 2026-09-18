@@ -2,20 +2,27 @@
 import { tripTouchesPrivacyZoneForTrend } from '@/lib/privateTripMode';
 import { routeKeyForTrip } from '@/lib/commuteMatching';
 import { getTripComponentScore } from '@/lib/tripEngine';
+import { deriveAggregateScoreProvenance } from '@/lib/scoreDisplay';
+import {
+  emptyLedger,
+  loadDriverProgressionLedger,
+  normalizeLedger,
+  PROGRESSION_HISTORY_PAGE,
+  PROGRESSION_LEDGER_VERSION,
+  pruneProgressionLedger,
+  readProgressionTransactionPage,
+  readProgressionXpSummary,
+  recordProgressionTransactions,
+  writeDriverProgressionLedger,
+} from '@/lib/driverProgressionLedger';
 
 const DAY_MS = 86400000;
-const LEDGER_KEY = 'drivesense_driver_progression_ledger_v1';
 const TIER_POINTS = { bronze: 100, silver: 180, gold: 280, platinum: 420, master: 650 };
 
-const emptyLedger = () => ({
-  version: 2,
-  mastery: {},
-  missions: {},
-  seasons: {},
-  weeklyPlans: {},
-  xpTransactions: [],
-  celebrations: [],
-});
+export { loadDriverProgressionLedger };
+
+/** Persisted unlocks one bounded notification page materializes. */
+export const PROGRESSION_NOTIFICATION_PAGE = PROGRESSION_HISTORY_PAGE;
 
 const number = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -330,7 +337,7 @@ function trendFor(current, previous) {
   return { direction: 'stable', delta, label: 'Stable' };
 }
 
-function buildMasteryTracks(allStats, recentStats, previousStats, ledger = {}) {
+function buildMasteryTracks(allStats, recentStats, previousStats, ledger = {}, scoreProvenance = null) {
   return TRACK_DEFINITIONS.map((definition) => {
     const currentScore = scoreForTrack(definition, recentStats);
     const previousScore = scoreForTrack(definition, previousStats);
@@ -363,6 +370,10 @@ function buildMasteryTracks(allStats, recentStats, previousStats, ledger = {}) {
     return {
       ...definition,
       score: currentScore,
+      // HPR-009. The derived track score is only as calibrated as the trips it
+      // was folded from, so it carries its own provenance to the screen instead
+      // of arriving as a bare number.
+      scoreProvenance,
       trend: trendFor(currentScore, previousScore),
       tiers,
       currentTier,
@@ -693,35 +704,9 @@ function rankForScore(score) {
   return { name: band.name, division, label: `${band.name} ${division}` };
 }
 
-export function loadDriverProgressionLedger() {
-  if (typeof localStorage === 'undefined') return emptyLedger();
-  try {
-    const value = JSON.parse(localStorage.getItem(LEDGER_KEY) || 'null');
-    if (value && typeof value === 'object') return {
-      ...emptyLedger(),
-      ...value,
-      version: 2,
-      mastery: value.mastery || {},
-      missions: value.missions || {},
-      seasons: value.seasons || {},
-      weeklyPlans: value.weeklyPlans || {},
-      xpTransactions: Array.isArray(value.xpTransactions) ? value.xpTransactions : [],
-      celebrations: Array.isArray(value.celebrations) ? value.celebrations : [],
-    };
-  } catch {
-    // A corrupt optional ledger should never prevent the progression page from loading.
-  }
-  return emptyLedger();
-}
-
-const writeDriverProgressionLedger = (ledger) => {
-  if (typeof localStorage === 'undefined') return;
-  try { localStorage.setItem(LEDGER_KEY, JSON.stringify(ledger)); } catch { /* optional persistence */ }
-};
-
 export function updateDriverProgressionMissionSelection(weekKey, missionIds, currentLedger = loadDriverProgressionLedger()) {
-  const next = { ...emptyLedger(), ...JSON.parse(JSON.stringify(currentLedger)) };
-  next.version = 2;
+  const next = normalizeLedger(JSON.parse(JSON.stringify(currentLedger)));
+  next.version = PROGRESSION_LEDGER_VERSION;
   next.weeklyPlans ||= {};
   const current = next.weeklyPlans[weekKey];
   if (!current) return next;
@@ -729,38 +714,52 @@ export function updateDriverProgressionMissionSelection(weekKey, missionIds, cur
   const selected = [...new Set(missionIds)].slice(0, 3);
   if (selected.length !== 3) return next;
   next.weeklyPlans[weekKey] = { ...current, activeMissionIds: selected, selectionLocked: true };
-  writeDriverProgressionLedger(next);
-  return next;
+  const pruned = pruneProgressionLedger(next);
+  writeDriverProgressionLedger(pruned);
+  return pruned;
 }
 
 export function acknowledgeDriverProgressionCelebration(id, currentLedger = loadDriverProgressionLedger()) {
-  const next = { ...emptyLedger(), ...JSON.parse(JSON.stringify(currentLedger)) };
-  next.version = 2;
+  const next = normalizeLedger(JSON.parse(JSON.stringify(currentLedger)));
+  next.version = PROGRESSION_LEDGER_VERSION;
   next.celebrations = (next.celebrations || []).map((celebration) => celebration.id === id ? { ...celebration, seen: true } : celebration);
   writeDriverProgressionLedger(next);
   return next;
 }
 
+/**
+ * Record everything `progression` just unlocked.
+ *
+ * P4-B-F01-3. This used to deep-copy the whole ledger, run `.some()` over every
+ * historical XP transaction per candidate and re-sort all of them on every
+ * call - O(total unlocks) work and memory inside whichever turn ran it. It now
+ * appends only the transactions whose unlock was not already recorded, through
+ * the segmented store's bounded append, and the deep copy it still makes is of
+ * a ledger that retention keeps bounded.
+ *
+ * Dedupe is exact rather than a scan: a transaction id is `xp:<unlock id>`, and
+ * the mastery/mission/season maps are written in the same operation that
+ * appends it, so "already in the map" is precisely "already has a transaction".
+ * The one exception is a pre-v2 ledger that carries unlock maps but has never
+ * recorded a transaction; that is detected in O(1) from the summary count and
+ * backfilled exactly once, as the old `.some()` guard did.
+ */
 export function syncDriverProgressionLedger(progression, currentLedger = loadDriverProgressionLedger()) {
-  const next = { ...emptyLedger(), ...JSON.parse(JSON.stringify(currentLedger || emptyLedger())) };
-  next.version = 2;
-  next.mastery ||= {};
-  next.missions ||= {};
-  next.seasons ||= {};
-  next.weeklyPlans ||= {};
-  next.xpTransactions ||= [];
-  next.celebrations ||= [];
+  const source = normalizeLedger(currentLedger || emptyLedger());
+  const next = normalizeLedger(JSON.parse(JSON.stringify(source)));
+  next.version = PROGRESSION_LEDGER_VERSION;
+  const backfillLegacyUnlocks = readProgressionXpSummary(source).count === 0;
   const now = progression.generatedAt;
   const newUnlocks = [];
+  const appended = [];
   if (progression.missionPlan && !next.weeklyPlans[progression.missionPlan.weekKey]) {
     next.weeklyPlans[progression.missionPlan.weekKey] = progression.missionPlan;
   } else if (progression.missionPlan?.selectionLocked && next.weeklyPlans[progression.missionPlan.weekKey]) {
     next.weeklyPlans[progression.missionPlan.weekKey].selectionLocked = true;
   }
   const addTransaction = ({ id, type, title, detail, amount, tripId = null, newlyUnlocked = false }) => {
-    const transactionId = `xp:${id}`;
-    if (!next.xpTransactions.some((transaction) => transaction.id === transactionId)) {
-      next.xpTransactions.push({ id: transactionId, sourceId: id, type, title, detail, amount, tripId, earnedAt: now });
+    if (newlyUnlocked || backfillLegacyUnlocks) {
+      appended.push({ id: `xp:${id}`, sourceId: id, type, title, detail, amount, tripId, earnedAt: now });
     }
     if (newlyUnlocked) {
       const unlock = { id, type, title, detail, xp: amount, tripId, earnedAt: now };
@@ -786,13 +785,13 @@ export function syncDriverProgressionLedger(progression, currentLedger = loadDri
     if (newlyUnlocked) next.seasons[challenge.id] = now;
     addTransaction({ id: `season:${challenge.id}`, type: 'season', title: challenge.title, detail: `${progression.season.label} seasonal challenge`, amount: challenge.reward, tripId: progression.latestTripId, newlyUnlocked });
   });
-  next.xpTransactions.sort((a, b) => new Date(b.earnedAt).getTime() - new Date(a.earnedAt).getTime());
   const seenCelebrations = next.celebrations.filter((celebration) => celebration.seen).slice(-20);
   const pendingCelebrations = next.celebrations.filter((celebration) => !celebration.seen).slice(-5);
   next.celebrations = [...seenCelebrations, ...pendingCelebrations];
-  const changed = JSON.stringify(next) !== JSON.stringify(currentLedger);
-  if (changed) writeDriverProgressionLedger(next);
-  return { ledger: next, changed, newUnlocks };
+  const ledger = recordProgressionTransactions(pruneProgressionLedger(next), appended);
+  const changed = appended.length > 0 || JSON.stringify(ledger) !== JSON.stringify(source);
+  if (changed) writeDriverProgressionLedger(ledger);
+  return { ledger, changed, newUnlocks, transactions: appended };
 }
 
 export function buildDriverProgression(trips = [], settings = {}, options = {}) {
@@ -832,7 +831,13 @@ export function buildDriverProgression(trips = [], settings = {}, options = {}) 
   const masteryStats = progressionStats(eligible.slice(0, 40));
   const recentStats = progressionStats(recent);
   const previousStats = progressionStats(previous);
-  const masteryTracks = buildMasteryTracks(masteryStats, recentStats, previousStats, ledger);
+  // HPR-009. One conservative provenance for every score derived from this
+  // window: the constituents are exactly the eligible trips the derivation read,
+  // and the rule lives with the central display contract in `scoreDisplay.js`.
+  const derivedScoreProvenance = deriveAggregateScoreProvenance(
+    recent.map((trip) => trip.score_provenance ?? null),
+  );
+  const masteryTracks = buildMasteryTracks(masteryStats, recentStats, previousStats, ledger, derivedScoreProvenance);
   const scoredTracks = masteryTracks.map((track) => track.score).filter((score) => score != null);
   const formScore = scoredTracks.length ? round(mean(scoredTracks)) : null;
   const previousScores = TRACK_DEFINITIONS.map((definition) => scoreForTrack(definition, previousStats)).filter((score) => score != null);
@@ -847,22 +852,45 @@ export function buildDriverProgression(trips = [], settings = {}, options = {}) 
   }));
   const missions = missionCandidates.filter((mission) => missionBuild.plan.activeMissionIds.includes(mission.id));
   const season = buildSeason(eligible, ledger, nowMs);
-  const xp = (ledger.xpTransactions || []).reduce((sum, transaction) => sum + number(transaction.amount), 0);
+  // P4-B-F01-3: lifetime XP comes from the incrementally maintained summary and
+  // history from one bounded page, so neither reduces or materializes the whole
+  // transaction ledger. A lifecycle caller passes `historyLimit: 0` and reads
+  // no transaction record at all.
+  const xp = readProgressionXpSummary(ledger).total;
   const level = Math.floor(xp / 500) + 1;
-  const history = (ledger.xpTransactions || []).map((transaction) => ({ ...transaction, detail: `${transaction.detail} · +${transaction.amount} XP` }));
+  const historyPage = readProgressionTransactionPage({
+    cursor: options.historyCursor ?? null,
+    limit: options.historyLimit ?? PROGRESSION_HISTORY_PAGE,
+  }, ledger);
+  const history = historyPage.entries.map((transaction) => ({ ...transaction, detail: `${transaction.detail} · +${transaction.amount} XP` }));
 
-  const confidence = eligible.length >= 20 && allStats.distanceKm >= 300
+  // P7 Annex C C5.2: only `allStats` is lifetime, and the lifetime figures the
+  // eligibility block reports come from the owner that keys them
+  // (`p7.progression.lifetimeStats@1` for the eligible population, Q4 for the
+  // completed count). Everything else here is a trip-count or calendar window
+  // and is computed from the bounded rows exactly as before.
+  //
+  // Without an authoritative lifetime the figures fall back to the rows, which
+  // is what a direct caller with no owner gets.
+  const lifetime = options.lifetime || null;
+  const lifetimeEligible = Number.isFinite(lifetime?.eligibleTrips) ? lifetime.eligibleTrips : eligible.length;
+  const lifetimeCompleted = Number.isFinite(lifetime?.completedTrips) ? lifetime.completedTrips : allCompleted.length;
+  const lifetimeDistanceKm = Number.isFinite(lifetime?.distanceKm) ? lifetime.distanceKm : allStats.distanceKm;
+
+  const confidence = lifetimeEligible >= 20 && lifetimeDistanceKm >= 300
     ? 'Strong'
-    : eligible.length >= 8 && allStats.distanceKm >= 100 ? 'Moderate' : 'Developing';
+    : lifetimeEligible >= 8 && lifetimeDistanceKm >= 100 ? 'Moderate' : 'Developing';
 
   return {
     generatedAt: new Date(nowMs).toISOString(),
     latestTripId: options.tripId || eligible[0]?.id || null,
     eligibility: {
-      completedTrips: allCompleted.length,
-      eligibleTrips: eligible.length,
-      excludedTrips: allCompleted.length - eligible.length,
-      distanceKm: round(allStats.distanceKm, 1),
+      completedTrips: lifetimeCompleted,
+      eligibleTrips: lifetimeEligible,
+      excludedTrips: Math.max(0, lifetimeCompleted - lifetimeEligible),
+      distanceKm: round(lifetimeDistanceKm, 1),
+      /** `true` when the lifetime figures came from their owners, not the rows. */
+      lifetimeExact: Boolean(lifetime?.exact),
       minimumTripKm,
       minimumTripSeconds,
       confidence,
@@ -875,6 +903,7 @@ export function buildDriverProgression(trips = [], settings = {}, options = {}) 
     },
     currentForm: {
       score: formScore,
+      scoreProvenance: derivedScoreProvenance,
       rank: rankForScore(formScore),
       trend: formTrend,
       recentTrips: recent.length,
@@ -899,31 +928,98 @@ export function buildDriverProgression(trips = [], settings = {}, options = {}) 
     season,
     records: buildRecords(eligible),
     history,
+    historyCursor: historyPage.nextCursor,
+    historyHasMore: historyPage.hasMore,
     pendingCelebration: (ledger.celebrations || []).find((celebration) => !celebration.seen) || null,
     formSeries: [...eligible].slice(0, 30).reverse().map((trip) => ({ date: trip.start_time, score: round(trip.score_overall), tripId: trip.id })),
   };
 }
 
+/** One persisted XP transaction as a notification candidate. */
+const notificationBadgeForTransaction = (transaction) => ({
+  id: `progression_${transaction.sourceId}`,
+  label: transaction.title,
+  description: `${transaction.detail}. +${transaction.amount} XP`,
+  earned: true,
+});
+
+/**
+ * One bounded page of persisted unlock notification candidates, newest first.
+ *
+ * P4-B-F01-3: the page is now bounded at the *persistence* layer. It reads the
+ * segmented XP store's header plus at most `ceil(limit / segment size) + 1`
+ * segment records, so more retained unlocks cost more bounded turns instead of
+ * one larger parse. The cursor is `<segment>:<index>`, not a global offset: a
+ * newly prepended unlock can only re-present entries the delivered-id set
+ * already filters, never push an older undelivered one out of reach.
+ *
+ * @param {{cursor?: string|null, limit?: number}} [page]
+ * @param {object} [ledger]
+ */
+export function selectProgressionNotificationPage({ cursor = null, limit = PROGRESSION_NOTIFICATION_PAGE } = {}, ledger = loadDriverProgressionLedger()) {
+  const page = readProgressionTransactionPage({ cursor, limit }, ledger);
+  return {
+    candidates: page.entries.map(notificationBadgeForTransaction),
+    nextCursor: page.nextCursor,
+    hasMore: page.hasMore,
+  };
+}
+
+/**
+ * Every persisted unlock, read one bounded page at a time.
+ *
+ * The explicit (non-lifecycle) reconciliation has always offered the notifier
+ * every persisted unlock so delivery can recover from a denied permission; that
+ * behaviour is unchanged, but it is now assembled from bounded pages rather
+ * than from one whole-ledger materialization.
+ */
+const drainProgressionNotificationCandidates = (ledger, pageSize = PROGRESSION_NOTIFICATION_PAGE) => {
+  const candidates = [];
+  let cursor = null;
+  for (;;) {
+    const page = selectProgressionNotificationPage({ cursor, limit: pageSize }, ledger);
+    candidates.push(...page.candidates);
+    if (!page.hasMore || !page.nextCursor || page.candidates.length === 0) {
+      return { candidates, cursor: page.nextCursor, hasMore: page.hasMore && page.candidates.length > 0 };
+    }
+    cursor = page.nextCursor;
+  }
+};
+
+/**
+ * @param {Array} trips
+ * @param {object} settings
+ * @param {{tripId?: string|null, now?: number, notificationBadgeLimit?: number}} [options]
+ *   `notificationBadgeLimit` caps how many persisted unlocks are materialized
+ *   as candidates in this call, for callers that must stay bounded. Omitting it
+ *   keeps the historical "every persisted unlock" behaviour.
+ */
 export function processDriverProgressionAfterTrip(trips = [], settings = {}, options = {}) {
   const currentLedger = loadDriverProgressionLedger();
-  const beforeSync = buildDriverProgression(trips, settings, { ...options, ledger: currentLedger });
+  // The settlement never needs the history list; only the notification page
+  // below reads transaction records at all.
+  const buildOptions = { ...options, historyLimit: 0 };
+  const beforeSync = buildDriverProgression(trips, settings, { ...buildOptions, ledger: currentLedger });
   const firstSync = syncDriverProgressionLedger(beforeSync, currentLedger);
-  const afterFirstSync = buildDriverProgression(trips, settings, { ...options, ledger: firstSync.ledger });
+  const afterFirstSync = buildDriverProgression(trips, settings, { ...buildOptions, ledger: firstSync.ledger });
   const secondSync = syncDriverProgressionLedger(afterFirstSync, firstSync.ledger);
-  const progression = buildDriverProgression(trips, settings, { ...options, ledger: secondSync.ledger });
+  const progression = buildDriverProgression(trips, settings, { ...buildOptions, ledger: secondSync.ledger });
   const newUnlocks = [...firstSync.newUnlocks, ...secondSync.newUnlocks];
+  const limit = Number(options.notificationBadgeLimit) || 0;
+  // Include every persisted unlock so notification delivery can recover after
+  // a denied permission or scheduling failure. The notification service owns
+  // the durable delivered-ID dedupe, so already-sent milestones remain quiet.
+  // A bounded caller passes `notificationBadgeLimit` and pages the rest
+  // through `selectProgressionNotificationPage`.
+  const page = limit > 0
+    ? selectProgressionNotificationPage({ limit }, secondSync.ledger)
+    : drainProgressionNotificationCandidates(secondSync.ledger);
   return {
     progression,
     ledger: secondSync.ledger,
     newUnlocks,
-    // Include every persisted unlock so notification delivery can recover after
-    // a denied permission or scheduling failure. The notification service owns
-    // the durable delivered-ID dedupe, so already-sent milestones remain quiet.
-    notificationBadges: secondSync.ledger.xpTransactions.map((transaction) => ({
-      id: `progression_${transaction.sourceId}`,
-      label: transaction.title,
-      description: `${transaction.detail}. +${transaction.amount} XP`,
-      earned: true,
-    })),
+    notificationBadges: page.candidates,
+    notificationCursor: page.nextCursor ?? page.cursor ?? null,
+    notificationCandidatesRemain: page.hasMore === true,
   };
 }

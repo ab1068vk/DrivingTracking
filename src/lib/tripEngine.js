@@ -8032,7 +8032,18 @@ const csvSpeedLimitDefaultCountries = (trip = {}) => {
   return [...countries].sort().join(';');
 };
 
-export function tripsToCSV(trips, { includeTelemetry = true } = {}) {
+/**
+ * Streaming CSV writer.
+ *
+ * The array form builds every row before joining, which for a whole-archive
+ * export means holding the entire history and its serialized telemetry at
+ * once. This exposes the same row construction one trip at a time so an
+ * export can append rows as a bounded job streams them.
+ *
+ * `tripsToCSV` is a thin wrapper over this, so a single row can never differ
+ * between the two paths.
+ */
+export function createTripCsvWriter({ includeTelemetry = true } = {}) {
   const summaryHeaders = [
     'ID', 'Start Time', 'End Time', 'Duration (min)', 'Distance (km)',
     'Avg Speed (km/h)', 'Avg Moving Speed (km/h)', 'Max Speed (km/h)', 'Score', 'Safety', 'Smoothness',
@@ -8070,7 +8081,7 @@ export function tripsToCSV(trips, { includeTelemetry = true } = {}) {
   );
 
   const privacyExportSalt = createPrivacyExportSalt();
-  const rows = trips.map((rawTrip) => {
+  const buildRow = (rawTrip) => {
     const t = /** @type {any} */ (maskTripForPrivacyExport(rawTrip, undefined, privacyExportSalt));
     const feedbackItems = Object.values(t.event_feedback || {});
     const accurateFeedback = feedbackItems.filter((item) => item?.verdict === 'accurate').length;
@@ -8153,10 +8164,25 @@ export function tripsToCSV(trips, { includeTelemetry = true } = {}) {
     return includeTelemetry
       ? [...summaryRow, JSON.stringify(t.route_points || []), JSON.stringify(t.driving_events || [])]
       : summaryRow;
-  });
+  };
 
   const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  return [headers, metricMetadata, ...rows].map(r => r.map(escape).join(',')).join('\n');
+  const line = (row) => row.map(escape).join(',');
+
+  return {
+    /** The two fixed leading lines: column headers, then metric metadata. */
+    headerLines: () => [line(headers), line(metricMetadata)],
+    /** One CSV line for one trip. */
+    rowLine: (trip) => line(buildRow(trip)),
+  };
+}
+
+export function tripsToCSV(trips, options = {}) {
+  const writer = createTripCsvWriter(options);
+  return [
+    ...writer.headerLines(),
+    ...(Array.isArray(trips) ? trips : []).map((trip) => writer.rowLine(trip)),
+  ].join('\n');
 }
 
 export async function downloadCSV(content, filename) {

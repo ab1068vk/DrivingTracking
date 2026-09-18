@@ -1,23 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  listTrips: vi.fn(),
-  listVehicles: vi.fn(),
+  queryHistoryPage: vi.fn(),
+  readBadges: vi.fn(),
+  applyAggregate: vi.fn(),
+  readCalibrationCounters: vi.fn(),
+  listVehiclePage: vi.fn(),
   processProgression: vi.fn(),
   syncNativeTrips: vi.fn(),
   syncNotifications: vi.fn(),
   syncCalibrationNotifications: vi.fn(),
   mirrorCalibrationState: vi.fn(),
-  calculateBadges: vi.fn(),
   getSettings: vi.fn(),
   logFailure: vi.fn(),
 }));
 
 vi.mock('@/api/trips', () => ({
-  tripService: { listAllSummaries: mocks.listTrips },
+  tripService: { queryHistoryPage: mocks.queryHistoryPage },
 }));
 vi.mock('@/api/vehicles', () => ({
-  vehicleService: { list: mocks.listVehicles },
+  vehicleService: { listPage: mocks.listVehiclePage },
 }));
 vi.mock('@/lib/driverProgression', () => ({
   processDriverProgressionAfterTrip: mocks.processProgression,
@@ -26,12 +28,24 @@ vi.mock('@/lib/localTripRepository', () => ({
   syncNativeCompletedTrips: mocks.syncNativeTrips,
 }));
 vi.mock('@/lib/notificationService', () => ({
+  // The one-pass callers never cap, so the selector is the identity filter over
+  // earned candidates here; delivered-id filtering stays inside the notifier.
+  selectUndeliveredAchievements: (candidates = []) => ({
+    batch: candidates.filter((candidate) => candidate?.earned),
+    remaining: [],
+  }),
   syncAchievementNotifications: mocks.syncNotifications,
   syncCalibrationMilestoneNotifications: mocks.syncCalibrationNotifications,
   mirrorCalibrationStateToNative: mocks.mirrorCalibrationState,
 }));
-vi.mock('@/lib/tripInsights', () => ({
-  calculateAchievementBadges: mocks.calculateBadges,
+vi.mock('@/lib/achievementAggregates', () => ({
+  ACHIEVEMENT_WEEK_WINDOW_MAX_ROWS: 2000,
+  achievementAggregateNeedsRepair: vi.fn(async () => false),
+  applyCompletedTripToAggregates: mocks.applyAggregate,
+  readAchievementBadges: mocks.readBadges,
+  readAchievementSurfaces: vi.fn(async () => ({ badges: [], calibration: null, needsRepair: false })),
+  readCalibrationProgressFromAggregates: mocks.readCalibrationCounters,
+  stepAchievementAggregateRepair: vi.fn(async () => ({ processed: 0, hasMore: false, built: true })),
 }));
 vi.mock('@/lib/trackingStore', () => ({
   localSettings: { get: mocks.getSettings },
@@ -50,8 +64,12 @@ describe('milestone notification coordinator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getSettings.mockReturnValue({ achievement_notifications: true });
-    mocks.listVehicles.mockResolvedValue([{ id: 'vehicle-1' }]);
-    mocks.calculateBadges.mockReturnValue([{ id: 'first_drive', earned: true }]);
+    mocks.listVehiclePage.mockResolvedValue({
+      vehicles: [{ id: 'vehicle-1' }], returned: 1, hasMore: false, complete: true, continuation: null,
+    });
+    mocks.readBadges.mockResolvedValue([{ id: 'first_drive', earned: true }]);
+    mocks.applyAggregate.mockResolvedValue(null);
+    mocks.readCalibrationCounters.mockResolvedValue({ tripsAnalyzed: 1, kmAnalyzed: 12 });
     mocks.processProgression.mockReturnValue({
       newUnlocks: [{ id: 'mastery:braking' }],
       notificationBadges: [{ id: 'progression_mastery:braking', earned: true }],
@@ -63,10 +81,10 @@ describe('milestone notification coordinator', () => {
 
   it('evaluates persisted trip history and sends both badge and progression notifications', async () => {
     const completedTrip = { id: 'trip-2', status: 'completed' };
-    mocks.listTrips.mockResolvedValue([
+    mocks.queryHistoryPage.mockResolvedValue({ nextCursor: null, rows: [
       completedTrip,
       { id: 'trip-draft', status: 'recording' },
-    ]);
+    ] });
 
     const result = await reconcileMilestoneNotifications({ tripId: completedTrip.id });
 
@@ -75,10 +93,9 @@ describe('milestone notification coordinator', () => {
       { achievement_notifications: true },
       { tripId: completedTrip.id },
     );
-    expect(mocks.calculateBadges).toHaveBeenCalledWith(
-      [completedTrip],
+    expect(mocks.readBadges).toHaveBeenCalledWith(
       { achievement_notifications: true },
-      [{ id: 'vehicle-1' }],
+      { vehicles: [{ id: 'vehicle-1' }] },
     );
     expect(mocks.syncNotifications).toHaveBeenCalledWith([
       { id: 'first_drive', earned: true },
@@ -97,7 +114,7 @@ describe('milestone notification coordinator', () => {
       importedTrips: [importedTrip],
       matchedActiveTrip: null,
     });
-    mocks.listTrips.mockResolvedValue([importedTrip]);
+    mocks.queryHistoryPage.mockResolvedValue({ nextCursor: null, rows: [importedTrip] });
 
     const result = await syncNativeCompletedTripsAndMilestones();
 
@@ -116,7 +133,7 @@ describe('milestone notification coordinator', () => {
       importedTrips: [],
       matchedActiveTrip: null,
     });
-    mocks.listTrips.mockResolvedValue([existingTrip]);
+    mocks.queryHistoryPage.mockResolvedValue({ nextCursor: null, rows: [existingTrip] });
 
     await syncNativeCompletedTripsAndMilestones({ reconcileExisting: true });
 
@@ -133,7 +150,7 @@ describe('milestone notification coordinator', () => {
     // appears in the native import list, so it must not depend on the
     // native-import path to have its milestones evaluated.
     const savedTrip = { id: 'in-app-trip', status: 'completed' };
-    mocks.listTrips.mockResolvedValue([savedTrip]);
+    mocks.queryHistoryPage.mockResolvedValue({ nextCursor: null, rows: [savedTrip] });
 
     await reconcileMilestonesAfterTripSave({ tripId: savedTrip.id });
 
@@ -149,7 +166,7 @@ describe('milestone notification coordinator', () => {
   });
 
   it('never lets a milestone failure propagate out of a trip save', async () => {
-    mocks.listTrips.mockRejectedValue(new Error('history unavailable'));
+    mocks.queryHistoryPage.mockRejectedValue(new Error('history unavailable'));
 
     await expect(reconcileMilestonesAfterTripSave({ tripId: 't1' })).resolves.toBeNull();
     expect(mocks.logFailure).toHaveBeenCalledWith(
@@ -165,7 +182,7 @@ describe('milestone notification coordinator', () => {
       importedTrips: [importedTrip],
       matchedActiveTrip: importedTrip,
     });
-    mocks.listTrips.mockRejectedValue(new Error('history unavailable'));
+    mocks.queryHistoryPage.mockRejectedValue(new Error('history unavailable'));
 
     const result = await syncNativeCompletedTripsAndMilestones();
 

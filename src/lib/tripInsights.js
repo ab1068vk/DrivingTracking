@@ -1,5 +1,6 @@
 ﻿import { clamp } from '@/lib/mathUtils';
 import { COACHING_CONTENT, coachingEventDetailFor } from '@/lib/coachingContent';
+import { readMeasurement } from '@/lib/measurementAvailability';
 import { NIGHT_END_HOUR, NIGHT_START_HOUR } from '@/lib/appConstants';
 import { routeKeyForTrip as commuteRouteKeyForTrip } from '@/lib/commuteMatching';
 import { inferTripTags } from '@/lib/tripTagIntelligence';
@@ -1087,10 +1088,14 @@ export function calculateCarbonImpact(completedTrips = [], settings = {}, vehicl
     if (trip?.status !== 'completed' || !(Number(trip?.distance_km) > 0)) return sum;
     const vehicle = vehicleForTrip(trip);
     if (vehicles && !vehicle) return sum;
-    const saved = vehicles ? null : Number(trip?.co2_saved_kg);
-    if (Number.isFinite(saved)) {
+    // The same recorded-carbon availability rule as the live accumulator, from
+    // the same helper: one domain must not hold two definitions of "this trip's
+    // carbon is not available". `Number(null)` and `Number('')` are both `0`,
+    // which made an unavailable figure an eligible trip saving nothing.
+    const recorded = vehicles ? { known: false, value: null } : readMeasurement(trip?.co2_saved_kg);
+    if (recorded.known) {
       eligibleTripCount += 1;
-      return sum + saved;
+      return sum + recorded.value;
     }
     const estimatedSaved = estimateTripEconomics(trip, vehicle, settings).co2_saved_kg;
     if (!Number.isFinite(estimatedSaved)) return sum;
@@ -1633,51 +1638,239 @@ export function buildDrivingCoachInsights(trips = [], settings = {}) {
   };
 }
 
+/**
+ * A trip can be replayed when it says so, or when its stored samples show
+ * movement. The stored flag is checked first so a bounded projection never has
+ * to carry route points just to answer this.
+ */
+const tripSupportsRouteReplay = (trip = {}) => {
+  if (trip.route_replay_available === true) return true;
+  const points = Array.isArray(trip.route_points) ? trip.route_points : [];
+  const pointCount = Number(trip.route_points_raw_count) || points.length;
+  return pointCount >= 20 && points.some((point) => Number(point.speed_kmh) > 0);
+};
+
+/** One trip's CO2 saving, or null when the trip is not eligible. */
+const accumulateTripCarbon = (trip, settings, vehicles) => {
+  if (trip?.status !== 'completed' || !(Number(trip?.distance_km) > 0)) return null;
+  const vehicle = !vehicles
+    ? {}
+    : vehicles instanceof Map
+      ? vehicles.get(String(trip?.vehicle_id)) || null
+      : Array.isArray(vehicles)
+        ? vehicles.find((item) => String(item.id) === String(trip?.vehicle_id)) || null
+        : null;
+  if (vehicles && !vehicle) return null;
+  // Without a collection to resolve against, the trip's own recorded figure is
+  // the evidence — but only when it is actually there. `Number(null)` and
+  // `Number('')` are both `0`, which promoted "we do not have this trip's
+  // carbon" into "this trip saved nothing": an eligible row contributing a
+  // fabricated zero, biasing every total that counts it. Availability is read
+  // explicitly, and a genuine recorded `0` stays a recorded `0`.
+  const recorded = vehicles ? { known: false, value: null } : readMeasurement(trip?.co2_saved_kg);
+  if (recorded.known) return recorded.value;
+  const estimated = estimateTripEconomics(trip, vehicle, settings).co2_saved_kg;
+  return Number.isFinite(estimated) ? estimated : null;
+};
+
+/** Carbon summary in `calculateCarbonImpact`'s shape, from accumulated totals. */
+export function carbonImpactFromStats(stats = {}, settings = {}) {
+  const totalCo2SavedKg = Math.round((Number(stats.carbonCo2SavedKg) || 0) * 10) / 10;
+  const eligibleTripCount = Number(stats.carbonEligibleTripCount) || 0;
+  const treeCo2KgPerYear = finiteNumberOrNull(settings.tree_co2_kg_per_year);
+  const effectiveTreeCo2KgPerYear = treeCo2KgPerYear != null && treeCo2KgPerYear > 0
+    ? treeCo2KgPerYear
+    : DEFAULT_TREE_CO2_KG_PER_YEAR;
+  return {
+    total_co2_saved_kg: totalCo2SavedKg,
+    eligible_trip_count: eligibleTripCount,
+    savings_available: eligibleTripCount > 0,
+    trees_equivalent: Math.round((totalCo2SavedKg / effectiveTreeCo2KgPerYear) * 10) / 10,
+    carbon_grade: totalCo2SavedKg >= 100
+      ? 'Climate Champion'
+      : totalCo2SavedKg >= 50
+        ? 'Green Driver'
+        : totalCo2SavedKg >= 20
+          ? 'Efficiency Aware'
+          : totalCo2SavedKg >= 5
+            ? 'Getting Started'
+            : 'No Data',
+  };
+}
+
+/**
+ * Streaming achievement-statistics accumulator.
+ *
+ * Every achievement input is a counter, a sum, or a bounded most-recent
+ * window, so the whole badge set can be derived without ever holding the trip
+ * history. `calculateAchievementBadges` and the durable aggregate store both
+ * feed this same accumulator, which is what keeps the array path and the
+ * streamed path from drifting apart.
+ *
+ * Trips may arrive in any order; the recent windows sort their own bounded
+ * buffers.
+ */
+export function createAchievementStatsAccumulator(settings = {}, vehicles = null, now = Date.now()) {
+  const weekAgo = now - 7 * 86400000;
+  const stats = {
+    completedCount: 0,
+    totalKm: 0,
+    nightCount: 0,
+    cleanTripCount: 0,
+    weekTripCount: 0,
+    weekHarshBrakes: 0,
+    noHarshTrips: 0,
+    noRapidTrips: 0,
+    noSharpTrips: 0,
+    noSpeedingTrips: 0,
+    routeReplayTrips: 0,
+    longTrips: 0,
+    cleanLongTrips: 0,
+    cleanNightTrips: 0,
+    highScoreTrips: 0,
+    excellentScoreTrips: 0,
+    cleanExcellentTrips: 0,
+    smoothBrakeTrips: 0,
+    distractionFreeTrips: 0,
+    cruiseMasterTrips: 0,
+    manoeuvreAlertFreeTrips: 0,
+    scoreDistanceProduct: 0,
+    scoreDistanceWeight: 0,
+    carbonCo2SavedKg: 0,
+    carbonEligibleTripCount: 0,
+  };
+  // Two bounded windows are all the badge set needs from ordering: the newest
+  // five for the rolling average and the newest ten for the defensive streak.
+  const RECENT_WINDOW = 10;
+  const recentWindow = [];
+
+  const startedAt = (trip) => new Date(trip?.start_time).getTime() || 0;
+
+  const addRecent = (trip) => {
+    recentWindow.push({
+      start: startedAt(trip),
+      score_overall: trip.score_overall,
+      distance_km: trip.distance_km,
+      defensive_grade: trip.defensive_grade,
+    });
+    if (recentWindow.length > RECENT_WINDOW * 4) {
+      recentWindow.sort((a, b) => b.start - a.start);
+      recentWindow.length = RECENT_WINDOW;
+    }
+  };
+
+  return {
+    addTrip(trip = {}) {
+      if (trip?.status !== 'completed') return;
+      const isClean = (trip.harsh_brakes_count || 0) === 0 &&
+        (trip.rapid_accel_count || 0) === 0 &&
+        (trip.sharp_turns_count || 0) === 0 &&
+        (trip.speeding_events_count || 0) === 0;
+      const score = trip.score_overall || 0;
+      const distance = Number(trip.distance_km);
+
+      stats.completedCount += 1;
+      stats.totalKm += trip.distance_km || 0;
+      if (trip.night_driving) stats.nightCount += 1;
+      if (isClean) stats.cleanTripCount += 1;
+      if (startedAt(trip) >= weekAgo) {
+        stats.weekTripCount += 1;
+        stats.weekHarshBrakes += trip.harsh_brakes_count || 0;
+      }
+      if ((trip.harsh_brakes_count || 0) === 0) stats.noHarshTrips += 1;
+      if ((trip.rapid_accel_count || 0) === 0) stats.noRapidTrips += 1;
+      if ((trip.sharp_turns_count || 0) === 0) stats.noSharpTrips += 1;
+      if ((trip.speeding_events_count || 0) === 0) stats.noSpeedingTrips += 1;
+      if (tripSupportsRouteReplay(trip)) stats.routeReplayTrips += 1;
+      if ((trip.duration_seconds || 0) >= 60 * 60) {
+        stats.longTrips += 1;
+        if (isClean) stats.cleanLongTrips += 1;
+      }
+      if (isClean && trip.night_driving) stats.cleanNightTrips += 1;
+      if (score >= 90) stats.highScoreTrips += 1;
+      if (score >= 95) {
+        stats.excellentScoreTrips += 1;
+        if (isClean) stats.cleanExcellentTrips += 1;
+      }
+      if (trip.smooth_braking_ratio === 100) stats.smoothBrakeTrips += 1;
+      if (trip.phone_use_score_available === true && trip.phone_use_risk === 'none') {
+        stats.distractionFreeTrips += 1;
+      }
+      if (trip.band_label === 'excellent cruise') stats.cruiseMasterTrips += 1;
+      if ((trip.close_proximity_count ?? 0) === 0) stats.manoeuvreAlertFreeTrips += 1;
+      if (Number.isFinite(distance) && distance > 0 && Number.isFinite(Number(trip.score_overall))) {
+        stats.scoreDistanceProduct += Number(trip.score_overall) * distance;
+        stats.scoreDistanceWeight += distance;
+      }
+      const carbon = accumulateTripCarbon(trip, settings, vehicles);
+      if (carbon != null) {
+        stats.carbonCo2SavedKg += carbon;
+        stats.carbonEligibleTripCount += 1;
+      }
+      addRecent(trip);
+    },
+    result() {
+      recentWindow.sort((a, b) => b.start - a.start);
+      const recentFive = recentWindow.slice(0, 5);
+      const lastTenDefensive = recentWindow.slice(0, 10);
+      return {
+        ...stats,
+        recentFiveCount: recentFive.length,
+        recentFiveAvg: distanceWeightedScore(recentFive) ?? 0,
+        avgScore: stats.scoreDistanceWeight > 0
+          ? stats.scoreDistanceProduct / stats.scoreDistanceWeight
+          : 0,
+        defensiveStreak: lastTenDefensive.length >= 10 && lastTenDefensive.every((trip) => (
+          ['defensive', 'exemplary'].includes(trip.defensive_grade)
+        )),
+        defensiveRecentCount: lastTenDefensive.filter((trip) => (
+          ['defensive', 'exemplary'].includes(trip.defensive_grade)
+        )).length,
+      };
+    },
+  };
+}
+
 export function calculateAchievementBadges(trips = [], settings = {}, vehicles = null) {
-  const completed = trips.filter((trip) => trip.status === 'completed');
-  const totalKm = completed.reduce((sum, trip) => sum + (trip.distance_km || 0), 0);
-  const nightCount = completed.filter((trip) => trip.night_driving).length;
-  const cleanTrips = completed.filter((trip) => (
-    (trip.harsh_brakes_count || 0) === 0 &&
-    (trip.rapid_accel_count || 0) === 0 &&
-    (trip.sharp_turns_count || 0) === 0 &&
-    (trip.speeding_events_count || 0) === 0
-  ));
-  const weekAgo = Date.now() - 7 * 86400000;
-  const weekTrips = completed.filter((trip) => new Date(trip.start_time).getTime() >= weekAgo);
-  const weekHarshBrakes = weekTrips.reduce((sum, trip) => sum + (trip.harsh_brakes_count || 0), 0);
-  const noHarshTrips = completed.filter((trip) => (trip.harsh_brakes_count || 0) === 0).length;
-  const noRapidTrips = completed.filter((trip) => (trip.rapid_accel_count || 0) === 0).length;
-  const noSharpTrips = completed.filter((trip) => (trip.sharp_turns_count || 0) === 0).length;
-  const noSpeedingTrips = completed.filter((trip) => (trip.speeding_events_count || 0) === 0).length;
-  const routeReplayTrips = completed.filter((trip) => {
-    if (trip.route_replay_available === true) return true;
-    const points = Array.isArray(trip.route_points) ? trip.route_points : [];
-    const pointCount = Number(trip.route_points_raw_count) || points.length;
-    return pointCount >= 20 && points.some((point) => Number(point.speed_kmh) > 0);
-  }).length;
-  const longTrips = completed.filter((trip) => (trip.duration_seconds || 0) >= 60 * 60).length;
-  const cleanLongTrips = cleanTrips.filter((trip) => (trip.duration_seconds || 0) >= 60 * 60).length;
-  const cleanNightTrips = cleanTrips.filter((trip) => trip.night_driving).length;
-  const highScoreTrips = completed.filter((trip) => (trip.score_overall || 0) >= 90).length;
-  const excellentScoreTrips = completed.filter((trip) => (trip.score_overall || 0) >= 95).length;
-  const recentFive = [...completed]
-    .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
-    .slice(0, 5);
-  const recentFiveAvg = distanceWeightedScore(recentFive) ?? 0;
-  const avgScore = distanceWeightedScore(completed) ?? 0;
-  const smoothBrakeTrips = completed.filter((trip) => trip.smooth_braking_ratio === 100).length;
-  const distractionFreeTrips = completed.filter((trip) => (
-    trip.phone_use_score_available === true && trip.phone_use_risk === 'none'
-  )).length;
-  const sortedRecent = [...completed].sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
-  const lastTenDefensive = sortedRecent.slice(0, 10);
-  const defensiveStreak = lastTenDefensive.length >= 10 && lastTenDefensive.every((trip) => (
-    ['defensive', 'exemplary'].includes(trip.defensive_grade)
-  ));
-  const cruiseMasterTrips = completed.filter((trip) => trip.band_label === 'excellent cruise').length;
-  const manoeuvreAlertFreeTrips = completed.filter((trip) => (trip.close_proximity_count ?? 0) === 0).length;
-  const carbon = calculateCarbonImpact(completed, settings, vehicles);
+  const accumulator = createAchievementStatsAccumulator(settings, vehicles);
+  (Array.isArray(trips) ? trips : []).forEach((trip) => accumulator.addTrip(trip));
+  return buildAchievementBadgesFromStats(accumulator.result(), settings);
+}
+
+/**
+ * The badge list is a pure function of accumulated statistics, so the streamed
+ * aggregate path and the in-memory array path produce identical badges.
+ */
+export function buildAchievementBadgesFromStats(stats = {}, settings = {}) {
+  const {
+    completedCount,
+    totalKm,
+    nightCount,
+    weekTripCount,
+    weekHarshBrakes,
+    noHarshTrips,
+    noRapidTrips,
+    noSharpTrips,
+    noSpeedingTrips,
+    routeReplayTrips,
+    longTrips,
+    cleanLongTrips,
+    cleanNightTrips,
+    highScoreTrips,
+    excellentScoreTrips,
+    cleanExcellentTrips,
+    smoothBrakeTrips,
+    distractionFreeTrips,
+    cruiseMasterTrips,
+    manoeuvreAlertFreeTrips,
+    recentFiveCount,
+    recentFiveAvg,
+    avgScore,
+    defensiveStreak,
+    defensiveRecentCount,
+  } = stats;
+  const completed = { length: completedCount };
+  const carbon = carbonImpactFromStats(stats, settings);
 
   return [
     {
@@ -1745,8 +1938,8 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       label: 'Perfect Trip',
       description: 'Complete a 95+ score trip with no risky events.',
       category: 'Score',
-      earned: completed.some((trip) => (trip.score_overall || 0) >= 95 && cleanTrips.includes(trip)),
-      current: completed.some((trip) => (trip.score_overall || 0) >= 95 && cleanTrips.includes(trip)) ? 1 : 0,
+      earned: cleanExcellentTrips > 0,
+      current: cleanExcellentTrips > 0 ? 1 : 0,
       target: 1,
     },
     {
@@ -1754,8 +1947,8 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       label: 'Clean Week',
       description: 'Finish the last 7 days with no harsh braking.',
       category: 'Safety',
-      earned: weekTrips.length > 0 && weekHarshBrakes === 0,
-      current: weekTrips.length > 0 && weekHarshBrakes === 0 ? 1 : 0,
+      earned: weekTripCount > 0 && weekHarshBrakes === 0,
+      current: weekTripCount > 0 && weekHarshBrakes === 0 ? 1 : 0,
       target: 1,
     },
     {
@@ -1813,8 +2006,8 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       label: 'Steady Five',
       description: 'Average 85+ across your last 5 trips.',
       category: 'Score',
-      earned: recentFive.length >= 5 && recentFiveAvg >= 85,
-      current: Math.min(5, recentFive.length),
+      earned: recentFiveCount >= 5 && recentFiveAvg >= 85,
+      current: Math.min(5, recentFiveCount),
       target: 5,
       unit: 'trips',
     },
@@ -1903,8 +2096,8 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       label: 'Daily Driver',
       description: 'Complete 5 trips in the last 7 days.',
       category: 'Consistency',
-      earned: weekTrips.length >= 5,
-      current: Math.min(5, weekTrips.length),
+      earned: weekTripCount >= 5,
+      current: Math.min(5, weekTripCount),
       target: 5,
       unit: 'trips',
     },
@@ -1963,7 +2156,7 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       label: 'Night Owl',
       description: 'Complete 5 night drives.',
       category: 'Conditions',
-      earned: completed.filter((trip) => trip.night_driving).length >= 5,
+      earned: nightCount >= 5,
       current: Math.min(5, nightCount),
       target: 5,
       unit: 'drives',
@@ -1994,7 +2187,7 @@ export function calculateAchievementBadges(trips = [], settings = {}, vehicles =
       description: 'Score defensive or higher on 10 consecutive trips.',
       category: 'Safety',
       earned: defensiveStreak,
-      current: defensiveStreak ? 10 : Math.min(10, lastTenDefensive.filter((trip) => ['defensive', 'exemplary'].includes(trip.defensive_grade)).length),
+      current: defensiveStreak ? 10 : Math.min(10, defensiveRecentCount),
       target: 10,
       unit: 'trips',
     },

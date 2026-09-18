@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { FakeIndexedDb } from '@/lib/__tests__/helpers/fakeIndexedDb';
 
 /**
  * The point of these tests is Codex's correction 1: arms B/C must short-circuit
@@ -15,12 +16,13 @@ let storage;
 let storageSpies;
 
 const installStorage = () => {
-  storage = new Map();
+  const currentStorage = new Map();
+  storage = currentStorage;
   storageSpies = {
-    getItem: vi.fn((key) => (storage.has(key) ? storage.get(key) : null)),
-    setItem: vi.fn((key, value) => storage.set(key, String(value))),
-    removeItem: vi.fn((key) => storage.delete(key)),
-    clear: vi.fn(() => storage.clear()),
+    getItem: vi.fn((key) => (currentStorage.has(key) ? currentStorage.get(key) : null)),
+    setItem: vi.fn((key, value) => currentStorage.set(key, String(value))),
+    removeItem: vi.fn((key) => currentStorage.delete(key)),
+    clear: vi.fn(() => currentStorage.clear()),
   };
   vi.stubGlobal('localStorage', storageSpies);
 };
@@ -34,12 +36,15 @@ const loadModules = async (arm) => {
   vi.stubEnv('DEV', '');
   vi.stubEnv('VITE_PERF_TRIAGE_LOGS', '');
   storage.set('roadsage_p0_arm', arm);
+  const indexedDb = new FakeIndexedDb();
+  vi.stubGlobal('indexedDB', indexedDb);
+  vi.stubGlobal('IDBKeyRange', indexedDb.keyRange);
   const p0 = await import('@/lib/p0Probe');
   p0.initializeP0Probe({ buildHash: 'test' });
   const systemLog = await import('@/lib/systemLog');
   const triage = await import('@/lib/performanceTriage');
   const experience = await import('@/lib/appExperienceDiagnostics');
-  return { p0, systemLog, triage, experience };
+  return { p0, systemLog, triage, experience, indexedDb };
 };
 
 const SYSTEM_LOG_KEY = 'drivesense_system_logs_v1';
@@ -102,16 +107,17 @@ afterEach(() => {
 });
 
 describe('arm A runs the recurring persistence jobs normally', () => {
-  it('reads, transforms and writes, and records the phases', async () => {
+  it('writes a bounded IndexedDB batch and records only synchronous scheduling/callback phases', async () => {
     seedStores();
-    const { p0, systemLog } = await loadModules('A');
+    const { p0, systemLog, indexedDb } = await loadModules('A');
     storageSpies.setItem.mockClear();
 
     systemLog.recordSystemEvent('probe_arm_a', {}, { category: 'app' });
     await vi.advanceTimersByTimeAsync(1000);
 
-    // The flush genuinely wrote.
-    expect(storageSpies.setItem.mock.calls.some(([key]) => key === SYSTEM_LOG_KEY)).toBe(true);
+    const eventStore = indexedDb.getStoreState('roadsage_diagnostics', 'events');
+    expect([...eventStore.records.values()].some(({ kind }) => kind === 'system_log')).toBe(true);
+    expect(storageSpies.setItem.mock.calls.some(([key]) => key === SYSTEM_LOG_KEY)).toBe(false);
 
     const trace = p0.exportP0Trace();
     const { DIAGNOSTICS_JOBS, PHASE_IDS } = await import('@/lib/p0Schema');
@@ -121,17 +127,16 @@ describe('arm A runs the recurring persistence jobs normally', () => {
     expect(flushSpans.length).toBeGreaterThan(0);
 
     const flushSpan = flushSpans.at(-1);
-    expect(flushSpan.entry_count_before).toBe(400);
-    // serialized_code_units comes from the string that already existed.
-    expect(flushSpan.serialized_code_units).toBeGreaterThan(0);
-
     const phaseNames = trace.phases
       .filter((row) => row.call_id === flushSpan.call_id)
       .map((row) => PHASE_IDS[row.phase]);
-    expect(phaseNames).toEqual(expect.arrayContaining([
-      'diag_get', 'diag_parse', 'diag_prune_a', 'diag_prune_b', 'diag_stringify', 'diag_set',
-    ]));
+    expect(phaseNames).toEqual(expect.arrayContaining(['diag_transform', 'diag_set']));
+    expect(phaseNames).not.toEqual(expect.arrayContaining(['diag_parse', 'diag_stringify']));
     expect(trace.suppressed.system_log_flush ?? 0).toBe(0);
+    // Drain the background legacy migration before this fake-timer/global test
+    // releases its module instance.
+    await systemLog.getSystemLogs();
+    await systemLog.reconcileSystemLogPrivacyRetention();
   });
 });
 
@@ -198,7 +203,7 @@ describe('arms B/C short-circuit at job entry', () => {
     const { systemLog } = await loadModules('B');
     storageSpies.setItem.mockClear();
 
-    const logs = systemLog.getSystemLogs();
+    const logs = await systemLog.getSystemLogs();
 
     // The explicitly requested read still returns data.
     expect(Array.isArray(logs)).toBe(true);
@@ -238,8 +243,8 @@ describe('arms B/C short-circuit at job entry', () => {
 
     // Clearing is an explicit user action, not a recurring persistence job.
     // Suppressing it would be a functional change, not a measurement one.
-    expect(storageSpies.setItem.mock.calls.some(([key]) => key === SYSTEM_LOG_KEY)).toBe(true);
-    expect(JSON.parse(storage.get(SYSTEM_LOG_KEY))).toEqual([]);
+    expect(storageSpies.setItem.mock.calls.some(([key]) => key === 'roadsage_diagnostics_clear_epoch_system_log')).toBe(true);
+    expect(storage.has(SYSTEM_LOG_KEY)).toBe(false);
   });
 });
 
@@ -405,12 +410,14 @@ describe('bounded volatile suppressed-work buffers', () => {
 describe('diagnostics measurement outcome honesty', () => {
   const diagnosticSpans = (p0) => p0.exportP0Trace().spans.filter((row) => row.diagnostics_job > 0);
 
-  it('records an error span when the stored history fails to parse', async () => {
+  it('records an error span when the IndexedDB transaction fails', async () => {
     seedStores();
-    const { p0, triage } = await loadModules('A');
-    // A corrupt store: the app still degrades to an empty list, which is correct
-    // and unchanged — but the measurement must not report success.
-    storage.set(TRIAGE_KEY, '{ this is not json');
+    const { p0, triage, indexedDb } = await loadModules('A');
+    indexedDb.failNextRequest({
+      storeName: 'events',
+      operation: 'get',
+      error: new Error('read failed'),
+    });
 
     triage.beginMeasure('probe.parse.failure')({ outcome: 'success' });
     await vi.advanceTimersByTimeAsync(2000);
@@ -422,9 +429,11 @@ describe('diagnostics measurement outcome honesty', () => {
 
   it('records an error span when the storage write fails', async () => {
     seedStores();
-    const { p0, systemLog } = await loadModules('A');
-    storageSpies.setItem.mockImplementation(() => {
-      throw new Error('QuotaExceededError');
+    const { p0, systemLog, indexedDb } = await loadModules('A');
+    indexedDb.failNextRequest({
+      storeName: 'events',
+      operation: 'put',
+      error: new Error('QuotaExceededError'),
     });
 
     systemLog.recordSystemEvent('probe_quota', {}, { category: 'app' });
@@ -452,9 +461,11 @@ describe('diagnostics measurement outcome honesty', () => {
   it('leaves pre-existing diagnostic data untouched on the failure path', async () => {
     seedStores();
     const before = snapshotStores();
-    const { p0, systemLog } = await loadModules('A');
-    storageSpies.setItem.mockImplementation(() => {
-      throw new Error('QuotaExceededError');
+    const { p0, systemLog, indexedDb } = await loadModules('A');
+    indexedDb.failNextRequest({
+      storeName: 'events',
+      operation: 'put',
+      error: new Error('QuotaExceededError'),
     });
 
     systemLog.recordSystemEvent('probe_quota_no_damage', {}, { category: 'app' });

@@ -1,6 +1,6 @@
 // @ts-check
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useQueries } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Activity,
@@ -23,7 +23,8 @@ import {
   TrendingUp,
   Trophy,
 } from 'lucide-react';
-import { limitedTripSummaryQueryOptions, tripDetailQueryOptions, tripSummaryQueryOptions } from '@/api/trips';
+import { p7DetailQueryOptions } from '@/api/trips';
+import { COACH_DETAIL_FANOUT, useDrivingCoachData } from '@/hooks/useDrivingCoachData';
 import { formatDistance } from '@/lib/tripEngine';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatPerDistanceRate } from '@/lib/unitFormatting';
@@ -41,7 +42,6 @@ import { buildAlertDangerZones } from '@/lib/dangerZoneEngine';
 import { getPrivacyZones } from '@/lib/privacyZones';
 import useSpeedingStretches from '@/hooks/useSpeedingStretches';
 import { buildRouteComparisons } from '@/lib/mediumInsights';
-import { isDriverMetricEligible } from '@/lib/phoneUseSummary';
 import { setJson } from '@/lib/mobileStorage';
 import {
   COACH_FEEDBACK_OPTIONS,
@@ -427,33 +427,25 @@ export default function DrivingCoach() {
   const selectedFocusInitializedRef = useRef(false);
   const requestedFocusAppliedRef = useRef(false);
 
-  const {
-    data: recentCompleted = [],
-    isLoading,
-    isFetching: recentFetching,
-    isSuccess: recentTripsLoaded,
-  } = useQuery({
-    ...limitedTripSummaryQueryOptions(50),
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
-  });
-  const {
-    data: fullHistoryCompleted = [],
-    isFetching: fullHistoryFetching,
-    isSuccess: fullHistoryLoaded,
-    isError: fullHistoryError,
-  } = useQuery({
-    ...tripSummaryQueryOptions(),
-    enabled: recentTripsLoaded,
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
-  });
-  const completed = fullHistoryCompleted.length > 0 ? fullHistoryCompleted : recentCompleted;
-  const driverCompleted = useMemo(() => completed.filter(isDriverMetricEligible), [completed]);
-  const isFetching = recentFetching || fullHistoryFetching;
+  // P7 Stage 6.6 (ledger entry #4, Annex C O19-O21): one canonical composition
+  // replacing a `(50)` page plus an always-firing `(200)` page. Every Coach
+  // analysis used to run over whichever of the two had arrived, and the
+  // evidence audit reported that sample's size as the driver's history.
+  const coachData = useDrivingCoachData();
+  const { isLoading, isFetching } = coachData;
+  // O19: the labelled `latest N` window, and its `P-DRIVER` rows.
+  const completed = coachData.completedTrips;
+  const driverCompleted = coachData.driverTrips;
 
   const coach = useMemo(() => buildDrivingCoachInsights(driverCompleted, settings), [driverCompleted, settings]);
   const activeProgram = programStore.active;
   const recommendations = useMemo(() => buildCoachRecommendations(coach, driverCompleted, programStore), [coach, driverCompleted, programStore]);
-  const evidenceAudit = useMemo(() => buildCoachEvidenceAudit(completed, driverCompleted), [completed, driverCompleted]);
+  // O21: the two lifetime counts come from their owners, never from the
+  // window. The readiness terms have no owner and stay window-scoped.
+  const evidenceAudit = useMemo(
+    () => buildCoachEvidenceAudit(completed, driverCompleted, { lifetime: coachData.lifetimeEvidence }),
+    [completed, driverCompleted, coachData.lifetimeEvidence]
+  );
   const selectedRecommendation = recommendations.find((item) => item.focusId === selectedFocus) || null;
   const programProgress = useMemo(
     () => buildCoachProgramProgress(activeProgram, driverCompleted),
@@ -468,9 +460,10 @@ export default function DrivingCoach() {
   const programRoutes = useMemo(() => buildCoachRouteOptions(driverCompleted), [driverCompleted]);
   const intelligenceRouteKey = activeProgram?.context?.routeKey || selectedRouteKey || programRoutes[0]?.routeKey || null;
   const intelligenceRoute = programRoutes.find((route) => route.routeKey === intelligenceRouteKey) || null;
+  // Q2, capped at the frozen fan-out. There is no N x Q2 on this page.
   const detailedRouteTripQueries = useQueries({
-    queries: (intelligenceRoute?.tripIds || []).slice(0, 5).map((tripId) => ({
-      ...tripDetailQueryOptions(tripId),
+    queries: (intelligenceRoute?.tripIds || []).slice(0, COACH_DETAIL_FANOUT).map((tripId) => ({
+      ...p7DetailQueryOptions(tripId),
       enabled: activeTab === 'patterns' && Boolean(tripId),
     })),
   });
@@ -491,7 +484,9 @@ export default function DrivingCoach() {
     () => [...buildAlertDangerZones(driverCompleted), ...speedingStretches],
     [driverCompleted, speedingStretches]
   );
-  const dangerZonesReady = recentTripsLoaded && (fullHistoryLoaded || fullHistoryError);
+  // The zones are built from the window, so they are ready when the window is
+  // settled — including when it settled on a typed unavailable.
+  const dangerZonesReady = coachData.isSuccess || Boolean(coachData.windowUnavailable);
   const displayedDangerZones = showAllDangerZones ? dangerZones : dangerZones.slice(0, 6);
   const hiddenDangerZoneCount = Math.max(0, dangerZones.length - displayedDangerZones.length);
   const timeOfDay = useMemo(() => analyzeTimeOfDay(driverCompleted), [driverCompleted]);
@@ -1026,12 +1021,28 @@ export default function DrivingCoach() {
               <section className={CARD}>
               <SectionHeading icon={ShieldCheck} eyebrow="Historical evidence audit" title="What the Coach can actually measure" description="A numeric 0 appears only when a trip explicitly recorded zero events. Missing legacy values are labelled unavailable and excluded." />
               <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                <Stat value={evidenceAudit.totalCompleted || 'None'} label="completed trips found" />
-                <Stat value={evidenceAudit.driverEligible || 'None eligible'} label="driver trips eligible" />
-                <Stat value={evidenceAudit.scoreReady ? `${evidenceAudit.scoreReady} trips` : 'Not measured'} label="score evidence" />
-                <Stat value={evidenceAudit.eventReady ? `${evidenceAudit.eventReady} trips` : 'Not measured'} label="event evidence" />
-                <Stat value={evidenceAudit.routeReady ? `${evidenceAudit.routeReady} trips` : 'No route key'} label="route evidence" />
+                <Stat value={evidenceAudit.totalCompleted || 'None'} label={evidenceAudit.lifetimeExact ? 'completed trips found' : 'completed trips found so far'} />
+                <Stat value={evidenceAudit.driverEligible || 'None eligible'} label={evidenceAudit.lifetimeExact ? 'driver trips eligible' : 'driver trips eligible so far'} />
+                <Stat value={evidenceAudit.scoreReady ? `${evidenceAudit.scoreReady} trips` : 'Not measured'} label={`score evidence (latest ${evidenceAudit.windowTrips})`} />
+                <Stat value={evidenceAudit.eventReady ? `${evidenceAudit.eventReady} trips` : 'Not measured'} label={`event evidence (latest ${evidenceAudit.windowTrips})`} />
+                <Stat value={evidenceAudit.routeReady ? `${evidenceAudit.routeReady} trips` : 'No route key'} label={`route evidence (latest ${evidenceAudit.windowTrips})`} />
               </div>
+              {/* A tally short of the end is a floor, and can be finished. */}
+              {!evidenceAudit.lifetimeExact && !coachData.lifetimeUnavailable && (
+                <button
+                  type="button"
+                  onClick={coachData.finishDriverLifetime}
+                  disabled={coachData.finishingDriverLifetime}
+                  className="mt-3 rounded-full border border-border px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
+                >
+                  {coachData.finishingDriverLifetime ? 'Counting...' : 'Count every drive'}
+                </button>
+              )}
+              {coachData.lifetimeUnavailable && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Lifetime totals are still being prepared. These counts describe the latest {evidenceAudit.windowTrips} drives.
+                </p>
+              )}
               {(evidenceAudit.missingCoachMeasurements > 0 || evidenceAudit.excludedDriver > 0 || evidenceAudit.privacyProtected > 0) && (
                 <div className="mt-4 space-y-1 rounded-2xl border border-amber-500/25 bg-amber-500/5 p-4 text-xs text-muted-foreground">
                   {evidenceAudit.missingCoachMeasurements > 0 && <p><span className="font-semibold text-foreground">{evidenceAudit.missingCoachMeasurements} historical trips:</span> no reliable score or Coach event measurement; excluded, never counted as 0.</p>}
@@ -1308,7 +1319,7 @@ export default function DrivingCoach() {
               dangerZonesReady={dangerZonesReady}
               displayedDangerZones={displayedDangerZones}
               hiddenDangerZoneCount={hiddenDangerZoneCount}
-              loading={!dangerZonesReady && (recentFetching || fullHistoryFetching)}
+              loading={!dangerZonesReady && isFetching}
               onShowAll={() => setShowAllDangerZones((current) => !current)}
               onShowOnMap={() => navigate('/map')}
               premium={settings.premium_visual_experience === true}

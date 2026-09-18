@@ -107,4 +107,30 @@ describe('backup import result presentation', () => {
 
     expect(issues[0]).toContain('Re-add 1 privacy zone because');
   });
+
+  it('discloses backup trips excluded by the effective retention policy', () => {
+    const report = describeBackupImportResult({
+      ...cleanImport,
+      trips: 11,
+      tripsRemovedByRetention: 1,
+    });
+
+    expect(report.hasIssues).toBe(true);
+    expect(report.description).toContain(
+      '1 trip from the backup was outside the restored retention period and was not kept.'
+    );
+    expect(report.description).toContain('11 trips');
+  });
+
+  it('does not present a clean result while retention cleanup is retryable', () => {
+    const report = describeBackupImportResult({
+      ...cleanImport,
+      tripRetentionStatus: 'pending',
+      tripRetentionReconciliation: { status: 'pending', retryable: true },
+    });
+
+    expect(report.hasIssues).toBe(true);
+    expect(report.title).toBe('Import completed with warnings');
+    expect(report.description).toContain('Trip retention cleanup is still pending');
+  });
 });

@@ -22,8 +22,8 @@ import {
   SlidersHorizontal,
 } from 'lucide-react';
 import { formatSpeed } from '@/lib/tripEngine';
-import { tripService } from '@/api/trips';
-import { readSpeedKnowledgeData } from '@/lib/speedKnowledgeRepository';
+import { mapScreenGeometryQuery } from '@/hooks/useMapScreenGeometry';
+import { readSpeedKnowledgeSample } from '@/lib/speedKnowledgeRepository';
 import {
   buildTrackingSpeedConsoleData,
   speedThresholdStatus,
@@ -42,14 +42,16 @@ const formatLimit = (value, units = 'metric') => {
 };
 
 export default function SpeedIntelligenceConsole({ units = 'metric' }) {
-  const { data: trips = [], isLoading: tripsLoading } = useQuery({
-    queryKey: ['tracking-speed-console-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 100 }),
-    staleTime: 2 * 60 * 1000,
-  });
+  // P7 Stage 8 (ledger entry #26, B6.13). `tripService.list({limit:100})` read
+  // every trip in the store and decrypted each one in full to show ten
+  // coverage rows. The console now selects a bounded candidate set through Q1
+  // and reads coverage from **one** D2 by-id batch: zero full-trip decrypts,
+  // and never Q2 per candidate.
+  const { data: geometryPage, isLoading: tripsLoading } = useQuery(mapScreenGeometryQuery());
+  const trips = useMemo(() => geometryPage?.trips ?? [], [geometryPage]);
   const { data: speedKnowledgeData = { cells: {}, corrections: [] }, isLoading: knowledgeLoading } = useQuery({
     queryKey: ['tracking-speed-console-knowledge'],
-    queryFn: () => readSpeedKnowledgeData().then((data) => data || { cells: {}, corrections: [] }),
+    queryFn: () => readSpeedKnowledgeSample(8).then((data) => data || { cells: {}, corrections: [] }),
     staleTime: 30 * 1000,
   });
   const consoleData = useMemo(
@@ -152,11 +154,16 @@ export default function SpeedIntelligenceConsole({ units = 'metric' }) {
                       <div className="font-semibold text-foreground">{formatDate(row.startTime)}</div>
                       <div className="text-muted-foreground">{row.tripId}</div>
                     </Td>
-                    <Td>{row.coveragePercent}%</Td>
-                    <Td>{row.verifiedCoveragePercent}%</Td>
-                    <Td>{row.estimatedCoveragePercent}%</Td>
-                    <Td>{row.lowConfidencePointCount}</Td>
-                    <Td>{row.thresholdExceededPointCount} point{row.thresholdExceededPointCount === 1 ? '' : 's'} / max {formatSpeed(row.maxOverKmh || 0, units)} over</Td>
+                    {/* O37: unknown coverage is its own state. A trip the
+                        geometry owner has not prepared is not a trip with no
+                        speed coverage, and must not read as one. */}
+                    <Td>{row.coverageKnown ? `${row.coveragePercent}%` : 'Unknown'}</Td>
+                    <Td>{row.coverageKnown ? `${row.verifiedCoveragePercent}%` : 'Unknown'}</Td>
+                    <Td>{row.coverageKnown ? `${row.estimatedCoveragePercent}%` : 'Unknown'}</Td>
+                    <Td>{row.coverageKnown ? row.lowConfidencePointCount : 'Unknown'}</Td>
+                    <Td>{row.coverageKnown
+                      ? `${row.thresholdExceededPointCount} point${row.thresholdExceededPointCount === 1 ? '' : 's'} / max ${formatSpeed(row.maxOverKmh || 0, units)} over`
+                      : 'Not prepared yet'}</Td>
                     <Td>
                       <div className="flex flex-wrap gap-2">
                         <Link className="rounded-sm border border-border px-2 py-1 font-semibold hover:bg-secondary" to={row.reviewHref}>Review</Link>
@@ -166,6 +173,7 @@ export default function SpeedIntelligenceConsole({ units = 'metric' }) {
                   </tr>
                 ))}
                 {!tripRows.length && <EmptyRow colSpan={7} text="No completed trips with retained route points." />}
+                {geometryPage?.unavailable && <EmptyRow colSpan={7} text="Speed coverage could not be read. Your saved trips were not changed." />}
               </tbody>
             </table>
           </div>

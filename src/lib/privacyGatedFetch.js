@@ -233,6 +233,13 @@ export async function privacyGatedFetch(service, request, options = {}) {
     return { blocked: false, logged: true, privacyTransformVerified, coordinateDisclosure, logRecord };
   }
 
+  // Inspection and transmission logging are asynchronous. A caller can abort
+  // while those fail-closed steps are in progress, so re-check at the final
+  // transport boundary instead of invoking fetch with a stale request.
+  if (init?.signal?.aborted) {
+    throw init.signal.reason || new DOMException('The request was aborted.', 'AbortError');
+  }
+
   try {
     return await (options.fetchImpl || pinnedFetch)(url, init);
   } catch (error) {

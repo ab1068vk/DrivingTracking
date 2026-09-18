@@ -207,13 +207,18 @@ describe('driver progression', () => {
     const firstSync = syncDriverProgressionLedger(initial, { version: 1, mastery: {}, missions: {} });
     const afterFirst = buildDriverProgression(excellentTrips, {}, { now: NOW, ledger: firstSync.ledger });
     const secondSync = syncDriverProgressionLedger(afterFirst, firstSync.ledger);
-    const transactionIds = secondSync.ledger.xpTransactions.map((transaction) => transaction.id);
+    // P4-B-F01-3: transactions are durable in the segmented store, and each
+    // sync returns exactly the batch it appended, so "recorded once" is now
+    // proved by the second sync appending nothing at all.
+    const transactionIds = [...firstSync.transactions, ...secondSync.transactions].map((transaction) => transaction.id);
     const pending = secondSync.ledger.celebrations.find((celebration) => !celebration.seen);
     const acknowledged = acknowledgeDriverProgressionCelebration(pending.id, secondSync.ledger);
 
     expect(firstSync.newUnlocks.length).toBeGreaterThan(0);
     expect(secondSync.newUnlocks).toHaveLength(0);
     expect(new Set(transactionIds).size).toBe(transactionIds.length);
+    expect(firstSync.transactions.length).toBeGreaterThan(0);
+    expect(secondSync.transactions).toHaveLength(0);
     expect(afterFirst.xp.total).toBeGreaterThan(0);
     expect(acknowledged.celebrations.find((celebration) => celebration.id === pending.id).seen).toBe(true);
   });

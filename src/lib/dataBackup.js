@@ -467,6 +467,35 @@ const addTruncationWarning = (warnings, field, limit) => {
   if (!warnings.includes(message)) warnings.push(message);
 };
 
+/**
+ * AUD-008. `sanitizeImportedTrip` caps `route_points` at
+ * `MAX_IMPORTED_TRIP_ROUTE_POINTS` as hostile-input protection, but export writes the
+ * route uncapped — so the loss is introduced by the restore. Route geometry is the
+ * app's primary data and it must be disclosed exactly as truncated notes already are:
+ * counted, acknowledged and reported. A shortened route presented as a complete
+ * restore is the defect, not the cap itself.
+ */
+const addRouteTruncationWarning = (warnings, tripCount, droppedPointCount) => {
+  if (!warnings || tripCount <= 0) return;
+  const message = `Imported route points exceeded ${MAX_IMPORTED_TRIP_ROUTE_POINTS.toLocaleString()} per trip. `
+    + `${droppedPointCount.toLocaleString()} point${droppedPointCount === 1 ? '' : 's'} `
+    + `across ${tripCount} trip${tripCount === 1 ? '' : 's'} were not restored.`;
+  if (!warnings.includes(message)) warnings.push(message);
+};
+
+/** Counted on the migrated (pre-sanitization) trips, so the loss is known before any write. */
+const measureRouteTruncation = (trips = []) => (Array.isArray(trips) ? trips : []).reduce(
+  (totals, trip) => {
+    const pointCount = Array.isArray(trip?.route_points) ? trip.route_points.length : 0;
+    if (pointCount > MAX_IMPORTED_TRIP_ROUTE_POINTS) {
+      totals.tripCount += 1;
+      totals.droppedPointCount += pointCount - MAX_IMPORTED_TRIP_ROUTE_POINTS;
+    }
+    return totals;
+  },
+  { tripCount: 0, droppedPointCount: 0 },
+);
+
 const sanitizeJsonValue = (value, depth = 0, { maxStringLength = MAX_IMPORTED_STRING_LENGTH, warnings = null, field = '' } = {}) => {
   if (value == null || typeof value === 'boolean' || typeof value === 'number') return value;
   if (typeof value === 'string') {
@@ -1554,6 +1583,40 @@ export function buildDriveSenseBackup({
  * @param {{trips?:Array,vehicles?:Array,settings?:Object,filename?:string,passphrase?:string|null,signal?:AbortSignal,onProgress?:(progress:{phase:string,completed?:number,total?:number})=>void}} options
  */
 export async function exportDriveSenseBackup({ trips, vehicles, settings, filename, passphrase = null, signal, onProgress } = {}) {
+  const { resolveBackupCapabilities } = await import('@/lib/backupCapabilities');
+  const capabilities = resolveBackupCapabilities();
+  if (capabilities.nativeStreamExportAvailable) {
+    const { nativeTripArchive } = await import('@/lib/nativeTripArchive');
+    if (typeof passphrase !== 'string' || passphrase.length < 8) {
+      throw new Error('Android P3.5 backups require a password with at least 8 characters.');
+    }
+    throwIfBackupAborted(signal);
+    const started = await nativeTripArchive.beginStreamBackup({
+      filename: filename || `road-sage-stream-backup-${new Date().toISOString().split('T')[0]}.rsb2`,
+      passphrase,
+    });
+    const cancel = () => { void nativeTripArchive.cancelStreamBackup(started.operationId).catch(() => {}); };
+    signal?.addEventListener('abort', cancel, { once: true });
+    try {
+      let status = started;
+      while (status?.done !== true) {
+        throwIfBackupAborted(signal);
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        status = await nativeTripArchive.streamBackupStatus(started.operationId);
+        onProgress?.({ phase: String(status.phase || 'exporting').toLowerCase(), completed: status.completedBytes || 0, total: null });
+      }
+      if (status.verified !== true) throw new Error(status.error || 'Native streaming backup did not verify.');
+      const published = await nativeTripArchive.publishStreamBackup(started.operationId);
+      return { native: true, filename: published.filename, uri: published.uri, encrypted: true, signed: true, version: 2 };
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+    }
+  }
+  if (!capabilities.browserJsonExportAvailable) {
+    const error = new Error('The active canonical storage authority does not support browser JSON backup export.');
+    error.code = 'UNSUPPORTED_BACKUP_AUTHORITY';
+    throw error;
+  }
   throwIfBackupAborted(signal);
   onProgress?.({ phase: 'preparing', completed: 0, total: 1 });
   const effectiveSettings = settings && typeof settings === 'object' ? settings : localSettings.get();
@@ -1573,7 +1636,7 @@ export async function exportDriveSenseBackup({ trips, vehicles, settings, filena
     getJson(SAVED_FILTERS_KEY, []),
     getJson(CALIBRATION_LABELS_KEY, []),
     getJson(CALIBRATION_SURVEY_MARKERS_KEY, {}),
-    readSpeedKnowledgeData().then((value) => value || {}),
+    readSpeedKnowledgeData({ explicitFullModel: true }).then((value) => value || {}),
   ]);
   const privacyHydratedSettings = {
     ...effectiveSettings,
@@ -1841,12 +1904,18 @@ function parseDriveSenseBackupValue(
     typeof trip?.notes === 'string' && trip.notes.length > MAX_IMPORTED_TRIP_NOTES_LENGTH
   )).length;
 
+  // AUD-008: measured BEFORE sanitization, because the slice that drops the points
+  // happens inside `sanitizeImportedTrip` and leaves no trace behind it.
+  const routeTruncation = measureRouteTruncation(migrated.trips);
+
   const trips = sanitizeTrips
     ? migrated.trips.map((trip) => sanitizeImportedTrip(trip, warnings))
     : migrated.trips;
   if (!sanitizeTrips && truncatedNoteTripCount > 0) {
     addTruncationWarning(warnings, 'notes', MAX_IMPORTED_TRIP_NOTES_LENGTH);
   }
+  // Unlike notes, the route slice emits no warning of its own in either mode.
+  addRouteTruncationWarning(warnings, routeTruncation.tripCount, routeTruncation.droppedPointCount);
 
   return {
     version: migrated.version,
@@ -1865,6 +1934,8 @@ function parseDriveSenseBackupValue(
     trips,
     warnings,
     truncatedNoteTripCount,
+    truncatedRouteTripCount: routeTruncation.tripCount,
+    droppedRoutePointCount: routeTruncation.droppedPointCount,
   };
 }
 
@@ -1887,6 +1958,7 @@ export async function importDriveSenseBackup(
     allowUnverifiedSignedBackup = false,
     signal,
     onProgress,
+    now = Date.now(),
   } = {}
 ) {
   throwIfBackupAborted(signal);
@@ -2114,17 +2186,54 @@ export async function importDriveSenseBackup(
     });
     throw error;
   }
-  if (backup.truncatedNoteTripCount > 0 && !acknowledgeTruncation) {
+  const truncatedRouteTripCount = Number(backup.truncatedRouteTripCount) || 0;
+  const droppedRoutePointCount = Number(backup.droppedRoutePointCount) || 0;
+  if ((backup.truncatedNoteTripCount > 0 || truncatedRouteTripCount > 0) && !acknowledgeTruncation) {
     recordSystemEvent('backup_import_needs_acknowledgement', {
       truncated_note_trip_count: backup.truncatedNoteTripCount,
+      truncated_route_trip_count: truncatedRouteTripCount,
+      dropped_route_point_count: droppedRoutePointCount,
       truncated_fields: backup.warnings.length,
     }, { category: 'storage', severity: 'warn', title: 'Backup import needs acknowledgement' });
     return {
       requiresAcknowledgement: true,
       truncatedNoteTripCount: backup.truncatedNoteTripCount,
+      truncatedRouteTripCount,
+      droppedRoutePointCount,
       warnings: backup.warnings,
       truncatedFields: backup.warnings.length,
     };
+  }
+  const restoreNow = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+  const shouldImportSettings = includeSettings && !signatureRecovered;
+  const sanitizedSettings = shouldImportSettings && backup.settings
+    ? sanitizeImportedSettings(backup.settings)
+    : {};
+  const currentRetentionDays = Math.max(
+    0,
+    Math.floor(Number(localSettings.get().data_retention_days) || 0),
+  );
+  const hasRestoredRetentionPolicy = Object.prototype.hasOwnProperty.call(
+    sanitizedSettings,
+    'data_retention_days',
+  );
+  const effectiveRetentionDays = hasRestoredRetentionPolicy
+    ? Math.max(0, Math.floor(Number(sanitizedSettings.data_retention_days) || 0))
+    : currentRetentionDays;
+  const adoptsStricterRetention = hasRestoredRetentionPolicy
+    && effectiveRetentionDays > 0
+    && (currentRetentionDays === 0 || effectiveRetentionDays < currentRetentionDays);
+  let preExistingHistoryNeedsReconciliation = false;
+  if (adoptsStricterRetention) {
+    try {
+      const probe = await tripService.queryHistoryPage({ limit: 1 });
+      preExistingHistoryNeedsReconciliation = Boolean(
+        probe?.unavailable || (Array.isArray(probe?.rows) && probe.rows.length > 0),
+      );
+    } catch {
+      // Fail closed on scheduling: an unreadable bounded probe cannot prove H=0.
+      preExistingHistoryNeedsReconciliation = true;
+    }
   }
 
   throwIfBackupAborted(signal);
@@ -2133,6 +2242,9 @@ export async function importDriveSenseBackup(
   onProgress?.({ phase: 'restoring_vehicles', completed: importedVehicles.length, total: backup.vehicles.length });
 
   let importedTripCount = 0;
+  let importedTripsRemovedByRetention = 0;
+  let importedTripsFailedToWrite = 0;
+  let processedTripCount = 0;
   const totalTripCount = backup.trips.length;
   try {
     for (let start = 0; start < totalTripCount; start += IMPORT_TRIP_BATCH_SIZE) {
@@ -2143,29 +2255,100 @@ export async function importDriveSenseBackup(
         batch.push(sanitizeImportedTrip(backup.trips[index], backup.warnings));
         backup.trips[index] = null;
       }
-      const importedBatch = await tripService.upsertMany(batch);
-      importedTripCount += importedBatch.length;
-      onProgress?.({ phase: 'restoring_trips', completed: importedTripCount, total: totalTripCount });
+      const batchOutcome = await tripService.restoreBatch(batch, {
+        retentionDays: effectiveRetentionDays,
+        now: restoreNow,
+      });
+      importedTripCount += Array.isArray(batchOutcome?.survivingTrips)
+        ? batchOutcome.survivingTrips.length
+        : 0;
+      importedTripsRemovedByRetention += Math.max(0, Number(batchOutcome?.removedByRetention) || 0);
+      importedTripsFailedToWrite += Math.max(0, Number(batchOutcome?.failedWrites) || 0);
+      processedTripCount += Math.max(0, Number(batchOutcome?.processedTrips) || batch.length);
+      onProgress?.({ phase: 'restoring_trips', completed: processedTripCount, total: totalTripCount });
       await yieldBackupWork();
     }
   } catch (error) {
-    if (importedTripCount > 0) {
+    const partial = error?.restoreOutcome;
+    if (partial) {
+      importedTripCount += Array.isArray(partial.survivingTrips) ? partial.survivingTrips.length : 0;
+      importedTripsRemovedByRetention += Math.max(0, Number(partial.removedByRetention) || 0);
+      importedTripsFailedToWrite += Math.max(0, Number(partial.failedWrites) || 0);
+      processedTripCount += Math.max(0, Number(partial.processedTrips) || 0);
+    }
+    error.importedTripCount = importedTripCount;
+    error.tripsRemovedByRetention = importedTripsRemovedByRetention;
+    error.tripsFailedToWrite = importedTripsFailedToWrite;
+    error.tripRetentionStatus = partial?.retentionPending ? 'pending' : 'incomplete';
+    if (processedTripCount > 0 || importedTripsFailedToWrite > 0) {
       error.importedTripCount = importedTripCount;
-      error.message = `${error.message || 'Backup import stopped.'} ${importedTripCount} of ${totalTripCount} trips were restored; retrying the same backup is safe.`;
+      error.message = `${error.message || 'Backup import stopped.'} ${importedTripCount} of ${totalTripCount} trips are confirmed restored; ${importedTripsRemovedByRetention} were excluded by retention and ${importedTripsFailedToWrite} failed to write. Retrying the same backup is safe.`;
     }
     throw error;
   }
 
-  const shouldImportSettings = includeSettings && !signatureRecovered;
   const privacyZonesNeedReconfiguration = shouldImportSettings && Array.isArray(backup.settings?.privacy_zones)
     ? backup.settings.privacy_zones.filter((zone) => zone && typeof zone === 'object').length
     : 0;
 
   let importedSettings = false;
   if (shouldImportSettings && backup.settings) {
-    const sanitizedSettings = sanitizeImportedSettings(backup.settings);
     importedSettings = Object.keys(sanitizedSettings).length > 0;
-    if (importedSettings) localSettings.update(sanitizedSettings);
+    if (importedSettings) {
+      const persistedSettings = localSettings.update(sanitizedSettings);
+      if (
+        hasRestoredRetentionPolicy
+        && Number(persistedSettings?.data_retention_days) !== effectiveRetentionDays
+      ) {
+        const error = new Error(
+          'Trips were processed, but the restored retention setting was not durably adopted. Pre-existing trips were not deleted under that uncommitted policy.',
+        );
+        error.code = 'BACKUP_RETENTION_SETTING_NOT_COMMITTED';
+        error.importedTripCount = importedTripCount;
+        error.tripsRemovedByRetention = importedTripsRemovedByRetention;
+        error.tripsFailedToWrite = importedTripsFailedToWrite;
+        error.tripRetentionStatus = 'incomplete';
+        throw error;
+      }
+    }
+  }
+
+  let tripRetentionStatus = 'complete';
+  let tripRetentionReconciliation = {
+    status: 'not_required',
+    deletedTrips: 0,
+    processed: 0,
+    examined: 0,
+    hasMore: false,
+    retryable: false,
+  };
+  if (adoptsStricterRetention && preExistingHistoryNeedsReconciliation) {
+    try {
+      const outcome = await tripService.stepRetentionReconciliation({ now: restoreNow });
+      tripRetentionStatus = outcome?.hasMore === true ? 'pending' : 'complete';
+      tripRetentionReconciliation = {
+        status: tripRetentionStatus,
+        deletedTrips: Math.max(0, Number(outcome?.deletedTrips) || 0),
+        processed: Math.max(0, Number(outcome?.processed) || 0),
+        examined: Math.max(0, Number(outcome?.examined) || 0),
+        hasMore: outcome?.hasMore === true,
+        retryable: outcome?.hasMore === true,
+      };
+    } catch (error) {
+      tripRetentionStatus = 'pending';
+      tripRetentionReconciliation = {
+        status: 'pending',
+        deletedTrips: Math.max(0, Number(error?.retentionOutcome?.deletedTrips) || 0),
+        processed: 0,
+        examined: 0,
+        hasMore: true,
+        retryable: true,
+        errorCode: error?.code || 'TRIP_RETENTION_RECONCILIATION_FAILED',
+      };
+      logSystemFailure('backup_import_trip_retention_reconciliation', error, {
+        retention_days: effectiveRetentionDays,
+      });
+    }
   }
 
   const savedFilters = sanitizeSavedTripFilters(backup.ui?.saved_trip_filters);
@@ -2224,7 +2407,7 @@ export async function importDriveSenseBackup(
   ) {
     let beforeSpeedKnowledge = {};
     try {
-      beforeSpeedKnowledge = (await readSpeedKnowledgeData()) || {};
+      beforeSpeedKnowledge = (await readSpeedKnowledgeData({ explicitFullModel: true })) || {};
     } catch (error) {
       // Comparing from an empty baseline can over-select work, but it cannot
       // leave a trip stale. The durable post-write snapshot below is required.
@@ -2244,7 +2427,7 @@ export async function importDriveSenseBackup(
     }
     if (speedKnowledgeRestored) {
       try {
-        const afterSpeedKnowledge = await readSpeedKnowledgeData();
+        const afterSpeedKnowledge = await readSpeedKnowledgeData({ explicitFullModel: true });
         if (!afterSpeedKnowledge || typeof afterSpeedKnowledge !== 'object') {
           throw new Error('Restored speed knowledge could not be read back from durable storage.');
         }
@@ -2282,6 +2465,11 @@ export async function importDriveSenseBackup(
 
   recordSystemEvent('backup_import_completed', {
     trip_count: importedTripCount,
+    trip_removed_by_retention_count: importedTripsRemovedByRetention,
+    trip_failed_write_count: importedTripsFailedToWrite,
+    trip_retention_status: tripRetentionStatus,
+    trip_retention_reconciliation_deleted_count: tripRetentionReconciliation.deletedTrips,
+    trip_retention_reconciliation_pending: tripRetentionReconciliation.status === 'pending',
     vehicle_count: importedVehicles.length,
     settings_imported: importedSettings,
     saved_filter_count: savedFilters.length,
@@ -2300,6 +2488,8 @@ export async function importDriveSenseBackup(
     speed_knowledge_rescore_failed: speedKnowledgeRescoreFailed,
     warning_count: backup.warnings.length,
     truncated_note_trip_count: backup.truncatedNoteTripCount,
+    truncated_route_trip_count: truncatedRouteTripCount,
+    dropped_route_point_count: droppedRoutePointCount,
     privacy_zones_need_reconfiguration: privacyZonesNeedReconfiguration,
     source_version: backup.sourceVersion,
     backup_version: backup.version,
@@ -2314,11 +2504,20 @@ export async function importDriveSenseBackup(
     signature_signed_at: signatureSignedAt,
   }, {
     category: 'storage',
-    severity: backup.warnings.length || privacyZonesNeedReconfiguration ? 'warn' : 'info',
+    severity: backup.warnings.length
+      || privacyZonesNeedReconfiguration
+      || importedTripsRemovedByRetention
+      || tripRetentionStatus === 'pending'
+      ? 'warn'
+      : 'info',
     title: 'Backup import completed',
   });
   return {
     trips: importedTripCount,
+    tripsRemovedByRetention: importedTripsRemovedByRetention,
+    tripsFailedToWrite: importedTripsFailedToWrite,
+    tripRetentionStatus,
+    tripRetentionReconciliation,
     vehicles: importedVehicles.length,
     settings: importedSettings,
     savedFilters: savedFilters.length,
@@ -2338,6 +2537,8 @@ export async function importDriveSenseBackup(
     warnings: backup.warnings,
     truncatedFields: backup.warnings.length,
     truncatedNoteTripCount: backup.truncatedNoteTripCount,
+    truncatedRouteTripCount,
+    droppedRoutePointCount,
     privacy_zones_need_reconfiguration: privacyZonesNeedReconfiguration,
     signatureVerified,
     signatureRecovered,

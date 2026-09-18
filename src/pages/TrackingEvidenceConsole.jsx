@@ -1,4 +1,5 @@
 import { useDeferredValue, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
@@ -8,10 +9,14 @@ import {
   Layers,
   Search,
 } from 'lucide-react';
-import { limitedTripSummaryQueryOptions, tripDetailQueryOptions } from '@/api/trips';
+import { p7DetailQueryOptions } from '@/api/trips';
+import { useBoundedTripWindow } from '@/hooks/useBoundedTripWindow';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDistance } from '@/lib/tripEngine';
 import { buildTrackingEvidenceConsoleData } from '@/lib/trackingEvidence';
+import {
+  readRequestedTripId, resolveTrackingTripSubject, trackingTripPickerOptions, trackingTripSubjectState,
+} from '@/lib/trackingTripSubject';
 import { buildSessionEvidenceRows } from '@/lib/trackingSessionForensics';
 
 const SUMMARY_LIMIT = 50;
@@ -32,6 +37,7 @@ const rowTone = (row = {}) => {
 };
 
 export default function TrackingEvidenceConsole() {
+  const [searchParams] = useSearchParams();
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
   const [selectedTripId, setSelectedTripId] = useState('');
@@ -39,23 +45,53 @@ export default function TrackingEvidenceConsole() {
   const [selectedRowId, setSelectedRowId] = useState('');
   const deferredTab = useDeferredValue(tab);
 
-  const { data: summaries = [], isLoading: summariesLoading } = useQuery({
-    ...limitedTripSummaryQueryOptions(SUMMARY_LIMIT),
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
+  // P7 Stage 8: one bounded Q1 window, labelled `latest N`, plus the Q2
+  // read for the one trip the user selected. Nothing here folds a history.
+  const summaryWindow = useBoundedTripWindow({
+    queryId: 'evidence-console', limit: SUMMARY_LIMIT, status: 'completed',
   });
-  const effectiveSelectedTripId = selectedTripId || (summaries[0]?.id ? String(summaries[0].id) : '');
+  const summaries = summaryWindow.trips;
+  const summariesLoading = summaryWindow.isLoading;
+  // HPR-017: the explicit `?trip=` subject outranks whatever the bounded window
+  // happens to put first. Resolution is by id, so a trip older than the window is
+  // still reachable here.
+  const requestedTrip = readRequestedTripId(searchParams);
+  const subject = resolveTrackingTripSubject({ requested: requestedTrip, selectedTripId, summaries });
+  const effectiveSelectedTripId = subject.tripId;
   const deferredSelectedTripId = useDeferredValue(effectiveSelectedTripId);
   const evidencePending = deferredTab !== tab || deferredSelectedTripId !== effectiveSelectedTripId;
-  const { data: selectedTripRaw, isLoading: selectedTripLoading } = useQuery(tripDetailQueryOptions(deferredSelectedTripId));
-  const selectedTrip = selectedTripRaw || summaries.find((trip) => String(trip.id) === String(deferredSelectedTripId)) || null;
+  const detailQuery = useQuery(p7DetailQueryOptions(deferredSelectedTripId));
+  const selectedTripLoading = detailQuery.isLoading;
+  const subjectState = trackingTripSubjectState({
+    // The deferred id is the one actually asked about, so the state describes the
+    // read that is in flight rather than a keystroke ahead of it.
+    subject: { ...subject, tripId: deferredSelectedTripId },
+    summaries,
+    detail: detailQuery,
+  });
+  const tripOptions = trackingTripPickerOptions({
+    summaries,
+    tripId: effectiveSelectedTripId,
+    subjectTrip: subjectState.trip || subjectState.summary,
+    formatLabel: (trip) => formatTripLabel(trip, units),
+  });
+
+  // Evidence and session construction are detail-required. The compact
+  // projection deliberately omits `score_provenance.components` and
+  // `constants_snapshot` (an unbounded block P3 exists to remove), so feeding a
+  // summary/projection into these builders would render "unavailable" evidence
+  // that is really just a projection omission. The picker list above still uses
+  // the bounded rows; only these two builders wait for the selected detail.
+  const evidenceTrip = subjectState.status === 'ready' ? subjectState.trip : null;
+  const evidenceDetailPending = subjectState.status === 'loading' && Boolean(deferredSelectedTripId);
 
   const data = useMemo(
-    () => buildTrackingEvidenceConsoleData({ trip: selectedTrip, settings }),
-    [selectedTrip, settings]
+    () => buildTrackingEvidenceConsoleData({ trip: evidenceTrip, settings }),
+    [evidenceTrip, settings]
   );
   const sessionRows = useMemo(
-    () => selectedTrip ? buildSessionEvidenceRows(selectedTrip) : [],
-    [selectedTrip]
+    () => evidenceTrip ? buildSessionEvidenceRows(evidenceTrip) : [],
+    [evidenceTrip]
   );
   const activeRows = deferredTab === 'sources'
     ? data.sourceRows
@@ -94,13 +130,18 @@ export default function TrackingEvidenceConsole() {
               }}
               className="h-9 rounded-md border border-border bg-card px-2 text-sm text-foreground"
             >
-              {!summaries.length && <option value="">No completed trips</option>}
-              {summaries.map((trip) => (
-                <option key={trip.id} value={trip.id}>{formatTripLabel(trip, units)}</option>
+              {!tripOptions.length && <option value="">No completed trips</option>}
+              {tripOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </label>
         </div>
+        {subjectState.status === 'unavailable' && (
+          <p role="status" className="mt-2 rounded-md border border-amber-800/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-200">
+            {subjectState.notice}
+          </p>
+        )}
       </header>
 
       <main className="min-h-0 flex-1 overflow-auto">
@@ -176,7 +217,9 @@ export default function TrackingEvidenceConsole() {
                   {!activeRows.length && (
                     <tr>
                       <td colSpan={6} className="px-3 py-12 text-center text-sm text-muted-foreground">
-                        {summariesLoading || selectedTripLoading ? 'Reading local trip evidence.' : 'No evidence rows available for this trip.'}
+                        {summariesLoading || selectedTripLoading || evidenceDetailPending
+                          ? 'Reading local trip evidence.'
+                          : subjectState.notice || 'No evidence rows available for this trip.'}
                       </td>
                     </tr>
                   )}

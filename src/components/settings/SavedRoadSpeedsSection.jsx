@@ -23,6 +23,7 @@ import {
 import { LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 import {
   getNativeSpeedKnowledgeMirrorStatus,
+  readSpeedKnowledgeStorageSummary,
   retryNativeSpeedKnowledgeMirror,
   speedKnowledgeStore,
 } from '@/lib/speedKnowledgeRepository';
@@ -79,8 +80,19 @@ export default function SavedRoadSpeedsSection({ cfg, updateCfg, onManageSavedSp
 
   const refreshStorage = useCallback(async () => {
     try {
-      const data = await knowledge.exportData();
-      setStorage(summarizeSpeedKnowledgeStorage(data));
+      const nativeSummary = await readSpeedKnowledgeStorageSummary();
+      if (nativeSummary) {
+        setStorage({
+          ...nativeSummary,
+          ruleCount: null,
+          learnedRoadCount: null,
+          cellCount: nativeSummary.itemCount,
+          historicalRuleCount: null,
+        });
+      } else {
+        const data = await knowledge.exportData();
+        setStorage(summarizeSpeedKnowledgeStorage(data));
+      }
       setStorageFailed(false);
     } catch (error) {
       // A failed read must not render as an empty store: "0 saved rules" would
@@ -230,6 +242,8 @@ export default function SavedRoadSpeedsSection({ cfg, updateCfg, onManageSavedSp
         label="What this device has saved"
         sublabel={storageFailed
           ? 'Saved road speeds could not be read just now. This is a display problem — nothing has been deleted.'
+          : storage?.nativeCanonical
+            ? `${storage.bucketCount} encrypted geographic bucket${storage.bucketCount === 1 ? '' : 's'}, ${storage.itemCount} current saved/learned item${storage.itemCount === 1 ? '' : 's'}. About ${formatApproximateBytes(storage.approximateBytes)}. Detailed lists are loaded in bounded pages on the Saved Road Speeds screen.`
           : storage
             ? `${storage.ruleCount} rule${storage.ruleCount === 1 ? '' : 's'} you set, ${storage.learnedRoadCount} road${storage.learnedRoadCount === 1 ? '' : 's'} learned, ${storage.cellCount} area${storage.cellCount === 1 ? '' : 's'} with evidence. About ${formatApproximateBytes(storage.approximateBytes)}, plus ${storage.historicalRuleCount} retained historical version${storage.historicalRuleCount === 1 ? '' : 's'}.`
             : 'Reading…'}

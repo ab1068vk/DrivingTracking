@@ -1,10 +1,11 @@
 import { buildPhoneUseFromTripEvidence, PHONE_USE_PENALTY_POINTS } from '@/lib/phoneUsageAccess';
 import { scoringValue } from '@/lib/scoringConstants';
+import { ROUTE_CONTEXT_WINDOW_MS, nearestRoutePointByTime } from '@/lib/routeDerivedContext';
 
 const riskRank = { none: 0, low: 1, medium: 2, high: 3 };
 const eventPenaltyPoints = scoringValue('EVENT_PENALTY_POINTS');
 const PHONE_USE_SUMMARY_VERSION = 1;
-const CONTEXT_EVENT_WINDOW_MS = 30_000;
+const CONTEXT_EVENT_WINDOW_MS = ROUTE_CONTEXT_WINDOW_MS;
 
 const numberOrZero = (value) => {
   const numeric = Number(value);
@@ -42,21 +43,15 @@ const eventPenalty = (event = {}) => (
   PHONE_USE_PENALTY_POINTS[eventSeverity(event)] ?? PHONE_USE_PENALTY_POINTS.low
 );
 
-const nearestRoutePoint = (routePoints = [], targetMs = null) => {
-  if (targetMs == null) return null;
-  let nearest = null;
-  let nearestDelta = Number.POSITIVE_INFINITY;
-  routePoints.forEach((point) => {
-    const pointMs = timestampMs(point?.timestamp ?? point?.time);
-    if (pointMs == null) return;
-    const delta = Math.abs(pointMs - targetMs);
-    if (delta < nearestDelta) {
-      nearest = point;
-      nearestDelta = delta;
-    }
-  });
-  return nearestDelta <= CONTEXT_EVENT_WINDOW_MS ? nearest : null;
-};
+/**
+ * HPR-007. The scan this replaces walked the whole route for every confirmed
+ * event, so the summary cost grew as events x route points. The shared search
+ * keeps the identical answer — same skipped timestamps, same earliest-position
+ * tie rule, same 30 s context window — from one index built per route.
+ */
+const nearestRoutePoint = (routePoints = [], targetMs = null) => (
+  nearestRoutePointByTime(routePoints, targetMs)
+);
 
 const isIntersectionPoint = (point = {}) => Boolean(
   point.intersection ||
@@ -242,7 +237,31 @@ const coachingMessageFor = ({ isPassenger, scoreAvailable, timeline, worstEvent 
   return 'A short phone-use window was recorded while moving. Wait until parked before checking the screen.';
 };
 
+/**
+ * HPR-002/HPR-007. Trip Detail reads this below its early returns, where a hook
+ * cannot live, so the reuse is keyed on the **trip object identity** instead:
+ * an unrelated rerender passes the same record and gets the same summary, while
+ * a refetched, edited or different trip is a new object and is recomputed. The
+ * function is a pure fold of the trip and `wasDriver`, so this changes when it
+ * runs, never what it answers.
+ */
+const summaryCache = new WeakMap();
+
 export function summarizeTripPhoneUse(trip = {}, options = {}) {
+  const wasDriverKey = String(options?.wasDriver ?? '');
+  if (trip && typeof trip === 'object') {
+    const perTrip = summaryCache.get(trip);
+    if (perTrip?.has(wasDriverKey)) return perTrip.get(wasDriverKey);
+    const computed = computeTripPhoneUseSummary(trip, options);
+    const store = perTrip || new Map();
+    store.set(wasDriverKey, computed);
+    if (!perTrip) summaryCache.set(trip, store);
+    return computed;
+  }
+  return computeTripPhoneUseSummary(trip, options);
+}
+
+function computeTripPhoneUseSummary(trip = {}, options = {}) {
   const compact = trip.phone_use_summary && typeof trip.phone_use_summary === 'object'
     ? trip.phone_use_summary
     : null;

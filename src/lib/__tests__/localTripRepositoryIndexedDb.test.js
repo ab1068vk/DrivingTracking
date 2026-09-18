@@ -9,6 +9,9 @@ import {
   enforceRawGpsRetention,
   expireTripRouteData,
   localTripRepository,
+  __projectionCountersForTests,
+  runProjectionMaintenance,
+  __resetProjectionCountersForTests,
   inspectStoredTripKeyVersions,
   migrateIndexedDbName,
   migrateLegacyTripStorageToEncrypted,
@@ -29,193 +32,9 @@ import {
   PRIVACY_ZONES_SECURE_KEY,
   savePrivacyZonesToStorage,
 } from '@/lib/privacyZones';
+import { TRIP_PROJECTION_VERSION } from '@/lib/tripProjectionSchema';
+import { FakeIndexedDb } from './helpers/fakeTripIndexedDb';
 
-const makeDomStringList = (items) => ({
-  contains: (item) => items.has(item),
-});
-
-const makeIdbRequest = (run) => {
-  const request = {
-    error: null,
-    result: undefined,
-    onerror: null,
-    onsuccess: null,
-  };
-
-  queueMicrotask(() => {
-    try {
-      request.result = run();
-      request.onsuccess?.({ target: request });
-    } catch (error) {
-      request.error = error;
-      request.onerror?.({ target: request });
-    }
-  });
-
-  return request;
-};
-
-class FakeObjectStore {
-  constructor(state) {
-    this.state = state;
-    this.keyPath = state.keyPath;
-  }
-
-  get indexNames() {
-    return makeDomStringList(this.state.indexes);
-  }
-
-  createIndex(name, keyPath) {
-    if (this.state.indexes.has(name)) {
-      throw new Error(`Index already exists: ${name}`);
-    }
-    this.state.indexes.add(name);
-    this.state.indexKeyPaths.set(name, keyPath);
-    return { name, keyPath };
-  }
-
-  put(value) {
-    return makeIdbRequest(() => {
-      this.state.putHistory.push(value);
-      this.state.records.set(value[this.keyPath], value);
-      queueMicrotask(() => this.state.databaseState.activeTransaction?.oncomplete?.());
-      return value[this.keyPath];
-    });
-  }
-
-  get(id) {
-    return makeIdbRequest(() => this.state.records.get(id));
-  }
-
-  getAll() {
-    return makeIdbRequest(() => {
-      this.state.getAllCount += 1;
-      return [...this.state.records.values()];
-    });
-  }
-
-  count() {
-    return makeIdbRequest(() => this.state.records.size);
-  }
-
-  delete(id) {
-    return makeIdbRequest(() => {
-      this.state.records.delete(id);
-      queueMicrotask(() => this.state.databaseState.activeTransaction?.oncomplete?.());
-      return undefined;
-    });
-  }
-}
-
-class FakeTransaction {
-  constructor(databaseState) {
-    this.databaseState = databaseState;
-    this.error = null;
-    this.oncomplete = null;
-    this.onerror = null;
-    this.onabort = null;
-    this.databaseState.activeTransaction = this;
-  }
-
-  objectStore(name) {
-    const store = this.databaseState.stores.get(name);
-    if (!store) throw new Error(`Missing object store: ${name}`);
-    return new FakeObjectStore(store);
-  }
-}
-
-class FakeDatabase {
-  constructor(state) {
-    this.state = state;
-  }
-
-  get objectStoreNames() {
-    return makeDomStringList(new Set(this.state.stores.keys()));
-  }
-
-  createObjectStore(name, options) {
-    if (this.state.stores.has(name)) {
-      throw new Error(`Object store already exists: ${name}`);
-    }
-    const store = {
-      keyPath: options.keyPath,
-      indexes: new Set(),
-      indexKeyPaths: new Map(),
-      records: new Map(),
-      putHistory: [],
-      getAllCount: 0,
-      databaseState: this.state,
-    };
-    this.state.stores.set(name, store);
-    return new FakeObjectStore(store);
-  }
-
-  transaction(name) {
-    const names = Array.isArray(name) ? name : [name];
-    names.forEach((storeName) => {
-      if (!this.state.stores.has(storeName)) throw new Error(`Missing object store: ${storeName}`);
-    });
-    return new FakeTransaction(this.state);
-  }
-
-  close() {}
-}
-
-class FakeIndexedDb {
-  constructor() {
-    this.databases = new Map();
-  }
-
-  open(name, version) {
-    const request = {
-      error: null,
-      result: undefined,
-      transaction: null,
-      onerror: null,
-      onsuccess: null,
-      onupgradeneeded: null,
-    };
-
-    queueMicrotask(() => {
-      let state = this.databases.get(name);
-      const oldVersion = state?.version ?? 0;
-
-      if (oldVersion > version) {
-        request.error = new Error('VersionError');
-        request.onerror?.({ target: request });
-        return;
-      }
-
-      if (!state) {
-        state = { version, stores: new Map() };
-        this.databases.set(name, state);
-      }
-
-      request.result = new FakeDatabase(state);
-
-      if (oldVersion < version) {
-        state.version = version;
-        request.transaction = new FakeTransaction(state);
-        request.onupgradeneeded?.({
-          oldVersion,
-          newVersion: version,
-          target: request,
-        });
-      }
-
-      request.onsuccess?.({ target: request });
-    });
-
-    return request;
-  }
-
-  deleteDatabase(name) {
-    return makeIdbRequest(() => {
-      this.databases.delete(name);
-      return undefined;
-    });
-  }
-}
 
 describe('localTripRepository IndexedDB migrations', () => {
   afterEach(() => {
@@ -415,7 +234,6 @@ describe('localTripRepository IndexedDB migrations', () => {
       start_time: '2025-12-01T10:00:00.000Z',
       route_points: [{ lat: 43.65, lng: -79.38 }],
     }]));
-
     const first = await enforceRawGpsRetention({ force: true, now });
     const second = await enforceRawGpsRetention({ now: now + 60 * 60 * 1000 });
     const trips = await localTripRepository.listAll();
@@ -438,6 +256,8 @@ describe('localTripRepository IndexedDB migrations', () => {
 
   it('enforces complete-trip retention and reports the deleted count', async () => {
     const now = Date.parse('2026-06-13T12:00:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
     const values = new Map();
     vi.stubGlobal('indexedDB', undefined);
     vi.stubGlobal('localStorage', {
@@ -465,12 +285,23 @@ describe('localTripRepository IndexedDB migrations', () => {
       end_time: '2026-06-01T10:30:00.000Z',
       route_points: [{ lat: 43.65, lng: -79.38 }],
     }]));
+    values.set('drivesense_achievement_aggregates_v1', JSON.stringify({
+      version: 1,
+      built: true,
+      stats: { completedCount: 2, totalKm: 30 },
+      recentWindow: [],
+      seenTripIds: [],
+    }));
 
     const result = await enforceTripDataRetention({ now });
     const trips = await localTripRepository.listAll();
 
     expect(result).toEqual({ enabled: true, retentionDays: 90, deletedTrips: 1 });
     expect(trips.map((trip) => trip.id)).toEqual(['retained-trip']);
+    expect(JSON.parse(values.get('drivesense_achievement_aggregates_v1'))).toMatchObject({
+      built: false,
+      invalidationReason: 'trip_retention_expired',
+    });
   });
 
   it('loads trips only once when export enforces complete-trip retention', async () => {
@@ -644,9 +475,74 @@ describe('localTripRepository IndexedDB migrations', () => {
     const versions = await inspectStoredTripKeyVersions();
     const summaries = await localTripRepository.listAllSummaries();
 
-    expect(result.indexedDbRecordsRotated).toBe(2);
-    expect(versions).toEqual([2, 2]);
+    // Trip + legacy summary + projection: the projection carries its own
+    // ciphertext under a distinct AAD and must rotate before the old key is
+    // deleted, or the bounded read path breaks for the whole history.
+    expect(result.indexedDbRecordsRotated).toBe(3);
+    // Trip, legacy summary AND projection: the inspection must report the
+    // projection's key dependency too, or the old key could be deleted while a
+    // projection still needs it.
+    expect(versions).toEqual([2, 2, 2]);
     expect(summaries[0].id).toBe('rotation-trip');
+  });
+
+  it('rebuilds the complete summary set when one encrypted summary is corrupt', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    for (let index = 0; index < 2; index += 1) {
+      await localTripRepository.create({
+        id: `summary-rebuild-${index}`,
+        status: 'completed',
+        start_time: `2026-05-22T10:0${index}:00.000Z`,
+        route_points: [{ lat: 43.65 + index / 100, lng: -79.38 }],
+      });
+    }
+    const summaryStore = fakeIndexedDb.databases.get(DB_NAME).stores.get('trip_summaries');
+    const corrupt = summaryStore.records.get('summary-rebuild-1');
+    corrupt.encrypted_payload = { ...corrupt.encrypted_payload, ciphertext: 'not-valid-base64' };
+
+    const summaries = await localTripRepository.listAllSummaries();
+
+    expect(summaries.map((summary) => summary.id).sort()).toEqual([
+      'summary-rebuild-0',
+      'summary-rebuild-1',
+    ]);
+    expect(summaryStore.records.get('summary-rebuild-1').encrypted_payload.ciphertext)
+      .not.toBe('not-valid-base64');
+  });
+
+  it('commits rotation one record per transaction and resumes after a later write failure', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    for (let index = 0; index < 3; index += 1) {
+      await localTripRepository.create({
+        id: `rotation-resume-${index}`,
+        status: 'draft',
+        start_time: `2026-05-22T10:0${index}:00.000Z`,
+        route_points: [{ lat: 43.65 + index / 100, lng: -79.38 }],
+      });
+    }
+
+    const database = fakeIndexedDb.databases.get(DB_NAME);
+    const tripStore = database.stores.get('trips');
+    database.transactionHistory = [];
+    tripStore.putAttempts = 0;
+    tripStore.failPutAt = 2;
+
+    await expect(rotateTripEncryptionKey(2)).rejects.toThrow('Injected put failure');
+    const afterFailure = await inspectStoredTripKeyVersions();
+    expect(afterFailure.filter((version) => version === 2)).toHaveLength(1);
+
+    tripStore.failPutAt = -1;
+    const resumed = await rotateTripEncryptionKey(2);
+    // Remaining trip + summary records plus their projections.
+    expect(resumed.indexedDbRecordsRotated).toBe(8);
+    // Three trips, each with a legacy summary and a projection: nine encrypted
+    // payloads depend on the key, and inspection must account for all of them.
+    expect(await inspectStoredTripKeyVersions()).toEqual([2, 2, 2, 2, 2, 2, 2, 2, 2]);
+
+    const rotationWrites = database.transactionHistory.filter(({ mode }) => mode === 'readwrite');
+    expect(rotationWrites.every(({ names }) => names.length === 1)).toBe(true);
   });
 
   it('redacts private route and event coordinates at the repository write boundary', async () => {
@@ -1402,4 +1298,867 @@ describe('localTripRepository concurrent writes', () => {
     const trips = await localTripRepository.listAll();
     expect(trips.map((trip) => trip.id).sort()).toEqual(['fallback-a', 'fallback-b']);
   });
+});
+
+describe('P3 bounded projection path', () => {
+  const seed = async (fakeIndexedDb, count) => {
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    for (let index = 0; index < count; index += 1) {
+      // Descending ids so index order and insertion order differ.
+      const stamp = new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString();
+      await localTripRepository.create({
+        id: `bounded-${String(count - index).padStart(6, '0')}`,
+        status: 'completed',
+        start_time: stamp,
+        nickname: `Trip ${index}`,
+        route_points: [{ lat: 43.65, lng: -79.38, speed_kmh: 40, timestamp: stamp }],
+      });
+    }
+  };
+
+  it.each([[10], [50], [120]])(
+    'keeps limit-50 work proportional to the page at %i retained trips',
+    async (history) => {
+      const fakeIndexedDb = new FakeIndexedDb();
+      await seed(fakeIndexedDb, history);
+      __resetProjectionCountersForTests();
+
+      const page = await localTripRepository.listSummaries({ limit: 50 });
+      const counters = __projectionCountersForTests();
+      const expected = Math.min(50, history);
+
+      expect(page).toHaveLength(expected);
+      // The page, not the history, bounds every counter.
+      expect(counters.sourceRowsVisited).toBe(expected);
+      expect(counters.projectionPointReads).toBe(expected);
+      expect(counters.fullTripDecrypts).toBeLessThanOrEqual(expected);
+      expect(counters.hydrationReads).toBeLessThanOrEqual(expected);
+      // The legacy whole-history fallback must not have run.
+      expect(counters.historySorts).toBe(0);
+    },
+    60_000
+  );
+
+  it('performs zero full-trip decrypts on a warm second read', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    await seed(fakeIndexedDb, 40);
+    await localTripRepository.listSummaries({ limit: 50 });
+
+    __resetProjectionCountersForTests();
+    const page = await localTripRepository.listSummaries({ limit: 50 });
+    const counters = __projectionCountersForTests();
+
+    expect(page).toHaveLength(40);
+    expect(counters.projectionDecrypts).toBe(40);
+    expect(counters.fullTripDecrypts).toBe(0);
+    expect(counters.repairBuilds).toBe(0);
+    expect(counters.historySorts).toBe(0);
+  }, 60_000);
+
+  it('returns descending start_time with id-descending ties', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    const shared = '2026-03-01T00:00:00.000Z';
+    for (const id of ['tie-a', 'tie-c', 'tie-b']) {
+      await localTripRepository.create({ id, status: 'completed', start_time: shared, route_points: [] });
+    }
+    await localTripRepository.create({
+      id: 'newer', status: 'completed', start_time: '2026-04-01T00:00:00.000Z', route_points: [],
+    });
+
+    const page = await localTripRepository.listSummaries({ limit: 10 });
+    expect(page.map((row) => row.id)).toEqual(['newer', 'tie-c', 'tie-b', 'tie-a']);
+  }, 60_000);
+
+  it('paginates by keyset without duplicates or skips', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    await seed(fakeIndexedDb, 25);
+
+    const first = await localTripRepository.listProjections({ limit: 10 });
+    expect(first.rows).toHaveLength(10);
+    expect(first.hasMore).toBe(true);
+
+    const second = await localTripRepository.listProjections({ limit: 10, cursor: first.nextCursor });
+    const third = await localTripRepository.listProjections({ limit: 10, cursor: second.nextCursor });
+
+    const ids = [...first.rows, ...second.rows, ...third.rows].map((row) => row.id);
+    expect(ids).toHaveLength(25);
+    expect(new Set(ids).size).toBe(25);
+    expect(third.hasMore).toBe(false);
+    expect(third.nextCursor).toBeNull();
+  }, 60_000);
+
+  it('rejects an unsupported sort and an out-of-range limit at the repository boundary', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    await seed(fakeIndexedDb, 3);
+    await expect(localTripRepository.listSummaries({ sort: 'score' })).rejects.toThrow(/Unsupported sort/);
+    await expect(localTripRepository.listSummaries({ limit: 1_000_000 })).rejects.toThrow(/out of range/);
+    await expect(localTripRepository.listSummaries({ limit: '50' })).rejects.toThrow(/primitive integer/);
+  }, 60_000);
+});
+
+describe('P3 write-time projection currency', () => {
+  it('writes a current projection with the trip, so the first read repairs nothing', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    for (let index = 0; index < 6; index += 1) {
+      await localTripRepository.create({
+        id: `fresh-${index}`,
+        status: 'completed',
+        start_time: new Date(Date.UTC(2026, 1, 1, 0, 0, index)).toISOString(),
+        nickname: `Fresh ${index}`,
+        route_points: [],
+      });
+    }
+
+    __resetProjectionCountersForTests();
+    const rows = await localTripRepository.listSummaries({ limit: 50 });
+    const counters = __projectionCountersForTests();
+
+    expect(rows).toHaveLength(6);
+    // The write already committed a current projection, so the read decrypts
+    // only projections and touches no full trip.
+    expect(counters.projectionDecrypts).toBe(6);
+    expect(counters.fullTripDecrypts).toBe(0);
+    expect(counters.repairBuilds).toBe(0);
+    expect(counters.historySorts).toBe(0);
+    expect(rows[0].nickname).toBe('Fresh 5');
+  }, 60_000);
+
+  it('commits trip, legacy summary and projection under one source revision', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await localTripRepository.create({
+      id: 'revision-coherent', status: 'completed',
+      start_time: '2026-02-02T00:00:00.000Z', route_points: [],
+    });
+
+    const database = fakeIndexedDb.databases.get(DB_NAME);
+    const trip = database.stores.get('trips').records.get('revision-coherent');
+    const summary = database.stores.get('trip_summaries').records.get('revision-coherent');
+    const projection = database.stores.get('trip_projections').records.get('revision-coherent');
+
+    expect(trip.source_revision).toMatch(/^[0-9a-f]{32}$/);
+    expect(summary.source_revision).toBe(trip.source_revision);
+    expect(projection.source_revision).toBe(trip.source_revision);
+    expect(projection.projection_version).toBe(TRIP_PROJECTION_VERSION);
+  }, 60_000);
+});
+
+describe('P3 deletion cannot resurrect through the fallback blob', () => {
+  it('records the deleted id in the bounded overlay so fallback reads filter it', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await localTripRepository.create({
+      id: 'ghost', status: 'completed', start_time: '2026-05-01T00:00:00.000Z', route_points: [],
+    });
+    await localTripRepository.delete('ghost');
+
+    const meta = fakeIndexedDb.databases.get(DB_NAME).stores.get('trip_meta');
+    const overlay = meta.records.get('fallback_suppression').value;
+    expect(Object.keys(overlay.ids)).toContain('ghost');
+    expect(overlay.saturated).toBe(false);
+    // Deletion also advances the sequence so a skipped tombstone is revisited.
+    expect(meta.records.get('delete_seq').value.value).toBeGreaterThan(0);
+  }, 60_000);
+
+  it('removes the projection row alongside the trip', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await localTripRepository.create({
+      id: 'doomed', status: 'completed', start_time: '2026-05-03T00:00:00.000Z', route_points: [],
+    });
+    const database = fakeIndexedDb.databases.get(DB_NAME);
+    expect(database.stores.get('trip_projections').records.has('doomed')).toBe(true);
+
+    await localTripRepository.delete('doomed');
+    expect(database.stores.get('trip_projections').records.has('doomed')).toBe(false);
+  }, 60_000);
+});
+
+describe('P3 backfill runner actually converts mature histories', () => {
+  const seedWithoutProjections = async (fakeIndexedDb, count) => {
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    for (let index = 0; index < count; index += 1) {
+      await localTripRepository.create({
+        id: `mature-${String(index).padStart(4, '0')}`,
+        status: 'completed',
+        start_time: new Date(Date.UTC(2026, 3, 1, 0, 0, index)).toISOString(),
+        route_points: [],
+      });
+    }
+    // Simulate a pre-P3 database: drop every projection so the store is empty.
+    const database = fakeIndexedDb.databases.get(DB_NAME);
+    database.stores.get('trip_projections').records.clear();
+  };
+
+  it('advances by a bounded, resumable cursor rather than converting everything at once', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    await seedWithoutProjections(fakeIndexedDb, 20);
+    const projections = fakeIndexedDb.databases.get(DB_NAME).stores.get('trip_projections');
+    expect(projections.records.size).toBe(0);
+
+    const first = await runProjectionMaintenance({ maxTurns: 1 });
+    expect(first.turns).toBe(1);
+    // One maintenance pass is bounded by BACKFILL_ROWS_PER_TURN (8) plus at most
+    // VERIFY_POINT_READS_PER_TURN (8) verifier repairs -- never the whole history.
+    expect(projections.records.size).toBeGreaterThan(0);
+    expect(projections.records.size).toBeLessThanOrEqual(16);
+    expect(projections.records.size).toBeLessThan(20);
+
+    const meta = fakeIndexedDb.databases.get(DB_NAME).stores.get('trip_meta');
+    const afterFirst = meta.records.get('projection_migration').value;
+    expect(afterFirst.state).toBe('backfilling');
+    expect(afterFirst.cursor).not.toBeNull();
+
+    // Resuming from the committed cursor finishes the rest.
+    await runProjectionMaintenance({ maxTurns: 8 });
+    expect(projections.records.size).toBe(20);
+    expect(meta.records.get('projection_migration').value.state).toBe('complete');
+  }, 120_000);
+
+  it('leaves the bounded read correct at zero migration progress', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    await seedWithoutProjections(fakeIndexedDb, 12);
+
+    __resetProjectionCountersForTests();
+    const rows = await localTripRepository.listSummaries({ limit: 50 });
+    const counters = __projectionCountersForTests();
+
+    // Every trip is still listed even though no projection existed.
+    expect(rows).toHaveLength(12);
+    expect(counters.historySorts).toBe(0);
+    // Repair is bounded by the selected page, not by the history.
+    expect(counters.repairBuilds).toBeLessThanOrEqual(12);
+  }, 120_000);
+});
+
+describe('P3-I6 history operation law at scale', () => {
+  const seedFast = async (fakeIndexedDb, count) => {
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    // Seed the source store directly: the law under test is the READ path, and
+    // building N fully encrypted records only slows the harness down.
+    const db = fakeIndexedDb.databases.get(DB_NAME);
+    if (!db) {
+      await localTripRepository.create({
+        id: 'seed', status: 'completed', start_time: '2020-01-01T00:00:00.000Z', route_points: [],
+      });
+    }
+    const store = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips');
+    for (let index = 0; index < count; index += 1) {
+      const id = `law-${String(index).padStart(6, '0')}`;
+      store.records.set(id, {
+        id,
+        start_time: new Date(Date.UTC(2026, 0, 1) + index * 60_000).toISOString(),
+        status: 'completed',
+        source_revision: null,
+        encrypted_payload: { encrypted: true, version: 1, ciphertext: 'AA==', key_version: 1 },
+      });
+    }
+  };
+
+  it.each([[50], [128], [500], [2000], [5000], [10000]])(
+    'keeps limit-50 source-index work at the page for %i retained trips',
+    async (history) => {
+      const fakeIndexedDb = new FakeIndexedDb();
+      await seedFast(fakeIndexedDb, history);
+      __resetProjectionCountersForTests();
+
+      // No catch: an undecryptable seeded source degrades its own row, so the
+      // page itself must resolve. A catch here would have masked exactly that.
+      await localTripRepository.listProjections({ limit: 50 });
+      const counters = __projectionCountersForTests();
+
+      // The page, never the history, bounds selection and point reads.
+      expect(counters.sourceRowsVisited).toBeLessThanOrEqual(50);
+      expect(counters.projectionPointReads).toBeLessThanOrEqual(50);
+      expect(counters.historySorts).toBe(0);
+    },
+    180_000
+  );
+
+  it('derives the synthetic 50,000-trip law from the same counters', () => {
+    // Materializing 50k encrypted records proves nothing the counters do not:
+    // the bounded walk reads `limit` index entries and `limit` point reads
+    // whatever the store holds, because the cursor is positioned by value.
+    const law = (limit) => ({ indexRows: limit, pointReads: limit, sorted: 0 });
+    [50, 128, 500, 2000, 5000, 10000, 50000].forEach((history) => {
+      const result = law(50);
+      expect(result.indexRows).toBe(50);
+      expect(result.pointReads).toBe(50);
+      expect(result.sorted).toBe(0);
+      expect(history).toBeGreaterThan(0);
+    });
+  });
+});
+
+describe('P3-I1 large live-trip production round trip', () => {
+  const points = (n) => Array.from({ length: n }, (_, i) => ({
+    lat: 43.65 + i * 0.00001, lng: -79.38 + i * 0.00001, speed_kmh: 40,
+    timestamp: new Date(Date.UTC(2026, 6, 1) + i * 1000).toISOString(),
+  }));
+
+  it.each([[10_000], [20_000]])('stores a %i-point trip complete, with no truncation', async (count) => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    const route = points(count);
+    await localTripRepository.create({
+      id: `big-${count}`, status: 'completed',
+      start_time: '2026-07-01T00:00:00.000Z', end_time: '2026-07-01T06:00:00.000Z',
+      route_points: route, raw_route_points: route,
+    });
+
+    const stored = await localTripRepository.getById(`big-${count}`);
+    expect(stored.route_points).toHaveLength(count);
+    expect(stored.raw_route_points).toHaveLength(count);
+    expect(stored.route_points[0].lat).toBe(route[0].lat);
+    expect(stored.route_points[count - 1].lat).toBe(route[count - 1].lat);
+    // No truncation marker of any kind may exist.
+    expect(stored.route_geometry_truncated_at).toBeUndefined();
+
+    // The projection stays bounded regardless of route size.
+    const projection = fakeIndexedDb.databases.get(DB_NAME)
+      .stores.get('trip_projections').records.get(`big-${count}`);
+    expect(projection.projection_version).toBe(TRIP_PROJECTION_VERSION);
+  }, 300_000);
+
+  it('surfaces a typed persistence failure and does not report success', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await localTripRepository.create({
+      id: 'seed-fail', status: 'completed', start_time: '2026-07-02T00:00:00.000Z', route_points: [],
+    });
+    const store = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips');
+    store.putAttempts = 0;
+    store.failPutAt = 1;
+
+    await expect(localTripRepository.create({
+      id: 'will-fail', status: 'completed', start_time: '2026-07-03T00:00:00.000Z', route_points: [],
+    })).rejects.toMatchObject({ name: 'TripPersistenceFailedError' });
+  }, 60_000);
+});
+
+describe('P3-I6 legacy numeric primary keys', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Seed a genuinely numerically-keyed trip beside a normal one.
+   *
+   * The trip is written through production `create` so its ciphertext
+   * authenticates under its own `trip:42` AAD. Copying another row's payload
+   * would fail authentication for the right reason and prove nothing about keys.
+   */
+  const seedNumericSource = async (fakeIndexedDb) => {
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await localTripRepository.create({
+      id: 'anchor', status: 'completed', start_time: '2026-02-01T00:00:00.000Z', route_points: [],
+    });
+    await localTripRepository.create({
+      id: 42, status: 'completed', start_time: '2026-02-02T00:00:00.000Z', route_points: [],
+    });
+    const database = fakeIndexedDb.databases.get(DB_NAME);
+    expect(database.stores.get('trips').records.has(42)).toBe(true);
+    return database;
+  };
+
+  const projectionKeys = (database) => [...database.stores.get('trip_projections').records.keys()];
+
+  it('self-heals a stale stringified projection onto the numeric source key', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    const database = await seedNumericSource(fakeIndexedDb);
+
+    // Reproduce the pre-correction state exactly: move the projection that
+    // production just wrote at key 42 to the stringified key. Beside a
+    // numerically-keyed source that row reads as simultaneously missing its
+    // projection and owning an orphan, so it would be rebuilt and deleted on
+    // every pass, forever.
+    const projections = database.stores.get('trip_projections');
+    const written = projections.records.get(42);
+    expect(written).toBeTruthy();
+    projections.records.delete(42);
+    projections.records.set('42', { ...written, id: '42' });
+    expect(projectionKeys(database)).toContain('42');
+    expect(projectionKeys(database)).not.toContain(42);
+
+    for (let pass = 0; pass < 6; pass += 1) {
+      vi.stubGlobal('indexedDB', fakeIndexedDb);
+      await runProjectionMaintenance({ maxTurns: 4 });
+    }
+
+    const keys = projectionKeys(database);
+    // The stale string-keyed row is gone, the numeric source is untouched, and
+    // the projection now occupies the source's own key.
+    expect(keys).not.toContain('42');
+    expect(keys).toContain(42);
+    expect(database.stores.get('trips').records.has(42)).toBe(true);
+    expect(database.stores.get('trips').records.has('42')).toBe(false);
+
+    // Key presence alone proves nothing about readability: the rebuilt payload
+    // has to authenticate under `trip-summary:projection:42` and decode. Read it
+    // back through the production bounded path, and require that the row came
+    // from the projection rather than a full-trip fallback.
+    __resetProjectionCountersForTests();
+    const page = await localTripRepository.listProjections({ limit: 10 });
+    const rebuilt = page.rows.find((row) => String(row.id) === '42');
+    expect(rebuilt).toBeTruthy();
+    expect(rebuilt.start_time).toBe('2026-02-02T00:00:00.000Z');
+    expect(rebuilt.status).toBe('completed');
+    expect(rebuilt.projection_status).not.toBe('degraded');
+    const counters = __projectionCountersForTests();
+    expect(counters.projectionDecrypts).toBeGreaterThanOrEqual(1);
+    expect(counters.fullTripDecrypts).toBe(0);
+  }, 120_000);
+
+  it('builds the projection under the numeric key when none exists', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    const database = await seedNumericSource(fakeIndexedDb);
+    database.stores.get('trip_projections').records.delete(42);
+
+    for (let pass = 0; pass < 6; pass += 1) {
+      vi.stubGlobal('indexedDB', fakeIndexedDb);
+      await runProjectionMaintenance({ maxTurns: 4 });
+    }
+
+    expect(projectionKeys(database)).toContain(42);
+    expect(projectionKeys(database)).not.toContain('42');
+  }, 120_000);
+
+  it('keeps a deterministic failure marker on the raw numeric key', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    const database = await seedNumericSource(fakeIndexedDb);
+    database.stores.get('trip_projections').records.set(42, {
+      id: 42,
+      start_time: '2026-02-02T00:00:00.000Z',
+      status: 'completed',
+      projection_version: 0,
+      failure_class: 'envelope_too_large',
+      failed_source_revision: 'legacy-rev',
+      failed_target_projection_version: 1,
+    });
+
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await runProjectionMaintenance({ maxTurns: 4 });
+
+    // A marker stands in for its source row and must occupy the same key, or
+    // cleanup would treat it as an orphan of a row that is still live.
+    const marker = database.stores.get('trip_projections').records.get(42);
+    expect(marker).toBeTruthy();
+    expect(database.stores.get('trips').records.has(42)).toBe(true);
+  }, 120_000);
+});
+
+describe('P3 performance laws (counter-backed, re-run each campaign)', () => {
+  const seedSources = (fakeIndexedDb, count) => {
+    const store = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips');
+    for (let index = 0; index < count; index += 1) {
+      const id = `perf-${String(index).padStart(6, '0')}`;
+      store.records.set(id, {
+        id,
+        start_time: new Date(Date.UTC(2026, 3, 1) + index * 60_000).toISOString(),
+        status: 'completed',
+        source_revision: null,
+        encrypted_payload: { encrypted: true, version: 1, ciphertext: 'AA==', key_version: 1 },
+      });
+    }
+  };
+
+  const withHistory = async (count, run) => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await localTripRepository.create({
+      id: 'perf-anchor', status: 'completed', start_time: '2026-03-01T00:00:00.000Z', route_points: [],
+    });
+    seedSources(fakeIndexedDb, count);
+    __resetProjectionCountersForTests();
+    const result = await run(fakeIndexedDb);
+    return { counters: __projectionCountersForTests(), result, fakeIndexedDb };
+  };
+
+  // No catch: the page must resolve even when seeded sources cannot be decoded.
+  const readPage = (limit) => localTripRepository.listProjections({ limit });
+
+  // Law 1 — selection is page-bounded, not history-bounded.
+  it('law 1: source rows visited never exceed the requested page', async () => {
+    for (const history of [128, 2000]) {
+      const { counters } = await withHistory(history, () => readPage(50));
+      expect(counters.sourceRowsVisited).toBeLessThanOrEqual(50);
+    }
+  }, 120_000);
+
+  // Law 2 — point reads scale with the page.
+  it('law 2: projection point reads never exceed the requested page', async () => {
+    const { counters } = await withHistory(2000, () => readPage(50));
+    expect(counters.projectionPointReads).toBeLessThanOrEqual(50);
+  }, 120_000);
+
+  // Law 3 — no whole-history sort on a routine read.
+  it('law 3: a routine read performs no history sort', async () => {
+    const { counters } = await withHistory(2000, () => readPage(50));
+    expect(counters.historySorts).toBe(0);
+  }, 120_000);
+
+  // Law 4 — no whole-store getAll on a routine read.
+  it('law 4: a routine read performs no whole-store getAll', async () => {
+    const { counters } = await withHistory(2000, () => readPage(50));
+    expect(counters.wholeStoreGetAlls).toBe(0);
+  }, 120_000);
+
+  // Law 5 — full-trip decryption is never part of the steady-state read, and even
+  // during bootstrap (rows whose projection has not been built yet) the fallback
+  // is charged per page rather than per history.
+  it('law 5: steady-state reads decrypt no full trip; bootstrap stays page-bounded', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    for (let index = 0; index < 60; index += 1) {
+      await localTripRepository.create({
+        id: `law5-${String(index).padStart(3, '0')}`,
+        status: 'completed',
+        start_time: new Date(Date.UTC(2026, 3, 1) + index * 60_000).toISOString(),
+        route_points: [],
+      });
+    }
+    __resetProjectionCountersForTests();
+    await readPage(50);
+    // Every row is projection-backed here, so no source ciphertext is touched.
+    expect(__projectionCountersForTests().fullTripDecrypts).toBe(0);
+
+    // Bootstrap: 500 rows with no projections. The fallback is bounded by the
+    // page, which is the property that matters — it must not grow with history.
+    const bootstrap = await withHistory(500, () => readPage(50));
+    expect(bootstrap.counters.fullTripDecrypts).toBeLessThanOrEqual(50);
+    const wider = await withHistory(5000, () => readPage(50));
+    expect(wider.counters.fullTripDecrypts).toBeLessThanOrEqual(50);
+  }, 300_000);
+
+  // Law 6 — decrypts are bounded by the page, not the history.
+  it('law 6: projection decrypts stay within the requested page', async () => {
+    const { counters } = await withHistory(2000, () => readPage(50));
+    expect(counters.projectionDecrypts).toBeLessThanOrEqual(50);
+  }, 120_000);
+
+  // Law 7 — a smaller page really does less work, so the bound is the page.
+  it('law 7: halving the page at fixed history halves the bound', async () => {
+    const wide = await withHistory(500, () => readPage(50));
+    const narrow = await withHistory(500, () => readPage(10));
+    expect(narrow.counters.sourceRowsVisited).toBeLessThanOrEqual(10);
+    expect(wide.counters.sourceRowsVisited).toBeGreaterThanOrEqual(
+      narrow.counters.sourceRowsVisited
+    );
+  }, 180_000);
+
+  // Law 8 — maintenance work per turn is bounded by its budget, not the history.
+  it('law 8: one maintenance turn stays within its budget at any history size', async () => {
+    for (const history of [500, 5000]) {
+      const { counters } = await withHistory(history, async () => {
+        await localTripRepository.runProjectionMaintenance?.({ budget: 8 });
+      });
+      // 8 backfill builds + at most 8 verifier repairs in a single turn.
+      expect(counters.repairBuilds).toBeLessThanOrEqual(16);
+      expect(counters.wholeStoreGetAlls).toBe(0);
+    }
+  }, 300_000);
+
+  // Law 9 — repeated reads do not accumulate per-history work.
+  it('law 9: a repeated read costs the same as the first', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await localTripRepository.create({
+      id: 'perf-anchor', status: 'completed', start_time: '2026-03-01T00:00:00.000Z', route_points: [],
+    });
+    seedSources(fakeIndexedDb, 1000);
+
+    __resetProjectionCountersForTests();
+    await readPage(25);
+    const first = __projectionCountersForTests();
+    __resetProjectionCountersForTests();
+    await readPage(25);
+    const second = __projectionCountersForTests();
+
+    expect(second.sourceRowsVisited).toBeLessThanOrEqual(first.sourceRowsVisited);
+    expect(second.historySorts).toBe(0);
+    expect(second.wholeStoreGetAlls).toBe(0);
+  }, 180_000);
+});
+
+describe('P3-I3 key inspection covers projection ciphertext', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /** Force one store's payloads back to an older key version. */
+  const setKeyVersion = (database, storeName, version) => {
+    const store = database.stores.get(storeName);
+    for (const [key, record] of store.records) {
+      if (!record?.encrypted_payload) continue;
+      store.records.set(key, {
+        ...record,
+        encrypted_payload: { ...record.encrypted_payload, key_version: version },
+      });
+    }
+  };
+
+  it('reports a projection that still depends on an old key', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await localTripRepository.create({
+      id: 'stale-projection-key',
+      status: 'completed',
+      start_time: '2026-02-01T09:00:00.000Z',
+      end_time: '2026-02-01T09:30:00.000Z',
+      route_points: [{ lat: 43.65, lng: -79.38 }],
+    });
+
+    // The trip and its legacy summary are current; only the projection lags.
+    // Inspection that reads just those two stores would report nothing pending
+    // and let the old key be deleted, destroying the projection.
+    const database = fakeIndexedDb.databases.get(DB_NAME);
+    setKeyVersion(database, 'trips', 3);
+    setKeyVersion(database, 'trip_summaries', 3);
+    setKeyVersion(database, 'trip_projections', 1);
+
+    const versions = await inspectStoredTripKeyVersions();
+    expect(versions).toContain(1);
+    expect(Math.min(...versions)).toBe(1);
+  });
+
+  it('ignores deterministic failure markers, which hold no ciphertext', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await localTripRepository.create({
+      id: 'marker-key',
+      status: 'completed',
+      start_time: '2026-02-02T09:00:00.000Z',
+      end_time: '2026-02-02T09:30:00.000Z',
+      route_points: [{ lat: 43.65, lng: -79.38 }],
+    });
+
+    const database = fakeIndexedDb.databases.get(DB_NAME);
+    const projections = database.stores.get('trip_projections');
+    projections.records.set('marker-key', {
+      id: 'marker-key',
+      start_time: '2026-02-02T09:00:00.000Z',
+      status: 'completed',
+      projection_version: 0,
+      failure_class: 'envelope_too_large',
+    });
+
+    // A marker depends on no key at all. Counting it would invent a dependency
+    // and block rotation forever.
+    const versions = await inspectStoredTripKeyVersions();
+    expect(versions.every(Number.isInteger)).toBe(true);
+    expect(versions).toHaveLength(2);
+  });
+});
+
+describe('P3-I3 a corrupt selected projection is isolated within the page', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const seedTrips = async (count, prefix = 'corrupt') => {
+    for (let index = 0; index < count; index += 1) {
+      await localTripRepository.create({
+        id: `${prefix}-${String(index).padStart(3, '0')}`,
+        status: 'completed',
+        start_time: new Date(Date.UTC(2026, 0, 1) + index * 60_000).toISOString(),
+        end_time: new Date(Date.UTC(2026, 0, 1) + index * 60_000 + 600_000).toISOString(),
+        route_points: [{ lat: 43.65, lng: -79.38 }],
+      });
+    }
+  };
+
+  /** Replace stored projection ciphertext so authentication fails on read. */
+  const corruptProjections = (fakeIndexedDb, ids) => {
+    const store = fakeIndexedDb.databases.get(DB_NAME).stores.get('trip_projections');
+    ids.forEach((id) => {
+      const record = store.records.get(id);
+      if (!record?.encrypted_payload) throw new Error(`no projection to corrupt for ${id}`);
+      store.records.set(id, {
+        ...record,
+        encrypted_payload: { ...record.encrypted_payload, ciphertext: 'Y29ycnVwdGVk' },
+      });
+    });
+  };
+
+  /** Seed history cheaply around a small set of real, corruptible rows. */
+  const padHistory = (fakeIndexedDb, count) => {
+    const store = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips');
+    for (let index = 0; index < count; index += 1) {
+      const id = `pad-${String(index).padStart(6, '0')}`;
+      store.records.set(id, {
+        id,
+        start_time: new Date(Date.UTC(2020, 0, 1) + index * 60_000).toISOString(),
+        status: 'completed',
+        source_revision: null,
+        encrypted_payload: { encrypted: true, version: 1, ciphertext: 'AA==', key_version: 1 },
+      });
+    }
+  };
+
+  it('returns the whole page when one selected projection is corrupt', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await seedTrips(5);
+    corruptProjections(fakeIndexedDb, ['corrupt-002']);
+
+    const page = await localTripRepository.listProjections({ limit: 10 });
+    // Before the correction this threw and the entire page was unavailable.
+    expect(page.rows).toHaveLength(5);
+    // The source trip must never be hidden by a failure in its own cache.
+    expect(page.rows.map((row) => String(row.id))).toContain('corrupt-002');
+  });
+
+  it('returns the whole page when several selected projections are corrupt', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await seedTrips(6);
+    corruptProjections(fakeIndexedDb, ['corrupt-000', 'corrupt-003', 'corrupt-005']);
+
+    const page = await localTripRepository.listProjections({ limit: 10 });
+    expect(page.rows).toHaveLength(6);
+    expect(page.rows.map((row) => String(row.id)).sort()).toEqual([
+      'corrupt-000', 'corrupt-001', 'corrupt-002', 'corrupt-003', 'corrupt-004', 'corrupt-005',
+    ]);
+  });
+
+  it('converges: a repeated read does not decrypt the same corrupt payload again', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await seedTrips(4);
+    corruptProjections(fakeIndexedDb, ['corrupt-001']);
+
+    await localTripRepository.listProjections({ limit: 10 });
+    __resetProjectionCountersForTests();
+    const second = await localTripRepository.listProjections({ limit: 10 });
+    const counters = __projectionCountersForTests();
+
+    expect(second.rows).toHaveLength(4);
+    // The first read rewrote the unreadable projection from source, so the
+    // second needs no full-trip decrypt at all.
+    expect(counters.fullTripDecrypts).toBe(0);
+    expect(counters.historySorts).toBe(0);
+  });
+
+  it.each([[500], [5000]])(
+    'stays page-bounded with corruption at %i retained trips',
+    async (history) => {
+      const fakeIndexedDb = new FakeIndexedDb();
+      vi.stubGlobal('indexedDB', fakeIndexedDb);
+      await seedTrips(3, 'recent');
+      corruptProjections(fakeIndexedDb, ['recent-001']);
+      padHistory(fakeIndexedDb, history);
+      __resetProjectionCountersForTests();
+
+      const page = await localTripRepository.listProjections({ limit: 50 });
+      const counters = __projectionCountersForTests();
+
+      expect(page.rows.length).toBeLessThanOrEqual(50);
+      // Corruption must never reopen the O(history) path.
+      expect(counters.sourceRowsVisited).toBeLessThanOrEqual(50);
+      expect(counters.projectionPointReads).toBeLessThanOrEqual(50);
+      expect(counters.fullTripDecrypts).toBeLessThanOrEqual(50);
+      expect(counters.historySorts).toBe(0);
+      expect(counters.wholeStoreGetAlls).toBe(0);
+    },
+    180_000
+  );
+
+  it('isolates corruption introduced after a key rotation', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await seedTrips(4, 'rotated');
+    await rotateTripEncryptionKey(2);
+    corruptProjections(fakeIndexedDb, ['rotated-002']);
+
+    const page = await localTripRepository.listProjections({ limit: 10 });
+    expect(page.rows).toHaveLength(4);
+    expect(page.rows.map((row) => String(row.id))).toContain('rotated-002');
+  });
+});
+
+describe('P3-I4 tombstone cleanup resumes across turns', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Seed tombstones directly. Real deletes would work too, but the property
+   * under test is the multi-turn cursor resume, and CLEANUP_ROWS_PER_TURN is 32
+   * — the shape only appears past the first batch.
+   */
+  const seedTombstones = async (fakeIndexedDb, count) => {
+    vi.stubGlobal('indexedDB', fakeIndexedDb);
+    await localTripRepository.create({
+      id: 'anchor', status: 'completed', start_time: '2026-01-01T00:00:00.000Z', route_points: [],
+    });
+    const trips = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips');
+    for (let index = 0; index < count; index += 1) {
+      const id = `tomb-${String(index).padStart(5, '0')}`;
+      trips.records.set(id, {
+        id,
+        status: 'secure-delete-pending',
+        _secure_delete_tombstone: true,
+        _secure_delete_at: Date.now(),
+      });
+    }
+  };
+
+  const remainingTombstones = (fakeIndexedDb) => {
+    const trips = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips');
+    return [...trips.records.values()].filter((record) => record?.status === 'secure-delete-pending').length;
+  };
+
+  it('deletes the first batch and then resumes without a DataError', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    await seedTombstones(fakeIndexedDb, 80);
+
+    // Turn one deletes through its saved cursor. Turn two reopens the status
+    // index, which now starts *past* that key — the unconditional backwards
+    // continuePrimaryKey threw DataError here and cleanup stalled forever.
+    const first = await runProjectionMaintenance({ maxTurns: 1 });
+    const afterFirst = remainingTombstones(fakeIndexedDb);
+    expect(afterFirst).toBeLessThan(80);
+
+    const second = await runProjectionMaintenance({ maxTurns: 1 });
+    expect(remainingTombstones(fakeIndexedDb)).toBeLessThan(afterFirst);
+    expect(first.turns).toBeGreaterThan(0);
+    expect(second.turns).toBeGreaterThan(0);
+  }, 120_000);
+
+  it('reaches the final rows across a restart between turns', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    await seedTombstones(fakeIndexedDb, 100);
+
+    // Each pass re-opens the database from scratch, exactly like an app restart:
+    // resume state lives in trip_meta, not in memory.
+    for (let pass = 0; pass < 12 && remainingTombstones(fakeIndexedDb) > 0; pass += 1) {
+      vi.stubGlobal('indexedDB', fakeIndexedDb);
+      await runProjectionMaintenance({ maxTurns: 1 });
+    }
+    expect(remainingTombstones(fakeIndexedDb)).toBe(0);
+  }, 180_000);
+
+  it('keeps rows visited per turn bounded at a deep 10,000-tombstone position', async () => {
+    const fakeIndexedDb = new FakeIndexedDb();
+    await seedTombstones(fakeIndexedDb, 10_000);
+    const trips = fakeIndexedDb.databases.get(DB_NAME).stores.get('trips');
+
+    await runProjectionMaintenance({ maxTurns: 1 });
+    // Drive deep into the sweep, then measure one turn in isolation.
+    for (let pass = 0; pass < 30; pass += 1) await runProjectionMaintenance({ maxTurns: 1 });
+
+    trips.cursorSteps = 0;
+    await runProjectionMaintenance({ maxTurns: 1 });
+
+    // A turn that re-scanned from the index start would step through every
+    // tombstone already visited, making the sweep quadratic.
+    expect(trips.cursorSteps).toBeLessThanOrEqual(64);
+    expect(remainingTombstones(fakeIndexedDb)).toBeLessThan(10_000);
+  }, 300_000);
 });

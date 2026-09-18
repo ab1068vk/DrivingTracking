@@ -1,12 +1,13 @@
 import { lazy, Suspense, useDeferredValue, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import {
   Box,
   GitCompare,
   Layers,
   Map,
 } from 'lucide-react';
-import { tripService } from '@/api/trips';
+import { useQuery } from '@tanstack/react-query';
+import { p7DetailQueryOptions } from '@/api/trips';
+import { useBoundedTripWindow } from '@/hooks/useBoundedTripWindow';
 import TripPlayback from '@/components/TripPlayback';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDistance, formatSpeed } from '@/lib/tripEngine';
@@ -30,6 +31,9 @@ const formatDate = (value) => {
     : 'source unavailable';
 };
 
+/** The labelled picker window. It is `latest N`, and the page says so. */
+const REPLAY_PICKER_TRIPS = 120;
+
 export default function TrackingReplayPro() {
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
@@ -38,11 +42,18 @@ export default function TrackingReplayPro() {
   const [playbackMode, setPlaybackMode] = useState('real_time');
   const [surface, setSurface] = useState('map');
 
-  const { data: trips = [], isLoading } = useQuery({
-    queryKey: ['tracking-replay-pro-trips'],
-    queryFn: () => tripService.list({ sort: '-start_time', limit: 120 }),
-    staleTime: 2 * 60 * 1000,
+  // P7 Stage 8 (ledger entry #17, B6.7). `tripService.list({limit:120})` read
+  // **every** trip in the store, decrypted each one in full, sorted the whole
+  // array and sliced 120 rows off the front — the limit described the output,
+  // never the work. The picker needs availability and a point count, which the
+  // projection already carries as `route_points_map_count` and
+  // `route_replay_available`; exact fidelity resolves on the <= 2 selected Q2
+  // fetches. The picker now performs **zero full-trip decrypts**.
+  const pickerWindow = useBoundedTripWindow({
+    queryId: 'replay-pro', limit: REPLAY_PICKER_TRIPS,
   });
+  const trips = pickerWindow.trips;
+  const isLoading = pickerWindow.isLoading;
 
   const options = useMemo(() => buildReplayTripOptions(trips), [trips]);
   const availableOptions = options.filter((option) => option.available);
@@ -58,8 +69,25 @@ export default function TrackingReplayPro() {
     deferredSecondaryId !== effectiveSecondaryId ||
     deferredPlaybackMode !== playbackMode ||
     deferredSurface !== surface;
-  const primaryTrip = trips.find((trip) => String(trip.id) === String(deferredPrimaryId)) || null;
-  const secondaryTrip = trips.find((trip) => String(trip.id) === String(deferredSecondaryId)) || null;
+  // P7 ledger entry #17: the picker is bounded projections and performs zero
+  // full-trip decrypts, and **exact fidelity resolves on the <= 2 selected Q2
+  // fetches**. Route similarity, gaps and playback all need real geometry,
+  // which a projection row does not carry — reading it from the picker row
+  // left the comparison permanently "unavailable".
+  const { data: primaryDetail } = useQuery(p7DetailQueryOptions(deferredPrimaryId));
+  const { data: secondaryDetail } = useQuery(p7DetailQueryOptions(deferredSecondaryId));
+  const primaryRow = trips.find((trip) => String(trip.id) === String(deferredPrimaryId)) || null;
+  const secondaryRow = trips.find((trip) => String(trip.id) === String(deferredSecondaryId)) || null;
+  // The detail wins where it has arrived; the projection keeps the surface
+  // populated until it does.
+  const primaryTrip = useMemo(
+    () => (primaryDetail ? { ...primaryRow, ...primaryDetail } : primaryRow),
+    [primaryDetail, primaryRow]
+  );
+  const secondaryTrip = useMemo(
+    () => (secondaryDetail ? { ...secondaryRow, ...secondaryDetail } : secondaryRow),
+    [secondaryDetail, secondaryRow]
+  );
   const compareData = useMemo(
     () => buildCompareReplayData({
       primaryTrip,

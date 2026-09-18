@@ -1,5 +1,5 @@
 // @ts-check
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   AlertTriangle,
@@ -32,6 +32,7 @@ import {
   getTrackingDiagnostics,
   normalizeNativeDiagnosticEvents,
 } from '@/lib/trackingDiagnostics';
+import { createLatestAsyncRequestGuard } from '@/lib/latestAsyncRequest';
 import useLocalSettings from '@/hooks/useLocalSettings';
 
 const severityStyle = {
@@ -121,10 +122,10 @@ function getWebDiagnosticLogs() {
   }
 }
 
-function getLocalLogSnapshot() {
+async function getLocalLogSnapshot() {
   let systemLogs = [];
   try {
-    systemLogs = getSystemLogs();
+    systemLogs = await getSystemLogs();
   } catch (error) {
     logSystemFailure('system_logs_local_load', error);
   }
@@ -132,7 +133,7 @@ function getLocalLogSnapshot() {
 }
 
 async function getFullLogSnapshot() {
-  const baseLogs = getLocalLogSnapshot();
+  const baseLogs = await getLocalLogSnapshot();
   if (!isAndroid()) return baseLogs;
   try {
     const nativeDiagnostics = await getNativeDiagnostics();
@@ -342,7 +343,10 @@ function LogRow({ event, index }) {
 
 export default function SystemLogs() {
   const settings = useLocalSettings();
-  const [logs, setLogs] = useState(() => getLocalLogSnapshot());
+  const [logs, setLogs] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(true);
+  const refreshGuard = useRef(null);
+  refreshGuard.current ??= createLatestAsyncRequestGuard();
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
   const [severity, setSeverity] = useState('all');
@@ -356,15 +360,17 @@ export default function SystemLogs() {
   const [exportStatus, setExportStatus] = useState('');
 
   const refresh = () => {
-    try {
-      setLogs(getLocalLogSnapshot());
-    } catch (error) {
-      logSystemFailure('system_logs_refresh_local', error);
-    }
+    const generation = refreshGuard.current.begin();
+    setLogsLoading(true);
     getFullLogSnapshot()
-      .then(setLogs)
+      .then((nextLogs) => {
+        if (refreshGuard.current.isCurrent(generation)) setLogs(nextLogs);
+      })
       .catch((error) => {
         logSystemFailure('system_logs_refresh', error);
+      })
+      .finally(() => {
+        if (refreshGuard.current.isCurrent(generation)) setLogsLoading(false);
       });
   };
 
@@ -374,6 +380,7 @@ export default function SystemLogs() {
     window.addEventListener(SYSTEM_LOG_EVENT, onLogUpdate);
     const interval = setInterval(refresh, 5000);
     return () => {
+      refreshGuard.current.invalidate();
       window.removeEventListener(SYSTEM_LOG_EVENT, onLogUpdate);
       clearInterval(interval);
     };
@@ -482,11 +489,15 @@ export default function SystemLogs() {
   };
 
   const exportJson = async () => {
+    if (logsLoading) {
+      setExportStatus('System logs are still loading. Wait for the complete history before exporting.');
+      return;
+    }
     try {
       setExportStatus('Saving JSON export...');
       const result = await exportLogText({
         filename: `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.json`,
-        text: exportSystemLogsJson(filteredLogs),
+        text: await exportSystemLogsJson(filteredLogs),
         mimeType: 'application/json',
         format: 'json',
         logCount: filteredLogs.length,
@@ -501,11 +512,15 @@ export default function SystemLogs() {
   };
 
   const exportCsv = async () => {
+    if (logsLoading) {
+      setExportStatus('System logs are still loading. Wait for the complete history before exporting.');
+      return;
+    }
     try {
       setExportStatus('Saving CSV export...');
       const result = await exportLogText({
         filename: `road-sage-system-logs-${new Date().toISOString().slice(0, 10)}.csv`,
-        text: exportSystemLogsCsv(filteredLogs),
+        text: await exportSystemLogsCsv(filteredLogs),
         mimeType: 'text/csv',
         format: 'csv',
         logCount: filteredLogs.length,
@@ -520,10 +535,7 @@ export default function SystemLogs() {
   };
 
   const clearLogs = () => {
-    clearSystemLogs();
-    recordSystemEvent('system_logs_cleared', {
-      previous_log_count: logs.length,
-    }, { category: 'storage', severity: 'warn', title: 'System logs cleared' });
+    clearSystemLogs({ previousLogCount: logs.length });
     setLogs(getWebDiagnosticLogs());
   };
 
@@ -547,14 +559,16 @@ export default function SystemLogs() {
             </button>
             <button
               onClick={exportJson}
-              className="inline-flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+              disabled={logsLoading}
+              className="inline-flex items-center gap-2 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
             >
               <FileJson className="h-4 w-4" />
               Export JSON
             </button>
             <button
               onClick={exportCsv}
-              className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm font-semibold hover:bg-secondary"
+              disabled={logsLoading}
+              className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm font-semibold hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Download className="h-4 w-4" />
               Export CSV
@@ -772,7 +786,7 @@ export default function SystemLogs() {
           ) : (
             <div className="rounded-xl border border-border bg-card p-6 text-center text-sm text-muted-foreground">
               <ClipboardList className="mx-auto mb-2 h-6 w-6" />
-              No matching logs.
+              {logsLoading ? 'Loading system logs…' : 'No matching logs.'}
             </div>
           )}
         </div>

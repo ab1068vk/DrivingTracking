@@ -200,6 +200,10 @@ export default function Parking() {
   const [vehicleReminders, setVehicleReminders] = useState({});
   const [reminderClock, setReminderClock] = useState(Date.now());
   const [vehicles, setVehicles] = useState([]);
+  // HPR-003. The durable default is its own authority. Reading it off the
+  // loaded page handed the role to whichever vehicle happened to be visible
+  // whenever the real default sat outside the prefix.
+  const [defaultVehicle, setDefaultVehicle] = useState(null);
   const [actionStatus, setActionStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [savingParking, setSavingParking] = useState(false);
@@ -428,7 +432,6 @@ export default function Parking() {
       setOriginalPhotoFileId(null);
       setPhotoExpiresAt(null);
       setPhotoExpiryDirty(false);
-      const defaultVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
       setVehicleId(String(defaultVehicle?.id ?? ''));
       setActionStatus('Private zone detected. Confirm the protected state below; no coordinates have been stored.');
       return;
@@ -451,18 +454,20 @@ export default function Parking() {
         : DEFAULT_PARKING_PHOTO_RETENTION_HOURS,
     );
     setPhotoExpiryDirty(Boolean(source.photo_data_url) && !hasStoredRetention);
-    const defaultVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
     setVehicleId(String(source.vehicle_id ?? defaultVehicle?.id ?? ''));
     setIndoorEstimated(source.indoor_estimated === true);
     setGarageHint(source.garage_hint || '');
     setEditorOpen(true);
     setViewingHistoryId(null);
-  }, [discardUnsavedPhoto, isPrivateParkingDraft, parkingState, vehicles]);
+  }, [defaultVehicle, discardUnsavedPhoto, isPrivateParkingDraft, parkingState]);
 
   useEffect(() => {
     vehicleService.list({ sort: '-created_date', limit: 50 })
       .then((items) => setVehicles(Array.isArray(items) ? items : []))
       .catch(() => setVehicles([]));
+    vehicleService.getDefault()
+      .then((vehicle) => setDefaultVehicle(vehicle || null))
+      .catch(() => setDefaultVehicle(null));
   }, []);
 
   useEffect(() => {

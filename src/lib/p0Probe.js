@@ -47,6 +47,12 @@ import {
   safeSecurePlugin,
 } from '@/lib/p0Schema';
 import {
+  __resetLifecycleAuthorityForTests,
+  getLifecycleSnapshot,
+  isSupportedLifecycleSignal,
+  recordLifecycleSignal,
+} from '@/lib/lifecycleAuthority';
+import {
   P0_RUN_MARKER_STORAGE_KEY,
   isProbeEnabled,
   p0ArmConfigId,
@@ -161,11 +167,6 @@ let processStartPerfMs = 0;
 let nextCallId = 1;
 let nextLtId = 1;
 let nextOpId = 1;
-
-let documentVisible = true;
-let nativeActive = true;
-let effectiveForeground = true;
-let foregroundEpoch = 0;
 
 let heartbeatTimer = null;
 let longTaskObserver = null;
@@ -299,15 +300,6 @@ const endSelfTime = (startedAt) => {
 // Lifecycle
 // ---------------------------------------------------------------------------
 
-const recomputeEffectiveForeground = () => {
-  const next = documentVisible && nativeActive;
-  if (next !== effectiveForeground) {
-    effectiveForeground = next;
-    foregroundEpoch += 1;
-  }
-  return effectiveForeground;
-};
-
 /**
  * Record a raw lifecycle event. Raw `visibilitychange` and `appStateChange`
  * events are stored **separately and unmerged** so the duplicated resume work is
@@ -318,25 +310,30 @@ const recomputeEffectiveForeground = () => {
  * @param {'visible'|'hidden'|'active'|'inactive'} state
  */
 export function recordP0Lifecycle(source, state) {
-  if (!enabled || frozen) return;
+  // Production state advances unconditionally. P0 only mirrors the returned
+  // authoritative event when its optional trace is active. Unsupported probe
+  // fuzz inputs retain P0's historical sanitize-and-record behaviour but are
+  // not production lifecycle signals.
+  const lifecycleEvent = isSupportedLifecycleSignal(source, state)
+    ? recordLifecycleSignal(source, state)
+    : getLifecycleSnapshot();
+  if (!enabled || frozen) return lifecycleEvent;
   const startedAt = beginSelfTime();
-  if (source === 'visibilitychange') documentVisible = state === 'visible';
-  else if (source === 'appStateChange') nativeActive = state === 'active';
-  const foreground = recomputeEffectiveForeground();
 
   const slot = ringSlot(lifecycleRing);
   const data = lifecycleRing.data;
   data.source[slot] = indexOfOrZero(LIFECYCLE_SOURCES, source);
   data.state[slot] = indexOfOrZero(LIFECYCLE_STATES, state);
-  data.effective_foreground[slot] = foreground ? 1 : 0;
-  data.epoch[slot] = foregroundEpoch;
+  data.effective_foreground[slot] = lifecycleEvent.effectiveForeground ? 1 : 0;
+  data.epoch[slot] = lifecycleEvent.epoch;
   data.perf_ms[slot] = now();
   data.wall_ms[slot] = Date.now();
   endSelfTime(startedAt);
+  return lifecycleEvent;
 }
 
-export const p0ForegroundEpoch = () => foregroundEpoch;
-export const p0EffectiveForeground = () => effectiveForeground;
+export const p0ForegroundEpoch = () => getLifecycleSnapshot().epoch;
+export const p0EffectiveForeground = () => getLifecycleSnapshot().effectiveForeground;
 
 // ---------------------------------------------------------------------------
 // Suppressed-work counters (arms B/C)
@@ -455,6 +452,7 @@ export function openP0Span(kind) {
   // writer self-time budget like every other write, so the exported overhead
   // cannot understate the instrument.
   const startedAt = beginSelfTime();
+  const lifecycle = getLifecycleSnapshot();
   const span = {
     call_id: nextP0CallId(),
     kind: indexOfOrZero(SPAN_KINDS, kind),
@@ -469,9 +467,9 @@ export function openP0Span(kind) {
     wall_end_ms: 0,
     wall_pre_native_ms: 0,
     wall_post_native_ms: 0,
-    start_epoch: foregroundEpoch,
+    start_epoch: lifecycle.epoch,
     end_epoch: 0,
-    start_state: effectiveForeground ? 1 : 0,
+    start_state: lifecycle.effectiveForeground ? 1 : 0,
     end_state: 0,
     queue_depth_at_enqueue: 0,
     outcome: 2,
@@ -566,8 +564,9 @@ export function closeP0Span(span, outcome = 'unknown') {
   const startedAt = beginSelfTime();
   span.perf_end = now();
   span.wall_end_ms = Date.now();
-  span.end_epoch = foregroundEpoch;
-  span.end_state = effectiveForeground ? 1 : 0;
+  const lifecycle = getLifecycleSnapshot();
+  span.end_epoch = lifecycle.epoch;
+  span.end_state = lifecycle.effectiveForeground ? 1 : 0;
   // A swallowed failure inside the measured work still makes this an error
   // span. See `markP0SpanFailure`.
   const effectiveOutcome = span.p0_failed && outcome === 'success' ? 'error' : outcome;
@@ -733,9 +732,10 @@ const startHeartbeat = () => {
       data.perf_start[slot] = expected;
       data.perf_end[slot] = actual;
       data.lateness_ms[slot] = lateness;
-      data.visibility_state[slot] = documentVisible ? 1 : 0;
-      data.effective_state[slot] = effectiveForeground ? 1 : 0;
-      data.epoch[slot] = foregroundEpoch;
+      const lifecycle = getLifecycleSnapshot();
+      data.visibility_state[slot] = lifecycle.documentVisible ? 1 : 0;
+      data.effective_state[slot] = lifecycle.effectiveForeground ? 1 : 0;
+      data.epoch[slot] = lifecycle.epoch;
       endSelfTime(startedAt);
     }
     expected = actual + 1000;
@@ -802,11 +802,6 @@ export function initializeP0Probe(options = {}) {
   lifecycleRing = createRing(RING_CAPACITY.lifecycleEvents, LIFECYCLE_COLUMNS);
   nativeRing = createRing(RING_CAPACITY.nativeBlocks, NATIVE_COLUMNS);
   initAllocMs = now() - allocStart;
-
-  if (typeof document !== 'undefined' && document.visibilityState) {
-    documentVisible = document.visibilityState === 'visible';
-  }
-  effectiveForeground = documentVisible && nativeActive;
 
   startLongTaskObserver();
   startHeartbeat();
@@ -964,10 +959,7 @@ export function __resetP0ProbeForTests() {
   nextCallId = 1;
   nextLtId = 1;
   nextOpId = 1;
-  documentVisible = true;
-  nativeActive = true;
-  effectiveForeground = true;
-  foregroundEpoch = 0;
+  __resetLifecycleAuthorityForTests();
   selfTimeSampleCounter = 0;
   selfTimeSamples = 0;
   selfTimeTotalMs = 0;

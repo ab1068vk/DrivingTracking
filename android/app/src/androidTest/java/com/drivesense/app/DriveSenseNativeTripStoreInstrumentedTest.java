@@ -105,14 +105,14 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
         SharedPreferences prefs = DriveSenseNativeTripStore.prefs(context);
         prefs.edit().putString("completed_trips", "{not-json").commit();
 
-        assertEquals(0, DriveSenseNativeTripStore.getCompletedTrips(context).length());
+        assertEquals(0, DriveSenseNativeTripStore.getCompletedTripPage(context, 8).getJSONArray("trips").length());
         assertFalse(DriveSenseNativeTripStore.getCompletedTripJournalStatus(context).getBoolean("queueReadable"));
 
         JSONObject trip = new JSONObject();
         trip.put("id", "native-trip-1");
         assertTrue(DriveSenseNativeTripStore.addCompletedTrip(context, trip));
 
-        JSONArray trips = DriveSenseNativeTripStore.getCompletedTrips(context);
+        JSONArray trips = DriveSenseNativeTripStore.getCompletedTripPage(context, 8).getJSONArray("trips");
         assertEquals(1, trips.length());
         assertEquals("native-trip-1", trips.getJSONObject(0).getString("id"));
         String stored = prefs.getString("completed_trips", "");
@@ -138,7 +138,7 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
 
         assertTrue(result.getBoolean("success"));
         assertEquals(1, result.getInt("removed"));
-        JSONArray remaining = DriveSenseNativeTripStore.getCompletedTrips(context);
+        JSONArray remaining = DriveSenseNativeTripStore.getCompletedTripPage(context, 8).getJSONArray("trips");
         assertEquals(1, remaining.length());
         assertEquals("native-trip-b", remaining.getJSONObject(0).getString("id"));
     }
@@ -157,7 +157,7 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
         assertTrue(DriveSenseNativeTripStore.addCompletedTrip(context, trip));
         assertEquals(
             padding.length(),
-            DriveSenseNativeTripStore.getCompletedTrips(context)
+            DriveSenseNativeTripStore.getCompletedTripPage(context, 8).getJSONArray("trips")
                 .getJSONObject(0)
                 .getString("test_padding")
                 .length()
@@ -177,7 +177,7 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
         DriveSenseNativeTripStore.clearCompletedTrips(context);
 
         assertFalse(DriveSenseNativeTripStore.prefs(context).contains("completed_trips"));
-        assertEquals(0, DriveSenseNativeTripStore.getCompletedTrips(context).length());
+        assertEquals(0, DriveSenseNativeTripStore.getCompletedTripPage(context, 8).getJSONArray("trips").length());
     }
 
     @Test
@@ -194,7 +194,7 @@ public class DriveSenseNativeTripStoreInstrumentedTest {
             .put(new JSONObject().put("sample", 2)));
         DriveSenseNativeTripStore.addCompletedTrip(context, richer);
 
-        JSONArray trips = DriveSenseNativeTripStore.getCompletedTrips(context);
+        JSONArray trips = DriveSenseNativeTripStore.getCompletedTripPage(context, 8).getJSONArray("trips");
         assertEquals(1, trips.length());
         assertEquals(2, trips.getJSONObject(0).getJSONArray("route_points").length());
     }

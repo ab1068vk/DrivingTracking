@@ -1281,6 +1281,28 @@ export function getNotifiedAchievementIds() {
   return [...readNotifiedAchievementIds()];
 }
 
+/**
+ * Split earned candidates into the batch a bounded caller should deliver now
+ * and the remainder still owed.
+ *
+ * P4-B-F01: a bounded coordinator slice may not simply truncate the candidate
+ * list, because the durable delivered-ID set is applied *inside*
+ * `syncAchievementNotifications` — a prefix of already-delivered ids would
+ * consume the whole quota and an older undelivered unlock beyond it would never
+ * advance into the call. Filtering here, against the same durable set the
+ * notifier owns, means a limit only ever caps *undelivered* work.
+ *
+ * @param {Array<{id: string, earned?: boolean}>} candidates
+ * @param {{limit?: number}} [options] `limit <= 0` means no cap.
+ */
+export function selectUndeliveredAchievements(candidates = [], { limit = 0 } = {}) {
+  const notifiedIds = readNotifiedAchievementIds();
+  const undelivered = (Array.isArray(candidates) ? candidates : [])
+    .filter((candidate) => candidate?.earned && !notifiedIds.has(candidate.id));
+  const cap = limit > 0 ? Math.floor(limit) : undelivered.length;
+  return { batch: undelivered.slice(0, cap), remaining: undelivered.slice(cap) };
+}
+
 const readNotifiedCalibrationIds = () => {
   try {
     const raw = localStorage.getItem(NOTIFIED_CALIBRATION_KEY);

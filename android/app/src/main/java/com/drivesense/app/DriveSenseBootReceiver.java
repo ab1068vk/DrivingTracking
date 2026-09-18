@@ -39,7 +39,7 @@ public final class DriveSenseBootReceiver extends BroadcastReceiver {
             return;
         }
 
-        boolean started = DriveSenseAutoTrackingService.start(context);
+        boolean started = DriveSenseAutoTrackingService.startForRecovery(context);
         record(
             context,
             started ? "service_restart_requested" : "service_restart_failed",

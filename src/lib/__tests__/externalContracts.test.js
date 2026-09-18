@@ -511,7 +511,14 @@ describe('external service contracts', () => {
   });
 
   it('ends a manual weather lookup with a useful timeout instead of hanging forever', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    // Model browser fetch accurately: an aborted request rejects. Leaving a
+    // never-settling promise here lets the timed-out pipeline continue into the
+    // following test after its globals have been replaced.
+    vi.stubGlobal('fetch', vi.fn((_url, { signal } = {}) => new Promise((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(signal.reason || new DOMException('Aborted', 'AbortError')), {
+        once: true,
+      });
+    })));
 
     const lookup = buildWeatherOnlyTripContextPatch({
       id: 'weather-timeout-trip',

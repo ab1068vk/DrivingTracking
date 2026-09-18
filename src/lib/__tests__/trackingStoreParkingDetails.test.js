@@ -29,6 +29,7 @@ vi.mock('@/lib/parkingHistory', () => ({
 }));
 
 vi.mock('@/lib/nativePlatform', () => ({
+  isAndroid: vi.fn(() => false),
   isNativePlatform: vi.fn(() => false),
 }));
 

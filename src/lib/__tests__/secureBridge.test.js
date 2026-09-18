@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 const bridgePlugin = vi.hoisted(() => ({
   initSession: vi.fn(),
   setPreference: vi.fn(async () => ({ stored: true })),
+  ensureSensitivePayloadKey: vi.fn(async () => ({ ensured: true })),
 }));
 
 vi.mock('@capacitor/core', () => ({
@@ -75,6 +76,58 @@ describe('secureBridge', () => {
       { stored: true, order: 2 },
     ]);
     expect(bridgePlugin.setPreference).toHaveBeenCalledTimes(baselineCalls + 2);
+  });
+
+  it('admits bulk producers FIFO and lets an already-queued single run before the next batch', async () => {
+    let releaseFirst = () => {};
+    const baselineBulk = bridgePlugin.setPreference.mock.calls.length;
+    const baselineSingle = bridgePlugin.ensureSensitivePayloadKey.mock.calls.length;
+    bridgePlugin.setPreference
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        releaseFirst = () => resolve({ stored: true, batch: 1 });
+      }))
+      .mockResolvedValueOnce({ stored: true, batch: 2 })
+      .mockResolvedValueOnce({ stored: true, batch: 3 });
+
+    const { secureCall, withSecureBulkAdmission, __secureBulkStateForTests } = await import('@/lib/secureBridge');
+    const first = withSecureBulkAdmission(() => secureCall('SecureBridge', 'setPreference', { batch: 1 }));
+    await vi.waitFor(() => expect(bridgePlugin.setPreference).toHaveBeenCalledTimes(baselineBulk + 1));
+    const second = withSecureBulkAdmission(() => secureCall('SecureBridge', 'setPreference', { batch: 2 }));
+    const third = withSecureBulkAdmission(() => secureCall('SecureBridge', 'setPreference', { batch: 3 }));
+    const single = secureCall('SecureBridge', 'ensureSensitivePayloadKey', { keyVersion: 1 });
+
+    expect(__secureBulkStateForTests()).toEqual({ active: 1, prepared: 1 });
+    expect(bridgePlugin.setPreference).toHaveBeenCalledTimes(baselineBulk + 1);
+    releaseFirst();
+    await expect(Promise.all([first, second, third, single])).resolves.toEqual([
+      { stored: true, batch: 1 },
+      { stored: true, batch: 2 },
+      { stored: true, batch: 3 },
+      { ensured: true },
+    ]);
+    expect(bridgePlugin.ensureSensitivePayloadKey).toHaveBeenCalledTimes(baselineSingle + 1);
+    expect(bridgePlugin.setPreference.mock.invocationCallOrder.at(-1))
+      .toBeGreaterThan(bridgePlugin.ensureSensitivePayloadKey.mock.invocationCallOrder.at(-1));
+    const bulkOrders = bridgePlugin.setPreference.mock.invocationCallOrder.slice(-3);
+    expect(bulkOrders[0]).toBeLessThan(bulkOrders[1]);
+    expect(bulkOrders[1]).toBeLessThan(bulkOrders[2]);
+    expect(__secureBulkStateForTests()).toEqual({ active: 0, prepared: 0 });
+  });
+
+  it('round-trips every byte, padding variants, and a cap-sized buffer through the base64 codec', async () => {
+    const { __secureBridgeCodecForTests } = await import('@/lib/secureBridge');
+    const samples = [
+      Uint8Array.of(0),
+      Uint8Array.of(0, 255),
+      Uint8Array.of(0, 127, 255),
+      Uint8Array.from({ length: 256 }, (_, index) => index),
+      Uint8Array.from({ length: 524_304 }, (_, index) => index % 256),
+    ];
+
+    samples.forEach((sample) => {
+      const encoded = __secureBridgeCodecForTests.bytesToBase64(sample);
+      expect(__secureBridgeCodecForTests.base64ToBytes(encoded)).toEqual(sample);
+    });
   });
 });
 

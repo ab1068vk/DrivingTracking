@@ -1,10 +1,13 @@
 import { registerPlugin } from '@capacitor/core';
-import { tripService } from '@/api/trips';
+import { P35_NATIVE_AUTHORITY_ENABLED } from '@/api/trips';
 import { vehicleService } from '@/api/vehicles';
 import {
   LAST_CHECKPOINT_EXPORT_KEY,
   PRIVACY_AUDIT_ANCHOR_KEY,
   PRIVACY_AUDIT_CHAIN_KEY,
+  AUDIT_FORMAT_KEY,
+  beginPrivacyAuditErasure,
+  finishPrivacyAuditErasure,
 } from '@/lib/hashChainLog';
 import {
   KEY_ROTATION_LOG_KEY,
@@ -17,7 +20,9 @@ import {
   TRIP_EVENT_MIGRATION_KEY,
   TRIP_EVENT_MIGRATION_NOTE_DISMISSED_KEY,
   TRIPS_KEY,
+  TRIPS_ERASURE_BARRIER_KEY,
   eraseTripRepositoryForDataRights,
+  setNativeErasurePending,
 } from '@/lib/localTripRepository';
 import { VEHICLES_KEY } from '@/lib/localVehicleRepository';
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
@@ -51,11 +56,17 @@ import {
   LAST_PARKED_KEY,
   LAST_PARKING_STATE_KEY,
   SETTINGS_KEY,
+  beginSettingsErasureFence,
   clearSettingsMemoryForErasure,
+  endSettingsErasureFence,
   localSettings,
 } from '@/lib/trackingStore';
 import { saveExportToDownloads } from '@/lib/nativeDownloads';
 import { logSystemFailure } from '@/lib/systemLog';
+import { runCanonicalGenerationRollover } from '@/lib/nativeProjectionBarrier';
+import { eraseDiagnosticsHistoryForDataRights } from '@/lib/diagnosticsHistoryStore';
+import { nativeTripArchive } from '@/lib/nativeTripArchive';
+import { browserActiveTripSpool } from '@/lib/browserActiveTripSpool';
 import { TRANSMISSION_LOG_KEY } from '@/lib/transmissionLog';
 import {
   eraseExportSigningKeyForDataRights,
@@ -101,6 +112,13 @@ const extraErasureKeys = Object.freeze([
   'drivesense_calibration_profile',
   'drivesense_coach_programs_v1',
   'drivesense_driver_progression_ledger_v1',
+  // The segmented XP store's header, conversion checkpoint and bounded
+  // progression document. Its `drivesense_progression_xp_seg_v1_*` and
+  // `drivesense_progression_xp_head_v1_*` records are retired by the
+  // `drivesense_` residual sweep below.
+  'drivesense_progression_xp_index_v1',
+  'drivesense_progression_xp_migration_v1',
+  'drivesense_progression_state_v1',
   'drivesense_parking_learning_v1',
   'drivesense_speed_sign_evidence_v1',
   'drivesense_speed_geometry_index_v1',
@@ -140,13 +158,30 @@ const APP_STORAGE_EXACT_KEYS = new Set([
   'speed_knowledge_v1',
   'sidebar_state',
 ]);
+/**
+ * Safety barriers the residual sweep must never remove.
+ *
+ * The sweep matches on the `drivesense_` prefix, so it would otherwise retire
+ * the fallback-erasure barrier as ordinary app storage — while the blob that
+ * barrier guards may still exist because its removal failed. Only
+ * `eraseTripRepositoryForDataRights` retires it, and only after proving the blob
+ * is gone.
+ */
+const ERASURE_SAFETY_BARRIER_KEYS = new Set([TRIPS_ERASURE_BARRIER_KEY, AUDIT_FORMAT_KEY]);
+
 const isAppStorageKey = (key) => (
-  APP_STORAGE_EXACT_KEYS.has(String(key)) ||
-  APP_STORAGE_PREFIXES.some((prefix) => String(key).startsWith(prefix))
+  !ERASURE_SAFETY_BARRIER_KEYS.has(String(key)) && (
+    APP_STORAGE_EXACT_KEYS.has(String(key)) ||
+    APP_STORAGE_PREFIXES.some((prefix) => String(key).startsWith(prefix))
+  )
 );
 
 const encryptedErasureKeys = new Set([
   ...ROTATING_ENCRYPTED_JSON_KEYS,
+  // P4-C-F05 removed the fallback trip archive from the rotating set, because a
+  // lifecycle KEK turn must never rewrite it. It is still encrypted, so erasure
+  // must still classify it as encrypted storage.
+  TRIPS_KEY,
   PRIVACY_SCORE_HISTORY_KEY,
   PRIVACY_POSTURE_SNAPSHOT_KEY,
   PRIVACY_ZONES_SECURE_KEY,
@@ -306,20 +341,49 @@ const privacySafeSettingsForPortability = (settings = {}, zones = []) => {
   return safe;
 };
 
+/**
+ * Mask every trip for the portability bundle, one trip at a time.
+ *
+ * The bundle is a single JSON file, so its masked trips are unavoidably
+ * materialized — but reading them is not. This pages trip ids and loads one
+ * complete trip at a time, masking it immediately and releasing the original,
+ * instead of holding the whole decrypted archive alongside its masked copy.
+ */
+async function collectPortabilityTrips({ trips, privacySettings, privacyExportSalt, signal = null }) {
+  if (Array.isArray(trips)) {
+    return trips.map((trip) => maskTripForPrivacyExport(trip, privacySettings, privacyExportSalt));
+  }
+  const { runBoundedTripJob, clearBoundedJobCheckpoint } = await import('@/lib/boundedTripJob');
+  const masked = [];
+  const jobKey = 'data_portability_export';
+  const outcome = await runBoundedTripJob({
+    jobKey,
+    fingerprint: 'portability-v1',
+    status: '',
+    loadFullTrip: true,
+    signal,
+    resume: false,
+    initialState: () => ({}),
+    onTrip: ({ trip }) => {
+      masked.push(maskTripForPrivacyExport(trip, privacySettings, privacyExportSalt));
+    },
+  });
+  if (outcome.completed) await clearBoundedJobCheckpoint(jobKey);
+  return masked;
+}
+
 export async function buildDataPortabilityExport({
   trips = null,
   vehicles = null,
   settings = null,
   privacyZones = null,
   scoreHistory = null,
+  signal = null,
 } = {}) {
   const resolvedSettings = settings || localSettings.get();
   const resolvedPrivacyZones = Array.isArray(privacyZones)
     ? privacyZones
     : await getHydratedPrivacyZones(resolvedSettings).catch(() => []);
-  const sourceTrips = Array.isArray(trips)
-    ? trips
-    : await (tripService.listAllForExport?.({ sort: '-start_time' }) ?? tripService.listAll({ sort: '-start_time' }));
   const privacyExportSalt = createPrivacyExportSalt();
   const privacySettings = {
     ...resolvedSettings,
@@ -336,8 +400,14 @@ export async function buildDataPortabilityExport({
       scoreHistory: 'Privacy Intelligence score-history entries.',
     },
     generatedAt: new Date().toISOString(),
-    trips: sourceTrips.map((trip) => maskTripForPrivacyExport(trip, privacySettings, privacyExportSalt)),
-    vehicles: Array.isArray(vehicles) ? vehicles : await vehicleService.list({ sort: '-created_date', limit: 1000 }),
+    trips: await collectPortabilityTrips({ trips, privacySettings, privacyExportSalt, signal }),
+    // HPR-003. A bundle that calls itself the user's data may not stop at a
+    // silent cap: the fleet is read as bounded turns to its terminal page, and
+    // retired profiles are included so historical trip attribution stays
+    // resolvable in the artifact.
+    vehicles: Array.isArray(vehicles)
+      ? vehicles
+      : [...await vehicleService.listAllVehiclesForExport(), ...await vehicleService.listRetired()],
     settings: privacySafeSettingsForPortability(resolvedSettings, resolvedPrivacyZones),
     privacyZones: privacyZonePortabilityPlaceholders(resolvedPrivacyZones),
     scoreHistory: Array.isArray(scoreHistory) ? scoreHistory : await getPrivacyScoreHistory(),
@@ -406,46 +476,115 @@ const reportErasureProgress = (onProgress, progress) => {
 };
 
 export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now(), onProgress } = {}) {
+  // Declared before the try so the finally can release exactly this erasure's ownership,
+  // even if the fence was never acquired.
+  let fenceToken = null;
   try {
     const startedAt = new Date(now).toISOString();
+    // AUD-004 round 2: the fence goes up BEFORE anything destructive, and comes down only
+    // after the residue proof below. A native settings write dispatched before the erasure
+    // could otherwise settle between the removal and the memory clear, see its own
+    // generation as current, and republish the settings that were just erased.
+    fenceToken = beginSettingsErasureFence();
     const keyList = getErasureKeyList();
-    const totalSteps = keyList.length + 9;
+    const totalSteps = keyList.length + 10;
     reportErasureProgress(onProgress, { phase: 'trips', completed: 0, total: totalSteps });
-    const tripRepository = await eraseTripRepositoryForDataRights();
+    // The barrier must be durably established BEFORE destructive erasure, and
+    // its failure must propagate: it is what stops a queued native completion
+    // repopulating the repository we are about to empty. One bounded global
+    // record guards the whole erase, so a 10,000-trip erasure never creates
+    // 10,000 suppression ids for a journal that holds at most 64.
+    if (isAndroid()) await setNativeErasurePending(true);
+    // Existing erasure authority first; the audit owner then fences all queued
+    // appends/conversion before its local state is removed. No native DB lock
+    // is held while waiting for this explicit owner lock.
+    const auditErasureToken = await beginPrivacyAuditErasure();
+    // Native authority never replaces the legacy/projection cleanup obligation:
+    // both domains can retain sensitive historical identity.  The canonical
+    // generation rollover is fail-closed and must complete before key erasure.
+    // P4-B-F02: the rollover runs inside the projection commit barrier, so an
+    // in-flight G1 projection turn can neither interleave with it nor leave G1
+    // rows/checkpoint behind once it verifies. Erasure ownership is unchanged.
+    const nativeTripRepository = isAndroid() && P35_NATIVE_AUTHORITY_ENABLED
+      ? await runCanonicalGenerationRollover(
+        () => nativeTripArchive.eraseGeneration('data_rights_erasure'),
+        { reason: 'data_rights_erasure' }
+      )
+      : null;
+    if (nativeTripRepository?.verified === true) {
+      // Scheduling-observer notification only. Per-turn token revalidation is
+      // the mandatory guarantee (C14), so a failure here must never fail an
+      // erasure whose canonical generation rollover already verified.
+      try {
+        const { notifyP4CanonicalAuthorityChanged } = await import('@/lib/appLifecycleWork');
+        notifyP4CanonicalAuthorityChanged('data_rights_generation_erased');
+      } catch (cause) {
+        logSystemFailure('p4_authority_invalidation_after_data_rights_erase', cause);
+      }
+    }
+    const legacyTripRepository = await eraseTripRepositoryForDataRights();
+    const tripRepository = {
+      ...legacyTripRepository,
+      nativeCanonical: nativeTripRepository,
+      verified: legacyTripRepository.verified === true
+        && (!isAndroid() || !P35_NATIVE_AUTHORITY_ENABLED || nativeTripRepository?.verified === true),
+    };
     reportErasureProgress(onProgress, { phase: 'trips', completed: 1, total: totalSteps });
-    const speedKnowledge = await eraseSpeedKnowledgeForDataRights();
+    const nativeSpeedKnowledge = isAndroid() && P35_NATIVE_AUTHORITY_ENABLED
+      ? await nativeTripArchive.eraseSpeedGeneration('data_rights_erasure')
+      : null;
+    const legacySpeedKnowledge = await eraseSpeedKnowledgeForDataRights();
+    const speedKnowledge = {
+      ...legacySpeedKnowledge,
+      nativeCanonical: nativeSpeedKnowledge,
+      verified: legacySpeedKnowledge.indexedDbDeleted === true
+        && legacySpeedKnowledge.fallbackRemoved === true
+        && legacySpeedKnowledge.writeAheadRemoved === true
+        && legacySpeedKnowledge.nativeMirrorRemoved === true
+        && (!isAndroid() || !P35_NATIVE_AUTHORITY_ENABLED || nativeSpeedKnowledge?.verified === true),
+    };
     reportErasureProgress(onProgress, { phase: 'speed_knowledge', completed: 2, total: totalSteps });
+    await browserActiveTripSpool.eraseAllForDataRights();
+    const browserActiveSpoolsCleared = true;
     const nativeCompletedTripsCleared = isAndroid()
       ? await clearNativeCompletedTripsForErasure().then(() => true).catch((error) => {
         logSystemFailure('data_erasure_native_trip_clear_failed', error, {});
         return false;
       })
       : false;
+    // Cleared only after native storage is verified cleared. If the clear failed
+    // the pending state survives, native imports stay suppressed, restart
+    // retries, and the receipt reports the erase as incomplete.
+    if (isAndroid() && nativeCompletedTripsCleared) {
+      await setNativeErasurePending(false).catch(() => undefined);
+    }
     reportErasureProgress(onProgress, { phase: 'native_data', completed: 3, total: totalSteps });
     const exportSigningKeys = await eraseExportSigningKeyForDataRights();
     reportErasureProgress(onProgress, { phase: 'signing_keys', completed: 4, total: totalSteps });
     const encryptionKeys = await eraseEncryptionKeysForDataRights();
     reportErasureProgress(onProgress, { phase: 'encryption_keys', completed: 5, total: totalSteps });
+    const diagnosticsStorage = await eraseDiagnosticsHistoryForDataRights();
+    reportErasureProgress(onProgress, { phase: 'diagnostics_storage', completed: 6, total: totalSteps });
     const wipedKeys = [];
     for (let index = 0; index < keyList.length; index += 1) {
       const item = keyList[index];
       wipedKeys.push(await overwriteThenRemoveKey(item.key));
       reportErasureProgress(onProgress, {
         phase: 'local_keys',
-        completed: 6 + index,
+        completed: 7 + index,
         total: totalSteps,
       });
     }
     const residualStorage = await removeResidualAppStorage();
     reportErasureProgress(onProgress, {
       phase: 'residual_storage',
-      completed: keyList.length + 6,
+      completed: keyList.length + 7,
       total: totalSteps,
     });
     clearSettingsMemoryForErasure();
     reportErasureProgress(onProgress, {
       phase: 'memory',
-      completed: keyList.length + 7,
+      completed: keyList.length + 8,
       total: totalSteps,
     });
 
@@ -459,18 +598,46 @@ export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now(), onPro
       tripRepository,
       speedKnowledge,
       nativeCompletedTripsCleared,
+      browserActiveSpoolsCleared,
       nativeLocalDataCleared: nativeCompletedTripsCleared,
+      // Never report durable eradication while known recoverable data can still
+      // repopulate the repository. The native journal is one such source; the
+      // repository's own stores and the fallback blob are others, and a receipt
+      // that reads only the native result would sign off on an erase that left
+      // trips, legacy summaries, orphan projections or the fallback blob behind.
+      erasureComplete: tripRepository.verified === true
+        && speedKnowledge.verified === true
+        && browserActiveSpoolsCleared
+        && (!isAndroid() || nativeCompletedTripsCleared),
+      pendingNativeCleanup: isAndroid() && !nativeCompletedTripsCleared,
+      pendingRepositoryCleanup: tripRepository.verified !== true,
+      pendingSpeedKnowledgeCleanup: speedKnowledge.verified !== true,
+      repositoryErasureFailures: tripRepository.failures ?? [],
       residualStorage,
       exportSigningKeys,
       encryptionKeys,
+      diagnosticsStorage,
       limitation: 'This receipt records Road Sage app-level overwrite/remove operations. A rooted device, compromised app bundle, browser cache, OS backup, or storage wear-leveling can remain outside what the app can verify from inside itself.',
     };
+    if (payload.erasureComplete) await finishPrivacyAuditErasure(auditErasureToken);
+    // Failure/partial erasure leaves ERASING durable. No fresh log is created
+    // merely because its rows were cleared before another owner failed.
     reportErasureProgress(onProgress, {
       phase: 'signing',
-      completed: keyList.length + 8,
+      completed: keyList.length + 9,
       total: totalSteps,
     });
     const signature = await signErasureReceiptPayload(payload);
+    if (isAndroid() && nativeTripRepository?.verified === true) {
+      try {
+        const { admitP5ReviewedWork, P5_LIFECYCLE_JOB_KEYS } = await import('@/lib/appLifecycleWork');
+        admitP5ReviewedWork(P5_LIFECYCLE_JOB_KEYS.ARCHIVE_RESIDUE_GC, {
+          wake: { type: 'canonical_health', key: 'healthy' },
+        });
+      } catch (cause) {
+        logSystemFailure('p5_residue_admission_after_data_rights_erase', cause);
+      }
+    }
     reportErasureProgress(onProgress, {
       phase: 'signing',
       completed: totalSteps - 1,
@@ -485,12 +652,17 @@ export async function eraseAllLocalDataAndBuildReceipt({ now = Date.now(), onPro
       key_count: getErasureKeyList().length,
     });
     throw error;
+  } finally {
+    // Lowered only here, and only THIS erasure's ownership: the fence has to outlive the
+    // residue proof, it must come down even when erasure fails, and an overlapping
+    // erasure's ownership is not ours to release.
+    if (fenceToken !== null) endSettingsErasureFence(fenceToken);
   }
 }
 
 export async function eraseAllLocalDataAndDownloadReceipt(options = {}) {
   const receipt = await eraseAllLocalDataAndBuildReceipt(options);
-  const totalSteps = getErasureKeyList().length + 10;
+  const totalSteps = getErasureKeyList().length + 11;
   const filename = `road-sage-erasure-receipt-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
   try {
     reportErasureProgress(options.onProgress, {

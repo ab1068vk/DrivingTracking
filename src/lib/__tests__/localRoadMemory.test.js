@@ -11,6 +11,28 @@ import {
 import { buildRoadMemoryActivity } from '@/lib/roadMemoryIntelligence';
 import { LocalSpeedKnowledge, STORAGE_KEY } from '@/lib/localSpeedKnowledge';
 
+/**
+ * Road-memory confidence **decays with age**: past
+ * `ROAD_MEMORY_FRESH_DAYS` the effective confidence drops by 0.0025 per day.
+ * These fixtures were dated `2026-07-${id}`, so the staging assertions below
+ * held only while that calendar date stayed close enough to the clock, and
+ * then began failing for no reason connected to the code.
+ *
+ * The boundary is an **instant, not a date**, which is why two readings of it
+ * disagreed. Replaying the pre-correction fixture against a stubbed clock:
+ * `2026-09-11T12:00:00Z` passes 29/29 and `2026-09-11T12:01:00Z` fails 1/29.
+ * So 2026-09-11 is both the last passing and the first failing day, depending
+ * on the hour the suite happened to run — the earlier note naming 2026-09-09
+ * and the review's 2026-09-10/2026-09-11 pair are both off.
+ *
+ * Dating each drive relative to **now** keeps the test about the rule it
+ * exists to check — two agreeing drives stage a corridor as `suggested`, a
+ * third makes it operational — rather than about what day it is run.
+ */
+const dayOffsetIso = (daysAgo, seconds = 0) => new Date(
+  Date.now() - daysAgo * 86400000 + seconds * 1000
+).toISOString();
+
 const routeTrip = (id, {
   speedKmh = 49,
   lat = 43.65,
@@ -19,15 +41,16 @@ const routeTrip = (id, {
 } = {}) => ({
   id,
   status: 'completed',
-  start_time: `2026-07-${String(id).padStart(2, '0')}T12:00:00.000Z`,
-  end_time: `2026-07-${String(id).padStart(2, '0')}T12:01:00.000Z`,
+  // Recent, and still ordered by id exactly as the absolute dates were.
+  start_time: dayOffsetIso(30 - id),
+  end_time: dayOffsetIso(30 - id, 60),
   route_points: Array.from({ length: pointCount }, (_, index) => ({
     lat,
     lng: startLng + index * 0.0001,
     speed_kmh: speedKmh,
     accuracy: 6,
     heading: 90,
-    timestamp: `2026-07-${String(id).padStart(2, '0')}T12:00:${String(index).padStart(2, '0')}.000Z`,
+    timestamp: dayOffsetIso(30 - id, index),
   })),
 });
 
@@ -229,9 +252,13 @@ describe('local Road Memory', () => {
 
     const changedTrip = (id) => {
       const trip = routeTrip(id, { speedKmh: 61 });
+      // Three days after the base drives, which is what "two **recent**
+      // comparable drives" means here. Pinned to an absolute date these became
+      // older than the base fixtures once the clock moved past them, and the
+      // change was no longer recent enough to review.
       trip.route_points = trip.route_points.map((point, index) => ({
         ...point,
-        timestamp: `2026-07-06T12:00:${String(index).padStart(2, '0')}.000Z`,
+        timestamp: dayOffsetIso(24, index),
       }));
       return buildRoadMemoryObservations(trip)[0];
     };
@@ -470,15 +497,21 @@ describe('local Road Memory', () => {
     const store = memoryStore();
     const knowledge = new LocalSpeedKnowledge(store);
 
-    await knowledge.learnRoadMemoryFromTrips([
-      routeTrip(3),
-      routeTrip(1),
-      routeTrip(2),
-    ]);
+    // Built once: `routeTrip` reads the clock, so calling it again at
+    // assertion time would compare two different milliseconds.
+    const oldest = routeTrip(1);
+    const middle = routeTrip(2);
+    const newest = routeTrip(3);
+    await knowledge.learnRoadMemoryFromTrips([newest, oldest, middle]);
 
     const [candidate] = await knowledge.listRoadMemoryCandidates();
-    expect(candidate.firstObservedAt).toBe('2026-07-01T12:00:28.000Z');
-    expect(candidate.lastObservedAt).toBe('2026-07-03T12:00:28.000Z');
+    // The fixtures are dated relative to now, so the assertion is the
+    // chronology itself — oldest trip first, newest last — rather than two
+    // calendar strings that only held in one particular week.
+    expect(candidate.firstObservedAt).toBe(oldest.route_points[28].timestamp);
+    expect(candidate.lastObservedAt).toBe(newest.route_points[28].timestamp);
+    expect(Date.parse(candidate.firstObservedAt))
+      .toBeLessThan(Date.parse(candidate.lastObservedAt));
     expect(candidate.recentObservations.map((item) => item.tripId)).toEqual(['1', '2', '3']);
   });
 
@@ -725,6 +758,33 @@ describe('trip vote retention', () => {
     const merged = mergeRoadMemoryObservation(legacy, observation(9001), 'candidate-1');
     expect(Object.keys(merged.tripVotes)).toHaveLength(50);
     expect(merged.tripVotes).toHaveProperty('9001');
+  });
+
+  it('deduplicates a P6 receipt after it leaves every bounded presentation window', () => {
+    const p6Observation = (index) => ({
+      ...observation(`browser:trip-${index}`),
+      observedAt: Date.parse(`2026-07-${String(1 + (index % 28)).padStart(2, '0')}T12:00:00Z`) +
+        Math.floor(index / 28) * 31 * 86400000,
+      sampleCount: 12,
+      p6Receipt: {
+        receiptId: `browser:trip-${index}:1:0`, sourceIdentity: `browser:trip-${index}`,
+        tripId: `trip-${index}`, sourceRevision: '1', observationOrdinal: 0,
+        membershipToken: `token-${index}`, overlapKnown: true,
+      },
+    });
+    let candidate = null;
+    for (let index = 0; index < 61; index += 1) {
+      candidate = mergeRoadMemoryObservation(candidate, p6Observation(index), 'candidate-p6');
+    }
+    expect(candidate.tripVoteOrder).toHaveLength(50);
+    expect(candidate.recentObservations.length).toBeLessThanOrEqual(8);
+    expect(candidate.p6AutomaticEvidence.receiptedEvidence).toHaveLength(61);
+    const beforeReplay = structuredClone(candidate);
+
+    candidate = mergeRoadMemoryObservation(candidate, p6Observation(0), 'candidate-p6');
+
+    expect(candidate).toEqual(beforeReplay);
+    expect(candidate.p6AutomaticEvidence.receiptedEvidence).toHaveLength(61);
   });
 });
 

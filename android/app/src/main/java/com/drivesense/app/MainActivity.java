@@ -6,15 +6,19 @@ import android.view.View;
 import android.view.Window;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 
 import androidx.appcompat.app.AppCompatDelegate;
 
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.WebViewListener;
 
 public class MainActivity extends BridgeActivity {
     private static volatile boolean appVisible = false;
+    private boolean rendererRecoveryScheduled = false;
+    private WebViewListener rendererRecoveryListener;
 
     static boolean isAppVisible() {
         return appVisible;
@@ -24,6 +28,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
         registerPlugin(DriveSenseActivityRecognitionPlugin.class);
+        registerPlugin(DriveSenseArchivePlugin.class);
         registerPlugin(ScreenSecurityPlugin.class);
         registerPlugin(ScreenAwakePlugin.class);
         registerPlugin(BiometricAuthPlugin.class);
@@ -33,7 +38,9 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(RoadDataQueuePlugin.class);
         registerPlugin(AuditAnchorPlugin.class);
         registerPlugin(SpeedSignScannerPlugin.class);
+        PrivacyAuditFormatStore.initializeBeforeWebView(this);
         super.onCreate(savedInstanceState);
+        installRendererRecoveryHandler();
         AppExperienceWatchdog.start(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         applyInitialSystemBars();
@@ -67,6 +74,16 @@ public class MainActivity extends BridgeActivity {
     public void onDestroy() {
         AppExperienceWatchdog.onDestroy(this);
         super.onDestroy();
+        if (getBridge() != null) {
+            WebView webView = getBridge().getWebView();
+            if (!rendererRecoveryScheduled && webView != null) {
+                DriveSenseWebViewRendererRecovery.dispose(webView, webView::destroy);
+            }
+            if (rendererRecoveryListener != null) {
+                getBridge().removeWebViewListener(rendererRecoveryListener);
+            }
+        }
+        rendererRecoveryListener = null;
     }
 
     @Override
@@ -79,6 +96,26 @@ public class MainActivity extends BridgeActivity {
     public void onLowMemory() {
         AppExperienceWatchdog.onLowMemory(this);
         super.onLowMemory();
+    }
+
+    private void installRendererRecoveryHandler() {
+        rendererRecoveryListener = new WebViewListener() {
+            @Override
+            public boolean onRenderProcessGone(WebView webView, RenderProcessGoneDetail detail) {
+                if (rendererRecoveryScheduled) return true;
+                rendererRecoveryScheduled = true;
+                return DriveSenseWebViewRendererRecovery.handle(
+                        webView,
+                        webView::destroy,
+                        () -> {
+                            if (!isFinishing() && (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1 || !isDestroyed())) {
+                                recreate();
+                            }
+                        }
+                );
+            }
+        };
+        getBridge().addWebViewListener(rendererRecoveryListener);
     }
 
     private void applyInitialSystemBars() {

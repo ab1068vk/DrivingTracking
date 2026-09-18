@@ -62,9 +62,13 @@ import java.util.Deque;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
+import java.lang.ref.WeakReference;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 import android.util.Log;
 
 public class DriveSenseAutoTrackingService extends Service implements SensorEventListener {
@@ -77,9 +81,15 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     // watchdog can tell "service running" from "process was killed" without polling or
     // trusting a heartbeat timestamp that Doze could delay.
     private static volatile boolean serviceRunning = false;
+    // Physical H discovery only. The isolated, centrally guarded harness is
+    // the sole caller; ordinary production code never reads this reference.
+    private static volatile WeakReference<DriveSenseAutoTrackingService> physicalHarnessInstance =
+        new WeakReference<>(null);
+    private static volatile boolean physicalHarnessProducerModeForTests = false;
     // Set only on user/app-authorized stop paths. onDestroy() uses it to tell a real stop
     // apart from the OS or an OEM battery manager tearing the service down mid-drive.
     private boolean explicitStopRequested = false;
+    private String pendingDeliberateStopRequestId = null;
     static final String ACTION_START = "com.drivesense.app.action.START_NATIVE_AUTO";
     static final String ACTION_START_MANUAL_TRIP = "com.drivesense.app.action.START_NATIVE_MANUAL_TRIP";
     static final String ACTION_STOP = "com.drivesense.app.action.STOP_NATIVE_AUTO";
@@ -93,6 +103,29 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     static final String EXTRA_START_TIME_MS = "startTimeMs";
     static final String EXTRA_TRIP_ID = "tripId";
     static final String EXTRA_KEEP_ARMED = "keepArmed";
+    static final String EXTRA_DELIBERATE_STOP_REQUEST_ID = "deliberateStopRequestId";
+    static final String EXTRA_TRACKING_INTENT_KIND = "trackingIntentKind";
+    static final String EXTRA_TRACKING_INTENT_GENERATION = "trackingIntentGeneration";
+    static final String TRACKING_INTENT_EXPLICIT = "EXPLICIT";
+    static final String TRACKING_INTENT_RECOVERY = "RECOVERY";
+    private static final String DELIBERATE_STOP_PREFS = "drivesense_deliberate_stop";
+    private static final String KEY_DELIBERATE_STOP_REQUEST_ID = "request_id";
+    private static final String KEY_DELIBERATE_STOP_STATE = "state";
+    private static final String KEY_DELIBERATE_STOP_HAD_ACTIVE = "had_active";
+    private static final String KEY_DELIBERATE_STOP_DETAIL = "detail";
+    private static final String KEY_DELIBERATE_STOP_UPDATED_AT = "updated_at_ms";
+    private static final String KEY_DELIBERATE_STOP_TARGET_BOUND = "target_bound";
+    private static final String KEY_DELIBERATE_STOP_TARGET_TRIP_ID = "target_trip_id";
+    private static final String KEY_DELIBERATE_STOP_TARGET_SESSION_ID = "target_session_id";
+    private static final String KEY_DELIBERATE_STOP_TARGET_TERMINAL = "target_terminal";
+    private static final String KEY_DELIBERATE_STOP_INTENT_GENERATION = "request_intent_generation";
+    private static final String KEY_TRACKING_INTENT_GENERATION = "tracking_intent_generation";
+    static final String DELIBERATE_STOP_PENDING = "PENDING";
+    static final String DELIBERATE_STOP_SUCCEEDED = "SUCCEEDED";
+    static final String DELIBERATE_STOP_FAILED = "FAILED";
+    static final String DELIBERATE_STOP_SUPERSEDED = "SUPERSEDED";
+    private static final long DELIBERATE_STOP_RETRY_MS = 2_000L;
+    private static final Object TRACKING_INTENT_LOCK = new Object();
 
     private static final int NOTIF_ID_TRACKING_START = 4101;
     private static final int ACTIVITY_RECOGNITION_REQUEST_CODE = 4102;
@@ -265,6 +298,16 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private PendingIntent activityIntent;
     private LocationCallback locationCallback;
     private JSONArray activePoints;
+    // P3.5 RSAS v1. When the still-dark native authority gate is enabled this
+    // is the sole authoritative active route; activePoints remains null.
+    private DriveSenseActiveTripSpool activeSpool;
+    private NightSettings activeNightSettings;
+    private PointNightResult activeNightFirst;
+    private PointNightResult activeNightFirstNight;
+    private int activeNightEvaluatedPoints;
+    private int activeNightFallbackPoints;
+    private String activeNightFallbackReason;
+    private JSONObject recoveredNightClassification;
     private JSONArray activeTimeline;
     private JSONArray activeMotionSamples;
     // How many IMU samples retention thinned out of this trip's buffer. Reported so
@@ -323,6 +366,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private long lastActiveCheckpointMs = 0L;
     private long checkpointRecoveryEndOverrideMs = 0L;
     private JSONObject pendingCompletedTrip;
+    private JSONObject pendingSpoolCompletionMetadata;
     private long nextCompletedTripSaveRetryMs = 0L;
     private JSONArray pendingParkingRefinementPoints;
     private JSONObject pendingParkingRefinementSignals;
@@ -389,6 +433,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     @Override
     public void onCreate() {
         super.onCreate();
+        physicalHarnessInstance = new WeakReference<>(this);
         serviceRunning = true;
         explicitStopRequested = false;
         dataErasureInProgress = false;
@@ -419,7 +464,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             }
         };
         registerVehicleConnectionReceiver();
-        restoreActiveTripCheckpointIfAvailable();
+        restoreActiveTripCheckpointIfAvailable(physicalHarnessProducerModeForTests);
+        resumeEmergencyAckContinuationIfPending();
     }
 
     @Override
@@ -430,9 +476,32 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         );
 
         if (ACTION_STOP.equals(action)) {
-            stopEverything();
-            stopSelf();
-            return START_NOT_STICKY;
+            String requestId = intent != null
+                ? intent.getStringExtra(EXTRA_DELIBERATE_STOP_REQUEST_ID)
+                : null;
+            return handleDeliberateConfigurationStop(requestId);
+        }
+
+        // Physical H injects deterministic points through the real producer
+        // methods. External GPS/activity subscriptions would contaminate that
+        // fixture, so the isolated harness suppresses only those subscriptions.
+        if (physicalHarnessProducerModeForTests) return START_STICKY;
+
+        boolean startAction = ACTION_START.equals(action) || ACTION_START_MANUAL_TRIP.equals(action);
+        boolean explicitStart = startAction && !TRACKING_INTENT_RECOVERY.equals(
+            intent != null ? intent.getStringExtra(EXTRA_TRACKING_INTENT_KIND) : null
+        );
+        if (explicitStart && !acceptExplicitStartIntent(intent)) {
+            return START_STICKY;
+        }
+
+        String pendingStop = pendingDeliberateStopRequestId(this);
+        boolean recoveryStart = action == null || (ACTION_START.equals(action) && !explicitStart);
+        if (pendingStop != null && recoveryStart) {
+            if (pendingStopStillOwnsRecovery(pendingStop)) {
+                return handleDeliberateConfigurationStop(pendingStop);
+            }
+            supersedeDeliberateStop(pendingStop, "recovery_identity_no_longer_matches");
         }
         if (ACTION_STOP_SPEECH.equals(action)) {
             if (speechController != null) speechController.stop();
@@ -444,7 +513,44 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             return START_STICKY;
         }
 
-        DriveSenseNativeTripStore.setServiceEnabled(this, true);
+        // UA. This used to be an unconditional enable, reached by every action
+        // that was not a stop — which made an activity broadcast indistinguishable
+        // from a user asking for tracking.
+        //
+        // THE RACE. `handleActivityBroadcast` checks the enabled state when it
+        // DISPATCHES and then queues ACTION_ACTIVITY through
+        // `startForegroundService`. A deliberate stop can enter PENDING, reach
+        // SUCCEEDED and make `serviceEnabled == false` durable in the window
+        // before that queued intent is delivered here. The generic enable then
+        // revived durable service-enabled truth, and the arming below rearmed the
+        // watchdog, re-requested activity updates and restarted armed location
+        // capture — all from a command the user never gave.
+        //
+        // THE RULE. An activity or notification command is not an intent to
+        // enable. Only an explicit start, or the recovery/null restart HPR-006
+        // owns, may move durable service-enabled truth from false to true. Every
+        // other command must find the service still enabled AT DELIVERY, not
+        // merely at dispatch. This is causal, not timing-based: it asks the same
+        // durable truth the stop published, so it holds whatever order the
+        // system chooses to deliver in.
+        boolean mayEnableTracking = startAction || action == null;
+        if (!mayEnableTracking && !DriveSenseNativeTripStore.isServiceEnabled(this)) {
+            recordDiagnostic(
+                "service_command_ignored_after_disable",
+                "A background command arrived after tracking was switched off and was ignored.",
+                ACTION_ACTIVITY.equals(action) ? "stale_activity_after_disable" : "stale_command_after_disable",
+                0d, 0L, 0d
+            );
+            // Nothing is armed and nothing is enabled. START_NOT_STICKY matters as
+            // much as the refusal: a sticky restart would redeliver a null intent,
+            // which IS a recovery start, and would re-enable by the front door.
+            if (!isTripActive()) {
+                DriveSenseTrackingWatchdog.cancel(this);
+                stopSelf();
+            }
+            return START_NOT_STICKY;
+        }
+        if (mayEnableTracking) DriveSenseNativeTripStore.setServiceEnabled(this, true);
         if (ACTION_START_MANUAL_TRIP.equals(action)) {
             long startTimeMs = intent != null ? intent.getLongExtra(EXTRA_START_TIME_MS, System.currentTimeMillis()) : System.currentTimeMillis();
             String tripId = intent != null ? intent.getStringExtra(EXTRA_TRIP_ID) : "";
@@ -495,6 +601,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         return serviceRunning;
     }
 
+    static void setPhysicalHarnessProducerModeForTests(boolean enabled) {
+        physicalHarnessProducerModeForTests = enabled;
+    }
+
+    static DriveSenseAutoTrackingService physicalHarnessInstanceForTests() {
+        return physicalHarnessInstance.get();
+    }
+
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         // Aggressive OEM launchers kill the whole process when the task is swiped away.
@@ -513,8 +627,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             0L,
             0d
         );
-        Intent restart = new Intent(getApplicationContext(), DriveSenseAutoTrackingService.class)
-            .setAction(ACTION_START);
+        Intent restart = recoveryStartIntent(getApplicationContext());
         try {
             ContextCompat.startForegroundService(getApplicationContext(), restart);
         } catch (Exception ignored) {
@@ -566,6 +679,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             checkpointExecutor = null;
         }
         serviceRunning = false;
+        DriveSenseAutoTrackingService harness = physicalHarnessInstance.get();
+        if (harness == this) physicalHarnessInstance = new WeakReference<>(null);
         super.onDestroy();
     }
 
@@ -577,8 +692,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     static boolean start(Context context) {
         cancelAutoTrackingOffNotification(context);
-        Intent intent = new Intent(context, DriveSenseAutoTrackingService.class);
-        intent.setAction(ACTION_START);
+        Intent intent = explicitStartIntent(context, ACTION_START);
+        if (intent == null) return false;
         try {
             ContextCompat.startForegroundService(context, intent);
             return true;
@@ -587,17 +702,35 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         }
     }
 
-    static void startManualTrip(Context context, long startTimeMs, String tripId) {
+    static boolean startManualTrip(Context context, long startTimeMs, String tripId) {
         cancelAutoTrackingOffNotification(context);
-        Intent intent = new Intent(context, DriveSenseAutoTrackingService.class);
-        intent.setAction(ACTION_START_MANUAL_TRIP);
+        Intent intent = explicitStartIntent(context, ACTION_START_MANUAL_TRIP);
+        if (intent == null) return false;
         intent.putExtra(EXTRA_START_TIME_MS, startTimeMs > 0L ? startTimeMs : System.currentTimeMillis());
         intent.putExtra(EXTRA_TRIP_ID, tripId == null ? "" : tripId);
         try {
             ContextCompat.startForegroundService(context, intent);
+            return true;
         } catch (Exception error) {
             Log.w(TAG, "Could not start manual trip", error);
+            return false;
         }
+    }
+
+    static boolean startForRecovery(Context context) {
+        cancelAutoTrackingOffNotification(context);
+        try {
+            ContextCompat.startForegroundService(context, recoveryStartIntent(context));
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    static Intent recoveryStartIntent(Context context) {
+        return new Intent(context, DriveSenseAutoTrackingService.class)
+            .setAction(ACTION_START)
+            .putExtra(EXTRA_TRACKING_INTENT_KIND, TRACKING_INTENT_RECOVERY);
     }
 
     static void discardManualTrip(Context context, boolean keepArmed) {
@@ -624,22 +757,162 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         }
     }
 
-    static void stop(Context context) {
-        Intent intent = new Intent(context, DriveSenseAutoTrackingService.class);
-        intent.setAction(ACTION_STOP);
-        DriveSenseNativeTripStore.setServiceEnabled(context, false);
-        try {
-            context.stopService(intent);
-        } catch (Exception ignored) {
-            DriveSenseNativeTripStore.setServiceEnabled(context, false);
+    static String stop(Context context) {
+        Context app = context.getApplicationContext();
+        String requestId;
+        synchronized (TRACKING_INTENT_LOCK) {
+            JSONObject current = deliberateStopStatus(app);
+            long currentGeneration = currentTrackingIntentGeneration(app);
+            boolean sameIntentPending = DELIBERATE_STOP_PENDING.equals(current.optString("state"))
+                && current.optLong("intentGeneration", -1L) == currentGeneration;
+            boolean sameLifecyclePending = sameIntentPending
+                && (!current.optBoolean("targetBound", false)
+                    || deliberateStopTargetsCurrentActiveOwner(app, current));
+            requestId = sameIntentPending
+                ? current.optString("requestId", "")
+                : "native-stop-" + UUID.randomUUID();
+            if (requestId.trim().isEmpty()) requestId = "native-stop-" + UUID.randomUUID();
+            // Only this explicit user seam may re-arm a terminal request. Recovery
+            // deliveries retain their old trip/session binding and must pass the
+            // normal ownership guard before they can do any lifecycle work.
+            if (!sameLifecyclePending
+                && !createDeliberateStopRequest(app, requestId, currentGeneration)) {
+                recordDeliberateStopStatus(
+                    app, requestId, DELIBERATE_STOP_FAILED, false, "request_not_durable"
+                );
+                return requestId;
+            }
         }
-        cancelTrackingNotification(context);
-        showAutoTrackingOffNotification(context);
+        Intent intent = new Intent(app, DriveSenseAutoTrackingService.class);
+        intent.setAction(ACTION_STOP);
+        intent.putExtra(EXTRA_DELIBERATE_STOP_REQUEST_ID, requestId);
+        try {
+            ContextCompat.startForegroundService(app, intent);
+        } catch (Exception error) {
+            recordDeliberateStopStatus(
+                app, requestId, DELIBERATE_STOP_FAILED, false,
+                error.getClass().getSimpleName()
+            );
+        }
+        return requestId;
+    }
+
+    private static boolean deliberateStopTargetsCurrentActiveOwner(
+        Context context,
+        JSONObject request
+    ) {
+        if (request.optBoolean("targetTerminal", false)) return false;
+        JSONObject owner = DriveSenseNativeTripStore.getActiveTripStatus(context);
+        if (owner == null || !owner.optBoolean("active", false)) return false;
+        String targetTripId = request.optString("targetTripId", "").trim();
+        String ownerTripId = owner.optString("id", "").trim();
+        if (targetTripId.isEmpty() || !targetTripId.equals(ownerTripId)) return false;
+        String targetSessionId = request.optString("targetSessionId", "").trim();
+        if (targetSessionId.isEmpty()) return true;
+        return targetSessionId.equals(owner.optString("session_id", "").trim());
+    }
+
+    static JSONObject deliberateStopStatus(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(DELIBERATE_STOP_PREFS, Context.MODE_PRIVATE);
+        JSONObject status = new JSONObject();
+        try {
+            status.put("requestId", prefs.getString(KEY_DELIBERATE_STOP_REQUEST_ID, ""));
+            status.put("state", prefs.getString(KEY_DELIBERATE_STOP_STATE, "NONE"));
+            status.put("hadActiveTrip", prefs.getBoolean(KEY_DELIBERATE_STOP_HAD_ACTIVE, false));
+            status.put("detail", prefs.getString(KEY_DELIBERATE_STOP_DETAIL, ""));
+            status.put("updatedAtMs", prefs.getLong(KEY_DELIBERATE_STOP_UPDATED_AT, 0L));
+            status.put("targetBound", prefs.getBoolean(KEY_DELIBERATE_STOP_TARGET_BOUND, false));
+            status.put("targetTripId", prefs.getString(KEY_DELIBERATE_STOP_TARGET_TRIP_ID, ""));
+            status.put("targetSessionId", prefs.getString(KEY_DELIBERATE_STOP_TARGET_SESSION_ID, ""));
+            status.put("targetTerminal", prefs.getBoolean(KEY_DELIBERATE_STOP_TARGET_TERMINAL, false));
+            status.put("intentGeneration", prefs.getLong(KEY_DELIBERATE_STOP_INTENT_GENERATION, -1L));
+            status.put("currentIntentGeneration", prefs.getLong(KEY_TRACKING_INTENT_GENERATION, 0L));
+        } catch (JSONException ignored) {
+            // Fixed primitive fields cannot normally fail JSON construction.
+        }
+        return status;
+    }
+
+    private static String pendingDeliberateStopRequestId(Context context) {
+        JSONObject status = deliberateStopStatus(context);
+        if (!DELIBERATE_STOP_PENDING.equals(status.optString("state"))) return null;
+        String requestId = status.optString("requestId", "").trim();
+        return requestId.isEmpty() ? null : requestId;
+    }
+
+    private static boolean recordDeliberateStopStatus(
+        Context context,
+        String requestId,
+        String state,
+        boolean hadActiveTrip,
+        String detail
+    ) {
+        return context.getSharedPreferences(DELIBERATE_STOP_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_DELIBERATE_STOP_REQUEST_ID, requestId == null ? "" : requestId)
+            .putString(KEY_DELIBERATE_STOP_STATE, state)
+            .putBoolean(KEY_DELIBERATE_STOP_HAD_ACTIVE, hadActiveTrip)
+            .putString(KEY_DELIBERATE_STOP_DETAIL, detail == null ? "" : detail)
+            .putLong(KEY_DELIBERATE_STOP_UPDATED_AT, System.currentTimeMillis())
+            .commit();
+    }
+
+    private static boolean createDeliberateStopRequest(
+        Context context,
+        String requestId,
+        long intentGeneration
+    ) {
+        return context.getSharedPreferences(DELIBERATE_STOP_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_DELIBERATE_STOP_REQUEST_ID, requestId)
+            .putString(KEY_DELIBERATE_STOP_STATE, DELIBERATE_STOP_PENDING)
+            .putBoolean(KEY_DELIBERATE_STOP_HAD_ACTIVE, false)
+            .putString(KEY_DELIBERATE_STOP_DETAIL, "command_requested")
+            .putLong(KEY_DELIBERATE_STOP_UPDATED_AT, System.currentTimeMillis())
+            .putBoolean(KEY_DELIBERATE_STOP_TARGET_BOUND, false)
+            .putString(KEY_DELIBERATE_STOP_TARGET_TRIP_ID, "")
+            .putString(KEY_DELIBERATE_STOP_TARGET_SESSION_ID, "")
+            .putBoolean(KEY_DELIBERATE_STOP_TARGET_TERMINAL, false)
+            .putLong(KEY_DELIBERATE_STOP_INTENT_GENERATION, intentGeneration)
+            .commit();
+    }
+
+    private static long currentTrackingIntentGeneration(Context context) {
+        return context.getSharedPreferences(DELIBERATE_STOP_PREFS, Context.MODE_PRIVATE)
+            .getLong(KEY_TRACKING_INTENT_GENERATION, 0L);
+    }
+
+    @Nullable
+    private static Intent explicitStartIntent(Context context, String action) {
+        Context app = context.getApplicationContext();
+        long generation = beginExplicitStartIntent(app);
+        if (generation < 0L) return null;
+        return new Intent(app, DriveSenseAutoTrackingService.class)
+            .setAction(action)
+            .putExtra(EXTRA_TRACKING_INTENT_KIND, TRACKING_INTENT_EXPLICIT)
+            .putExtra(EXTRA_TRACKING_INTENT_GENERATION, generation);
+    }
+
+    private static long beginExplicitStartIntent(Context context) {
+        synchronized (TRACKING_INTENT_LOCK) {
+            SharedPreferences prefs = context.getSharedPreferences(DELIBERATE_STOP_PREFS, Context.MODE_PRIVATE);
+            long current = prefs.getLong(KEY_TRACKING_INTENT_GENERATION, 0L);
+            long next = current == Long.MAX_VALUE ? 1L : current + 1L;
+            SharedPreferences.Editor editor = prefs.edit().putLong(KEY_TRACKING_INTENT_GENERATION, next);
+            if (DELIBERATE_STOP_PENDING.equals(prefs.getString(KEY_DELIBERATE_STOP_STATE, "NONE"))) {
+                editor
+                    .putString(KEY_DELIBERATE_STOP_STATE, DELIBERATE_STOP_SUPERSEDED)
+                    .putString(KEY_DELIBERATE_STOP_DETAIL, "newer_tracking_start")
+                    .putLong(KEY_DELIBERATE_STOP_UPDATED_AT, System.currentTimeMillis());
+            }
+            return editor.commit() ? next : -1L;
+        }
     }
 
     static void stopForDataErasure(Context context) {
         dataErasureInProgress = true;
         DriveSenseNativeTripStore.setServiceEnabled(context, false);
+        context.getSharedPreferences(DELIBERATE_STOP_PREFS, Context.MODE_PRIVATE).edit().clear().commit();
         try {
             context.stopService(new Intent(context, DriveSenseAutoTrackingService.class));
         } catch (Exception ignored) {
@@ -964,7 +1237,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         activeStartMs = normalizedStartMs;
         lastVehicleExitTransitionMs = 0L;
         lastVehicleDisconnectMs = 0L;
-        activePoints = new JSONArray();
+        activePoints = null;
         activeTimeline = new JSONArray();
         activeMotionSamples = new JSONArray();
         activeMotionSamplesDropped = 0;
@@ -1002,6 +1275,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         nativeRecoveryTripId = nativeManualTripId.isEmpty()
             ? DriveSenseNativeTripStore.newTripId()
             : nativeManualTripId;
+        if (!beginActiveRoute(nativeRecoveryTripId, normalizedStartMs)) {
+            activeStartMs = 0L;
+            updateNotification("Trip recording unavailable - storage safety check failed");
+            return;
+        }
         nativeManualTrip = true;
         candidateTrip = false;
         candidateNearParked = false;
@@ -1028,7 +1306,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         activeStartMs = triggerMs;
         lastVehicleExitTransitionMs = 0L;
         lastVehicleDisconnectMs = 0L;
-        activePoints = new JSONArray();
+        activePoints = null;
         activeTimeline = new JSONArray();
         activeMotionSamples = new JSONArray();
         activeMotionSamplesDropped = 0;
@@ -1064,6 +1342,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         nativeTripStartSource = "native_auto";
         nativeManualTripId = "";
         nativeRecoveryTripId = DriveSenseNativeTripStore.newTripId();
+        if (!beginActiveRoute(nativeRecoveryTripId, triggerMs)) {
+            activeStartMs = 0L;
+            updateNotification("Trip recording unavailable - storage safety check failed");
+            return;
+        }
         nativeManualTrip = false;
         candidateTrip = true;
         candidateNearParked = isInParkingCooldown(triggerLocation);
@@ -1078,7 +1361,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 : Math.max(0d, lastKnownSpeedKmh);
             lastKnownSpeedKmh = triggerSpeedKmh;
             lastLocationMs = triggerLocation.getTime() > 0L ? triggerLocation.getTime() : triggerMs;
-            activePoints.put(locationToJson(triggerLocation, triggerSpeedKmh));
+            if (!appendActivePoint(locationToJson(triggerLocation, triggerSpeedKmh))) return;
             previousLocation = triggerLocation;
         }
         recordTimeline("candidate_started", "Candidate started: speed >= 5 km/h for 2 seconds", reason, lastKnownSpeedKmh, 0L, maxDriftSinceStopM);
@@ -1093,7 +1376,210 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private boolean isTripActive() {
-        return activeStartMs > 0L && activePoints != null;
+        return activeStartMs > 0L && (activeSpool != null || activePoints != null);
+    }
+
+    private boolean beginActiveRoute(String tripId, long startMs) {
+        resetActiveNightAccumulator();
+        if (!DriveSenseP35Flags.nativeAuthorityEnabled()) {
+            activePoints = new JSONArray();
+            activeSpool = null;
+            return true;
+        }
+        try {
+            activeSpool = DriveSenseActiveTripSpool.create(
+                this, tripId, startMs, DriveSenseActiveTripSpool.OWNER_NATIVE
+            );
+            activePoints = null;
+            return true;
+        } catch (Exception error) {
+            activeSpool = null;
+            activePoints = null;
+            Log.e(TAG, "Could not create admitted encrypted active-trip spool", error);
+            recordDiagnostic("active_spool_start_failed", "Trip recording could not start safely.", error.getClass().getSimpleName(), 0d, 0L, 0d);
+            return false;
+        }
+    }
+
+    private boolean appendActivePoint(JSONObject point) {
+        if (point == null) return false;
+        if (activeSpool == null) {
+            if (activePoints == null) return false;
+            activePoints.put(point);
+            updateActiveNightAccumulator(point);
+            return true;
+        }
+        try {
+            activeSpool.append(point);
+            updateActiveNightAccumulator(point);
+            return true;
+        } catch (Exception error) {
+            Log.e(TAG, "Active-trip spool append refused; captured sealed segments were preserved", error);
+            recordDiagnostic("active_spool_append_failed", "Active trip storage refused a new point; captured route bytes were preserved.", error.getClass().getSimpleName(), lastKnownSpeedKmh, 0L, 0d);
+            updateNotification("Trip storage full - captured route preserved");
+            return false;
+        }
+    }
+
+    // Package-private producer fixture seam. It is not a plugin/API surface and
+    // remains unreachable unless the native-authority test override is enabled.
+    boolean beginActiveRouteForTests(String tripId, long startMs) {
+        if (!DriveSenseP35Flags.nativeAuthorityEnabled()) throw new IllegalStateException("P35_TEST_AUTHORITY_DISABLED");
+        boolean started = beginActiveRoute(tripId, startMs);
+        if (started) {
+            nativeRecoveryTripId = tripId;
+            activeStartMs = startMs;
+            nativeTripStartSource = "p35_fixture";
+            nativeManualTrip = true;
+            nativeManualTripId = tripId;
+        }
+        return started;
+    }
+
+    boolean appendActivePointForTests(JSONObject point) {
+        if (!DriveSenseP35Flags.nativeAuthorityEnabled()) throw new IllegalStateException("P35_TEST_AUTHORITY_DISABLED");
+        return appendActivePoint(point);
+    }
+
+    JSONObject activeRouteStatusForTests() throws Exception {
+        if (activeSpool == null) return null;
+        return activeSpool.boundedView(System.currentTimeMillis());
+    }
+
+    boolean recoverActiveRouteForPhysicalHarness() {
+        if (!DriveSenseP35Flags.nativeAuthorityEnabled()) {
+            throw new IllegalStateException("P35_TEST_AUTHORITY_DISABLED");
+        }
+        if (activeSpool == null) restoreActiveTripCheckpointIfAvailable(true);
+        return activeSpool != null;
+    }
+
+    void persistActiveRouteCheckpointForTests() {
+        if (!DriveSenseP35Flags.nativeAuthorityEnabled()) throw new IllegalStateException("P35_TEST_AUTHORITY_DISABLED");
+        persistActiveTripCheckpoint(System.currentTimeMillis(), true);
+        persistActiveTripStatus(System.currentTimeMillis());
+    }
+
+    boolean sealActiveRouteToJournalForTests(JSONObject completionMetadata) {
+        if (!DriveSenseP35Flags.nativeAuthorityEnabled()) throw new IllegalStateException("P35_TEST_AUTHORITY_DISABLED");
+        if (activeSpool == null) return false;
+        return DriveSenseCompletedTripJournal.addCompletedActiveSpool(this, activeSpool, completionMetadata);
+    }
+
+    JSONObject activeRollingStatsForTests(long endMs) throws Exception {
+        return tripStatsJson(currentTripStats(endMs));
+    }
+
+    JSONObject legacyBatchStatsForTests(JSONArray points, long startMs, long endMs) throws Exception {
+        return tripStatsJson(calculateStats(points, startMs, endMs));
+    }
+
+    private static JSONObject tripStatsJson(TripStats stats) throws Exception {
+        JSONObject value = new JSONObject();
+        value.put("distance_km", stats.distanceKm);
+        value.put("avg_speed_kmh", stats.avgSpeedKmh);
+        value.put("avg_running_speed_kmh", stats.avgRunningSpeedKmh);
+        value.put("max_speed_kmh", stats.maxSpeedKmh);
+        value.put("idle_seconds", stats.idleSeconds);
+        value.put("moving_seconds", stats.movingSeconds);
+        value.put("wall_clock_duration_seconds", stats.wallClockDurationSeconds);
+        value.put("gap_seconds", stats.gapSeconds);
+        value.put("gap_count", stats.gapCount);
+        value.put("duration_seconds", stats.durationSeconds);
+        value.put("night_driving", stats.nightDriving);
+        return value;
+    }
+
+    private JSONArray activeRecentPoints() {
+        return activeSpool != null ? activeSpool.recentPoints() : activePoints;
+    }
+
+    private long activePointCount() {
+        return activeSpool != null ? activeSpool.pointCount() : activePoints == null ? 0L : activePoints.length();
+    }
+
+    private JSONObject activeLatestPoint() {
+        if (activeSpool != null) return activeSpool.latestPoint();
+        return activePoints != null && activePoints.length() > 0
+            ? activePoints.optJSONObject(activePoints.length() - 1)
+            : null;
+    }
+
+    private int activeStablePointCount() {
+        return activeSpool != null ? activeSpool.stablePointCount() : countStablePoints(activePoints);
+    }
+
+    private TripStats currentTripStats(long endMs) {
+        if (activeSpool == null) return calculateStats(activePoints, activeStartMs, endMs);
+        try {
+            JSONObject value = activeSpool.rollingStats(endMs);
+            TripStats stats = new TripStats();
+            stats.distanceKm = value.optDouble("distance_km", 0d);
+            stats.avgSpeedKmh = value.optDouble("avg_speed_kmh", 0d);
+            stats.avgRunningSpeedKmh = value.optDouble("avg_running_speed_kmh", 0d);
+            stats.maxSpeedKmh = value.optDouble("max_speed_kmh", 0d);
+            stats.idleSeconds = value.optLong("idle_seconds", 0L);
+            stats.movingSeconds = value.optLong("moving_seconds", 0L);
+            stats.wallClockDurationSeconds = value.optLong("wall_clock_duration_seconds", 0L);
+            stats.gapSeconds = value.optLong("gap_seconds", 0L);
+            stats.gapCount = value.optInt("gap_count", 0);
+            stats.durationSeconds = value.optLong("duration_seconds", 0L);
+            NightClassificationResult night = activeNightClassification();
+            stats.nightDriving = night.isNight;
+            stats.nightClassification = night.metadata;
+            return stats;
+        } catch (Exception error) {
+            throw new IllegalStateException("ACTIVE_SPOOL_STATS_UNAVAILABLE", error);
+        }
+    }
+
+    private void resetActiveNightAccumulator() {
+        activeNightSettings = readNightSettings();
+        activeNightFirst = null;
+        activeNightFirstNight = null;
+        activeNightEvaluatedPoints = 0;
+        activeNightFallbackPoints = 0;
+        activeNightFallbackReason = null;
+        recoveredNightClassification = null;
+    }
+
+    private void updateActiveNightAccumulator(JSONObject point) {
+        if (point == null) return;
+        long timeMs = parseIsoOrDefault(point.optString("timestamp"), Long.MIN_VALUE);
+        if (timeMs == Long.MIN_VALUE) return;
+        if (activeNightSettings == null) activeNightSettings = readNightSettings();
+        PointNightResult result = evaluateNightPoint(point, timeMs, activeNightSettings);
+        activeNightEvaluatedPoints += 1;
+        if (activeNightFirst == null) activeNightFirst = result;
+        if (activeNightFirstNight == null && result.isNight) activeNightFirstNight = result;
+        if (result.fallbackReason != null) {
+            activeNightFallbackPoints += 1;
+            if (activeNightFallbackReason == null) activeNightFallbackReason = result.fallbackReason;
+            else if (!activeNightFallbackReason.contains(result.fallbackReason)) activeNightFallbackReason += "," + result.fallbackReason;
+        }
+    }
+
+    private NightClassificationResult activeNightClassification() {
+        if (activeNightSettings == null) activeNightSettings = readNightSettings();
+        boolean recoveredNight = recoveredNightClassification != null && recoveredNightClassification.optBoolean("is_night", false);
+        PointNightResult decision = activeNightFirstNight != null ? activeNightFirstNight : activeNightFirst;
+        JSONObject metadata = buildNightMetadata(
+            activeNightFirst,
+            decision,
+            activeNightSettings,
+            activeNightEvaluatedPoints,
+            activeNightFallbackPoints,
+            activeNightFallbackReason
+        );
+        if (recoveredNight && activeNightFirstNight == null) {
+            try {
+                metadata = new JSONObject(recoveredNightClassification.toString());
+                metadata.put("evaluated_point_count", metadata.optInt("evaluated_point_count", 0) + activeNightEvaluatedPoints);
+            } catch (Exception ignored) {
+                metadata = recoveredNightClassification;
+            }
+        }
+        return new NightClassificationResult(recoveredNight || activeNightFirstNight != null, metadata);
     }
 
     private void startTripLocationUpdates() {
@@ -1399,7 +1885,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (!candidateTrip && !Double.isNaN(bearing)) updatePhoneUseProxy(bearing, speedKmh, location.getAccuracy(), location.getTime() > 0L ? location.getTime() : System.currentTimeMillis());
         if (!candidateTrip && !Double.isNaN(bearing)) updateHeadingDriftWindow(bearing, speedKmh, location.getTime() > 0L ? location.getTime() : System.currentTimeMillis());
 
-        activePoints.put(locationToJson(location, speedKmh));
+        if (!appendActivePoint(locationToJson(location, speedKmh))) {
+            finishTrip("active_spool_low_space", true);
+            return;
+        }
         previousLocation = location;
         if (candidateTrip) {
             reviewCandidate(false);
@@ -1578,10 +2067,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private void reviewCandidate(boolean forceFinal) {
-        if (!candidateTrip || activePoints == null) return;
+        if (!candidateTrip || !isTripActive()) return;
         long now = System.currentTimeMillis();
-        TripStats stats = calculateStats(activePoints, activeStartMs, now);
-        int stablePoints = countStablePoints(activePoints);
+        TripStats stats = currentTripStats(now);
+        int stablePoints = activeStablePointCount();
         double requiredDistanceM = candidateNearParked ? CANDIDATE_CONFIRM_DISTANCE_COOLDOWN_M : CANDIDATE_CONFIRM_DISTANCE_M;
         double requiredSpeedKmh = candidateNearParked ? CANDIDATE_CONFIRM_SPEED_COOLDOWN_KMH : CANDIDATE_CONFIRM_SPEED_KMH;
         int requiredStablePoints = candidateNearParked ? CANDIDATE_MIN_STABLE_POINTS_COOLDOWN : CANDIDATE_MIN_STABLE_POINTS;
@@ -1638,7 +2127,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private void discardCandidate(String reason, String title, boolean keepArmed) {
         if (!isTripActive()) return;
         long now = System.currentTimeMillis();
-        TripStats stats = calculateStats(activePoints, activeStartMs, now);
+        TripStats stats = currentTripStats(now);
         recordTimeline("trip_discarded", title, reason, stats.maxSpeedKmh, 0L, 0d);
         recordDiagnostic("trip_discarded", title, reason, stats.maxSpeedKmh, 0L, 0d);
         discardActiveTrip(reason, keepArmed);
@@ -1647,6 +2136,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private void discardActiveTrip(String reason, boolean keepArmed) {
         if (!isTripActive()) return;
         boolean discardedManualTrip = nativeManualTrip;
+        if (activeSpool != null) {
+            try { activeSpool.abandonOwned(activeSpool.ownerToken(), reason); }
+            catch (Exception error) { Log.e(TAG, "Could not retire explicitly discarded active spool", error); }
+            finally { activeSpool = null; }
+        }
         activePoints = null;
         activeTimeline = null;
         activeMotionSamples = null;
@@ -1748,6 +2242,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (candidateTrip) {
             reviewCandidate(true);
             if (!isTripActive() || candidateTrip) return;
+        }
+
+        if (activeSpool != null) {
+            finishSpooledTrip(reason, keepArmed);
+            return;
         }
 
         long endMs = checkpointRecoveryEndOverrideMs > 0L
@@ -2060,6 +2559,135 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         // reached on a background trip is reported straight away, rather than
         // the next time the user opens the Settings page.
         CalibrationMilestoneNotifier.recordCompletedTrip(this, stats == null ? 0d : stats.distanceKm);
+    }
+
+    /** P3.5 bounded producer completion. Legacy completion remains dark-gate fallback only. */
+    private void finishSpooledTrip(String reason, boolean keepArmed) {
+        DriveSenseActiveTripSpool spool = activeSpool;
+        if (spool == null) return;
+        long endMs = checkpointRecoveryEndOverrideMs > 0L ? checkpointRecoveryEndOverrideMs : System.currentTimeMillis();
+        checkpointRecoveryEndOverrideMs = 0L;
+        TripStats stats = currentTripStats(endMs);
+        if (spool.pointCount() < MIN_POINTS_TO_SAVE || stats.durationSeconds < MIN_TRIP_MS / 1000L || stats.distanceKm < MIN_TRIP_KM) {
+            discardActiveTrip("bounded_spool_trip_too_short", keepArmed);
+            recordDiagnostic("trip_discarded", "Native trip was too short to save.", reason, 0d, 0L, 0d);
+            return;
+        }
+
+        long startMs = activeStartMs;
+        boolean completedManual = nativeManualTrip;
+        String tripId = spool.tripId();
+        long stoppedSeconds = stillSinceMs > 0L ? Math.max(0L, (endMs - stillSinceMs) / 1000L) : 0L;
+        recordTimeline("ending_review", "Ending review started.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
+        recordTimeline("trip_ended", "Native trip ended.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
+        recordDiagnostic("trip_ended", "Native trip ended.", reason, lastKnownSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
+
+        JSONObject metadata = new JSONObject();
+        try {
+            JSONObject phoneUsage = DriveSensePhoneUsageTracker.queryTripUsage(this, startMs, endMs);
+            metadata.put("id", tripId);
+            metadata.put("start_time", iso(startMs));
+            metadata.put("start_time_ms", startMs);
+            metadata.put("end_time", iso(endMs));
+            metadata.put("end_time_ms", endMs);
+            metadata.put("duration_seconds", stats.durationSeconds);
+            metadata.put("wall_clock_duration_seconds", stats.wallClockDurationSeconds);
+            metadata.put("gap_seconds", stats.gapSeconds);
+            metadata.put("distance_km", round(stats.distanceKm, 3));
+            metadata.put("avg_speed_kmh", round(stats.avgSpeedKmh, 1));
+            metadata.put("avg_running_speed_kmh", round(stats.avgRunningSpeedKmh, 1));
+            metadata.put("max_speed_kmh", round(stats.maxSpeedKmh, 1));
+            metadata.put("idle_time_seconds", stats.idleSeconds);
+            metadata.put("night_driving", stats.nightDriving);
+            if (stats.nightClassification != null) metadata.put("night_classification", stats.nightClassification);
+            metadata.put("motion_samples", activeMotionSamples != null ? activeMotionSamples : new JSONArray());
+            metadata.put("native_motion_sample_count", activeMotionSamples != null ? activeMotionSamples.length() : 0);
+            metadata.put("native_motion_samples_dropped", activeMotionSamplesDropped);
+            metadata.put("driving_events", PrivacyZoneChecker.redactEvents(this, activeIncidentEvents != null ? activeIncidentEvents : new JSONArray()));
+            metadata.put("score_overall", JSONObject.NULL);
+            metadata.put("score_safety", JSONObject.NULL);
+            metadata.put("score_smoothness", JSONObject.NULL);
+            metadata.put("score_status", "pending_javascript_scoring");
+            metadata.put("needs_rescore", true);
+            metadata.put("status", "completed");
+            metadata.put("background_tracking", true);
+            metadata.put("start_source", nativeTripStartSource);
+            if (completedManual) metadata.put("manual_session_id", tripId);
+            metadata.put("native_trip_state", completedManual ? "manual_confirmed" : "confirmed");
+            metadata.put("native_candidate_started_at", iso(startMs));
+            if (candidateConfirmedMs > 0L) metadata.put("native_candidate_confirmed_at", iso(candidateConfirmedMs));
+            metadata.put("native_candidate_near_parked", candidateNearParked);
+            metadata.put("native_auto_start_reason", nativeAutoStartReason);
+            metadata.put("native_auto_stop_reason", reason);
+            metadata.put("native_tracking_timeline", activeTimeline != null ? activeTimeline : new JSONArray());
+            metadata.put("native_phone_proxy_count", nativeMicroSteerCount);
+            metadata.put("native_phone_usage_access_granted", phoneUsage.optBoolean("usage_access_granted", false));
+            metadata.put("native_phone_usage_events", phoneUsage.optJSONArray("events") != null ? phoneUsage.optJSONArray("events") : new JSONArray());
+            metadata.put("native_phone_usage_event_count", phoneUsage.optInt("event_count", 0));
+            metadata.put("native_phone_usage_total_seconds", phoneUsage.optLong("total_seconds", 0L));
+            metadata.put("source_segment_count", spool.sealedSegmentCount());
+            metadata.put("created_at", iso(endMs));
+            metadata.put("updated_at", iso(endMs));
+        } catch (Exception error) {
+            Log.e(TAG, "Could not prepare bounded active-spool completion metadata", error);
+            recordDiagnostic("trip_save_failed", "Native trip ended but completion metadata could not be prepared.", "bounded_metadata_error", stats.maxSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
+            return;
+        }
+
+        boolean saved = DriveSenseCompletedTripJournal.addCompletedActiveSpool(this, spool, metadata);
+        if (!saved) {
+            pendingSpoolCompletionMetadata = metadata;
+            nextCompletedTripSaveRetryMs = System.currentTimeMillis() + COMPLETED_TRIP_SAVE_RETRY_MS;
+            recordDiagnostic("trip_save_failed", "Native trip ended but its sealed spool could not enter journal ownership; bytes were preserved.", reason, stats.maxSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
+            updateNotification("Trip save pending - captured route preserved");
+            return;
+        }
+
+        activeSpool = null;
+        pendingSpoolCompletionMetadata = null;
+        recordDiagnostic("trip_saved", "Native trip safely queued from its bounded encrypted spool.", reason, stats.maxSpeedKmh, stoppedSeconds, maxDriftSinceStopM);
+        DriveSenseActiveTripCheckpointStore.clear(this);
+        JSONArray parkingPoints = spool.recentPoints();
+        JSONObject rawParkingEndpoint = parkingPoints.optJSONObject(parkingPoints.length() - 1);
+        if (!isAdministrativeStopReason(reason) && rawParkingEndpoint != null) {
+            JSONObject parkingSignals = buildParkingSignals(reason, stoppedSeconds, lastKnownSpeedKmh, maxDriftSinceStopM, completedManual);
+            JSONObject parkedResolution = DriveSenseParkingResolver.resolve(parkingPoints, endMs, parkingSignals);
+            if (parkedResolution != null) {
+                DriveSenseNativeTripStore.saveLastParkedLocation(
+                    this, parkedResolution.optDouble("lat"), parkedResolution.optDouble("lng"),
+                    endMs, tripId, "native_trip_end", parkedResolution
+                );
+                beginParkingRefinement(
+                    parkingPoints, parkedResolution, parkingSignals, endMs,
+                    tripId, "native_trip_end", !keepArmed
+                );
+            }
+        }
+        resetAfterSpooledTrip(keepArmed);
+    }
+
+    private void resetAfterSpooledTrip(boolean keepArmed) {
+        activePoints = null;
+        activeTimeline = null;
+        activeMotionSamples = null;
+        activeMotionSamplesDropped = 0;
+        activeMotionSampleBytes = 0L;
+        activeIncidentEvents = null;
+        activeTelemetryEvents = null;
+        activeStartMs = 0L;
+        previousLocation = null;
+        candidateTrip = false;
+        candidateNearParked = false;
+        nativeManualTrip = false;
+        nativeManualTripId = "";
+        nativeRecoveryTripId = "";
+        nativeTripStartSource = "native_auto";
+        lastLocationMs = 0L;
+        lastKnownSpeedKmh = 0d;
+        stopMotionSensors();
+        stopLocationUpdates();
+        if (keepArmed && DriveSenseNativeTripStore.isServiceEnabled(this)) startArmedLocationUpdates();
+        updateNotification("Ready when you start moving");
     }
 
     private JSONObject buildParkingSignals(
@@ -2611,7 +3239,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (now - lastPossibleIncidentAlertMs < POSSIBLE_INCIDENT_ALERT_COOLDOWN_MS) return;
 
         JSONObject incident = detectNativePossibleIncident(
-            activePoints,
+            activeRecentPoints(),
             activeMotionSamples,
             lastActivityType,
             lastActivityConfidence,
@@ -2762,24 +3390,105 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         return false;
     }
 
+    /** Bounded follow-up turns chained from one acknowledgement action. */
+    private static final int MAX_EMERGENCY_ACK_FOLLOW_UPS = 8;
+    private static final long EMERGENCY_ACK_FOLLOW_UP_DELAY_MS = 1_500L;
+
     private void acknowledgePossibleIncidentFromNotification() {
         String acknowledgedAt = iso(System.currentTimeMillis());
         boolean activeUpdated = acknowledgeIncidentEvents(activeIncidentEvents, acknowledgedAt);
-        boolean storedUpdated = DriveSenseNativeTripStore.acknowledgePendingEmergencyWorkflow(this, acknowledgedAt);
+        DriveSenseNativeTripStore.EmergencyAckOutcome outcome =
+            DriveSenseNativeTripStore.acknowledgePendingEmergencyWorkflow(this, acknowledgedAt);
+        // AUD-005. Completion is predicated on the FULL success contract, never on
+        // `hasMore` alone. A final row that changed in memory and then failed to save has
+        // `hasMore == false` and `saved == false`: branching on paging alone treated that
+        // as finished, scheduled no retry, and emitted completion over unsaved work.
+        DriveSenseNativeTripStore.EmergencyAckDisposition disposition =
+            DriveSenseNativeTripStore.dispositionFor(outcome);
+        boolean storedUpdated = outcome.changed && outcome.saved;
         recordDiagnostic(
             "emergency_check_in",
-            activeUpdated || storedUpdated
-                ? "Driver checked in OK from notification."
-                : "Driver check-in notification action received.",
-            "notification_ok",
+            disposition.reportComplete
+                ? (activeUpdated || storedUpdated
+                    ? "Driver checked in OK from notification."
+                    : "Driver check-in notification action received.")
+                : disposition.continuationAtRisk
+                    ? "Driver checked in OK from notification. Earlier check-ins are unfinished and could not be recorded for later."
+                    : "Driver checked in OK from notification. Earlier check-ins are still being applied.",
+            disposition.reportComplete ? "notification_ok" : disposition.reason,
             lastKnownSpeedKmh,
             0L,
             maxDriftSinceStopM
         );
         NotificationManagerCompat.from(this).cancel(NOTIF_ID_POSSIBLE_INCIDENT);
-        if (activeUpdated && isTripActive()) {
-            updateNotification("Possible incident acknowledged");
+        if (isTripActive()) {
+            // The user-visible text may not imply the queue is finished while it is not.
+            if (!disposition.reportComplete) updateNotification("Possible incident acknowledged - finishing earlier check-ins");
+            else if (activeUpdated) updateNotification("Possible incident acknowledged");
         }
+        if (disposition.scheduleContinuation) scheduleEmergencyAckContinuation(acknowledgedAt, MAX_EMERGENCY_ACK_FOLLOW_UPS);
+    }
+
+    /**
+     * One bounded follow-up turn, delayed so a long queue cannot become a tight loop.
+     *
+     * The chain is capped. If the queue is still not exhausted when the cap is reached the
+     * DURABLE continuation is what carries it: the cursor is already in preferences, so the
+     * next service start — or the next acknowledgement — resumes exactly where this stopped
+     * rather than at the head of the ordering.
+     */
+    private void scheduleEmergencyAckContinuation(String acknowledgedAt, int turnsLeft) {
+        if (turnsLeft <= 0) {
+            // Bounded: the chain stops here and the durable marker carries the work to the
+            // next service start. No unbounded retry, and no completion claimed.
+            Log.w(TAG, "Emergency acknowledgement continuation deferred to the durable marker");
+            recordDiagnostic(
+                "emergency_check_in",
+                "Earlier check-ins are still unfinished and will be resumed.",
+                "notification_ok_deferred",
+                lastKnownSpeedKmh,
+                0L,
+                maxDriftSinceStopM
+            );
+            return;
+        }
+        mainHandler().postDelayed(() -> {
+            if (!serviceRunning) return;   // the durable marker still holds the continuation
+            DriveSenseNativeTripStore.EmergencyAckOutcome next =
+                DriveSenseNativeTripStore.acknowledgePendingEmergencyWorkflow(this, acknowledgedAt);
+            // AUD-005: the follow-up path takes the same contract. A turn that could not
+            // save is not a finished turn, however empty the paging looks.
+            DriveSenseNativeTripStore.EmergencyAckDisposition disposition =
+                DriveSenseNativeTripStore.dispositionFor(next);
+            if (disposition.scheduleContinuation) {
+                scheduleEmergencyAckContinuation(acknowledgedAt, turnsLeft - 1);
+                return;
+            }
+            recordDiagnostic(
+                "emergency_check_in",
+                "Earlier pending check-ins have all been applied.",
+                disposition.reason,
+                lastKnownSpeedKmh,
+                0L,
+                maxDriftSinceStopM
+            );
+            if (isTripActive()) updateNotification("Possible incident acknowledged");
+        }, EMERGENCY_ACK_FOLLOW_UP_DELAY_MS);
+    }
+
+    /**
+     * Resume an emergency acknowledgement continuation left by a previous process.
+     *
+     * Scheduling lives in a process that can die; the cursor does not. A service start with
+     * a stored cursor therefore picks the chain back up instead of leaving those workflows
+     * waiting for an unrelated future invocation.
+     */
+    private void resumeEmergencyAckContinuationIfPending() {
+        // The marker, not the cursor: a failed write at the head of the ordering leaves
+        // work to redo with no cursor, and a null cursor is "start at the beginning".
+        if (!DriveSenseNativeTripStore.hasPendingEmergencyAckWork(this)) return;
+        Log.w(TAG, "Resuming a stored emergency acknowledgement continuation");
+        scheduleEmergencyAckContinuation(iso(System.currentTimeMillis()), MAX_EMERGENCY_ACK_FOLLOW_UPS);
     }
 
     private static boolean acknowledgeIncidentEvents(@Nullable JSONArray events, String acknowledgedAt) {
@@ -2962,9 +3671,27 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private boolean retryPendingCompletedTripSave(boolean force) {
+        if (pendingSpoolCompletionMetadata != null) {
+            long nowMs = System.currentTimeMillis();
+            if (!force && nowMs < nextCompletedTripSaveRetryMs) return false;
+            String completedTripId = pendingSpoolCompletionMetadata.optString("id", "").trim();
+            if (activeSpool == null || !DriveSenseCompletedTripJournal.addCompletedActiveSpool(this, activeSpool, pendingSpoolCompletionMetadata)) {
+                nextCompletedTripSaveRetryMs = nowMs + COMPLETED_TRIP_SAVE_RETRY_MS;
+                updateNotification("Previous sealed trip recovery pending - captured route preserved");
+                return false;
+            }
+            activeSpool = null;
+            pendingSpoolCompletionMetadata = null;
+            nextCompletedTripSaveRetryMs = 0L;
+            DriveSenseActiveTripCheckpointStore.clear(this);
+            markDeliberateStopTargetTerminalIfMatches(completedTripId);
+            recordDiagnostic("trip_save_recovered", "Previous sealed trip entered the completed journal after retry.", "rsas_journal_retry", 0d, 0L, 0d);
+            return true;
+        }
         if (pendingCompletedTrip == null) return true;
         long nowMs = System.currentTimeMillis();
         if (!force && nowMs < nextCompletedTripSaveRetryMs) return false;
+        String completedTripId = pendingCompletedTrip.optString("id", "").trim();
         if (!DriveSenseNativeTripStore.addCompletedTrip(this, pendingCompletedTrip)) {
             nextCompletedTripSaveRetryMs = nowMs + COMPLETED_TRIP_SAVE_RETRY_MS;
             updateNotification("Previous trip recovery pending - open Road Sage");
@@ -2973,6 +3700,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         pendingCompletedTrip = null;
         nextCompletedTripSaveRetryMs = 0L;
         DriveSenseActiveTripCheckpointStore.clear(this);
+        markDeliberateStopTargetTerminalIfMatches(completedTripId);
         recordDiagnostic(
             "trip_save_recovered",
             "Previous trip was safely queued after a storage retry.",
@@ -3682,6 +4410,14 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     @Nullable
     private NativeSpeedLimit resolveLocalSpeedLimit(double lat, double lng, double headingDeg, long nowMs) {
         try {
+            // P3.5 canonical speed authority is prefix-4 and local: background
+            // lookup never decrypts geography unrelated to this position.
+            DriveSenseSpeedArchiveRepository nativeSpeed = new DriveSenseSpeedArchiveRepository(this);
+            if (nativeSpeed.hasCanonicalBuckets()) {
+                String bucketId = geohashEncode(lat, lng, 4);
+                JSONObject bucket = nativeSpeed.readBucketJson(bucketId);
+                return bucket == null ? null : findLocalSpeedLimit(bucket, lat, lng, headingDeg, nowMs);
+            }
             SharedPreferences preferences = getSharedPreferences(CAPACITOR_PREFS, Context.MODE_PRIVATE);
             String mirrorRaw = preferences.getString(SPEED_KNOWLEDGE_KEY, null);
             boolean mirrorPresent = preferences.contains(SPEED_KNOWLEDGE_KEY);
@@ -4839,14 +5575,243 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (manager != null) manager.createNotificationChannel(channel);
     }
 
-    private void stopEverything() {
+    private boolean acceptExplicitStartIntent(@Nullable Intent intent) {
+        String kind = intent != null ? intent.getStringExtra(EXTRA_TRACKING_INTENT_KIND) : null;
+        if (TRACKING_INTENT_EXPLICIT.equals(kind)) {
+            long supplied = intent.getLongExtra(EXTRA_TRACKING_INTENT_GENERATION, -1L);
+            return supplied >= 0L && supplied == currentTrackingIntentGeneration(this);
+        }
+        // Direct commands from an older caller are still new product intent. Make the
+        // supersession durable before the service can own a new trip.
+        return beginExplicitStartIntent(this) >= 0L;
+    }
+
+    private boolean pendingStopStillOwnsRecovery(String requestId) {
+        JSONObject status = deliberateStopStatus(this);
+        if (!requestId.equals(status.optString("requestId", ""))
+            || !DELIBERATE_STOP_PENDING.equals(status.optString("state", ""))
+            || status.optLong("intentGeneration", -1L) != currentTrackingIntentGeneration(this)
+            || !status.optBoolean("targetBound", false)) {
+            return false;
+        }
+
+        JSONObject owner = currentDeliberateStopOwnerIdentity();
+        String currentTripId = owner.optString("tripId", "").trim();
+        String currentSessionId = owner.optString("sessionId", "").trim();
+        String targetTripId = status.optString("targetTripId", "").trim();
+        String targetSessionId = status.optString("targetSessionId", "").trim();
+        if (!currentTripId.isEmpty() || !currentSessionId.isEmpty()) {
+            if (!targetTripId.equals(currentTripId)) return false;
+            if (status.optBoolean("targetTerminal", false)) return true;
+            return targetSessionId.isEmpty() || targetSessionId.equals(currentSessionId);
+        }
+        if (targetTripId.isEmpty()) return true;
+        if (status.optBoolean("targetTerminal", false)
+            || DriveSenseNativeTripStore.hasCompletedTrip(this, targetTripId)) {
+            markDeliberateStopTargetTerminal(requestId);
+            return true;
+        }
+        return false;
+    }
+
+    private JSONObject currentDeliberateStopOwnerIdentity() {
+        JSONObject owner = new JSONObject();
+        String tripId = nativeRecoveryTripId == null ? "" : nativeRecoveryTripId.trim();
+        String sessionId = activeSpool == null ? "" : activeSpool.sessionId();
+        if (tripId.isEmpty() && pendingSpoolCompletionMetadata != null) {
+            tripId = pendingSpoolCompletionMetadata.optString("id", "").trim();
+        }
+        if (tripId.isEmpty() && pendingCompletedTrip != null) {
+            tripId = pendingCompletedTrip.optString("id", "").trim();
+        }
+        try {
+            owner.put("tripId", tripId);
+            owner.put("sessionId", sessionId == null ? "" : sessionId.trim());
+        } catch (JSONException ignored) {
+            // Primitive strings cannot normally fail JSON construction.
+        }
+        return owner;
+    }
+
+    private boolean bindDeliberateStopTarget(String requestId, boolean hadActiveTrip) {
+        JSONObject status = deliberateStopStatus(this);
+        if (!requestId.equals(status.optString("requestId", ""))
+            || !DELIBERATE_STOP_PENDING.equals(status.optString("state", ""))
+            || status.optLong("intentGeneration", -1L) != currentTrackingIntentGeneration(this)) {
+            return false;
+        }
+        if (status.optBoolean("targetBound", false)) return pendingStopStillOwnsRecovery(requestId);
+
+        JSONObject owner = currentDeliberateStopOwnerIdentity();
+        return getSharedPreferences(DELIBERATE_STOP_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_DELIBERATE_STOP_TARGET_BOUND, true)
+            .putString(KEY_DELIBERATE_STOP_TARGET_TRIP_ID, owner.optString("tripId", ""))
+            .putString(KEY_DELIBERATE_STOP_TARGET_SESSION_ID, owner.optString("sessionId", ""))
+            .putBoolean(KEY_DELIBERATE_STOP_HAD_ACTIVE, hadActiveTrip)
+            .putString(KEY_DELIBERATE_STOP_DETAIL, "target_bound")
+            .putLong(KEY_DELIBERATE_STOP_UPDATED_AT, System.currentTimeMillis())
+            .commit();
+    }
+
+    private void markDeliberateStopTargetTerminal(String requestId) {
+        SharedPreferences prefs = getSharedPreferences(DELIBERATE_STOP_PREFS, Context.MODE_PRIVATE);
+        if (!requestId.equals(prefs.getString(KEY_DELIBERATE_STOP_REQUEST_ID, ""))) return;
+        prefs.edit()
+            .putBoolean(KEY_DELIBERATE_STOP_TARGET_TERMINAL, true)
+            .putLong(KEY_DELIBERATE_STOP_UPDATED_AT, System.currentTimeMillis())
+            .commit();
+    }
+
+    private void markDeliberateStopTargetTerminalIfMatches(String completedTripId) {
+        if (completedTripId == null || completedTripId.trim().isEmpty()) return;
+        JSONObject status = deliberateStopStatus(this);
+        if (!DELIBERATE_STOP_PENDING.equals(status.optString("state", ""))
+            || status.optLong("intentGeneration", -1L) != currentTrackingIntentGeneration(this)
+            || !completedTripId.trim().equals(status.optString("targetTripId", "").trim())) {
+            return;
+        }
+        markDeliberateStopTargetTerminal(status.optString("requestId", ""));
+    }
+
+    private void supersedeDeliberateStop(String requestId, String detail) {
+        JSONObject status = deliberateStopStatus(this);
+        if (!requestId.equals(status.optString("requestId", ""))
+            || !DELIBERATE_STOP_PENDING.equals(status.optString("state", ""))) return;
+        recordDeliberateStopStatus(
+            this,
+            requestId,
+            DELIBERATE_STOP_SUPERSEDED,
+            status.optBoolean("hadActiveTrip", false),
+            detail
+        );
+        pendingDeliberateStopRequestId = null;
+    }
+
+    private int handleDeliberateConfigurationStop(@Nullable String suppliedRequestId) {
+        String requestId = suppliedRequestId == null ? "" : suppliedRequestId.trim();
+        if (requestId.isEmpty()) {
+            String pending = pendingDeliberateStopRequestId(this);
+            requestId = pending == null ? "native-stop-" + UUID.randomUUID() : pending;
+            if (pending == null
+                && !createDeliberateStopRequest(this, requestId, currentTrackingIntentGeneration(this))) {
+                return START_STICKY;
+            }
+        }
+        JSONObject currentStatus = deliberateStopStatus(this);
+        if (!requestId.equals(currentStatus.optString("requestId", ""))
+            || !DELIBERATE_STOP_PENDING.equals(currentStatus.optString("state", ""))
+            || currentStatus.optLong("intentGeneration", -1L) != currentTrackingIntentGeneration(this)) {
+            return START_STICKY;
+        }
+        boolean hadActiveTrip = isTripActive()
+            || pendingCompletedTrip != null
+            || pendingSpoolCompletionMetadata != null
+            || DriveSenseActiveTripCheckpointStore.getStatus(
+                this, System.currentTimeMillis()).optBoolean("present", false);
+        if (!bindDeliberateStopTarget(requestId, hadActiveTrip)) {
+            supersedeDeliberateStop(requestId, "target_identity_changed");
+            return START_STICKY;
+        }
+        pendingDeliberateStopRequestId = requestId;
+
+        if (stopEverything()) {
+            recordDeliberateStopStatus(
+                this, requestId, DELIBERATE_STOP_SUCCEEDED, hadActiveTrip, "terminal_before_disable"
+            );
+            pendingDeliberateStopRequestId = null;
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
+        JSONObject ownerAfterAttempt = currentDeliberateStopOwnerIdentity();
+        String targetTripId = deliberateStopStatus(this).optString("targetTripId", "").trim();
+        if (!targetTripId.isEmpty()
+            && ownerAfterAttempt.optString("tripId", "").trim().isEmpty()
+            && DriveSenseNativeTripStore.hasCompletedTrip(this, targetTripId)) {
+            markDeliberateStopTargetTerminal(requestId);
+        }
+
+        recordDeliberateStopStatus(
+            this, requestId, DELIBERATE_STOP_PENDING, hadActiveTrip, "completion_retry_owned"
+        );
+        scheduleDeliberateStopRetry(requestId);
+        return START_STICKY;
+    }
+
+    private void scheduleDeliberateStopRetry(String requestId) {
+        mainHandler().postDelayed(() -> {
+            String pending = pendingDeliberateStopRequestId(this);
+            if (pending == null || !pending.equals(requestId)) return;
+            handleDeliberateConfigurationStop(requestId);
+        }, DELIBERATE_STOP_RETRY_MS);
+    }
+
+    private boolean enterSynchronousCheckpointTurn() {
+        ExecutorService executor = checkpointExecutor;
+        if (executor == null || executor.isShutdown()) return true;
+        try {
+            Future<?> barrier = executor.submit(() -> { });
+            barrier.get(5L, TimeUnit.SECONDS);
+            return true;
+        } catch (Exception error) {
+            Log.e(TAG, "Could not drain active-trip checkpoint writes before deliberate stop", error);
+            return false;
+        }
+    }
+
+    private boolean keepDeliberateStopOwned(String reason) {
+        explicitStopRequested = false;
+        DriveSenseNativeTripStore.setServiceEnabledDurably(this, true);
+        DriveSenseTrackingWatchdog.armPeriodicCheck(this);
+        recordDiagnostic(
+            "deliberate_stop_pending",
+            "Tracking disable is waiting for durable trip completion.",
+            reason,
+            lastKnownSpeedKmh,
+            0L,
+            maxDriftSinceStopM
+        );
+        updateNotification("Trip save pending - tracking remains on");
+        return false;
+    }
+
+    private boolean stopEverything() {
         explicitStopRequested = true;
         DriveSenseTrackingWatchdog.cancel(this);
-        finishTrip("service_stopped_by_user", false);
+        if (!enterSynchronousCheckpointTurn()) {
+            return keepDeliberateStopOwned("checkpoint_barrier_failed");
+        }
+        try {
+            if (!retryPendingCompletedTripSave(true)) {
+                return keepDeliberateStopOwned("prior_completion_retry_pending");
+            }
+            finishTrip("service_stopped_by_user", false);
+            if (!retryPendingCompletedTripSave(true)) {
+                return keepDeliberateStopOwned("completion_journal_retry_pending");
+            }
+        } catch (Exception error) {
+            Log.e(TAG, "Deliberate tracking stop could not establish terminal trip ownership", error);
+            return keepDeliberateStopOwned(error.getClass().getSimpleName());
+        }
+        boolean activeStillOwned = isTripActive()
+            || pendingCompletedTrip != null
+            || pendingSpoolCompletionMetadata != null;
+        boolean checkpointStillPresent = DriveSenseActiveTripCheckpointStore.getStatus(
+            this, System.currentTimeMillis()).optBoolean("present", false);
+        if (activeStillOwned || checkpointStillPresent) {
+            return keepDeliberateStopOwned(
+                activeStillOwned ? "active_completion_pending" : "checkpoint_terminal_unproven"
+            );
+        }
+        if (!DriveSenseNativeTripStore.setServiceEnabledDurably(this, false)) {
+            return keepDeliberateStopOwned("service_disable_not_durable");
+        }
         removeActivityUpdates();
         stopLocationUpdates();
-        DriveSenseNativeTripStore.setServiceEnabled(this, false);
+        DriveSenseNativeTripStore.clearActiveTripStatus(this);
         removeTrackingNotification();
+        return true;
     }
 
     private void removeTrackingNotification() {
@@ -4898,7 +5863,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         return builder.build();
     }
 
-    private void restoreActiveTripCheckpointIfAvailable() {
+    private void restoreActiveTripCheckpointIfAvailable(boolean preserveStalePhysicalHarnessCase) {
         long nowMs = System.currentTimeMillis();
         JSONObject checkpoint = DriveSenseActiveTripCheckpointStore.load(this, nowMs);
         if (checkpoint == null) return;
@@ -4911,12 +5876,34 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
         JSONArray checkpointPoints = checkpoint.optJSONArray("route_points");
         if (checkpointPoints == null || checkpointPoints.length() < 2) {
-            DriveSenseActiveTripCheckpointStore.clear(this);
             return;
         }
 
         activeStartMs = checkpoint.optLong("start_time_ms", 0L);
-        activePoints = checkpointPoints;
+        if (DriveSenseP35Flags.nativeAuthorityEnabled() && checkpoint.optInt("rsas_version", 0) == DriveSenseActiveTripSpool.VERSION) {
+            try {
+                String sessionId=checkpoint.getString("rsas_session_id");
+                try{
+                    activeSpool = DriveSenseActiveTripSpool.reopen(
+                        this,
+                        sessionId,
+                        checkpoint.optString("rsas_owner_kind", DriveSenseActiveTripSpool.OWNER_NATIVE),
+                        checkpoint.getString("rsas_owner_token")
+                    );
+                }catch(IllegalStateException priorProcess){
+                    if(!"ACTIVE_PRODUCER_PRIOR_PROCESS".equals(priorProcess.getMessage()))throw priorProcess;
+                    activeSpool=DriveSenseActiveTripSpool.reclaimFormerNativeProcess(this,sessionId);
+                }
+                activePoints = null;
+            } catch (Exception error) {
+                Log.e(TAG, "RSAS checkpoint referenced an unavailable spool; evidence was preserved", error);
+                recordDiagnostic("active_spool_recovery_failed", "Active route spool could not be reopened; no cleanup was attempted.", error.getClass().getSimpleName(), 0d, 0L, 0d);
+                return;
+            }
+        } else {
+            activeSpool = null;
+            activePoints = checkpointPoints;
+        }
         activeTimeline = checkpoint.optJSONArray("timeline");
         if (activeTimeline == null) activeTimeline = new JSONArray();
         activeMotionSamples = new JSONArray();
@@ -4985,7 +5972,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             0d
         );
         long checkpointAgeMs = Math.max(0L, nowMs - lastActiveCheckpointMs);
-        if (checkpointAgeMs > ACTIVE_CHECKPOINT_RESUME_WINDOW_MS) {
+        if (checkpointAgeMs > ACTIVE_CHECKPOINT_RESUME_WINDOW_MS && !preserveStalePhysicalHarnessCase) {
             checkpointRecoveryEndOverrideMs = lastActiveCheckpointMs;
             if (candidateTrip) {
                 reviewCandidate(true);
@@ -5011,8 +5998,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private void persistActiveTripCheckpoint(long nowMs, boolean force) {
         if (
             !isTripActive() ||
-            activePoints == null ||
-            activePoints.length() < 2
+            activePointCount() < 2
         ) {
             return;
         }
@@ -5041,16 +6027,24 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             checkpoint.put("last_location_ms", lastLocationMs);
             checkpoint.put("still_since_ms", stillSinceMs);
             checkpoint.put("native_phone_proxy_count", nativeMicroSteerCount);
-            checkpoint.put("route_point_count_original", activePoints.length());
+            checkpoint.put("route_point_count_original", activePointCount());
             // The checkpoint outlives a crash or process kill, so in-zone
             // coordinates must be redacted here rather than only at trip finalize.
             checkpoint.put(
                 "route_points",
                 PrivacyZoneChecker.redactRoutePoints(
                     this,
-                    DriveSenseActiveTripCheckpointStore.compactRoutePoints(activePoints)
+                    activeSpool != null ? activeSpool.overviewPoints() : DriveSenseActiveTripCheckpointStore.compactRoutePoints(activePoints)
                 )
             );
+            if (activeSpool != null) {
+                checkpoint.put("rsas_version", DriveSenseActiveTripSpool.VERSION);
+                checkpoint.put("rsas_session_id", activeSpool.sessionId());
+                checkpoint.put("rsas_owner_kind", DriveSenseActiveTripSpool.OWNER_NATIVE);
+                checkpoint.put("rsas_owner_token", activeSpool.ownerToken());
+                checkpoint.put("rolling_state", activeSpool.rollingStats(nowMs));
+                checkpoint.put("recent_points", activeSpool.recentPoints());
+            }
             checkpoint.put(
                 "timeline",
                 DriveSenseActiveTripCheckpointStore.compactTail(
@@ -5066,7 +6060,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 )
             );
             checkpoint.put("motion_samples_omitted", true);
-        } catch (JSONException error) {
+        } catch (Exception error) {
             recordDiagnostic(
                 "checkpoint_save_failed",
                 "Active trip recovery checkpoint could not be prepared.",
@@ -5125,8 +6119,8 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             DriveSenseNativeTripStore.clearActiveTripStatus(this);
             return;
         }
-        TripStats stats = calculateStats(activePoints, activeStartMs, nowMs);
-        JSONObject latestPoint = activePoints.length() > 0 ? activePoints.optJSONObject(activePoints.length() - 1) : null;
+        TripStats stats = currentTripStats(nowMs);
+        JSONObject latestPoint = activeLatestPoint();
         JSONObject latestMotion = activeMotionSamples != null && activeMotionSamples.length() > 0
             ? activeMotionSamples.optJSONObject(activeMotionSamples.length() - 1)
             : null;
@@ -5151,6 +6145,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             status.put("candidate_near_parked", candidateNearParked);
             status.put("manual", nativeManualTrip);
             status.put("id", nativeRecoveryTripId.isEmpty() ? "native_active_trip" : nativeRecoveryTripId);
+            status.put("session_id", activeSpool == null ? "" : activeSpool.sessionId());
             status.put("start_time", iso(activeStartMs));
             status.put("start_time_ms", activeStartMs);
             status.put("start_source", nativeTripStartSource);
@@ -5166,7 +6161,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             status.put("stopped_seconds", stoppedSeconds);
             status.put("gap_seconds", stats.gapSeconds);
             status.put("route_gap_count", stats.gapCount);
-            status.put("route_point_count", activePoints.length());
+            status.put("route_point_count", activePointCount());
             status.put("route_preview", routePreview);
             status.put("route_preview_point_count", routePreview.length());
             status.put("privacy_masked_point_count", countPrivacyMaskedPoints(routePreview));
@@ -5311,7 +6306,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     private String buildLiveTripStatus(long nowMs) {
         if (candidateTrip) {
-            TripStats stats = calculateStats(activePoints, activeStartMs, nowMs);
+            TripStats stats = currentTripStats(nowMs);
             return String.format(
                 Locale.US,
                 "Checking movement - %.1f km - %.0f km/h",
@@ -5319,7 +6314,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 lastKnownSpeedKmh
             );
         }
-        TripStats stats = calculateStats(activePoints, activeStartMs, nowMs);
+        TripStats stats = currentTripStats(nowMs);
         long durationMinutes = Math.max(0L, stats.durationSeconds / 60L);
         String base = String.format(
             Locale.US,
@@ -5392,6 +6387,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     }
 
     private JSONArray buildLiveRoutePreview() {
+        if (activeSpool != null) return activeSpool.overviewPoints();
         JSONArray sampled = new JSONArray();
         if (activePoints == null || activePoints.length() == 0) return sampled;
         int count = activePoints.length();

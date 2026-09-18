@@ -11,12 +11,20 @@ import {
 
 const BRIDGE_VERSION = 1;
 const BRIDGE_CONTEXT = 'drivesense-secure-bridge-v1';
+// P2 duplicates these transport-layer caps deliberately: secureBridge cannot
+// import securePayloadCrypto without creating a cycle. Contract tests pin both.
+const SECURE_BATCH_METHOD_JSON_BYTES = 524_288;
+const SECURE_BATCH_BRIDGE_CIPHERTEXT_BYTES = 524_304;
+const SECURE_BATCH_BRIDGE_BASE64_CHARS = 699_072;
 
 const SecureBridge = registerPlugin('SecureBridge');
 
 let sessionPromise = null;
 let lastNonce = 0;
 let bridgeCallQueue = Promise.resolve();
+let bulkAdmissionTail = Promise.resolve();
+let activeBulkAdmissions = 0;
+let preparedBulkBatches = 0;
 
 /**
  * P0 queue contract: the number of secure calls already pending or in flight.
@@ -40,16 +48,20 @@ const cryptoApi = () => {
 };
 
 const bytesToBase64 = (bytes) => {
-  let binary = '';
+  const chunks = [];
   for (let index = 0; index < bytes.length; index += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    chunks.push(String.fromCharCode(...bytes.subarray(index, index + 0x8000)));
   }
-  return btoa(binary);
+  return btoa(chunks.join(''));
 };
 
 const base64ToBytes = (value) => {
   const binary = atob(String(value || ''));
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 };
 
 const concatBytes = (...parts) => {
@@ -65,6 +77,10 @@ const concatBytes = (...parts) => {
 
 const associatedData = (sessionId, pluginName, method, nonce) => (
   `${BRIDGE_CONTEXT}|${sessionId}|${pluginName}|${method}|${nonce}`
+);
+
+const requiresEncryptedResponse = (pluginName, method) => (
+  pluginName === 'SecureBridge' && method === 'decryptSensitivePayload'
 );
 
 const nextNonce = () => {
@@ -214,6 +230,9 @@ const stripP0Block = (result) => {
  */
 async function performSecureCall(pluginName, method, data, p0 = null) {
   const span = p0?.span ?? null;
+  const isSecureBatch = pluginName === 'SecureBridge' &&
+    (method === 'encryptSensitivePayload' || method === 'decryptSensitivePayload') &&
+    data?.batchVersion === 1 && Array.isArray(data?.items);
   // Reading the clock only when a span exists keeps Arm D (probe off) free of
   // per-phase timing cost.
   const mark = () => (span ? p0Now() : 0);
@@ -277,6 +296,9 @@ async function performSecureCall(pluginName, method, data, p0 = null) {
       recordP0Phase(span, 'req_encode', reqJsonEnd, reqEncodeEnd);
       span.req_plaintext_bytes = encodedRequest.byteLength;
     }
+    if (isSecureBatch && encodedRequest.byteLength > SECURE_BATCH_METHOD_JSON_BYTES) {
+      throw new Error('Secure batch request exceeds the transport limit.');
+    }
 
     let encryptPromise;
     try {
@@ -303,6 +325,9 @@ async function performSecureCall(pluginName, method, data, p0 = null) {
     if (span) {
       recordP0Phase(span, 'wc_encrypt_await', encryptInvokeEnd, encryptAwaitEnd);
       span.req_ciphertext_bytes = encrypted.byteLength;
+    }
+    if (isSecureBatch && encrypted.byteLength > SECURE_BATCH_BRIDGE_CIPHERTEXT_BYTES) {
+      throw new Error('Secure batch request exceeds the transport limit.');
     }
 
     const plugin = pluginName === 'SecureBridge'
@@ -334,6 +359,9 @@ async function performSecureCall(pluginName, method, data, p0 = null) {
     }
     const dataB64End = mark();
     if (span) recordP0Phase(span, 'req_b64_data', ivB64End, dataB64End);
+    if (isSecureBatch && dataBase64.length > SECURE_BATCH_BRIDGE_BASE64_CHARS) {
+      throw new Error('Secure batch request exceeds the transport limit.');
+    }
 
     const envelope = {
       encrypted: true,
@@ -389,17 +417,57 @@ async function performSecureCall(pluginName, method, data, p0 = null) {
       if (nativeBlock) recordP0NativeBlock(span, nativeBlock, sendWallMs);
     }
 
-    if (!result?.encrypted) {
+    // A decrypt response contains at-rest plaintext. Native is required to use
+    // the authenticated response envelope, but JS enforces that contract too:
+    // a misplaced `resolveWithP0` must fail closed before any result field can
+    // reach the logical payload parser or caller.
+    let responseEncrypted = false;
+    try {
+      responseEncrypted = result?.encrypted === true;
+    } catch {
+      throw new Error('Secure bridge encrypted response is invalid.');
+    }
+    if (requiresEncryptedResponse(pluginName, method) && !responseEncrypted) {
+      throw new Error('Secure bridge encrypted response required.');
+    }
+
+    if (!responseEncrypted) {
       const plain = stripP0Block(result);
       outcome = 'success';
       return plain;
     }
 
-    const resultNonce = Number(result.nonce);
+    let responseVersion;
+    let responseSessionId;
+    let responseIvBase64;
+    let responseDataBase64;
+    let resultNonce;
+    try {
+      responseVersion = result.version;
+      responseSessionId = result.sessionId;
+      responseIvBase64 = result.iv;
+      responseDataBase64 = result.data;
+      resultNonce = result.nonce;
+    } catch {
+      throw new Error('Secure bridge encrypted response is invalid.');
+    }
+    if (
+      responseVersion !== BRIDGE_VERSION ||
+      responseSessionId !== sessionId ||
+      typeof responseIvBase64 !== 'string' ||
+      typeof responseDataBase64 !== 'string' ||
+      !Number.isFinite(resultNonce)
+    ) {
+      throw new Error('Secure bridge encrypted response is invalid.');
+    }
+    if (isSecureBatch && responseDataBase64.length > SECURE_BATCH_BRIDGE_BASE64_CHARS) {
+      throw new Error('Secure batch response exceeds the transport limit.');
+    }
+
     const resB64IvStart = mark();
     let responseIv;
     try {
-      responseIv = base64ToBytes(result.iv);
+      responseIv = base64ToBytes(responseIvBase64);
     } catch (error) {
       if (span) recordP0Phase(span, 'res_b64_iv', resB64IvStart, p0Now());
       throw error;
@@ -407,7 +475,7 @@ async function performSecureCall(pluginName, method, data, p0 = null) {
     const resB64IvEnd = mark();
     if (span) {
       recordP0Phase(span, 'res_b64_iv', resB64IvStart, resB64IvEnd);
-      span.res_b64_chars = typeof result.data === 'string' ? result.data.length : -1;
+      span.res_b64_chars = responseDataBase64.length;
     }
 
     // The response AAD encode sits between the two base64 phases with no phase
@@ -422,7 +490,7 @@ async function performSecureCall(pluginName, method, data, p0 = null) {
     // most valuable row in the trace.
     let responseBytes;
     try {
-      responseBytes = base64ToBytes(result.data);
+      responseBytes = base64ToBytes(responseDataBase64);
     } catch (error) {
       if (span) recordP0Phase(span, 'res_b64_data', responseAadEnd, p0Now());
       throw error;
@@ -538,6 +606,46 @@ export function secureCall(pluginName, method, data, p0Meta) {
   bridgeCallQueue = call.catch(() => undefined);
   return call;
 }
+
+/**
+ * Admit one P2 bulk batch at a time. Admission is FIFO per physical batch;
+ * callers release, yield, and re-enter at the tail for their next batch. The
+ * task factory runs only after admission, so waiting producers retain no
+ * prepared aggregate plaintext/request.
+ *
+ * @template T
+ * @param {() => Promise<T> | T} task
+ * @returns {Promise<T>}
+ */
+export async function withSecureBulkAdmission(task) {
+  let releaseTurn = () => {};
+  const turn = new Promise((resolve) => { releaseTurn = resolve; });
+  const previous = bulkAdmissionTail;
+  bulkAdmissionTail = turn;
+  await previous;
+
+  activeBulkAdmissions += 1;
+  preparedBulkBatches += 1;
+  try {
+    return await task();
+  } finally {
+    preparedBulkBatches -= 1;
+    activeBulkAdmissions -= 1;
+    releaseTurn();
+  }
+}
+
+/** Yield after releasing bulk admission before a producer requests its next turn. */
+export const yieldSecureBulkTurn = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** Test-only structural counters; never exported through P0. */
+export const __secureBulkStateForTests = () => ({
+  active: activeBulkAdmissions,
+  prepared: preparedBulkBatches,
+});
+
+/** Test-only byte-codec surface. */
+export const __secureBridgeCodecForTests = Object.freeze({ bytesToBase64, base64ToBytes });
 
 /** Test-only view of the queue counter. */
 export const __pendingSecureCallsForTests = () => pendingSecureCalls;

@@ -28,7 +28,12 @@ describe('activeTripStore encryption', () => {
     expect(stored).toContain('"encrypted":true');
     expect(stored).not.toContain('43.6532');
     expect(stored).not.toContain('-79.3832');
-    await expect(activeTripStore.hydrate()).resolves.toEqual(trip);
+    await expect(activeTripStore.hydrate()).resolves.toMatchObject({
+      ...trip,
+      active_route_is_bounded_preview: true,
+      active_route_point_count: 1,
+      route_preview: trip.route_points,
+    });
   });
 
   it('migrates legacy plaintext crash-recovery data during hydration', async () => {

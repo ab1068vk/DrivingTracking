@@ -1,6 +1,5 @@
 // @ts-check
 import {
-  scheduleDashboardIdleWork,
   hasLiveSpeedEvidence,
   shouldMuteDashboardWebViewVoice,
   createTierAwareSpeedLimitContext,
@@ -8,6 +7,7 @@ import {
   speedLimitBadgeForResolved,
   checkAndSpeakSpeedAlert,
   isRecoverableActiveTrip,
+  isPendingBrowserFinalization,
   waitForTripEndingFeedbackPaint,
   lastUsableParkingPoint,
 } from '@/components/dashboard/dashboardHelpers';
@@ -17,8 +17,8 @@ import {
 } from '@/components/dashboard/dashboardSpeedPlanner';
 import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { limitedTripSummaryQueryOptions, tripService, tripSummaryQueryOptions } from '@/api/trips';
-import { vehicleService } from '@/api/vehicles';
+import { tripService } from '@/api/trips';
+import { vehicleQueryKeys, vehicleService } from '@/api/vehicles';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -101,7 +101,6 @@ import {
   mergePhoneUseEventsIntoDrivingEvents,
   mergePhoneUseSignals,
 } from '@/lib/phoneUsageAccess';
-import { isDriverMetricEligible } from '@/lib/phoneUseSummary';
 import PremiumReadyToDriveCard from '@/components/PremiumReadyToDriveCard';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
 import LiveCoachOverlay from '@/components/LiveCoachOverlay';
@@ -124,7 +123,21 @@ import { buildAlertDangerZones, loadDangerZones, saveDangerZones } from '@/lib/d
 import { useHazardHorizon } from '@/hooks/useHazardHorizon';
 import { computeDailyFatigue, getTodayTrips } from '@/lib/dailyFatigueEngine';
 import { buildHabitProfile } from '@/lib/habitProfile';
-import { buildDashboardActivityStats } from '@/lib/dashboardStats';
+import { dashboardAverageScore, useDashboardData } from '@/hooks/useDashboardData';
+import { p7TripQueries } from '@/api/trips';
+
+/**
+ * The bounded recent page the native-manual-completion match needs.
+ *
+ * Both trip-ending paths used an ad-hoc `listSummaries({limit:50})`; the
+ * lookup is the same bounded question, asked through the canonical path.
+ */
+const recentCompletedTripsForNativeMatch = async () => {
+  const page = await p7TripQueries.historyPage({
+    sort: '-start_time', status: 'completed', limit: 50,
+  }).catch(() => null);
+  return page?.unavailable ? [] : (page?.data ?? []);
+};
 import { invalidateRouteRiskIndex } from '@/lib/routeRiskIndex';
 import {
   buildDashboardTrackingExplanation,
@@ -356,7 +369,6 @@ export default function Dashboard() {
   const [dismissedSpeedLimitReviewFingerprint, setDismissedSpeedLimitReviewFingerprint] = useState('');
   const [speedLimitReviewDismissalLoaded, setSpeedLimitReviewDismissalLoaded] = useState(false);
   const [speedKnowledgeRevision, setSpeedKnowledgeRevision] = useState(0);
-  const [fullHistoryEnabled, setFullHistoryEnabled] = useState(false);
   const [parkedLocation, setParkedLocation] = useState(null);
   const [parkingState, setParkingState] = useState(null);
   const [dangerZones, setDangerZones] = useState([]);
@@ -522,48 +534,49 @@ export default function Dashboard() {
     }
   }, [activeTrip, tracking]);
 
-  // Load recent trips
+  // P7 Stage 6.4 (Annex C O01-O06): one canonical Dashboard composition. It
+  // replaces four routine history acquisitions — a (50) page, an idle-gated
+  // (200) page, and two ad-hoc listSummaries lookups on the trip-ending paths.
+  // Every lifetime figure on this page used to be derived from whichever of
+  // those windows happened to be loaded, so past 200 retained trips the
+  // activity block described a truncation.
+  const dashboardData = useDashboardData({
+    periodDays: activityPeriod === 'all_time' ? null : 7,
+  });
   const {
-    data: completedTrips = [],
+    completedTrips,
     refetch,
     isSuccess: recentTripsLoaded,
     isError: recentTripsError,
     error: recentTripError,
-  } = useQuery({
-    ...limitedTripSummaryQueryOptions(50),
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
-  });
+  } = dashboardData;
   const {
     dismiss: dismissPostDriveReview,
     showTrip: showPostDriveReview,
     trip: postDriveReviewTrip,
   } = usePendingPostDriveReview(completedTrips);
-  const {
-    data: fullHistoryCompletedTrips = [],
-    isFetching: fullHistoryFetching,
-    isError: fullHistoryError,
-    refetch: refetchFullHistory,
-  } = useQuery({
-    ...tripSummaryQueryOptions(),
-    enabled: fullHistoryEnabled,
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
+
+  // HPR-003. The durable default is a property of the collection, not of the
+  // page: `page.find(is_default) || page[0]` handed the role to whichever
+  // vehicle happened to be visible when the real one sat outside the prefix.
+  const { data: defaultVehicle = null } = useQuery({
+    queryKey: vehicleQueryKeys.default,
+    queryFn: () => vehicleService.getDefault(),
   });
-
-  useEffect(() => {
-    if (!recentTripsLoaded || fullHistoryEnabled || completedTrips.length < 50) return undefined;
-    return scheduleDashboardIdleWork(() => setFullHistoryEnabled(true));
-  }, [completedTrips.length, fullHistoryEnabled, recentTripsLoaded]);
-
   const { data: vehicles = [] } = useQuery({
-    queryKey: ['vehicles'],
-    queryFn: () => vehicleService.list({ sort: '-created_date', limit: 50 }),
+    // HPR-003. One bounded page on the shared vehicle key family: this surface
+    // legitimately wants a prefix, and its request is part of the cache identity
+    // so it can neither read nor poison another surface's differently bounded one.
+    queryKey: vehicleQueryKeys.page({ sort: '-created_date', limit: 50 }),
+    queryFn: () => vehicleService.listPage({ sort: '-created_date', limit: 50 }),
+    select: (page) => page.vehicles,
   });
 
-  const analyticsCompletedTrips = fullHistoryCompletedTrips.length > 0 ? fullHistoryCompletedTrips : completedTrips;
-  const analyticsDriverCompletedTrips = useMemo(
-    () => analyticsCompletedTrips.filter(isDriverMetricEligible),
-    [analyticsCompletedTrips]
-  );
+  // The bounded window the P-DRIVER computations run over. `driverTrips` is
+  // already filtered by the approved `driver_metric_eligible` projection field,
+  // so no consumer re-derives the predicate.
+  const analyticsCompletedTrips = completedTrips;
+  const analyticsDriverCompletedTrips = dashboardData.driverTrips;
   const speedPlannerLocation = currentLocationInPrivacyZone ? null : currentLocation;
   const speedPlannerLocationKey = speedPlannerLocation
     ? `${Number(speedPlannerLocation.lat).toFixed(4)}:${Number(speedPlannerLocation.lng).toFixed(4)}`
@@ -693,9 +706,11 @@ export default function Dashboard() {
     [analyticsCompletedTrips]
   );
   const dailyFatigue = useMemo(() => {
-    const todayTrips = getTodayTrips(analyticsCompletedTrips);
+    // O05: the complete LOCAL day, read through a bounded Q1 date-range scan.
+    // A UTC day bucket cannot express this window and is not substituted.
+    const todayTrips = getTodayTrips(dashboardData.todayTrips);
     return computeDailyFatigue(todayTrips, settings, habitProfile?.fatigueOnsetMinutes);
-  }, [analyticsCompletedTrips, habitProfile?.fatigueOnsetMinutes, settings]);
+  }, [dashboardData.todayTrips, habitProfile?.fatigueOnsetMinutes, settings]);
 
   const latestCompletedTripId = completedTrips[0]?.id;
 
@@ -732,6 +747,15 @@ export default function Dashboard() {
       startTimer(new Date(recovered.start_time));
       // Re-attach GPS
       startGPS();
+    } else if (isPendingBrowserFinalization(recovered)) {
+      // SEALED is immutable capture awaiting same-session completion, not a
+      // recording to resume or stale data to clear. Preserve its durable owner.
+      recordTrackingDiagnostic({
+        type: 'trip_finalization_recovery_pending',
+        title: 'Sealed trip retained for finalization retry',
+        reason: 'sealed_same_session_finalization_required',
+        tripId: recovered.id,
+      });
     } else if (recovered) {
       recordTrackingDiagnostic({
         type: 'trip_recovery_ignored',
@@ -841,7 +865,7 @@ export default function Dashboard() {
         }
       }
       if (!completedNativeTrip && !activeTripStore.get()) {
-        const storedTrips = await tripService.listAllSummaries({ sort: '-start_time' }).catch(() => []);
+        const storedTrips = await recentCompletedTripsForNativeMatch();
         completedNativeTrip = findNativeManualCompletion(storedTrips, trip);
       }
       if (!completedNativeTrip) return false;
@@ -1655,7 +1679,10 @@ export default function Dashboard() {
     };
 
     privateTripRuntimeRef.current = summaryOnlyPrivateTrip ? createPrivateTripRuntime() : null;
-    activeTripStore.set(tripData);
+    const admittedTrip = activeTripStore.set(tripData);
+    // Browser admission allocates exactly one identity; live caller state must
+    // carry it before GPS updates re-enter producer ownership.
+    if (!tripData.id && admittedTrip && 'id' in admittedTrip && admittedTrip.id) tripData.id = admittedTrip.id;
     if (candidate) {
       recordTrackingDiagnostic({
         type: 'candidate_started',
@@ -1967,7 +1994,7 @@ export default function Dashboard() {
           }
         }
         if (!completedNativeTrip && !tripToEnd.id) {
-          const storedTrips = await tripService.listAllSummaries({ sort: '-start_time' }).catch(() => []);
+          const storedTrips = await recentCompletedTripsForNativeMatch();
           completedNativeTrip = findNativeManualCompletion(storedTrips, tripToEnd);
         }
       } catch (error) {
@@ -2406,7 +2433,10 @@ export default function Dashboard() {
       mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || events, phoneUse),
       { privacy_zones: tripPrivacyZones }
     );
-    const completedVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
+    // The vehicle a finished drive is attributed to is the durable default from
+    // the collection authority, never whichever vehicle the loaded page happened
+    // to start with.
+    const completedVehicle = defaultVehicle || null;
     const economics = estimateTripEconomics({ ...stats, ...scores }, completedVehicle, settings);
     const driverModel = buildOnDeviceDriverModel(completedTrips);
     const anomaly = scoreTripAnomaly({ ...stats, ...scores }, driverModel);
@@ -2581,17 +2611,14 @@ export default function Dashboard() {
     // nothing to warn about. Zones are derived from event coordinates, not route
     // geometry, so this is a cheap pass over the trip list.
     try {
-      // Read the whole history rather than reusing `completedTrips`, which is the
-      // 50-trip window this page renders. Rebuilding from that window overwrote
-      // the full-history set MapScreen had written, so every area supported only
-      // by older drives disappeared from the live warning after each trip and
-      // came back only when the Map page was next opened. `analyticsCompletedTrips`
-      // is not enough either: it falls back to the same window until the lazy
-      // full-history query has loaded.
-      const allSummaries = await tripService.listAllSummaries({ sort: '-start_time' });
-      const history = (Array.isArray(allSummaries) ? allSummaries : [])
-        .filter((trip) => trip?.status === 'completed' && trip.id !== completedTrip.id);
-      await saveDangerZones(buildAlertDangerZones([completedTrip, ...history]));
+      // Canonical growth must not turn completion into an O(total-history)
+      // operation. Preserve prior derived zones and merge only this trip's
+      // bounded delta; a separate checkpointed rebuild owns deep recomputation.
+      const existingZones = await loadDangerZones();
+      const deltaZones = buildAlertDangerZones([completedTrip]);
+      const zonesById = new Map(existingZones.map((zone) => [String(zone.id), zone]));
+      deltaZones.forEach((zone) => zonesById.set(String(zone.id), zone));
+      await saveDangerZones([...zonesById.values()]);
     } catch (error) {
       logError('danger_zone_rebuild_after_trip', error, {
         trip_id: savedTrip?.id || completedTrip.id,
@@ -2960,20 +2987,12 @@ export default function Dashboard() {
   } = useMemo(() => {
     const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
     const weekTrips = analyticsDriverCompletedTrips.filter(t => new Date(t.start_time) >= weekAgo);
-    const scoredTrips = analyticsDriverCompletedTrips.slice(0, 10)
-      .map((trip) => ({ trip, component: getTripComponentScore(trip, 'overall') }))
-      .filter(({ component }) => component.value != null);
-    const totalScoredKm = scoredTrips.reduce((sum, { trip }) => sum + (Number(trip.distance_km) || 0), 0);
-    const avgScore = scoredTrips.length && totalScoredKm > 0
-      ? Math.round(scoredTrips.reduce((sum, { trip, component }) => sum + component.value * (Number(trip.distance_km) || 0), 0) / totalScoredKm)
-      : null;
-    const avgScoreEvidence = scoredTrips.length === 0
-      ? 'unavailable'
-      : scoredTrips.some(({ component }) => component.evidence === 'low')
-        ? 'low'
-        : scoredTrips.some(({ component }) => component.evidence === 'developing')
-          ? 'developing'
-          : 'high';
+    // O04: the latest ten P-DRIVER scored trips, distance-weighted. The formula
+    // lives beside its contract so the page and its oracle cannot drift apart.
+    const { avgScore, avgScoreEvidence } = dashboardAverageScore(
+      analyticsDriverCompletedTrips,
+      (trip) => getTripComponentScore(trip, 'overall'),
+    );
     const baseline = computePersonalBaseline(analyticsDriverCompletedTrips);
     const baselineRangeLabel = baseline.baseline_includes_older_scores
       ? baseline.baseline_label
@@ -3001,12 +3020,37 @@ export default function Dashboard() {
       weeklyGoals: calculateWeeklyDrivingGoals(analyticsDriverCompletedTrips, settings),
     };
   }, [analyticsDriverCompletedTrips, parkedLocation, parkingState, settings]);
-  const dashboardActivity = useMemo(
-    () => buildDashboardActivityStats(analyticsCompletedTrips, {
-      periodDays: activityPeriod === 'all_time' ? null : 7,
-    }),
-    [activityPeriod, analyticsCompletedTrips]
-  );
+  // O01/O02 lifetime trips and distance come from the completed-only D1 owner;
+  // O03 driving time and O06 active local days / longest trip come from
+  // `p7.dashboard.activityStats@1`, because D1 keys no duration and a UTC
+  // bucket cannot express a local-day count. The two means are derived from
+  // those exactly as they were derived from the row fold.
+  const dashboardActivity = useMemo(() => {
+    const stats = dashboardData.activityStats;
+    const isAllTime = activityPeriod === 'all_time';
+    const tripCount = isAllTime && Number.isFinite(dashboardData.lifetimeTrips)
+      ? dashboardData.lifetimeTrips
+      : Number(stats?.trip_count) || 0;
+    const distanceKm = isAllTime && Number.isFinite(dashboardData.lifetimeDistanceKm)
+      ? dashboardData.lifetimeDistanceKm
+      : (Number(stats?.distance_m) || 0) / 1000;
+    const activeDays = Number(stats?.active_local_days) || 0;
+    return {
+      periodDays: isAllTime ? null : 7,
+      tripCount,
+      distanceKm,
+      drivingSeconds: Number(stats?.driving_seconds) || 0,
+      activeDays,
+      averageTripKm: tripCount ? distanceKm / tripCount : 0,
+      longestTripKm: (Number(stats?.longest_trip_distance_m) || 0) / 1000,
+      tripsPerActiveDay: activeDays ? tripCount / activeDays : 0,
+    };
+  }, [
+    activityPeriod,
+    dashboardData.activityStats,
+    dashboardData.lifetimeTrips,
+    dashboardData.lifetimeDistanceKm,
+  ]);
   const isAllTimeActivity = activityPeriod === 'all_time';
   const latestTrip = completedTrips[0];
   const activeSpeedLimitReview = speedLimitReviewSummary || speedLimitConflictReview;
@@ -3283,12 +3327,23 @@ export default function Dashboard() {
           {new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
         </p>
         <div className="mt-2 flex flex-wrap gap-2">
-          <InlineRefreshBadge visible={fullHistoryFetching && recentTripsLoaded} label="Loading history analytics" />
+          <InlineRefreshBadge visible={dashboardData.isFetching && recentTripsLoaded} label="Loading history analytics" />
           <InlineLoadError
-            visible={fullHistoryError}
-            message="History analytics could not refresh."
-            onRetry={refetchFullHistory}
+            visible={Boolean(dashboardData.windowUnavailable)}
+            message="Recent trips could not be read. Your saved trips were not changed."
+            onRetry={refetch}
           />
+          {/* A not-ready analytics ledger is a state, never a zero total. */}
+          {dashboardData.lifetimeUnavailable && (
+            <span className="rounded-lg border border-border px-2 py-1 text-xs text-muted-foreground">
+              Lifetime totals are still being prepared
+            </span>
+          )}
+          {!dashboardData.activityUnavailable && !dashboardData.activityExact && (
+            <span className="rounded-lg border border-border px-2 py-1 text-xs text-muted-foreground">
+              Activity totals are at least this much so far
+            </span>
+          )}
         </div>
       </motion.div>
 
@@ -4001,4 +4056,3 @@ export default function Dashboard() {
     </div>
   );
 }
-

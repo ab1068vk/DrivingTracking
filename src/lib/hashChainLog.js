@@ -1,5 +1,10 @@
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { registerPlugin } from '@capacitor/core';
+import { createAuditV2, AuditWork } from '@/lib/hashChainLogV2';
+import {
+  AUDIT_FORMAT_KEY, auditBytes, auditError, introduceAuditFence,
+  readAuditFence, withAuditWebLock,
+} from '@/lib/privacyAuditFormat';
 
 export const PRIVACY_AUDIT_CHAIN_KEY = 'drivesense_privacy_audit_chain_v1';
 export const PRIVACY_AUDIT_ANCHOR_KEY = 'drivesense_privacy_audit_anchor_v1';
@@ -22,6 +27,7 @@ const DETAIL_ALLOWLIST = new Set([
   'purge_raw_gps',
   'purged_event_count',
   'purged_point_count',
+  'purged_motion_sample_count',
   'purged_trip_count',
   'reason',
   'segment_count',
@@ -94,12 +100,15 @@ const parseStoredJson = async (key, fallback) => {
   }
 };
 
-async function sha256hex(input) {
+async function sha256hex(input, work) {
   const subtle = globalThis.crypto?.subtle;
   if (!subtle || typeof TextEncoder === 'undefined') {
     throw new Error('SHA-256 is unavailable in this runtime.');
   }
-  const digest = await subtle.digest('SHA-256', new TextEncoder().encode(input));
+  const encoded = new TextEncoder().encode(input);
+  work?.bytes(encoded.byteLength);
+  const digest = await subtle.digest('SHA-256', encoded);
+  work?.bytes(digest.byteLength);
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
@@ -133,6 +142,7 @@ function normalizePrivacyEvent(event = {}, seq, prevHash) {
     seq,
     timestamp: safeNumber(event.timestamp, Date.now()),
     op: safeString(event.op || event.operation || event.type, 'PRIVACY_EVENT'),
+    operation_id: safeString(event.operationId ?? event.operation_id, undefined),
     zone_id: safeString(event.zoneId ?? event.zone_id, undefined),
     zone_label: safeString(event.zoneLabel ?? event.zone_label, undefined),
     hidden_count: safeNumber(event.hiddenCount ?? event.hidden_count, 0) || 0,
@@ -196,25 +206,129 @@ async function verifyAuditState({ chainResult, anchorResult, chain, anchor }) {
 }
 
 export async function loadPrivacyAuditChain() {
-  const { chain } = await readAuditState();
-  return chain;
+  return runPrivacyOwner(async () => (await readSelectedAudit(false)).chain);
 }
 
 // Consumers that need both entries and verification should use one secure
 // storage snapshot instead of loading the chain twice.
 export async function loadVerifiedPrivacyAuditChain() {
-  const state = await readAuditState();
-  return {
-    chain: state.chain,
-    result: await verifyAuditState(state),
-  };
+  try { return await runPrivacyOwner(() => readSelectedAudit(true)); }
+  catch (error) { return { chain: [], result: { valid: false, reason: error.message } }; }
 }
 
-export async function appendPrivacyEvent(event = {}) {
+let privacyAppendQueue = Promise.resolve();
+let privacyOwnerPending = 0;
+
+// One logical owner and queue across formats. A lifecycle attempt cannot join
+// a queue containing an explicit history-sized read/conversion.
+function runPrivacyOwner(run, { bounded = false } = {}) {
+  if (bounded && privacyOwnerPending > 0) return Promise.reject(auditError('AUDIT_BUSY'));
+  privacyOwnerPending += 1;
+  const operation = privacyAppendQueue.then(() => withAuditWebLock(run, { bounded }))
+    .finally(() => { privacyOwnerPending -= 1; });
+  privacyAppendQueue = operation.catch(() => undefined);
+  return operation;
+}
+
+async function signAuditEntry(entry, work) {
+  if (!isNativePlatform()) return;
+  try {
+    const payload = { tipHash: entry.hash };
+    work?.bytes(auditBytes(JSON.stringify(payload)) + auditBytes(entry.hash));
+    const signed = await AuditAnchor.signTipHash(payload);
+    work?.bytes(2 * auditBytes(JSON.stringify(signed)));
+    entry.tipSignature = signed.signature || null;
+    entry.signingPublicKey = signed.publicKey || null;
+  } catch (error) {
+    if (error?.code === 'AUDIT_WORK_LIMIT') throw error;
+    work?.bytes(2 * auditBytes(JSON.stringify({ message: String(error?.message || error) })));
+    entry.tipSignature = null; entry.signingPublicKey = null;
+  }
+}
+
+const auditV2 = createAuditV2({
+  canonical: canonicalStringify, normalize: normalizePrivacyEvent,
+  operationId: (event) => safeString(event.operationId ?? event.operation_id, undefined),
+  hash: sha256hex, sign: signAuditEntry, verifyLegacy: verifyAuditState, readLegacy: readAuditState,
+});
+
+async function readSelectedAudit(verified) {
+  const fence = await introduceAuditFence();
+  const selected = await auditV2.selector(fence);
+  if (selected.format === 2) return auditV2.read(fence, verified);
+  if (selected.state === 'FRESH_PENDING') {
+    await auditV2.initialize(fence);
+    return auditV2.read(await readAuditFence(), verified);
+  }
+  const state = await readAuditState(); // Explicit v1 authority only.
+  return { chain: state.chain, result: verified ? await verifyAuditState(state) : null };
+}
+
+export function initializePrivacyAudit() {
+  return runPrivacyOwner(async () => auditV2.initialize(await introduceAuditFence()));
+}
+
+export async function getPrivacyAuditReadiness() {
+  const work = new AuditWork();
+  try {
+    return await runPrivacyOwner(async () => {
+      const fence = await readAuditFence(work);
+      const result = await auditV2.selector(fence, work);
+      return { state: result.state, ...work.result() };
+    }, { bounded: true });
+  } catch (error) { return { state: typeof error.code === 'string' ? error.code : 'AUDIT_STORAGE_UNAVAILABLE', ...work.result() }; }
+}
+
+// A committed receipt only, never an old event body. ACK runs under this same
+// owner lock so full erasure cannot interleave between commit and native ACK.
+export async function appendPrivacyEventBounded(event, { afterCommit } = {}) {
+  const work = new AuditWork(true);
+  try {
+    return await runPrivacyOwner(async () => {
+      const { entry: _entry, ...receipt } = await auditV2.append(event, work);
+      const acknowledgement = afterCommit ? await afterCommit(receipt) : undefined;
+      return { state: 'READY', ...receipt, ...work.result(), acknowledgement };
+    }, { bounded: true });
+  } catch (error) {
+    return { state: typeof error.code === 'string' ? error.code : 'AUDIT_STORAGE_UNAVAILABLE', ...work.result(), error: error.message };
+  }
+}
+
+export async function runPrivacyAuditCompatibilityUpgrade(options = {}) {
+  const result = await runPrivacyOwner(async () => auditV2.convert(await introduceAuditFence(), options));
+  if (result.state === 'READY') {
+    // Existing reviewed wake vocabulary; this owner never schedules its own turn.
+    const { notifyPrivacyAuditConversionComplete } = await import('@/lib/appLifecycleWork');
+    notifyPrivacyAuditConversionComplete();
+  }
+  return result;
+}
+
+export const beginPrivacyAuditErasure = () => runPrivacyOwner(async () => auditV2.beginErase(await readAuditFence()));
+export const finishPrivacyAuditErasure = (token) => runPrivacyOwner(() => auditV2.finishErase(token));
+export { AUDIT_FORMAT_KEY };
+
+async function appendPrivacyEventSerialized(event = {}, withDisposition = false) {
+  const fence = await introduceAuditFence();
+  const selected = await auditV2.selector(fence);
+  if (selected.format === 2 || selected.state === 'FRESH_PENDING') {
+    await auditV2.initialize(fence);
+    const receipt = await auditV2.append(event, new AuditWork(true));
+    const entry = receipt.entry || await auditV2.getEntry(receipt.ledgerId, receipt.seq);
+    return withDisposition ? { entry, appended: receipt.appended } : entry;
+  }
+  // Explicit compatibility v1 functionality remains available before cutover.
+  // Lifecycle retention exclusively uses appendPrivacyEventBounded instead.
   const state = await readAuditState();
   const current = await verifyAuditState(state);
   if (!current.valid) {
     throw new Error(`Audit log verification failed before append: ${current.reason}`);
+  }
+
+  const operationId = safeString(event.operationId ?? event.operation_id, undefined);
+  if (operationId) {
+    const existing = state.chain.find((entry) => entry?.operation_id === operationId);
+    if (existing) return withDisposition ? { entry: existing, appended: false } : existing;
   }
 
   const prevHash = state.chain.length > 0 ? state.chain[state.chain.length - 1].hash : GENESIS_HASH;
@@ -241,15 +355,26 @@ export async function appendPrivacyEvent(event = {}) {
     tip: entry.hash,
     updated_at: Date.now(),
   }));
-  return entry;
+  return withDisposition ? { entry, appended: true } : entry;
+}
+
+export function appendPrivacyEvent(event = {}) {
+  return runPrivacyOwner(() => appendPrivacyEventSerialized(event));
+}
+
+// Same serialized ledger owner and verification; only expose whether replay
+// found a committed operation so secondary retention notices are not doubled.
+export function appendPrivacyEventWithDisposition(event = {}) {
+  return runPrivacyOwner(() => appendPrivacyEventSerialized(event, true));
 }
 
 export async function verifyChain() {
-  return verifyAuditState(await readAuditState());
+  return (await loadVerifiedPrivacyAuditChain()).result;
 }
 
 export async function exportAuditCheckpoint() {
-  const chain = await loadPrivacyAuditChain();
+  const { chain, result } = await loadVerifiedPrivacyAuditChain();
+  if (!result.valid) throw auditError(`AUDIT_INTEGRITY_FAILED: ${result.reason}`);
   if (!chain.length) throw new Error('Audit chain is empty');
   const tip = chain.at(-1);
   const exportedAt = Date.now();
@@ -356,7 +481,7 @@ export async function verifyCheckpoint(checkpoint = {}) {
       };
     }
   }
-  const currentVerification = await verifyChain();
+  const { chain, result: currentVerification } = await loadVerifiedPrivacyAuditChain();
   if (!currentVerification.valid) {
     return {
       valid: false,
@@ -364,7 +489,6 @@ export async function verifyCheckpoint(checkpoint = {}) {
       reason: `Current audit chain is invalid: ${currentVerification.reason}`,
     };
   }
-  const chain = await loadPrivacyAuditChain();
   if (chain.length < checkpoint.seq) {
     return {
       valid: false,

@@ -76,8 +76,10 @@ import {
   writeSpeedMapModelCache,
 } from '@/lib/speedMapModelCache';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
+import P6ExplicitOperationControl from '@/components/P6ExplicitOperationControl';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/use-toast';
+import { SPEED_MAP_PAGE_TRIPS, readSpeedMapGeometryPage, speedMapCoverageLabel } from '@/hooks/useSpeedMapGeometry';
 import { requestAppConfirm } from '@/lib/appDialog';
 import {
   matchesSavedRoadSpeedFilter,
@@ -85,12 +87,12 @@ import {
   sortSavedRoadSpeedRows,
 } from '@/lib/savedRoadSpeedFilters';
 import { backfillLocalRoadMemoryFromTripHistory } from '@/lib/roadMemoryCoordinator';
+import { P6_EXPLICIT_OPERATION_TYPES } from '@/lib/p6Contracts';
 import {
   pruneSpeedKnowledge,
   speedKnowledgeRetentionDays,
 } from '@/lib/speed/speedKnowledgeMaintenance';
 import {
-  readSpeedGeometryIndex,
   rebuildSpeedGeometryIndex,
 } from '@/lib/speedGeometryIndex';
 import { buildLocalCorridorGraph, summarizeLocalCorridorGraph } from '@/lib/localCorridorGraph';
@@ -147,7 +149,7 @@ import {
   reconcileSavedSpeedDrafts,
 } from '@/lib/speedLimitDraftReconciliation';
 
-const SPEED_MAP_TRIP_BATCH_SIZE = 80;
+const SPEED_MAP_TRIP_BATCH_SIZE = SPEED_MAP_PAGE_TRIPS;
 const SPEED_RULE_EXPORT_PRIVACY_WARNING = [
   'This export contains precise road locations, map-line coordinates, and your saved speed rules.',
   'Store it securely and share it only with people you trust.',
@@ -308,17 +310,21 @@ export default function SpeedLimits() {
   const [loading, setLoading] = useState(true);
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // O36: the map model carries what has been loaded and whether the Q8 scan
+  // reached its end. There is no total, because a bounded scan has none.
   const [mapModelState, setMapModelState] = useState(/** @type {any} */ ({
     status: 'idle',
     error: null,
-    totalTripCount: 0,
-    nextOffset: 0,
+    loadedTripCount: 0,
+    exact: false,
+    geometryCursor: null,
   }));
   const mapModelStateRef = useRef(/** @type {any} */ ({
     status: 'idle',
     error: null,
-    totalTripCount: 0,
-    nextOffset: 0,
+    loadedTripCount: 0,
+    exact: false,
+    geometryCursor: null,
   }));
   const [mapSectionBuildState, setMapSectionBuildState] = useState(/** @type {any} */ ({
     status: 'idle',
@@ -333,22 +339,31 @@ export default function SpeedLimits() {
   const [status, setStatus] = useState(/** @type {string | { message: string, scoreDeltas?: any[], canUndo?: boolean }} */ (''));
   const [linkedTrip, setLinkedTrip] = useState(null);
   const [mapTrips, setMapTrips] = useState([]);
+  // O36: the geometry surface carries a floor and a scan state, never a total.
   const [geometryIndexState, setGeometryIndexState] = useState({
     status: 'idle',
     indexedTripCount: 0,
-    totalAvailable: 0,
-    truncated: false,
+    exact: false,
+    unavailable: null,
   });
   const [roadMemoryCandidates, setRoadMemoryCandidates] = useState([]);
+  const [editorCursors, setEditorCursors] = useState({
+    corrections: null,
+    candidates: null,
+    exclusions: null,
+    conflicts: null,
+  });
+  const editorCursorsRef = useRef(editorCursors);
   const [smartProtection, setSmartProtection] = useState({
     confirmedCorridorCount: 0,
     suppressedSuggestionCount: 0,
   });
-  const [memoryHistorySync, setMemoryHistorySync] = useState({
+  const [memoryHistorySync, setMemoryHistorySync] = useState(/** @type {any} */ ({
     status: 'idle',
     scannedTripCount: 0,
     observationCount: 0,
-  });
+    operation: null,
+  }));
   const [cameraReviewCount, setCameraReviewCount] = useState(0);
   const [selectedSection, setSelectedSection] = useState(null);
   const [addMode, setAddMode] = useState(false);
@@ -976,18 +991,27 @@ export default function SpeedLimits() {
     void retryNativeMirror();
   }, [nativeMirrorHealth.state, retryNativeMirror]);
 
-  const loadRows = useCallback(async ({ silent = false } = {}) => {
+  const loadRows = useCallback(async ({ silent = false, append = false } = {}) => {
     const firstLoad = !loadedOnceRef.current;
     if (firstLoad && !silent) setLoading(true);
     else if (!silent) setRefreshing(true);
-    const snapshot = await knowledge.getSpeedLimitsSnapshot().catch(() => ({
+    const snapshot = await (append
+      ? knowledge.getSpeedLimitsSnapshotPage({ cursors: editorCursorsRef.current, maxItems: 50, filter: deferredRowQuery })
+      : knowledge.getSpeedLimitsSnapshot()).catch((error) => {
+      if (error?.message === 'SPEED_EDITOR_CURSOR_STALE') {
+        const empty = { corrections: null, candidates: null, exclusions: null, conflicts: null };
+        editorCursorsRef.current = empty;
+        setEditorCursors(empty);
+      }
+      return ({
       rows: [],
       candidates: [],
       history: { canUndo: false, canRedo: false, undoLabel: '', redoLabel: '' },
       rawKnowledge: { cells: {}, corrections: [] },
       exclusions: [],
       protection: { confirmedCorridorCount: 0, suppressedSuggestionCount: 0 },
-    }));
+      });
+    });
     const nextRows = snapshot.rows;
     const nextCandidates = snapshot.candidates;
     const nextHistory = snapshot.history;
@@ -998,10 +1022,21 @@ export default function SpeedLimits() {
       suppressedSuggestionCount: 0,
     });
     const safeRows = (Array.isArray(nextRows) ? nextRows : []).filter(Boolean);
-    setRows(safeRows);
-    setRoadMemoryCandidates((Array.isArray(nextCandidates) ? nextCandidates : []).filter(Boolean));
+    setRows((current) => append
+      ? [...new Map([...current, ...safeRows].map((row) => [correctionKey(row), row])).values()]
+      : safeRows);
+    const safeCandidates = (Array.isArray(nextCandidates) ? nextCandidates : []).filter(Boolean);
+    setRoadMemoryCandidates((current) => append
+      ? [...new Map([...current, ...safeCandidates].map((item) => [String(item.id), item])).values()]
+      : safeCandidates);
     const safeExclusions = (Array.isArray(nextExclusions) ? nextExclusions : []).filter(Boolean);
-    setPersistedExcludedSpeedSections(safeExclusions);
+    setPersistedExcludedSpeedSections((current) => append
+      ? [...new Map([...current, ...safeExclusions].map((item) => [String(item.exclusionId || item.exclusionKey || item.id), item])).values()]
+      : safeExclusions);
+    if (snapshot.cursors) {
+      editorCursorsRef.current = snapshot.cursors;
+      setEditorCursors(snapshot.cursors);
+    }
     setExcludedSpeedSectionKeys((current) => [
       ...new Set([
         ...current,
@@ -1045,7 +1080,9 @@ export default function SpeedLimits() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [knowledge]);
+  }, [deferredRowQuery, knowledge]);
+
+  const loadMoreEditorRows = useCallback(() => loadRows({ silent: true, append: true }), [loadRows]);
 
   const loadMapModel = useCallback(({ force = false } = {}) => {
     if (TRIAGE_DISABLE_MAPS || !loadedOnceRef.current) return;
@@ -1061,38 +1098,46 @@ export default function SpeedLimits() {
       setMapTrips([]);
       setRawMapSections([]);
     }
+    // P7 Stage 7 (Annex C O35/O36): one bounded Q8 page — a fixed Q1 selection
+    // plus the single D2 by-id batch that hydrates exactly those ids. It
+    // replaces an offset-paged `listForSpeedMap` merged with a second geometry
+    // read: offset paging sorted the whole eligible history to reach each page,
+    // so page 20 cost twenty times page 1.
     mapModelCancelRef.current = scheduleIdleWork(() => {
-      Promise.all([
-        tripService.listForSpeedMap({
-          sort: '-start_time',
-          offset: 0,
-          limit: SPEED_MAP_TRIP_BATCH_SIZE,
-        }),
-        readSpeedGeometryIndex().catch(() => ({ trips: [], totalAvailable: 0, truncated: false })),
-      ])
-        .then(([result, geometryIndex]) => {
+      readSpeedMapGeometryPage()
+        .then((page) => {
           if (mapTripsLoadRef.current !== loadId) return;
-          const recentTrips = Array.isArray(result?.trips) ? result.trips : [];
-          const indexedTrips = Array.isArray(geometryIndex?.trips) ? geometryIndex.trips : [];
-          const byId = new Map(indexedTrips.map((trip) => [String(trip?.id), trip]));
-          recentTrips.forEach((trip) => byId.set(String(trip?.id), trip));
-          const safeTrips = [...byId.values()];
-          setMapTrips(safeTrips);
+          if (page.unavailable) {
+            // A D2 owner that cannot serve is a state, never an empty map
+            // presented as "no routes".
+            setMapTrips([]);
+            setGeometryIndexState({
+              status: 'unavailable',
+              indexedTripCount: 0,
+              exact: false,
+              unavailable: page.unavailable,
+            });
+            const failedState = { status: 'error', error: page.unavailable };
+            mapModelStateRef.current = failedState;
+            setMapModelState(failedState);
+            return;
+          }
+          const indexed = page.trips.filter((trip) => trip.geometry_indexed).length;
+          setMapTrips(page.trips);
           setGeometryIndexState({
-            status: indexedTrips.length ? 'ready' : 'idle',
-            indexedTripCount: indexedTrips.length,
-            totalAvailable: Math.max(indexedTrips.length, Number(geometryIndex?.totalAvailable) || 0),
-            truncated: geometryIndex?.truncated === true,
+            status: indexed ? 'ready' : 'idle',
+            indexedTripCount: indexed,
+            // O36: a bounded scan states a floor. There is no total here, and
+            // no synthesized one is substituted.
+            exact: page.exact,
+            unavailable: null,
           });
           const nextState = {
             status: 'loaded',
             error: null,
-            totalTripCount: Math.max(
-              safeTrips.length,
-              Number(result?.totalAvailable) || 0,
-              Number(geometryIndex?.totalAvailable) || 0
-            ),
-            nextOffset: Math.max(safeTrips.length, Number(result?.nextOffset) || 0),
+            loadedTripCount: page.trips.length,
+            exact: page.exact,
+            geometryCursor: page.nextCursor,
           };
           mapModelStateRef.current = nextState;
           setMapModelState(nextState);
@@ -1111,31 +1156,38 @@ export default function SpeedLimits() {
 
   const loadMoreMapTrips = useCallback(async () => {
     if (mapMoreBusy || mapModelStateRef.current.status !== 'loaded') return;
-    const offset = Math.max(0, Number(mapModelStateRef.current.nextOffset) || mapTrips.length);
-    const total = Math.max(0, Number(mapModelStateRef.current.totalTripCount) || 0);
-    if (total > 0 && offset >= total) return;
+    // The Q8 cursor is the only way forward. When it is null the scan reached
+    // its end, and there is no offset to fall back to.
+    const cursor = mapModelStateRef.current.geometryCursor;
+    if (!cursor) return;
     setMapMoreBusy(true);
     try {
-      const result = await tripService.listForSpeedMap({
-        sort: '-start_time',
-        offset,
-        limit: SPEED_MAP_TRIP_BATCH_SIZE,
-      });
-      const incoming = Array.isArray(result?.trips) ? result.trips : [];
+      const page = await readSpeedMapGeometryPage({ cursor });
+      if (page.unavailable) {
+        setMapMoreBusy(false);
+        return;
+      }
+      const incoming = page.trips;
       setMapTrips((current) => {
         const byId = new Map(current.map((trip) => [String(trip?.id), trip]));
         incoming.forEach((trip) => byId.set(String(trip?.id), trip));
         return [...byId.values()];
       });
+      setGeometryIndexState((current) => ({
+        ...current,
+        status: 'ready',
+        indexedTripCount: (Number(current.indexedTripCount) || 0)
+          + incoming.filter((trip) => trip.geometry_indexed).length,
+        exact: page.exact,
+        unavailable: null,
+      }));
       const nextState = {
         ...mapModelStateRef.current,
         status: 'loaded',
         error: null,
-        totalTripCount: Math.max(
-          Number(mapModelStateRef.current.totalTripCount) || 0,
-          Number(result?.totalAvailable) || 0
-        ),
-        nextOffset: Math.max(offset + incoming.length, Number(result?.nextOffset) || 0),
+        loadedTripCount: (Number(mapModelStateRef.current.loadedTripCount) || 0) + incoming.length,
+        exact: page.exact,
+        geometryCursor: page.nextCursor,
       };
       mapModelStateRef.current = nextState;
       setMapModelState(nextState);
@@ -1144,17 +1196,24 @@ export default function SpeedLimits() {
     } finally {
       setMapMoreBusy(false);
     }
-  }, [mapMoreBusy, mapTrips.length]);
+  }, [mapMoreBusy]);
 
   const syncRoadMemoryHistory = useCallback(async () => {
     if (memoryHistorySync.status === 'syncing') return;
     setMemoryHistorySync((current) => ({ ...current, status: 'syncing' }));
     try {
-      const result = await backfillLocalRoadMemoryFromTripHistory();
+      const result = await backfillLocalRoadMemoryFromTripHistory({
+        onProgress: (operation) => setMemoryHistorySync((current) => ({
+          ...current,
+          status: 'syncing',
+          operation,
+        })),
+      });
       setMemoryHistorySync({
         status: 'ready',
         scannedTripCount: Number(result?.scannedTripCount) || 0,
         observationCount: Number(result?.observationCount) || 0,
+        operation: result?.operation || null,
       });
       await loadRows({ silent: true });
       if (mapModelActive) loadMapModel({ force: true });
@@ -1173,8 +1232,11 @@ export default function SpeedLimits() {
       setGeometryIndexState({
         status: 'ready',
         indexedTripCount: Number(index?.indexedTripCount) || 0,
-        totalAvailable: Number(index?.totalAvailable) || 0,
-        truncated: index?.truncated === true,
+        // This is the explicit whole-history rebuild (B6's surviving explicit
+        // path), so its count is a real total rather than a scan floor --
+        // unless the rebuild itself reported truncation.
+        exact: index?.truncated !== true,
+        unavailable: null,
       });
       setMapTrips((current) => {
         const byId = new Map((index?.trips || []).map((trip) => [String(trip?.id), trip]));
@@ -1183,14 +1245,11 @@ export default function SpeedLimits() {
       });
       const nextState = {
         ...mapModelStateRef.current,
-        totalTripCount: Math.max(
-          Number(mapModelStateRef.current.totalTripCount) || 0,
-          Number(index?.totalAvailable) || 0
-        ),
-        nextOffset: Math.max(
-          Number(mapModelStateRef.current.nextOffset) || 0,
+        loadedTripCount: Math.max(
+          Number(mapModelStateRef.current.loadedTripCount) || 0,
           Number(index?.indexedTripCount) || 0
         ),
+        exact: index?.truncated !== true,
       };
       mapModelStateRef.current = nextState;
       setMapModelState(nextState);
@@ -1270,7 +1329,10 @@ export default function SpeedLimits() {
     migrations.forEach((_entry, key) => legacyExclusionMigrationRef.current.add(key));
     let cancelled = false;
     void (async () => {
-      const beforeKnowledge = await knowledge.exportData().catch(() => null);
+      // Bounded change capture replaces two whole-model snapshots: the write
+      // path records exactly what it touched, which native authority can serve
+      // and a whole-model read cannot.
+      const speedChangeCapture = knowledge.beginChangeCapture();
       const migrated = [];
       for (const [key, entry] of migrations) {
         try {
@@ -1288,7 +1350,8 @@ export default function SpeedLimits() {
       }
       if (!cancelled && migrated.length) {
         setPersistedExcludedSpeedSections((current) => [...current, ...migrated]);
-        const afterKnowledge = await knowledge.exportData().catch(() => null);
+        const { before: beforeKnowledge, after: afterKnowledge } =
+          knowledge.endChangeCapture(speedChangeCapture);
         if (beforeKnowledge && afterKnowledge) {
           const updatedTrips = await refreshTripsForLocalSpeedKnowledgeChanges(
             beforeKnowledge,
@@ -1611,7 +1674,10 @@ export default function SpeedLimits() {
       timeRule: timeRuleFromDraft(draft),
       ...validityFromDraft(draft),
     };
-    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    // Bounded change capture replaces two whole-model snapshots: the write
+    // path records exactly what it touched, which native authority can serve
+    // and a whole-model read cannot.
+    const speedChangeCapture2 = knowledge.beginChangeCapture();
     const beforeTrips = [
       ...new Map([
         ...matchingTripsForCorrection(row),
@@ -1652,7 +1718,8 @@ export default function SpeedLimits() {
       setBusyGeohash(null);
       setStatus(withUndo('Saved road speed updated. Matching trip scores are updating in the background.'));
       void (async () => {
-        const afterKnowledge = await knowledge.exportData().catch(() => null);
+        const { before: beforeKnowledge, after: afterKnowledge } =
+          knowledge.endChangeCapture(speedChangeCapture2);
         const updatedTrips = await withRecalculation(() => (
           beforeKnowledge && afterKnowledge
             ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
@@ -1683,7 +1750,10 @@ export default function SpeedLimits() {
     if (!confirmed) return;
     const key = correctionKey(row);
     setBusyGeohash(key);
-    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    // Bounded change capture replaces two whole-model snapshots: the write
+    // path records exactly what it touched, which native authority can serve
+    // and a whole-model read cannot.
+    const speedChangeCapture3 = knowledge.beginChangeCapture();
     const beforeTrips = matchingTripsForCorrection(row);
     const removed = await knowledge.removeUserCorrection(key).catch(() => false);
     if (removed) {
@@ -1697,7 +1767,8 @@ export default function SpeedLimits() {
         return next;
       });
       removeSavedRowsFromView([row]);
-      const afterKnowledge = await knowledge.exportData().catch(() => null);
+      const { before: beforeKnowledge, after: afterKnowledge } =
+        knowledge.endChangeCapture(speedChangeCapture3);
       const updatedTrips = await withRecalculation(() => (
         beforeKnowledge && afterKnowledge
           ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
@@ -1762,7 +1833,10 @@ export default function SpeedLimits() {
       setStatus('Trace at least two distinct points on the road map before resolving this speed conflict. Point-only rules cannot affect scores or alerts safely.');
       return;
     }
-    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    // Bounded change capture replaces two whole-model snapshots: the write
+    // path records exactly what it touched, which native authority can serve
+    // and a whole-model read cannot.
+    const speedChangeCapture4 = knowledge.beginChangeCapture();
     const beforeTrips = [
       ...new Map([
         ...matchingTripsForCorrection(row),
@@ -1871,7 +1945,8 @@ export default function SpeedLimits() {
     if (keepSaved) {
       setStatus(withUndo(`Conflict resolved: kept the saved ${formatSpeedLimit(nextLimitKmh, units)} rule for this road section. Matching trip scores are updating in the background.`));
       void (async () => {
-        const afterKnowledge = await knowledge.exportData().catch(() => null);
+        const { before: beforeKnowledge, after: afterKnowledge } =
+          knowledge.endChangeCapture(speedChangeCapture4);
         const updatedTrips = beforeKnowledge && afterKnowledge
           ? await withRecalculation(() => (
             refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
@@ -1891,7 +1966,8 @@ export default function SpeedLimits() {
 
     setStatus(withUndo(`Conflict resolved: updated this road section to ${formatSpeedLimit(nextLimitKmh, units)}. Matching trip scores are updating in the background.`));
     void (async () => {
-      const afterKnowledge = await knowledge.exportData().catch(() => null);
+      const { before: beforeKnowledge, after: afterKnowledge } =
+        knowledge.endChangeCapture(speedChangeCapture4);
       const updatedTrips = await withRecalculation(() => (
         beforeKnowledge && afterKnowledge
           ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
@@ -2055,7 +2131,10 @@ export default function SpeedLimits() {
 
     const selectedKey = correctionKey(selectedSection);
     setBusyGeohash(selectedKey);
-    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    // Bounded change capture replaces two whole-model snapshots: the write
+    // path records exactly what it touched, which native authority can serve
+    // and a whole-model read cannot.
+    const speedChangeCapture5 = knowledge.beginChangeCapture();
     const beforeTrips = matchingTripsForCorrection(selectedSection);
     const excluded = await knowledge.excludeSpeedSection({
       ...selectedSection,
@@ -2080,7 +2159,8 @@ export default function SpeedLimits() {
     setSelectedSection(null);
     setAddPath([]);
     setAddMode(false);
-    const afterKnowledge = await knowledge.exportData().catch(() => null);
+    const { before: beforeKnowledge, after: afterKnowledge } =
+      knowledge.endChangeCapture(speedChangeCapture5);
     const updatedTrips = await withRecalculation(() => (
       beforeKnowledge && afterKnowledge
         ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
@@ -2367,7 +2447,10 @@ export default function SpeedLimits() {
       return;
     }
     setBusyGeohash(selectedKey);
-    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    // Bounded change capture replaces two whole-model snapshots: the write
+    // path records exactly what it touched, which native authority can serve
+    // and a whole-model read cannot.
+    const speedChangeCapture6 = knowledge.beginChangeCapture();
     const saved = await knowledge.updateUserCorrection(
       selectedKey,
       Math.round(limitKmh),
@@ -2408,7 +2491,8 @@ export default function SpeedLimits() {
     setMapEditorSnapshot(updatedSection, mapDraft);
     setStatus(withUndo(`Saved snapped route geometry (${snapSummary}). Matching trip scores are updating in the background.`));
     void (async () => {
-      const afterKnowledge = await knowledge.exportData().catch(() => null);
+      const { before: beforeKnowledge, after: afterKnowledge } =
+        knowledge.endChangeCapture(speedChangeCapture6);
       const updatedTrips = await withRecalculation(() => (
         beforeKnowledge && afterKnowledge
           ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
@@ -2494,7 +2578,10 @@ export default function SpeedLimits() {
         ? `linked-geometry-${Date.now()}`
       : null;
     const validity = validityFromDraft(mapDraft);
-    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    // Bounded change capture replaces two whole-model snapshots: the write
+    // path records exactly what it touched, which native authority can serve
+    // and a whole-model read cannot.
+    const speedChangeCapture7 = knowledge.beginChangeCapture();
     const saved = selectedSection.saved
       ? await knowledge.updateUserCorrection(
         selectedKey,
@@ -2602,7 +2689,8 @@ export default function SpeedLimits() {
       setBusyGeohash(null);
       setStatus(withUndo(`Saved ${formatSpeedLimit(limitKmh, units)} for this road section${linkedGeometryLabel}. Matching trip scores are updating in the background.`));
       void (async () => {
-        const afterKnowledge = await knowledge.exportData().catch(() => null);
+        const { before: beforeKnowledge, after: afterKnowledge } =
+          knowledge.endChangeCapture(speedChangeCapture7);
         const updatedTrips = await withRecalculation(() => (
           beforeKnowledge && afterKnowledge
             ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
@@ -2658,7 +2746,10 @@ export default function SpeedLimits() {
 
     const selectedKey = correctionKey(selectedSection);
     setBusyGeohash(selectedKey);
-    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    // Bounded change capture replaces two whole-model snapshots: the write
+    // path records exactly what it touched, which native authority can serve
+    // and a whole-model read cannot.
+    const speedChangeCapture8 = knowledge.beginChangeCapture();
     const updatedSection = {
       ...selectedSection,
       lat: midpoint.lat,
@@ -2711,7 +2802,8 @@ export default function SpeedLimits() {
         ...matchingTripsForCorrection(updatedSection),
       ].map((trip) => [String(trip.id), trip])).values(),
     ];
-    const afterKnowledge = await knowledge.exportData().catch(() => null);
+    const { before: beforeKnowledge, after: afterKnowledge } =
+      knowledge.endChangeCapture(speedChangeCapture8);
     const updatedTrips = await withRecalculation(() => (
       beforeKnowledge && afterKnowledge
         ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
@@ -2791,7 +2883,14 @@ export default function SpeedLimits() {
     const source = mapDraft.source || originalSection.source || 'user_entered_estimate';
     const noteBase = mapDraft.note || originalSection.note || '';
     const { validFrom, validFromDate, expiresAt, expiresAtDate } = validityFromDraft(mapDraft);
-    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    // Splitting rewrites one stretch of road, so it reads and writes only the
+    // buckets that stretch falls in rather than the whole saved-road model.
+    const splitScopePoints = [
+      ...(Array.isArray(originalSection.sectionPoints) ? originalSection.sectionPoints : []),
+      ...parts.flatMap((part) => (Array.isArray(part.sectionPoints) ? part.sectionPoints : [])),
+      { lat: Number(originalSection.lat), lng: Number(originalSection.lng) },
+    ];
+    const beforeKnowledge = await knowledge.exportDataForPoints(splitScopePoints).catch(() => null);
     if (!beforeKnowledge) {
       setStatus('Could not load saved road speeds before splitting. Try refresh, then split again.');
       setBusyGeohash(null);
@@ -2850,7 +2949,9 @@ export default function SpeedLimits() {
         ...splitCorrections,
       ],
     };
-    const replaced = await knowledge.replaceData(nextKnowledge, 'split_correction').catch(() => false);
+    const replaced = await knowledge
+      .replaceDataForPoints(nextKnowledge, splitScopePoints, 'split_correction')
+      .catch(() => false);
     if (replaced) {
       setRows((current) => [
         ...current.filter((row) => !matchesOriginal(row)),
@@ -2876,7 +2977,10 @@ export default function SpeedLimits() {
 
   const undoKnowledgeChange = async () => {
     setBusyGeohash('undo');
-    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    // Bounded change capture replaces two whole-model snapshots: the write
+    // path records exactly what it touched, which native authority can serve
+    // and a whole-model read cannot.
+    const speedChangeCapture10 = knowledge.beginChangeCapture();
     const undone = await knowledge.undo().catch(() => false);
     if (!undone) {
       setStatus('There is no saved road-speed change to undo.');
@@ -2889,7 +2993,8 @@ export default function SpeedLimits() {
     setSelectedSection(null);
     setMapDraft(DEFAULT_MAP_DRAFT);
     setMapEditorSnapshot(null);
-    const afterKnowledge = await knowledge.exportData().catch(() => null);
+    const { before: beforeKnowledge, after: afterKnowledge } =
+      knowledge.endChangeCapture(speedChangeCapture10);
     const updatedTrips = beforeKnowledge && afterKnowledge
       ? await withRecalculation(() => (
         refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
@@ -2909,7 +3014,9 @@ export default function SpeedLimits() {
       confirmLabel: 'Export rules',
     });
     if (!confirmed) return;
-    const data = await knowledge.exportData();
+    // Explicit whole-geography export, assembled one prefix-4 bucket at a time.
+    const data = await knowledge.exportDataStreamed();
+    if (!data) return;
     const filename = `road-sage-speed-rules-${new Date().toISOString().slice(0, 10)}.json`;
     const payload = {
       app: 'Road Sage',
@@ -2945,14 +3052,18 @@ export default function SpeedLimits() {
 
   const repairSavedRoadSpeeds = async () => {
     setBusyGeohash('repair');
-    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    // Bounded change capture replaces two whole-model snapshots: the write
+    // path records exactly what it touched, which native authority can serve
+    // and a whole-model read cannot.
+    const speedChangeCapture11 = knowledge.beginChangeCapture();
     const result = await knowledge.repairSavedSpeedData().catch(() => null);
     if (!result) {
       setStatus('Could not repair saved road speeds right now. Try refresh, then repair again.');
       setBusyGeohash(null);
       return;
     }
-    const afterKnowledge = await knowledge.exportData().catch(() => null);
+    const { before: beforeKnowledge, after: afterKnowledge } =
+      knowledge.endChangeCapture(speedChangeCapture11);
     const updatedTrips = result.changed && beforeKnowledge && afterKnowledge
       ? await withRecalculation(() => (
         refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
@@ -3027,7 +3138,10 @@ export default function SpeedLimits() {
       ) {
         throw new Error('Unsafe speed-rule backup');
       }
-      const beforeKnowledge = await knowledge.exportData();
+      // Bounded change capture replaces two whole-model snapshots: the write
+      // path records exactly what it touched, which native authority can serve
+      // and a whole-model read cannot.
+      const speedChangeCapture12 = knowledge.beginChangeCapture();
       const restored = await knowledge.replaceData(sanitized, 'restore_speed_backup');
       if (!restored) throw new Error('Speed-rule restore did not commit');
       dirtyDraftKeysRef.current.clear();
@@ -3036,7 +3150,8 @@ export default function SpeedLimits() {
       setSelectedSection(null);
       setMapDraft(DEFAULT_MAP_DRAFT);
       setMapEditorSnapshot(null);
-      const afterKnowledge = await knowledge.exportData();
+      const { before: beforeKnowledge, after: afterKnowledge } =
+        knowledge.endChangeCapture(speedChangeCapture12);
       const updatedTrips = await withRecalculation(() => (
         refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
       ));
@@ -3097,7 +3212,10 @@ export default function SpeedLimits() {
     }
     const historyGroup = `bulk-confirm-${Date.now()}`;
     setBusyGeohash('bulk');
-    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    // Bounded change capture replaces two whole-model snapshots: the write
+    // path records exactly what it touched, which native authority can serve
+    // and a whole-model read cannot.
+    const speedChangeCapture13 = knowledge.beginChangeCapture();
     const results = await Promise.all(selected.map((row) => knowledge.updateUserCorrection(
       correctionKey(row),
       row.limitKmh,
@@ -3106,7 +3224,8 @@ export default function SpeedLimits() {
       { historyGroup }
     ).catch(() => false)));
     const updated = selected.filter((_, index) => results[index]);
-    const afterKnowledge = await knowledge.exportData().catch(() => null);
+    const { before: beforeKnowledge, after: afterKnowledge } =
+      knowledge.endChangeCapture(speedChangeCapture13);
     await withRecalculation(() => (
       beforeKnowledge && afterKnowledge
         ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
@@ -3141,13 +3260,17 @@ export default function SpeedLimits() {
     if (!confirmed) return;
     const historyGroup = `bulk-delete-${Date.now()}`;
     setBusyGeohash('bulk');
-    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    // Bounded change capture replaces two whole-model snapshots: the write
+    // path records exactly what it touched, which native authority can serve
+    // and a whole-model read cannot.
+    const speedChangeCapture14 = knowledge.beginChangeCapture();
     const results = await Promise.all(selected.map((row) => (
       knowledge.removeUserCorrection(correctionKey(row), { historyGroup }).catch(() => false)
     )));
     const removed = selected.filter((_, index) => results[index]);
     removeSavedRowsFromView(removed);
-    const afterKnowledge = await knowledge.exportData().catch(() => null);
+    const { before: beforeKnowledge, after: afterKnowledge } =
+      knowledge.endChangeCapture(speedChangeCapture14);
     await withRecalculation(() => (
       beforeKnowledge && afterKnowledge
         ? refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null)
@@ -3273,6 +3396,16 @@ export default function SpeedLimits() {
             <RefreshCw className="h-3.5 w-3.5" />
             Refresh
           </button>
+          {Object.values(editorCursors).some(Boolean) && (
+            <button
+              type="button"
+              onClick={loadMoreEditorRows}
+              disabled={refreshing}
+              className="inline-flex items-center justify-center rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary disabled:opacity-60"
+            >
+              Load more saved roads
+            </button>
+          )}
           <button
             type="button"
             onClick={syncRoadMemoryHistory}
@@ -3440,6 +3573,17 @@ export default function SpeedLimits() {
       />
       <SpeedRescoreStatus />
 
+      {!isNativePlatform() && (
+        <P6ExplicitOperationControl
+          operationType={P6_EXPLICIT_OPERATION_TYPES.BROWSER_SPEED_MIGRATION}
+          title="Move saved speeds to protected browser storage"
+          description="This one-time foreground migration keeps the previous saved-speed source authoritative until the protected v2 copy is verified and switched atomically."
+          startLabel="Start saved-speed migration"
+          repeatable={false}
+          observedOperation={memoryHistorySync.operation || null}
+        />
+      )}
+
       <section className="rounded-2xl border border-indigo-200 bg-indigo-50/70 px-4 py-3 text-xs dark:border-indigo-900/60 dark:bg-indigo-950/20" aria-label="Private road corridor intelligence">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -3518,18 +3662,19 @@ export default function SpeedLimits() {
                   : 'Recent road evidence loaded without blocking the page'}
             </div>
             <div className="mt-0.5 text-muted-foreground">
-              {mapTrips.length} compact trip route{mapTrips.length === 1 ? '' : 's'} loaded
-              {Number(mapModelState.totalTripCount) > 0
-                ? ` from ${Number(mapModelState.totalTripCount)} available`
-                : ''}
+              {speedMapCoverageLabel({
+                loaded: mapTrips.length,
+                exact: mapModelState.exact === true,
+              }).replace('trip route', 'compact trip route')}
               {mapSectionBuildState.status === 'ready' && Number(mapSectionBuildState.durationMs) > 0
                 ? ` · road lines built in ${Math.round(Number(mapSectionBuildState.durationMs))} ms`
                 : ''}
             </div>
           </div>
+          {/* The Q8 cursor is the gate: more exists exactly when it is not null. */}
           {geometryIndexState.status !== 'building' &&
             geometryIndexState.status !== 'ready' &&
-            Number(mapModelState.nextOffset) < Number(mapModelState.totalTripCount) && (
+            Boolean(mapModelState.geometryCursor) && (
             <button
               type="button"
               onClick={loadMoreMapTrips}
@@ -3541,7 +3686,7 @@ export default function SpeedLimits() {
             </button>
           )}
           {geometryIndexState.status !== 'building' &&
-            Number(mapTrips.length) < Number(mapModelState.totalTripCount) && (
+            Boolean(mapModelState.geometryCursor) && (
             <button
               type="button"
               onClick={loadFullGeometryHistory}

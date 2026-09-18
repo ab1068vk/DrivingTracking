@@ -12,6 +12,7 @@ import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 
 final class DriveSensePayloadCrypto {
     private static final String ANDROID_KEYSTORE = "AndroidKeyStore";
@@ -20,6 +21,7 @@ final class DriveSensePayloadCrypto {
     private static final String TRANSFORMATION = "AES/GCM/NoPadding";
     private static final int TAG_LENGTH_BITS = 128;
     private static final String STORED_PREFIX = "enc:v1:";
+    private static final java.util.Map<Integer, SecretKey> TEST_KEYS = new java.util.concurrent.ConcurrentHashMap<>();
 
     private DriveSensePayloadCrypto() {}
 
@@ -28,6 +30,8 @@ final class DriveSensePayloadCrypto {
     }
 
     private static SecretKey getOrCreateKey(int keyVersion) throws Exception {
+        SecretKey testKey = TEST_KEYS.get(keyVersion);
+        if (testKey != null) return testKey;
         KeyStore keyStore = KeyStore.getInstance(ANDROID_KEYSTORE);
         keyStore.load(null);
         String alias = aliasForVersion(keyVersion);
@@ -50,6 +54,8 @@ final class DriveSensePayloadCrypto {
     }
 
     private static SecretKey getExistingKey(int keyVersion) throws Exception {
+        SecretKey testKey = TEST_KEYS.get(keyVersion);
+        if (testKey != null) return testKey;
         KeyStore keyStore = KeyStore.getInstance(ANDROID_KEYSTORE);
         keyStore.load(null);
         String alias = aliasForVersion(keyVersion);
@@ -85,6 +91,18 @@ final class DriveSensePayloadCrypto {
 
     static String decrypt(String payloadBase64, String context, int keyVersion) throws Exception {
         byte[] payload = Base64.decode(payloadBase64, Base64.NO_WRAP);
+        byte[] plaintext = decryptPayloadBytes(payload, context, keyVersion);
+        try {
+            return new String(plaintext, StandardCharsets.UTF_8);
+        } finally {
+            java.util.Arrays.fill(plaintext, (byte) 0);
+            java.util.Arrays.fill(payload, (byte) 0);
+        }
+    }
+
+    /** PRDE-1 byte-level decrypt. The caller owns and must zero the returned buffer. */
+    static byte[] decryptPayloadBytes(byte[] payload, String context, int keyVersion) throws Exception {
+        if (payload == null || payload.length < 30) throw new IllegalArgumentException("Invalid encrypted payload.");
         ByteBuffer buffer = ByteBuffer.wrap(payload);
         int ivLength = Byte.toUnsignedInt(buffer.get());
         if (ivLength < 12 || ivLength > 16 || buffer.remaining() <= ivLength) {
@@ -100,7 +118,12 @@ final class DriveSensePayloadCrypto {
         if (context != null) {
             cipher.updateAAD(context.getBytes(StandardCharsets.UTF_8));
         }
-        return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
+        try {
+            return cipher.doFinal(ciphertext);
+        } finally {
+            java.util.Arrays.fill(ciphertext, (byte) 0);
+            java.util.Arrays.fill(iv, (byte) 0);
+        }
     }
 
     static String encryptForStorage(String plaintext, String context) throws Exception {
@@ -163,9 +186,18 @@ final class DriveSensePayloadCrypto {
 
     static void deleteKeyVersion(int keyVersion) throws Exception {
         if (keyVersion < 0) return;
+        if (TEST_KEYS.remove(keyVersion) != null) return;
         KeyStore keyStore = KeyStore.getInstance(ANDROID_KEYSTORE);
         keyStore.load(null);
         String alias = aliasForVersion(keyVersion);
         if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias);
     }
+
+    /** Package-private deterministic test hook; no plugin or production call path exposes it. */
+    static void installTestKey(int keyVersion, byte[] key) {
+        if (key == null || key.length != 32) throw new IllegalArgumentException("Test payload key must contain 32 bytes");
+        TEST_KEYS.put(keyVersion, new SecretKeySpec(java.util.Arrays.copyOf(key, key.length), "AES"));
+    }
+
+    static void clearTestKeys() { TEST_KEYS.clear(); }
 }

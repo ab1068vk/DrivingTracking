@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <meta-data
+            android:name="com.drivesense.app.PHYSICAL_H_NON_PRODUCTION"
+            android:value="true" />
+    </application>
+</manifest>

@@ -64,9 +64,18 @@ vi.mock('@/lib/hashChainLog', async (importOriginal) => ({
   appendPrivacyEvent: privacyZoneMocks.appendPrivacyEvent,
 }));
 
+// Zone purge is a bounded cursor scan now: it pages trip ids and loads one
+// complete trip at a time, so the fake repository serves the same paging and
+// full-trip surface the real ones do. `listTrips` still supplies the corpus.
 vi.mock('@/api/trips', () => ({
   tripService: {
-    listAll: privacyZoneMocks.listTrips,
+    queryHistoryPage: vi.fn(async () => ({
+      rows: await privacyZoneMocks.listTrips(),
+      nextCursor: null,
+      hasMore: false,
+    })),
+    getFullById: vi.fn(async (id) => (await privacyZoneMocks.listTrips())
+      .find((trip) => String(trip.id) === String(id))),
     update: privacyZoneMocks.updateTrip,
   },
 }));

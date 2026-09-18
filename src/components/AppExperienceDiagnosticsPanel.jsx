@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -23,6 +23,7 @@ import {
 } from '@/lib/appExperienceDiagnostics';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { isP0DebugBuild, resolveP0Arm } from '@/lib/p0ProbeArms';
+import { createLatestAsyncRequestGuard } from '@/lib/latestAsyncRequest';
 
 // Resolved once at module scope: the arm is frozen for the process, and the raw
 // export control must not exist at all in a release build.
@@ -117,15 +118,36 @@ export default function AppExperienceDiagnosticsPanel({
   buildInfo = {},
   nativeWatchdog = null,
   tripDataReady = true,
+  /**
+   * A typed P7 unavailable outcome for the page's trip query, or `null`.
+   *
+   * It is kept separate from `tripDataReady` on purpose: "still loading" and
+   * "the query reported a typed failure" are different states, and rendering
+   * either of them as an empty trip set would be the false-zero this panel is
+   * meant to expose rather than commit.
+   */
+  tripDataUnavailable = null,
+  diagnosticsHistoryReady = true,
 } = {}) {
   const inputRef = useRef(null);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [importedReports, setImportedReports] = useState(() => getImportedAppExperienceReports());
-  // Reads a module-level store that takes no arguments. The counts are the
-  // intentional staleness signal for re-reading it, not unused inputs.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const historicalEvents = useMemo(() => getHistoricalAppExperienceEvents(), [performanceEntries.length, trackingEvents.length]);
+  const [historicalEvents, setHistoricalEvents] = useState([]);
+  const [experienceHistoryReady, setExperienceHistoryReady] = useState(false);
+  const historyGuard = useRef(null);
+  historyGuard.current ??= createLatestAsyncRequestGuard();
+  useEffect(() => {
+    const generation = historyGuard.current.begin();
+    getHistoricalAppExperienceEvents().then((events) => {
+      if (historyGuard.current.isCurrent(generation)) {
+        setHistoricalEvents(events);
+        setExperienceHistoryReady(true);
+      }
+    });
+    return () => { historyGuard.current.invalidate(); };
+  }, [performanceEntries.length, trackingEvents.length]);
+  const reportReady = tripDataReady && !tripDataUnavailable && diagnosticsHistoryReady && experienceHistoryReady;
   const report = useMemo(() => buildAppExperienceReport({
     trips,
     performanceEntries,
@@ -148,8 +170,13 @@ export default function AppExperienceDiagnosticsPanel({
    * @param {{ includeP0Raw?: boolean }} [options]
    */
   const exportReport = async ({ includeP0Raw = false } = {}) => {
-    if (!tripDataReady) {
-      setNotice('Trip history is still loading. Wait for it to finish so the report is not exported with an empty dataset.');
+    if (tripDataUnavailable) {
+      // Never export a report whose trip section would silently read zero.
+      setNotice(`Trip data is unavailable (${tripDataUnavailable.code}), so a report would understate this profile.`);
+      return;
+    }
+    if (!reportReady) {
+      setNotice('Diagnostics history is still loading. Wait for it to finish so the report is complete.');
       return;
     }
     setBusy(true);
@@ -245,14 +272,14 @@ export default function AppExperienceDiagnosticsPanel({
           <p className="mt-2 text-sm font-semibold">{report.health.headline}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => exportReport()} disabled={busy || !tripDataReady} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">
-            <Download className="h-4 w-4" /> {tripDataReady ? 'Export safe report' : 'Loading trip history…'}
+          <button type="button" onClick={() => exportReport()} disabled={busy || !reportReady} className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">
+            <Download className="h-4 w-4" /> {tripDataUnavailable ? 'Trip data unavailable' : (reportReady ? 'Export safe report' : 'Loading diagnostics…')}
           </button>
           {P0_DEBUG_BUILD && (
             <button
               type="button"
               onClick={() => exportReport({ includeP0Raw: true })}
-              disabled={busy || !tripDataReady}
+              disabled={busy || !reportReady}
               className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold disabled:opacity-50"
               title={`P0 arm ${p0Arm} — raw measurement rows, debug builds only`}
             >

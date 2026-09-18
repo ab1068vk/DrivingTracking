@@ -156,9 +156,15 @@ export function checkAndSpeakSpeedAlert(speed, resolved, settings, onAlert, {
 
 export function isRecoverableActiveTrip(trip) {
   if (!trip || typeof trip !== 'object') return false;
+  if (trip.rsas_lifecycle_state === 'SEALED') return false;
+  if (trip.rsas_lifecycle_state === 'CANONICAL' || trip.rsas_lifecycle_state === 'UNAVAILABLE') return false;
   if (trip.status !== 'active') return false;
   if (trip.end_time) return false;
   return RECOVERABLE_TRIP_STATES.has(trip.trip_state);
+}
+
+export function isPendingBrowserFinalization(trip) {
+  return Boolean(trip?.id && trip?.rsas_session_id && trip.rsas_lifecycle_state === 'SEALED');
 }
 
 export function readinessPlannerTone(riskLevel) {

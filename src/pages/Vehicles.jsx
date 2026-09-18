@@ -2,8 +2,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { limitedTripSummaryQueryOptions, tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
-import { vehicleService } from '@/api/vehicles';
+import { tripQueryKeys, tripService } from '@/api/trips';
+import { vehicleQueryKeys, vehicleService } from '@/api/vehicles';
 import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle, Zap, ClipboardCheck, Route, CalendarClock, TrendingUp, Sparkles } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
 import VehicleMaintenancePanel from '@/components/VehicleMaintenancePanel';
@@ -23,6 +23,7 @@ import { VEHICLE_MAINTENANCE_DISCLAIMER } from '@/lib/vehicleReferenceCatalog';
 import { toast } from '@/components/ui/use-toast';
 import { logError } from '@/lib/errorReporting';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { useVehicleAnalytics } from '@/hooks/useVehicleAnalytics';
 import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
 import { formatDistance, getTripComponentScore } from '@/lib/tripEngine';
 import { convertPerDistanceRate, distanceUnitLabel, formatDistanceScope } from '@/lib/unitFormatting';
@@ -32,14 +33,6 @@ import { requestAppConfirm } from '@/lib/appDialog';
 
 const COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
 
-const scheduleVehiclesIdleWork = (callback) => {
-  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-    const id = window.requestIdleCallback(callback, { timeout: 3000 });
-    return () => window.cancelIdleCallback?.(id);
-  }
-  const id = window.setTimeout(callback, 500);
-  return () => window.clearTimeout(id);
-};
 
 let odometerSyncFailureCount = 0;
 let odometerSyncFailureToastShown = false;
@@ -108,15 +101,232 @@ export function getTripsForVehicle(vehicle, trips = []) {
   ));
 }
 
+/** One bounded fleet page; the control below adds another turn, not a bigger read. */
+export const VEHICLE_PAGE_SIZE = 50;
+
+/** One bounded page of retired profiles; the collection grows with deletions. */
+export const RETIRED_PAGE_SIZE = 10;
+
+/** One bounded history turn per user action while looking for affected trips. */
+export const VEHICLE_RETIRED_SCAN_PAGE = 100;
+
+/**
+ * HPR-003. A count card must not look like a total while more remain.
+ *
+ * The footer used to carry the "at least" truth on its own, which left the
+ * headline figure reading as the whole fleet.
+ */
+export function fleetCountLabel({ count = 0, hasMore = false } = {}) {
+  return hasMore ? `at least ${count}` : String(count);
+}
+
 export function getUnassignedCompletedTrips(trips = []) {
   return trips.filter((trip) => trip.status === 'completed' && !trip.vehicle_id);
 }
 
-export function getTripsNeedingVehicleReview(trips = []) {
+/**
+ * HPR-010. A trip whose vehicle profile was retired needs a decision too.
+ *
+ * `retiredVehicleIds` comes from the retired-profile authority, never from the
+ * loaded page: a vehicle outside the current prefix is not deleted, and
+ * treating it as such would reassign history that is perfectly well attributed.
+ */
+export function getTripsNeedingVehicleReview(trips = [], { retiredVehicleIds = null, vehicleStates = null } = {}) {
+  // `vehicleStates` is the per-reference answer from the id authority; the
+  // retired-id set remains supported for callers that already hold one.
+  const isRetiredReference = (id) => {
+    const key = String(id);
+    if (vehicleStates instanceof Map) return vehicleStates.get(key)?.retired === true;
+    if (vehicleStates && typeof vehicleStates === 'object') return vehicleStates[key]?.retired === true;
+    return retired.has(key);
+  };
+  const retired = retiredVehicleIds instanceof Set
+    ? retiredVehicleIds
+    : new Set((retiredVehicleIds || []).map((id) => String(id)));
   return trips.filter((trip) => (
     trip.status === 'completed' &&
-    (!trip.vehicle_id || trip.vehicle_assignment_status === 'needs_confirmation')
+    (
+      !trip.vehicle_id ||
+      trip.vehicle_assignment_status === 'needs_confirmation' ||
+      isRetiredReference(trip.vehicle_id)
+    )
   ));
+}
+
+/**
+ * HPR-010. Bounded discovery of trips that still reference a retired profile.
+ *
+ * The repair workflow only ever saw the newest history page, so an older
+ * retired reference could not be found at all. This walks the existing P7
+ * completed-trip pagination **one page per call**, carries its continuation and
+ * reports its own completeness, so more history means more bounded turns rather
+ * than a foreground scan of everything. A refused cursor is reported as a
+ * restart, never as completion.
+ *
+ * @param {{retiredVehicleIds?: Set<string>, readPage?: Function, cursor?: string|null}} [options]
+ */
+export async function discoverRetiredReferenceTrips({
+  retiredVehicleIds = new Set(),
+  readPage,
+  cursor = null,
+} = {}) {
+  if (typeof readPage !== 'function' || !retiredVehicleIds.size) {
+    return { trips: [], continuation: null, complete: true, restartRequired: false };
+  }
+  const page = await readPage({ cursor });
+  if (page?.unavailable) {
+    return {
+      trips: [],
+      continuation: null,
+      complete: false,
+      restartRequired: String(page.unavailable.code || '').startsWith('CURSOR_'),
+      unavailable: page.unavailable,
+    };
+  }
+  const rows = Array.isArray(page?.data) ? page.data : [];
+  const continuation = page?.continuation ?? null;
+  return {
+    trips: rows.filter((trip) => (
+      trip?.status === 'completed' && retiredVehicleIds.has(String(trip.vehicle_id || ''))
+    )),
+    continuation,
+    complete: !continuation,
+    restartRequired: false,
+  };
+}
+
+/**
+ * What a trip's vehicle reference actually resolves to.
+ *
+ * Four distinct answers, so no surface has to guess: an active vehicle, the
+ * default for an unassigned trip, an explicitly retired profile, or `unknown`
+ * when the reference simply is not in the collection this caller holds —
+ * which is a statement about the caller's page, not about the vehicle.
+ */
+/**
+ * HPR-010. Bounded navigation over the retired collection.
+ *
+ * The repository pages retired profiles, but the screen requested the first ten
+ * and stopped, so profile eleven existed, was disclosed as "more", and could
+ * never be loaded — and therefore could never be handed to repair discovery.
+ * The page keeps the cursor it was given and the trail it came by, so forward
+ * and back are the same bounded turn in either direction. Nothing here holds a
+ * retired record; only the cursors between pages.
+ */
+export function retiredPageState() {
+  return { cursor: null, pageIndex: 0, trail: [] };
+}
+
+/** Is there a further bounded turn to take, according to the page itself? */
+export function canAdvanceRetiredPage(_state = retiredPageState(), page = null) {
+  return Boolean(page?.hasMore && page?.continuation);
+}
+
+export function advanceRetiredPage(state = retiredPageState(), page = null) {
+  if (!canAdvanceRetiredPage(state, page)) return state;
+  return {
+    cursor: page.continuation,
+    pageIndex: state.pageIndex + 1,
+    trail: [...state.trail, state.cursor],
+  };
+}
+
+export function rewindRetiredPage(state = retiredPageState()) {
+  if (!state.trail.length) return retiredPageState();
+  const trail = state.trail.slice(0, -1);
+  return {
+    cursor: state.trail[state.trail.length - 1] ?? null,
+    pageIndex: Math.max(0, state.pageIndex - 1),
+    trail,
+  };
+}
+
+/**
+ * What a scan started from this page actually covers.
+ *
+ * "More deleted vehicles remain" and "more trip history remains" are two
+ * different claims, and a scan that examined one page of deletions must not
+ * read as coverage of every deletion.
+ */
+export function retiredScanScopeNote({ represented = 0, hasMoreProfiles = false, pageIndex = 0 } = {}) {
+  // Scope is a property of the page's position in the collection, not only of
+  // what follows it. A terminal page still has pages *before* it, and a scan
+  // started there covered one profile — reading `hasMore === false` as "nothing
+  // left to qualify" let the finished-history sentence stand alone and sound
+  // like every deletion had been searched.
+  const hasOtherProfiles = hasMoreProfiles || pageIndex > 0;
+  if (!hasOtherProfiles) return null;
+  const subject = `the ${represented} deleted vehicle${represented === 1 ? '' : 's'} on this page`;
+  return hasMoreProfiles
+    ? `This searches for ${subject}. Load the next page to search for the rest.`
+    : `This searches for ${subject}. Earlier pages hold other deleted vehicles, which this search did not cover.`;
+}
+
+/**
+ * HPR-010. Process-local discoveries converge with the durable mutation.
+ *
+ * A trip found beyond the recent page lives in this screen's own state, which
+ * cache invalidation does not touch. After a successful reassignment it is no
+ * longer a retired reference, so leaving it in the workflow offered the user a
+ * repair that had already happened — repeatedly. Exactly the ids that settled
+ * are removed, so a failed write keeps its trip repairable.
+ */
+export function clearReassignedDiscoveries(discovered = [], reassignedIds = []) {
+  const removed = new Set((reassignedIds || []).filter(Boolean).map(String));
+  if (!removed.size) return discovered;
+  const kept = discovered.filter((trip) => !removed.has(String(trip?.id)));
+  return kept.length === discovered.length ? discovered : kept;
+}
+
+/** Which assignments actually settled, so only those are treated as repaired. */
+export function summarizeAssignmentOutcome(results = []) {
+  const succeededIds = [];
+  let failedCount = 0;
+  for (const result of results) {
+    if (result?.status === 'fulfilled' && result.value != null) succeededIds.push(String(result.value));
+    else failedCount += 1;
+  }
+  return { succeededIds, failedCount };
+}
+
+/**
+ * HPR-010. Bounded discovery feeds the same repair workflow as the recent page.
+ *
+ * A trip found beyond the newest page is repairable exactly like a recent one;
+ * discovery that only counted would be a report, not a repair. Recent rows win
+ * on identity, so nothing is listed twice and the recent row's own freshness is
+ * the one that survives.
+ */
+export function mergeDiscoveredReviewTrips(recent = [], discovered = []) {
+  if (!discovered.length) return recent;
+  // One id appears once however many turns found it: a restart after the
+  // history moved can legitimately re-read a page this scan already saw.
+  const seen = new Set(recent.map((trip) => String(trip?.id)));
+  const merged = [...recent];
+  for (const trip of discovered) {
+    if (!trip || seen.has(String(trip.id))) continue;
+    seen.add(String(trip.id));
+    merged.push(trip);
+  }
+  return merged;
+}
+
+export function resolveTripVehicle(trip = {}, vehicles = [], retiredVehicles = [], defaultVehicle = null) {
+  const reference = String(trip?.vehicle_id || '');
+  if (!reference) {
+    // An unassigned trip follows the durable default. Deriving that default from
+    // the loaded page handed the role to a visible stranger whenever the real
+    // one sat outside it.
+    const fallback = defaultVehicle
+      || vehicles.find((vehicle) => vehicle.is_default)
+      || null;
+    return { vehicle: fallback, retired: false, unknown: false, assigned: false };
+  }
+  const active = vehicles.find((vehicle) => String(vehicle.id) === reference);
+  if (active) return { vehicle: active, retired: false, unknown: false, assigned: true };
+  const retired = retiredVehicles.find((vehicle) => String(vehicle.id) === reference);
+  if (retired) return { vehicle: retired, retired: true, unknown: false, assigned: true };
+  return { vehicle: null, retired: false, unknown: true, assigned: true };
 }
 
 const sameMonth = (date, now = new Date()) => {
@@ -127,12 +337,28 @@ const sameMonth = (date, now = new Date()) => {
     parsed.getMonth() === now.getMonth();
 };
 
-export function buildFleetIntelligence(vehicles = [], trips = [], settings = {}) {
+/**
+ * @param {Array} vehicles
+ * @param {Array} trips the bounded recent rows the assignment and service
+ *   surfaces work on
+ * @param {object} settings
+ * @param {{fleet?: {trips: number, distanceKm: number}|null,
+ *          byVehicleId?: Map<string, {trips: number, distanceKm: number, score: number|null}>}} [lifetime]
+ *   authoritative lifetime totals from the D1 vehicle owner (Annex C O09/O10).
+ *   When absent every figure falls back to the row array, which is what a
+ *   direct caller without an owner gets; the page always supplies it.
+ */
+export function buildFleetIntelligence(vehicles = [], trips = [], settings = {}, lifetime = null, retiredVehicles = [], defaultVehicle = null) {
   const completedTrips = trips.filter((trip) => trip.status === 'completed');
-  const defaultVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
-  const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle]));
-  const vehicleForTrip = (trip) => vehicleById.get(String(trip.vehicle_id)) || (!trip.vehicle_id ? defaultVehicle : null) || {};
-  const totalKm = completedTrips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+  const lifetimeFor = (vehicle) => lifetime?.byVehicleId?.get(String(vehicle?.id)) || null;
+  // HPR-010. A reference the fleet page cannot see is either retired or simply
+  // outside this page; neither is "no vehicle", and neither is the default one.
+  const vehicleForTrip = (trip) => resolveTripVehicle(trip, vehicles, retiredVehicles, defaultVehicle).vehicle || {};
+  // Lifetime distance is an aggregate the D1 owner keys. Reducing the fetched
+  // rows would report the window, not the fleet.
+  const totalKm = lifetime?.fleet
+    ? lifetime.fleet.distanceKm
+    : completedTrips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
   const monthTrips = completedTrips.filter((trip) => sameMonth(trip.start_time || trip.end_time));
   const monthlyCost = monthTrips.reduce((sum, trip) => (
     sum + estimateTripEconomics(trip, vehicleForTrip(trip), settings).cost
@@ -147,20 +373,27 @@ export function buildFleetIntelligence(vehicles = [], trips = [], settings = {})
   const ranked = vehicles
     .map((vehicle) => {
       const vehicleTrips = getTripsForVehicle(vehicle, completedTrips);
-      const distanceKm = vehicleTrips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
+      const owned = lifetimeFor(vehicle);
       return {
         vehicle,
-        trips: vehicleTrips.length,
-        distanceKm,
-        score: calculateAverageVehicleScore(vehicleTrips),
+        // Trips, distance and the distance-weighted score are lifetime figures
+        // the vehicle bucket already keys. Cost is per-trip economics that no
+        // ledger keys, so it stays a figure over the bounded recent rows and the
+        // UI labels it as such.
+        trips: owned ? owned.trips : vehicleTrips.length,
+        distanceKm: owned ? owned.distanceKm : vehicleTrips.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0),
+        score: owned ? owned.score : calculateAverageVehicleScore(vehicleTrips),
         cost: vehicleTrips.reduce((sum, trip) => sum + estimateTripEconomics(trip, vehicle, settings).cost, 0),
+        costIsRecentWindow: true,
       };
     })
     .sort((a, b) => b.distanceKm - a.distanceKm);
 
   return {
     vehicleCount: vehicles.length,
-    completedTripCount: completedTrips.length,
+    completedTripCount: lifetime?.fleet ? lifetime.fleet.trips : completedTrips.length,
+    /** `true` when the lifetime figures came from the D1 owner rather than the rows. */
+    lifetimeExact: Boolean(lifetime?.fleet),
     unassignedTripCount: unassignedTrips.length,
     assignmentReviewCount: reviewTrips.length,
     totalKm,
@@ -388,49 +621,123 @@ export default function Vehicles() {
   const qc = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [tripStatsEnabled, setTripStatsEnabled] = useState(false);
   const settings = useLocalSettings();
   const currencySymbol = normalizeCurrencySymbol(settings.currencySymbol);
   const units = settings.units || 'metric';
 
-  const { data: vehicles = [], isLoading } = useQuery({
-    queryKey: ['vehicles'],
-    queryFn: () => vehicleService.list({ sort: '-created_date', limit: 50 }),
+  // HPR-003. The fleet manager reads one bounded page and is told what that page
+  // represents, so it can say "at least N" and offer the rest instead of ending
+  // silently at a cap. HPR-010: retired profiles are their own bounded authority
+  // — reference existence is never inferred from this page's contents.
+  const [vehiclePageSize, setVehiclePageSize] = useState(VEHICLE_PAGE_SIZE);
+  const { data: vehiclePage, isLoading } = useQuery({
+    queryKey: vehicleQueryKeys.page({ sort: '-created_date', limit: vehiclePageSize }),
+    queryFn: () => vehicleService.listPage({ sort: '-created_date', limit: vehiclePageSize }),
+  });
+  const vehicles = useMemo(() => vehiclePage?.vehicles ?? [], [vehiclePage]);
+  // HPR-010/6A. Retired profiles are shown as a bounded page: the collection
+  // grows with every deletion and the screen only ever shows the first names.
+  // HPR-010. Deletions accumulate, so the retired list is paged and the page
+  // keeps the cursor it is on. Without this the eleventh deleted profile was
+  // disclosed and unreachable.
+  const [retiredNav, setRetiredNav] = useState(retiredPageState);
+  const { data: retiredPage } = useQuery({
+    queryKey: vehicleQueryKeys.retiredPage({ limit: RETIRED_PAGE_SIZE, cursor: retiredNav.cursor }),
+    queryFn: () => vehicleService.listRetiredPage({ limit: RETIRED_PAGE_SIZE, cursor: retiredNav.cursor }),
+  });
+  const retiredVehicles = useMemo(() => retiredPage?.vehicles ?? [], [retiredPage]);
+  useEffect(() => {
+    // A refused continuation means the deletions moved; going back to the first
+    // page is the only honest position left.
+    if (retiredPage?.restartRequired && retiredNav.cursor) setRetiredNav(retiredPageState());
+  }, [retiredPage, retiredNav.cursor]);
+  // The durable default, not the first row of whatever page loaded.
+  const { data: durableDefaultVehicle = null } = useQuery({
+    queryKey: vehicleQueryKeys.default,
+    queryFn: () => vehicleService.getDefault(),
   });
 
+  // P7 Stage 6 (Annex C O09/O10): one bounded Q1 page for the assignment and
+  // service surfaces, plus Q4 per vehicle over the D1 owner's own
+  // `browser:vehicle:<id>:2` buckets for the lifetime totals. The page used to
+  // derive those lifetime figures from a 200-row window, which made them wrong
+  // for any fleet with more history than that.
   const {
-    data: recentTrips = [],
+    recentTrips,
+    recentUnavailable,
+    lifetime: vehicleLifetime,
     isLoading: recentTripsLoading,
-    isSuccess: recentTripsLoaded,
-  } = useQuery({
-    ...limitedTripSummaryQueryOptions(100),
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
-  });
-  const { data: fullHistoryTrips = [] } = useQuery({
-    ...tripSummaryQueryOptions(),
-    enabled: recentTripsLoaded && tripStatsEnabled,
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
-  });
-  useEffect(() => {
-    if (!recentTripsLoaded || tripStatsEnabled) return undefined;
-    return scheduleVehiclesIdleWork(() => setTripStatsEnabled(true));
-  }, [recentTripsLoaded, tripStatsEnabled]);
-  const trips = fullHistoryTrips.length > 0 ? fullHistoryTrips : recentTrips;
+  } = useVehicleAnalytics(vehicles);
+  const trips = recentTrips;
 
   // Stable so the odometer-sync effect can depend on it without re-syncing on
   // every render. The query client identity is already stable.
-  const invalidate = useCallback(() => qc.invalidateQueries({ queryKey: ['vehicles'] }), [qc]);
+  const invalidate = useCallback(() => qc.invalidateQueries({ queryKey: vehicleQueryKeys.all }), [qc]);
   const invalidateTrips = () => {
     qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
     qc.invalidateQueries({ queryKey: tripQueryKeys.map });
   };
 
+  // A typed unavailable is its own state: an empty fleet list would claim the
+  // garage is empty, which is a different and untrue thing to say.
+  const vehicleTripsUnavailable = recentUnavailable;
+
   const fleetIntelligence = useMemo(
-    () => buildFleetIntelligence(vehicles, trips, settings),
-    [vehicles, trips, settings]
+    () => buildFleetIntelligence(vehicles, trips, settings, vehicleLifetime, retiredVehicles, durableDefaultVehicle),
+    [vehicles, trips, settings, vehicleLifetime, retiredVehicles, durableDefaultVehicle]
   );
   const unassignedTrips = useMemo(() => getUnassignedCompletedTrips(trips), [trips]);
-  const assignmentReviewTrips = useMemo(() => getTripsNeedingVehicleReview(trips), [trips]);
+  // HPR-010/6A. Classification asks the authority about exactly the references
+  // these loaded rows mention, so no global retired-id set is needed and a
+  // vehicle outside any page is never mistaken for a deleted one.
+  const referencedVehicleIds = useMemo(
+    () => [...new Set(trips.map((trip) => trip?.vehicle_id).filter(Boolean).map(String))],
+    [trips],
+  );
+  const { data: vehicleStates = new Map() } = useQuery({
+    // The lifecycle question has its own cache identity: Trip History asks for
+    // the same ids and gets records back, and one identity cannot hold both.
+    queryKey: vehicleQueryKeys.referenceStates(referencedVehicleIds),
+    queryFn: () => vehicleService.getReferenceStates(referencedVehicleIds),
+    enabled: referencedVehicleIds.length > 0,
+  });
+  const [retiredScan, setRetiredScan] = useState({
+    running: false, cursor: null, complete: false, restartRequired: false, scanned: 0, found: [],
+  });
+  useEffect(() => {
+    // A scan belongs to the deleted vehicles it was started for. Moving to
+    // another page changes the question, so its answer does not carry over.
+    setRetiredScan({ running: false, cursor: null, complete: false, restartRequired: false, scanned: 0, found: [] });
+  }, [retiredNav.cursor]);
+  const runRetiredReferenceScan = useCallback(async () => {
+    const retiredIds = new Set(retiredVehicles.map((vehicle) => String(vehicle.id)));
+    if (!retiredIds.size) return;
+    setRetiredScan((state) => ({ ...state, running: true }));
+    const { p7TripQueries } = await import('@/api/trips');
+    const result = await discoverRetiredReferenceTrips({
+      retiredVehicleIds: retiredIds,
+      cursor: retiredScan.cursor,
+      readPage: ({ cursor }) => p7TripQueries.historyPage({
+        sort: '-start_time', status: 'completed', limit: VEHICLE_RETIRED_SCAN_PAGE, cursor,
+      }),
+    }).catch(() => null);
+    setRetiredScan((state) => (result ? {
+      running: false,
+      cursor: result.continuation,
+      complete: result.complete,
+      restartRequired: result.restartRequired,
+      scanned: state.scanned + 1,
+      found: [...state.found, ...result.trips],
+    } : { ...state, running: false }));
+  }, [retiredVehicles, retiredScan.cursor]);
+
+  const assignmentReviewTrips = useMemo(
+    () => mergeDiscoveredReviewTrips(
+      getTripsNeedingVehicleReview(trips, { vehicleStates }),
+      retiredScan.found,
+    ),
+    [trips, vehicleStates, retiredScan.found],
+  );
   const assignmentSuggestions = useMemo(
     () => buildVehicleAssignmentSuggestions(assignmentReviewTrips, vehicles, trips),
     [assignmentReviewTrips, vehicles, trips]
@@ -450,7 +757,11 @@ export default function Vehicles() {
       })
       .filter(Boolean)
   ), [assignmentReviewTrips, assignmentSuggestions]);
-  const defaultVehicle = vehicles.find((vehicle) => vehicle.is_default) || vehicles[0] || null;
+  // The durable default from the collection authority; the loaded page is a
+  // display prefix and cannot decide which vehicle is canonical.
+  const defaultVehicle = durableDefaultVehicle
+    || vehicles.find((vehicle) => vehicle.is_default)
+    || null;
 
   const createMut = useMutation({
     mutationFn: (/** @type {any} */ d) => vehicleService.create(d),
@@ -480,21 +791,38 @@ export default function Vehicles() {
             vehicleId: vars.vehicleId,
             source: 'manual_assignment',
           }));
-      await Promise.all(assignments.map((assignment) => tripService.update(assignment.tripId, {
-        vehicle_id: assignment.vehicleId,
-        vehicle_assignment_status: 'confirmed',
-        vehicle_assignment_source: assignment.source || 'manual_assignment',
-        vehicle_assignment_confidence: Number(assignment.confidence) || null,
-        vehicle_assignment_confirmed_at: confirmedAt,
-      })));
-      return { assignments };
+      // Settled per trip, because the repair state must converge with what
+      // actually happened: one failed write may not carry away the trips that
+      // succeeded, and a trip that did not move stays repairable.
+      const results = await Promise.allSettled(assignments.map(async (assignment) => {
+        await tripService.update(assignment.tripId, {
+          vehicle_id: assignment.vehicleId,
+          vehicle_assignment_status: 'confirmed',
+          vehicle_assignment_source: assignment.source || 'manual_assignment',
+          vehicle_assignment_confidence: Number(assignment.confidence) || null,
+          vehicle_assignment_confirmed_at: confirmedAt,
+        });
+        return assignment.tripId;
+      }));
+      return { assignments, ...summarizeAssignmentOutcome(results) };
     },
-    onSuccess: ({ assignments }) => {
+    onSuccess: ({ succeededIds, failedCount }) => {
       invalidateTrips();
       invalidate();
+      // Cache invalidation refreshes durable data; it cannot reach this
+      // screen's own discoveries, so those are reconciled explicitly.
+      if (succeededIds.length) {
+        setRetiredScan((state) => {
+          const found = clearReassignedDiscoveries(state.found, succeededIds);
+          return found === state.found ? state : { ...state, found };
+        });
+      }
       toast({
-        title: 'Trips confirmed',
-        description: `${assignments.length} trip${assignments.length === 1 ? '' : 's'} now feed trusted vehicle cost, maintenance, and score insights.`,
+        title: failedCount ? 'Some trips confirmed' : 'Trips confirmed',
+        description: failedCount
+          ? `${succeededIds.length} trip${succeededIds.length === 1 ? '' : 's'} confirmed; ${failedCount} could not be saved and can be tried again.`
+          : `${succeededIds.length} trip${succeededIds.length === 1 ? '' : 's'} now feed trusted vehicle cost, maintenance, and score insights.`,
+        variant: failedCount ? 'destructive' : undefined,
       });
     },
   });
@@ -590,6 +918,18 @@ export default function Vehicles() {
         )}
       />
 
+      {vehicleTripsUnavailable && (
+        <div role="status" className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
+          <div className="font-semibold">Trip data for this fleet is not available right now</div>
+          {/* Rendering this as an empty trip set would report zero kilometres
+              for every vehicle, which is a measurement claim rather than a
+              state. */}
+          <div className="mt-1">
+            The stored trips could not be read ({vehicleTripsUnavailable.code}). Vehicle records and odometers were not changed.
+          </div>
+        </div>
+      )}
+
       <div role="note" className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs leading-relaxed text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100">
         <div className="flex items-start gap-2">
           <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
@@ -600,6 +940,7 @@ export default function Vehicles() {
       {settings.premium_visual_experience === true ? (
         <PremiumVehicleOverview
           summary={fleetIntelligence}
+          vehicleCountLabel={fleetCountLabel({ count: fleetIntelligence.vehicleCount, hasMore: vehiclePage?.hasMore === true })}
           formattedMonthlyCost={formatCurrencyAmount(fleetIntelligence.monthlyCost, currencySymbol)}
           formattedTotalDistance={formatDistanceScope(fleetIntelligence.totalKm, units)}
           loading={isLoading || recentTripsLoading}
@@ -611,7 +952,11 @@ export default function Vehicles() {
             <Car className="h-4 w-4 text-primary" />
             Garage
           </div>
-          <div className="mt-2 text-2xl font-bold">{fleetIntelligence.vehicleCount}</div>
+          {/* HPR-003. The headline figure itself is a lower bound while the fleet
+              page has a continuation; a footer alone cannot un-say a total. */}
+          <div className="mt-2 text-2xl font-bold">
+            {fleetCountLabel({ count: fleetIntelligence.vehicleCount, hasMore: vehiclePage?.hasMore === true })}
+          </div>
           <div className="text-xs text-muted-foreground">
             {fleetIntelligence.completedTripCount} completed trip{fleetIntelligence.completedTripCount === 1 ? '' : 's'}
           </div>
@@ -1032,6 +1377,100 @@ export default function Vehicles() {
           );
         })}
       </div>
+
+      {vehiclePage?.hasMore && (
+        <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border bg-card/60 p-4 text-center">
+          {/* HPR-003. The page is a floor, and it says so rather than ending silently. */}
+          <div className="text-sm text-muted-foreground">
+            Showing at least {vehicles.length} vehicles - more of your fleet has not been read yet.
+          </div>
+          <button
+            type="button"
+            onClick={() => setVehiclePageSize((size) => size + VEHICLE_PAGE_SIZE)}
+            className="rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+          >
+            Show more vehicles
+          </button>
+        </div>
+      )}
+
+      {retiredVehicles.length > 0 && (
+        <div className="rounded-2xl border border-border bg-card p-4">
+          {/* HPR-010. A deleted profile keeps an explicit identity so the trips
+              that reference it can still be found and reassigned. */}
+          <div className="text-sm font-semibold">Deleted vehicles</div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {retiredVehicles.length} deleted vehicle{retiredVehicles.length === 1 ? '' : 's'} still
+            {' '}{retiredVehicles.length === 1 ? 'holds' : 'hold'} historical trips. Those trips stay in your
+            history and appear in the assignment review above, where you can move them to a current vehicle.
+          </p>
+          <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+            {retiredVehicles.map((vehicle) => (
+              <li key={vehicle.id}>{vehicle.name || 'Deleted vehicle'} - deleted {new Date(vehicle.retired_at).toLocaleDateString()}</li>
+            ))}
+          </ul>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {retiredNav.pageIndex > 0 && (
+              <button
+                type="button"
+                onClick={() => setRetiredNav((nav) => rewindRetiredPage(nav))}
+                className="rounded-xl bg-secondary px-3 py-2 text-xs font-semibold text-foreground"
+              >
+                Previous deleted vehicles
+              </button>
+            )}
+            {canAdvanceRetiredPage(retiredNav, retiredPage) && (
+              <button
+                type="button"
+                onClick={() => setRetiredNav((nav) => advanceRetiredPage(nav, retiredPage))}
+                className="rounded-xl bg-secondary px-3 py-2 text-xs font-semibold text-foreground"
+              >
+                More deleted vehicles
+              </button>
+            )}
+            {(retiredPage?.hasMore || retiredNav.pageIndex > 0) && (
+              <span className="text-xs text-muted-foreground">
+                Page {retiredNav.pageIndex + 1}
+                {retiredPage?.hasMore ? ' - more deleted vehicles remain.' : ' - this is the last page.'}
+              </span>
+            )}
+          </div>
+          {/* HPR-010. Older affected trips live beyond the recent page, so the
+              workflow offers bounded turns instead of implying it has them all. */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={runRetiredReferenceScan}
+              disabled={retiredScan.running}
+              className="rounded-xl bg-secondary px-3 py-2 text-xs font-semibold text-foreground disabled:opacity-50"
+            >
+              {retiredScan.running ? 'Looking…' : retiredScan.cursor ? 'Look further back' : 'Find affected trips'}
+            </button>
+            <span className="text-xs text-muted-foreground">
+              {retiredScan.complete
+                ? `All read history has been checked. ${retiredScan.found.length} affected trip${retiredScan.found.length === 1 ? '' : 's'} found.`
+                : retiredScan.restartRequired
+                  ? 'History moved while looking; start again to check it.'
+                  : retiredScan.scanned
+                    ? `${retiredScan.found.length} affected trip${retiredScan.found.length === 1 ? '' : 's'} found so far - more history has not been checked yet.`
+                    : 'History beyond the recent list has not been checked yet.'}
+            </span>
+            {retiredScanScopeNote({
+              represented: retiredVehicles.length,
+              hasMoreProfiles: retiredPage?.hasMore === true,
+              pageIndex: retiredNav.pageIndex,
+            }) && (
+              <span className="text-xs text-muted-foreground">
+                {retiredScanScopeNote({
+                  represented: retiredVehicles.length,
+                  hasMoreProfiles: retiredPage?.hasMore === true,
+                  pageIndex: retiredNav.pageIndex,
+                })}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

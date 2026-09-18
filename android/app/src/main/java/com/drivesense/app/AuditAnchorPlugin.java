@@ -26,6 +26,18 @@ public class AuditAnchorPlugin extends Plugin {
     private static final String KEY_ALIAS = "ds_audit_anchor_key_v1";
 
     @PluginMethod
+    public void readAuditFormat(PluginCall call) {
+        try { call.resolve(JSObject.fromJSONObject(PrivacyAuditFormatStore.read(getContext()))); }
+        catch (Exception error) { call.reject("AUDIT_STORAGE_UNAVAILABLE", error); }
+    }
+
+    @PluginMethod
+    public void writeAuditFormat(PluginCall call) {
+        try { call.resolve(JSObject.fromJSONObject(PrivacyAuditFormatStore.write(getContext(), call.getObject("fence")))); }
+        catch (Exception error) { call.reject("AUDIT_FORMAT_INVALID", error); }
+    }
+
+    @PluginMethod
     public void signTipHash(PluginCall call) {
         String tipHash = call.getString("tipHash");
         if (tipHash == null || tipHash.trim().isEmpty()) {

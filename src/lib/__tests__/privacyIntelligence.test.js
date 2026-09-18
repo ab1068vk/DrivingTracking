@@ -19,6 +19,7 @@ vi.mock('@/lib/transmissionLog', () => ({
 }));
 
 vi.mock('@/lib/nativePlatform', () => ({
+  isAndroid: () => false,
   isNativePlatform: mocks.isNativePlatform,
 }));
 
@@ -624,7 +625,7 @@ describe('privacy intelligence summaries', () => {
   it('passes driving readout evidence into the Overview action plan wiring', () => {
     const source = readFileSync(new URL('../privacyIntelligence.js', import.meta.url), 'utf8');
 
-    expect(source).toMatch(/const drivingReadout = buildDrivingPrivacyReadout\(trips, zonesWithEffectiveness\);[\s\S]*buildPrivacyActionPlan\(\{[\s\S]*drivingReadout,/);
+    expect(source).toMatch(/const drivingReadout = archiveScan\.readout;[\s\S]*buildPrivacyActionPlan\(\{[\s\S]*drivingReadout,/);
   });
 
   it('surfaces zone and recent-drive findings in the action plan', () => {

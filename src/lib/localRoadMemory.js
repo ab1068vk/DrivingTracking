@@ -1,5 +1,11 @@
 import { MAX_SAVED_SPEED_LIMIT_KMH } from '@/lib/speedKnowledgeCellPolicy';
 import { snapToSpeedLimitLadder } from '@/lib/speed/speedLimitLadder';
+import {
+  composeP6CandidateEvidence,
+  normalizeP6Receipt,
+  p6EvidencePartCount,
+  reconcileP6E2Evidence,
+} from '@/lib/p6RoadEvidence';
 
 const EARTH_RADIUS_M = 6371000;
 const MAX_SECTION_POINTS = 24;
@@ -400,6 +406,75 @@ const mergeObservations = (first, second) => {
 };
 
 /**
+ * Finalize one P6 window after its exact order statistics were selected from
+ * encrypted spill pages. Scalar fields are accumulated while streaming, and
+ * this function intentionally applies the same acceptance and output law as
+ * `makeObservation`.
+ */
+export function finalizeP6RoadMemoryWindow({ summary = {}, sectionPoints = [], trip = {}, statistics = {}, units } = {}) {
+  const speedCount = Math.max(0, Number(summary.speedCount) || 0);
+  const distanceM = Math.max(0, Number(summary.distanceM) || 0);
+  if (distanceM < MIN_SEGMENT_LENGTH_M || speedCount < 4) return null;
+  const p85Kmh = Number(statistics.p85Kmh);
+  const medianKmh = Number(statistics.medianKmh);
+  const medianAccuracyM = Number(statistics.medianAccuracyM);
+  const mean = speedCount ? Number(summary.speedSum) / speedCount : 0;
+  const variance = speedCount > 1
+    ? Math.max(0, Number(summary.speedSquareSum) / speedCount - mean ** 2)
+    : 0;
+  const speedDeviationKmh = Math.sqrt(variance);
+  const stopRatio = Number(summary.stopCount) / Math.max(1, Number(summary.rawSpeedCount) || 0);
+  const lowSpeedRatio = Number(summary.lowSpeedCount) / Math.max(1, Number(summary.rawSpeedCount) || 0);
+  const congestionSpreadKmh = Number.isFinite(p85Kmh) && Number.isFinite(medianKmh)
+    ? p85Kmh - medianKmh
+    : Infinity;
+  if (stopRatio > MAX_STOP_RATIO
+    || lowSpeedRatio > MAX_LOW_SPEED_RATIO
+    || congestionSpreadKmh > 22
+    || Number(summary.largestTimestampGapMs) > MAX_TIMESTAMP_GAP_MS
+    || Number(summary.headingChangeDeg) > MAX_HEADING_CHANGE_DEG
+    || !Number.isFinite(p85Kmh)
+    || speedDeviationKmh > 24) return null;
+  const snapped = snapToSpeedLimitLadder(p85Kmh, { units });
+  const estimatedLimitKmh = snapped.ambiguous ? Number(statistics.explicitEstimatedLimit) : null;
+  const limitKmh = snapped.limitKmh ?? (Number.isFinite(estimatedLimitKmh) ? estimatedLimitKmh : null);
+  if (!Number.isFinite(limitKmh) || limitKmh <= 0 || sectionPoints.length < 2) return null;
+  const center = sectionPoints[Math.floor(sectionPoints.length / 2)];
+  const directionBearing = headingForPoints(sectionPoints);
+  const recordedAt = summary.recordedAt || trip.end_time || trip.start_time || new Date().toISOString();
+  return {
+    tripId: String(trip.id || trip.trip_id || trip.start_time || ''),
+    lat: center.lat,
+    lng: center.lng,
+    sectionPoints,
+    distanceM: Math.round(distanceM),
+    directionMode: Number.isFinite(directionBearing) ? 'forward' : 'both',
+    directionBearing,
+    limitKmh: Math.round(limitKmh),
+    inferenceBasis: Number.isFinite(estimatedLimitKmh) ? 'trip_estimate_consensus' : 'driving_behavior_p85',
+    legalAuthority: false,
+    p85Kmh: Math.round(p85Kmh),
+    speedDeviationKmh: Math.round(speedDeviationKmh * 10) / 10,
+    sampleCount: speedCount,
+    observedAt: recordedAt,
+    timeBucket: roadMemoryTimeBucket(recordedAt, summary.utcOffsetMinutes ?? trip.utc_offset_minutes),
+    timezoneId: String(summary.timezoneId || trip.timezone_id || ''),
+    utcOffsetMinutes: Number.isFinite(Number(summary.utcOffsetMinutes)) ? Number(summary.utcOffsetMinutes) : null,
+    quality: {
+      stopRatio: Math.round(stopRatio * 100) / 100,
+      lowSpeedRatio: Math.round(lowSpeedRatio * 100) / 100,
+      headingChangeDeg: Math.round(Number(summary.headingChangeDeg) || 0),
+      congestionSpreadKmh: Math.round(congestionSpreadKmh),
+      medianAccuracyM: Number.isFinite(medianAccuracyM) ? Math.round(medianAccuracyM) : null,
+    },
+  };
+}
+
+export const mergeCompatibleP6RoadMemoryObservations = (first, second) => (
+  first && second && compatibleObservation(first, second) ? mergeObservations(first, second) : null
+);
+
+/**
  * @param {Object} trip
  * @param {{units?: string}} [options] Selects the speed-limit ladder, so a road
  *   in a mph jurisdiction is learned on mph rungs rather than metric ones.
@@ -558,6 +633,12 @@ export function roadMemoryEffectiveLimit(candidate = {}, timestamp = null, utcOf
 }
 
 export function roadMemoryCandidateOperationalState(candidate = {}, nowMs = Date.now()) {
+  const automatic = candidate?.p6AutomaticEvidence;
+  const composed = automatic ? composeP6CandidateEvidence({
+    frozenBaseline: automatic.frozenBaseline || [],
+    receiptedEvidence: automatic.receiptedEvidence || [],
+    now: nowMs,
+  }) : null;
   // Older backfills were loaded newest-first while the learner assumed
   // chronological input. Use every retained boundary here so a legacy
   // inverted first/last pair cannot make a recently driven road look stale.
@@ -569,21 +650,22 @@ export function roadMemoryCandidateOperationalState(candidate = {}, nowMs = Date
       ...(candidate.recentObservations || []).map((item) => item?.observedAt),
     ].map(observationTimestampMs).filter(Number.isFinite)
   );
-  const ageDays = Number.isFinite(observedAt)
+  const frozenContinuity = composed?.freshness === 'FROZEN_CONTINUITY';
+  const ageDays = frozenContinuity ? 0 : Number.isFinite(observedAt)
     ? Math.max(0, (nowMs - observedAt) / DAY_MS)
     : Infinity;
   const reconstructedConfidence = roadMemoryEvidenceConfidence(
-    Number(candidate.tripCount) || 0,
-    Number(candidate.agreement) || 0
+    composed?.supportCount ?? (Number(candidate.tripCount) || 0),
+    composed?.agreement ?? (Number(candidate.agreement) || 0)
   );
   const storedConfidence = Math.max(0, Math.min(0.72, Number(
-    candidate.evidenceConfidence ?? candidate.rawConfidence ?? reconstructedConfidence
+    composed?.confidence ?? candidate.evidenceConfidence ?? candidate.rawConfidence ?? reconstructedConfidence
   ) || 0));
   const decay = ageDays <= ROAD_MEMORY_FRESH_DAYS
     ? 0
     : Math.min(0.24, (ageDays - ROAD_MEMORY_FRESH_DAYS) * 0.0025);
   const effectiveConfidence = Math.max(0, Math.round((storedConfidence - decay) * 100) / 100);
-  const stale = ageDays > ROAD_MEMORY_STALE_DAYS;
+  const stale = !frozenContinuity && ageDays > ROAD_MEMORY_STALE_DAYS;
   const possibleChange = candidate.changeDetection?.status === 'possible_change';
   const userResolved = ['confirmed', 'adjusted', 'rejected'].includes(candidate.reviewState);
   const strongTimeProfiles = (candidate.timeProfiles || []).filter((profile) => (
@@ -598,13 +680,13 @@ export function roadMemoryCandidateOperationalState(candidate = {}, nowMs = Date
   else if (stale) stage = 'stale';
   else if (possibleChange) stage = 'change_review';
   else if (
-    Number(candidate.tripCount) >= MIN_OPERATIONAL_TRIPS &&
-    (Number(candidate.agreement) >= MIN_OPERATIONAL_AGREEMENT || strongTimePattern) &&
+    Number(composed?.supportCount ?? candidate.tripCount) >= MIN_OPERATIONAL_TRIPS &&
+    (Number(composed?.agreement ?? candidate.agreement) >= MIN_OPERATIONAL_AGREEMENT || strongTimePattern) &&
     effectiveConfidence >= MIN_OPERATIONAL_CONFIDENCE
   ) stage = 'operational';
   else if (
-    Number(candidate.tripCount) >= 2 &&
-    Number(candidate.agreement) >= 0.6 &&
+    Number(composed?.supportCount ?? candidate.tripCount) >= 2 &&
+    Number(composed?.agreement ?? candidate.agreement) >= 0.6 &&
     effectiveConfidence >= 0.58
   ) stage = 'suggested';
   return {
@@ -614,6 +696,7 @@ export function roadMemoryCandidateOperationalState(candidate = {}, nowMs = Date
     effectiveConfidence,
     stage,
     stale,
+    evidenceFreshness: composed?.freshness || (stale ? 'STALE' : 'LIVE_FRESH'),
   };
 }
 
@@ -661,6 +744,22 @@ const mergeCandidateGeometry = (candidate = {}, observation = {}) => {
 
 export function mergeRoadMemoryObservation(candidate = null, observation = {}, id = '') {
   const observationTripId = String(observation.tripId || '');
+  const priorAutomatic = candidate?.p6AutomaticEvidence || {};
+  const incomingReceipt = observation?.p6Receipt
+    ? normalizeP6Receipt(observation.p6Receipt)
+    : null;
+  const receiptAlreadyLive = Boolean(incomingReceipt &&
+    (priorAutomatic.receiptedEvidence || []).some((value) => {
+      const receipt = normalizeP6Receipt(value);
+      return receipt.receiptId === incomingReceipt.receiptId ||
+        Boolean(receipt.membershipToken && receipt.membershipToken === incomingReceipt.membershipToken);
+    }));
+  // The durable receipt set, rather than any bounded presentation window, is
+  // the P6 idempotence boundary. A replay older than the trip-vote/recent/
+  // processed-marker windows must be a byte-for-byte no-op.
+  if (receiptAlreadyLive) return candidate;
+  const receiptAlreadyFrozen = Boolean(incomingReceipt &&
+    p6EvidencePartCount(priorAutomatic, incomingReceipt) > 0);
   const existingTripVotes = candidate?.tripVotes && typeof candidate.tripVotes === 'object'
     ? { ...candidate.tripVotes }
     : {};
@@ -671,7 +770,9 @@ export function mergeRoadMemoryObservation(candidate = null, observation = {}, i
         null;
     });
   }
-  const alreadyObserved = Boolean(observationTripId && existingTripVotes[observationTripId] != null);
+  const alreadyObserved = Boolean(
+    (observationTripId && existingTripVotes[observationTripId] != null) || receiptAlreadyFrozen
+  );
   if (!alreadyObserved && observationTripId) {
     existingTripVotes[observationTripId] = Math.round(Number(observation.limitKmh));
   }
@@ -845,6 +946,37 @@ export function mergeRoadMemoryObservation(candidate = null, observation = {}, i
     quality: observation.quality || candidate?.quality || null,
     chronologyRepairPending: false,
   };
+  const hasAutomaticEvidence = Boolean(candidate?.p6AutomaticEvidence || observation?.p6Receipt);
+  let evidence = {
+    frozenBaseline: [...(priorAutomatic.frozenBaseline || [])],
+    receiptedEvidence: [...(priorAutomatic.receiptedEvidence || [])],
+    state: priorAutomatic.state || 'VERIFIED',
+    reason: priorAutomatic.reason || null,
+  };
+  if (observation?.p6Receipt) {
+    const receipt = normalizeP6Receipt({
+      ...observation.p6Receipt,
+      observedAt: observation.observedAt,
+      scalars: {
+        supportCount: !alreadyObserved || receiptAlreadyFrozen ? 1 : 0,
+        sampleCount: !alreadyObserved || receiptAlreadyFrozen ? Number(observation.sampleCount) || 0 : 0,
+        limitVotes: !alreadyObserved || receiptAlreadyFrozen ? { [Math.round(Number(observation.limitKmh))]: 1 } : {},
+        agreementNumerator: !alreadyObserved || receiptAlreadyFrozen ? 1 : 0,
+        agreementDenominator: !alreadyObserved || receiptAlreadyFrozen ? 1 : 0,
+        confidenceNumerator: !alreadyObserved || receiptAlreadyFrozen ? confidence : 0,
+        confidenceDenominator: !alreadyObserved || receiptAlreadyFrozen ? 1 : 0,
+        timeBuckets: !alreadyObserved || receiptAlreadyFrozen ? { [observationBucket]: 1 } : {},
+      },
+    });
+    evidence = reconcileP6E2Evidence({ ...evidence, replayedEvidence: [receipt] });
+  }
+  if (hasAutomaticEvidence) next.p6AutomaticEvidence = {
+      version: 1,
+      frozenBaseline: evidence.frozenBaseline,
+      receiptedEvidence: evidence.receiptedEvidence,
+      state: evidence.state,
+      reason: evidence.reason,
+    };
   const state = roadMemoryCandidateOperationalState(next);
   return {
     ...next,

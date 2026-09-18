@@ -66,4 +66,26 @@ describe('buildSpeedRescoreView', () => {
       title: 'Historical score update completed',
     });
   });
+
+  it('distinguishes durable refused selection debt from zero affected trips', () => {
+    expect(buildSpeedRescoreView({
+      activeJobs: 0,
+      latest: null,
+    }, {
+      knowledgeRevision: 12,
+    }, {
+      type: 'E3_AFFECTED_TRIP_RESCORE',
+      state: 'READY',
+      cursor: { phase: 'CREATE_REQUESTS' },
+      details: {
+        selectionPending: true,
+        spatialSelectionReason: 'SPATIAL_SELECTION_UNAVAILABLE',
+      },
+    })).toMatchObject({
+      selectionPending: true,
+      selectionReason: 'SPATIAL_SELECTION_UNAVAILABLE',
+      tone: 'warning',
+      title: 'Affected-trip selection is pending',
+    });
+  });
 });

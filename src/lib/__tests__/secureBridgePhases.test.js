@@ -223,6 +223,68 @@ describe('secure bridge transport equivalence with the probe on and off', () => 
     expect(JSON.stringify(trace)).not.toContain('trip_abc123');
     expect(trace.native_blocks.at(-1).native_total_internal_us).toBe(900);
   });
+
+  it.each([
+    ['single', { ciphertext: 'ciphertext', context: 'trip:secret', keyVersion: 1 }],
+    ['batch', {
+      batchVersion: 1,
+      items: [{ ordinal: 0, ciphertext: 'ciphertext', context: 'trip:secret', keyVersion: 1 }],
+    }],
+  ])('fails closed when a decrypt %s response is not encrypted', async (_label, request) => {
+    bridgePlugin.decryptSensitivePayload.mockResolvedValueOnce({
+      encrypted: false,
+      plaintext: 'never-expose-this-plaintext',
+      results: [{ ordinal: 0, ok: true, plaintext: 'never-expose-this-batch-plaintext' }],
+    });
+    const { bridge } = await loadBridge({ probe: true });
+    const error = await bridge.secureCall(
+      'SecureBridge',
+      'decryptSensitivePayload',
+      request
+    ).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe('Secure bridge encrypted response required.');
+    expect(String(error)).not.toContain('never-expose');
+  });
+
+  it.each([
+    undefined,
+    { encrypted: true },
+    { encrypted: true, version: 1, sessionId: 'wrong', nonce: 1, iv: '', data: '' },
+  ])('rejects a missing or malformed encrypted decrypt response without echoing values', async (response) => {
+    bridgePlugin.decryptSensitivePayload.mockResolvedValueOnce(response);
+    const { bridge } = await loadBridge({ probe: true });
+    const error = await bridge.secureCall('SecureBridge', 'decryptSensitivePayload', {
+      ciphertext: 'sensitive-ciphertext',
+      context: 'trip:sensitive-context',
+      keyVersion: 1,
+    }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toMatch(/^Secure bridge (encrypted response required|encrypted response is invalid)\.$/);
+    expect(String(error)).not.toContain('sensitive');
+  });
+
+  it('rejects an encrypted decrypt response that is not authenticated for the method result AAD', async () => {
+    bridgePlugin.decryptSensitivePayload.mockResolvedValueOnce({
+      encrypted: true,
+      version: 1,
+      sessionId: 'test-session',
+      nonce: Date.now(),
+      iv: btoa(String.fromCharCode(...new Uint8Array(12))),
+      data: btoa(String.fromCharCode(...new Uint8Array(32))),
+    });
+    const { bridge } = await loadBridge({ probe: true });
+    const error = await bridge.secureCall('SecureBridge', 'decryptSensitivePayload', {
+      ciphertext: 'sensitive-ciphertext',
+      context: 'trip:sensitive-context',
+      keyVersion: 1,
+    }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error)).not.toContain('sensitive');
+  });
 });
 
 describe('secure bridge phase recording', () => {

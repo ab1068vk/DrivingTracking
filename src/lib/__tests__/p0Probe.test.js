@@ -5,6 +5,18 @@ let storage;
 /** @type {any} */
 let probe;
 
+const HOSTILE_LIFECYCLE_SOURCES = [
+  '__proto__',
+  'constructor',
+  'toString',
+  'hasOwnProperty',
+  'valueOf',
+  null,
+  undefined,
+  42,
+  { source: 'visibilitychange' },
+];
+
 const loadProbe = async ({ arm = 'A', debug = true } = {}) => {
   vi.resetModules();
   vi.stubEnv('VITE_SHOW_DEBUG_ROUTES', debug ? 'true' : 'false');
@@ -38,12 +50,15 @@ describe('p0 probe activation', () => {
     expect(p0.initializeP0Probe()).toBe(false);
     expect(p0.isP0ProbeActive()).toBe(false);
 
-    // Every entry point must be a safe no-op when the probe is off.
+    // Diagnostic entry points remain inert. The production lifecycle authority
+    // still advances because scheduler correctness cannot depend on P0.
     const span = p0.openP0Span('secure_call');
     expect(span).toBeNull();
     expect(() => p0.recordP0Phase(span, 'req_json', 1, 2)).not.toThrow();
     expect(() => p0.closeP0Span(span, 'success')).not.toThrow();
     expect(() => p0.recordP0Lifecycle('visibilitychange', 'hidden')).not.toThrow();
+    expect(p0.p0ForegroundEpoch()).toBe(1);
+    expect(p0.p0EffectiveForeground()).toBe(false);
     expect(p0.exportP0Trace()).toBeNull();
   });
 
@@ -58,6 +73,38 @@ describe('p0 probe activation', () => {
     expect(p0.initializeP0Probe({ buildHash: 'abc123' })).toBe(true);
     expect(p0.isP0ProbeActive()).toBe(true);
     expect(p0.exportP0Trace().meta.build_hash).toBe('abc123');
+  });
+
+  it('V2: advances production lifecycle state while the P0 trace is frozen', async () => {
+    const p0 = await loadProbe();
+    p0.initializeP0Probe();
+    p0.freezeP0Trace();
+
+    p0.recordP0Lifecycle('visibilitychange', 'hidden');
+    p0.recordP0Lifecycle('appStateChange', 'inactive');
+
+    expect(p0.p0ForegroundEpoch()).toBe(1);
+    expect(p0.p0EffectiveForeground()).toBe(false);
+    p0.unfreezeP0Trace();
+    expect(p0.exportP0Trace().lifecycle_events).toEqual([]);
+  });
+
+  it.each([
+    ['disabled', { debug: false, freeze: false }],
+    ['enabled', { debug: true, freeze: false }],
+    ['frozen', { debug: true, freeze: true }],
+  ])('F05: remains total for prototype/hostile lifecycle input while %s', async (_label, mode) => {
+    const p0 = await loadProbe({ debug: mode.debug });
+    p0.initializeP0Probe();
+    if (mode.freeze) p0.freezeP0Trace();
+
+    for (const source of HOSTILE_LIFECYCLE_SOURCES) {
+      expect(() => p0.recordP0Lifecycle(source, source)).not.toThrow();
+    }
+
+    if (!mode.debug) expect(p0.exportP0Trace()).toBeNull();
+    else if (mode.freeze) expect(p0.exportP0Trace().lifecycle_events).toEqual([]);
+    else expect(p0.exportP0Trace().lifecycle_events).toHaveLength(HOSTILE_LIFECYCLE_SOURCES.length);
   });
 });
 

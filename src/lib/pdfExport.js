@@ -304,7 +304,7 @@ export async function exportTechnicalReportPDF(report = {}, _settings = {}) {
   const filename = `road-sage-technical-report-${now.toISOString().slice(0, 10)}.pdf`;
   recordSystemEvent('pdf_export_started', {
     report_type: 'tracking_technical_report',
-    trip_count: report.counts?.trip_count || 0,
+    trip_count: report.population?.represented_trip_count ?? report.counts?.trip_count ?? 0,
   }, { category: 'storage', title: 'PDF export started' });
 
   doc.setFont('helvetica', 'bold');
@@ -316,10 +316,24 @@ export async function exportTechnicalReportPDF(report = {}, _settings = {}) {
   doc.text('Privacy-safe technical summary. Private-zone coordinates and private-zone geometry are not exported.', 14, 40, { maxWidth: 182 });
   doc.text(report.score_notice || SCORE_ESTIMATE_NOTICE, 14, 48, { maxWidth: 182 });
 
+  // HPR-019: the report says which population it describes and how much of that
+  // population it embeds. It used to print counts alone, which read as "your
+  // history has zero trips" when the payload had simply never been given any.
+  const population = report.population || {};
+  const totals = report.evidence_totals || {};
+  const embedsEveryTrip = report.artifact?.embeds_every_trip === true;
+  const extractLimit = report.artifact?.extract_row_limit ?? 0;
+  const representedTrips = population.represented_trip_count
+    ?? report.counts?.trip_count
+    ?? 0;
   const summaryRows = [
-    ['Trips', report.counts?.trip_count ?? 0],
-    ['Event rows', report.counts?.event_row_count ?? 0],
-    ['Route quality rows', report.counts?.route_quality_row_count ?? 0],
+    ['Trips represented', representedTrips],
+    ['Population read', population.complete === true ? 'complete history' : 'partial - see notes'],
+    ['Per-trip evidence embedded', embedsEveryTrip ? 'every trip' : `extract of up to ${extractLimit} rows`],
+    ['Event rows recorded', totals.event_row_count ?? report.counts?.event_row_count ?? 0],
+    ['Trips with route evidence', totals.route_evidence_trip_count ?? representedTrips],
+    ['Trips without route evidence read', totals.route_evidence_unavailable_trip_count ?? 0],
+    ['Retained route samples', totals.retained_route_point_total ?? 'not summarised'],
     ['Speed source rows', report.counts?.speed_source_row_count ?? 0],
     ['Voice alert rows', report.counts?.voice_alert_row_count ?? 0],
     ['Private coordinates exported', report.privacy?.private_coordinates_exported ? 'yes' : 'no'],
@@ -337,6 +351,17 @@ export async function exportTechnicalReportPDF(report = {}, _settings = {}) {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
   doc.text('Route Point Quality Summary', 14, 20);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text(
+    embedsEveryTrip
+      ? 'Every trip represented by this report is listed below.'
+      : `Extract only: the rows below are the first ${extractLimit} of ${representedTrips} trips. Totals above cover all of them.`,
+    14,
+    27,
+    { maxWidth: 182 }
+  );
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   writeRow(doc, ['Trip', 'Retained', 'Raw', 'Map', 'Gaps', 'Privacy', 'Score estimate'], 32, [38, 24, 22, 22, 20, 26, 36]);
   doc.setFont('helvetica', 'normal');

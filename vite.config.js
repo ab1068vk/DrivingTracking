@@ -35,7 +35,17 @@ export default defineConfig({
     }),
   ],
   test: {
-    exclude: [...configDefaults.exclude, 'e2e/**', 'android/**'],
+    exclude: [
+      ...configDefaults.exclude,
+      'e2e/**',
+      'android/**',
+      // Retained audit evidence intentionally probes pre-fix behavior and is
+      // run only during the corresponding historical review.
+      'agent-post-p7-audit/probes/**',
+      // External-review probes and generated review fixtures are temporary,
+      // not part of normal product-test discovery.
+      'tmp/**',
+    ],
   },
   build: {
     rollupOptions: {

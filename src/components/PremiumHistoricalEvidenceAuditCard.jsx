@@ -33,6 +33,12 @@ export function buildPremiumHistoricalEvidenceAuditViewModel(audit = {}) {
   );
   const excludedDriver = Math.max(0, Math.trunc(Number(audit.excludedDriver) || 0));
   const privacyProtected = Math.max(0, Math.trunc(Number(audit.privacyProtected) || 0));
+  // The lifetime counts come from their owners (Annex C O21); the per-trip
+  // readiness terms have no owner and describe the bounded window. The card
+  // labels each for what it is, so a sample is never read as a history.
+  const lifetimeExact = audit.lifetimeExact === true;
+  const windowTrips = Math.max(0, Math.trunc(Number(audit.windowTrips) || 0));
+  const windowLabel = windowTrips ? ` (latest ${windowTrips})` : '';
 
   return {
     metrics: [
@@ -42,7 +48,7 @@ export function buildPremiumHistoricalEvidenceAuditViewModel(audit = {}) {
         icon: premiumHistoricalAuditCompletedIcon,
         art: premiumHistoricalAuditCompleted,
         value: totalCompleted ? String(totalCompleted) : 'None',
-        label: 'completed trips found',
+        label: lifetimeExact ? 'completed trips found' : 'completed trips found so far',
         measured: totalCompleted > 0,
       },
       {
@@ -51,7 +57,7 @@ export function buildPremiumHistoricalEvidenceAuditViewModel(audit = {}) {
         icon: premiumHistoricalAuditDriverIcon,
         art: premiumHistoricalAuditDriver,
         value: driverEligible ? String(driverEligible) : 'None eligible',
-        label: 'driver trips eligible',
+        label: lifetimeExact ? 'driver trips eligible' : 'driver trips eligible so far',
         measured: driverEligible > 0,
       },
       {
@@ -60,7 +66,7 @@ export function buildPremiumHistoricalEvidenceAuditViewModel(audit = {}) {
         icon: premiumHistoricalAuditScoreIcon,
         art: premiumHistoricalAuditScore,
         value: scoreReady ? `${scoreReady} trips` : 'Not measured',
-        label: 'score evidence',
+        label: `score evidence${windowLabel}`,
         measured: scoreReady > 0,
       },
       {
@@ -69,7 +75,7 @@ export function buildPremiumHistoricalEvidenceAuditViewModel(audit = {}) {
         icon: premiumHistoricalAuditEventsIcon,
         art: premiumHistoricalAuditEvents,
         value: eventReady ? `${eventReady} trips` : 'Not measured',
-        label: 'event evidence',
+        label: `event evidence${windowLabel}`,
         measured: eventReady > 0,
       },
       {
@@ -78,7 +84,7 @@ export function buildPremiumHistoricalEvidenceAuditViewModel(audit = {}) {
         icon: premiumHistoricalAuditRouteIcon,
         art: premiumHistoricalAuditRoute,
         value: routeReady ? `${routeReady} trips` : 'No route key',
-        label: 'route evidence',
+        label: `route evidence${windowLabel}`,
         measured: routeReady > 0,
       },
     ],

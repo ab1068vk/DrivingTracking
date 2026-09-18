@@ -1,3 +1,4 @@
+import { createAccelerationHistogram, createLateralGHistogram } from '@/lib/boundedPercentile';
 import { getJson, removeJson, setJson } from '@/lib/mobileStorage';
 import { clamp } from '@/lib/mathUtils';
 import { calculateAcceleration, calculateSegmentMetrics } from '@/lib/tripEngine';
@@ -86,46 +87,70 @@ const surveyThresholdMap = {
 const MAX_FEEDBACK_LABELS_PER_TRIP_PER_TYPE = 3;
 const MIN_FEEDBACK_TRIPS_FOR_THRESHOLD_SHIFT = 3;
 
-const summarizeEventFeedback = (trips = []) => {
+/**
+ * Streaming event-feedback accumulator.
+ *
+ * Labels are per-trip and already capped per type, so folding them one trip at
+ * a time is exact. The distinct-trip sets remain the only unbounded term and
+ * they hold ids for trips the driver actually labelled, which is a user action
+ * count rather than an archive size.
+ */
+const createEventFeedbackAccumulator = () => {
   const byType = {};
-  for (const trip of trips) {
-    const perTripCounts = {};
-    for (const item of Object.values(trip?.event_feedback || {})) {
-      const type = item?.type;
-      const config = feedbackThresholdMap[type];
-      if (!config) continue;
-      if (item.affects_score === false) continue;
-      perTripCounts[type] = (perTripCounts[type] || 0) + 1;
-      if (perTripCounts[type] > MAX_FEEDBACK_LABELS_PER_TRIP_PER_TYPE) continue;
-      byType[type] ??= {
-        accurate: 0,
-        wrong: 0,
-        wrongValues: [],
-        accurateValues: [],
-        wrongTripIds: new Set(),
-        accurateTripIds: new Set(),
-      };
-      const tripId = String(trip?.id ?? '');
-      if (item.verdict === 'wrong') {
-        byType[type].wrong += 1;
-        byType[type].wrongTripIds.add(tripId);
-        if (Number.isFinite(Number(item.value))) byType[type].wrongValues.push(Math.abs(Number(item.value)));
+  return {
+    addTrip(trip = {}) {
+      const perTripCounts = {};
+      for (const item of Object.values(trip?.event_feedback || {})) {
+        const type = item?.type;
+        const config = feedbackThresholdMap[type];
+        if (!config) continue;
+        if (item.affects_score === false) continue;
+        perTripCounts[type] = (perTripCounts[type] || 0) + 1;
+        if (perTripCounts[type] > MAX_FEEDBACK_LABELS_PER_TRIP_PER_TYPE) continue;
+        byType[type] ??= {
+          accurate: 0,
+          wrong: 0,
+          wrongValues: [],
+          accurateValues: [],
+          wrongTripIds: new Set(),
+          accurateTripIds: new Set(),
+        };
+        const tripId = String(trip?.id ?? '');
+        if (item.verdict === 'wrong') {
+          byType[type].wrong += 1;
+          byType[type].wrongTripIds.add(tripId);
+          if (Number.isFinite(Number(item.value))) byType[type].wrongValues.push(Math.abs(Number(item.value)));
+        }
+        if (item.verdict === 'accurate') {
+          byType[type].accurate += 1;
+          byType[type].accurateTripIds.add(tripId);
+          if (Number.isFinite(Number(item.value))) byType[type].accurateValues.push(Math.abs(Number(item.value)));
+        }
       }
-      if (item.verdict === 'accurate') {
-        byType[type].accurate += 1;
-        byType[type].accurateTripIds.add(tripId);
-        if (Number.isFinite(Number(item.value))) byType[type].accurateValues.push(Math.abs(Number(item.value)));
+    },
+    result() {
+      const out = {};
+      for (const [type, item] of Object.entries(byType)) {
+        out[type] = {
+          accurate: item.accurate,
+          wrong: item.wrong,
+          wrongValues: item.wrongValues,
+          accurateValues: item.accurateValues,
+          wrongTripCount: item.wrongTripIds.size,
+          accurateTripCount: item.accurateTripIds.size,
+        };
       }
-    }
-  }
-  for (const item of Object.values(byType)) {
-    item.wrongTripCount = item.wrongTripIds.size;
-    item.accurateTripCount = item.accurateTripIds.size;
-    delete item.wrongTripIds;
-    delete item.accurateTripIds;
-  }
-  const total = Object.values(byType).reduce((sum, item) => sum + item.accurate + item.wrong, 0);
-  return { total, byType };
+      const total = Object.values(out).reduce((sum, item) => sum + item.accurate + item.wrong, 0);
+      return { total, byType: out };
+    },
+  };
+};
+
+/** Array entry point retained for tests and callers that already hold trips. */
+export const summarizeEventFeedback = (trips = []) => {
+  const accumulator = createEventFeedbackAccumulator();
+  for (const trip of trips) accumulator.addTrip(trip);
+  return accumulator.result();
 };
 
 export function summarizeCalibrationSurveyLabels(labels = []) {
@@ -276,11 +301,68 @@ export function summarizeSurveyCoverage(labels = []) {
   };
 }
 
+/**
+ * Streaming calibration accumulator.
+ *
+ * Replaces the former `accelValues` / `decelValues` / `lateralGValues` arrays,
+ * which grew with every GPS point in the archive. Each becomes a fixed-bin
+ * histogram whose bin width is finer than the rounding applied to the
+ * suggestion, so the streamed result matches the array result at output
+ * precision while memory stays flat.
+ */
+export function createCalibrationAccumulator(/** @type {any} */ currentThresholds = {}) {
+  const feedback = createEventFeedbackAccumulator();
+  const accel = createAccelerationHistogram();
+  const decel = createAccelerationHistogram();
+  const lateralG = createLateralGHistogram();
+  let tripsAnalyzed = 0;
+  let kmAnalyzedRaw = 0;
+
+  return {
+    addTrip(trip = {}) {
+      if (trip?.status !== 'completed') return;
+      tripsAnalyzed += 1;
+      kmAnalyzedRaw += Number(trip.distance_km) || 0;
+      feedback.addTrip(trip);
+
+      const points = Array.isArray(trip.route_points) ? trip.route_points : [];
+      for (let i = 1; i < points.length; i++) {
+        const segment = calculateSegmentMetrics(points[i - 1], points[i], currentThresholds);
+        if (segment.dt <= 0 || segment.dt > 60 || segment.isNoise) continue;
+        const previousSpeed = Number(points[i - 1]?.speed_kmh);
+        const baselineSpeed = Number.isFinite(previousSpeed) ? previousSpeed : segment.reliableSpeedKmh;
+        const acceleration = calculateAcceleration(baselineSpeed, segment.reliableSpeedKmh, segment.dt);
+        if (!Number.isFinite(acceleration) || Math.max(baselineSpeed, segment.reliableSpeedKmh) <= 15) continue;
+        if (acceleration > 0) accel.add(acceleration);
+        if (acceleration < 0) decel.add(Math.abs(acceleration));
+      }
+
+      for (const event of trip.driving_events || []) {
+        const value = Number(event.value);
+        if (event.type === 'sharp_turn' && Number.isFinite(value)) lateralG.add(Math.abs(value));
+      }
+    },
+    result(options = {}) {
+      return finalizeCalibrationProfile({
+        tripsAnalyzed,
+        kmAnalyzedRaw,
+        feedbackSummary: feedback.result(),
+        accel,
+        decel,
+        lateralG,
+      }, currentThresholds, options);
+    },
+  };
+}
+
 export function computeCalibrationProfile(trips = [], /** @type {any} */ currentThresholds = {}, options = {}) {
-  const completed = (trips || []).filter((trip) => trip?.status === 'completed');
-  const tripsAnalyzed = completed.length;
-  const kmAnalyzedRaw = completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
-  const feedbackSummary = summarizeEventFeedback(completed);
+  const accumulator = createCalibrationAccumulator(currentThresholds);
+  for (const trip of trips || []) accumulator.addTrip(trip);
+  return accumulator.result(options);
+}
+
+function finalizeCalibrationProfile(accumulated, /** @type {any} */ currentThresholds = {}, options = {}) {
+  const { tripsAnalyzed, kmAnalyzedRaw, feedbackSummary, accel, decel, lateralG } = accumulated;
   const surveySummary = summarizeCalibrationSurveyLabels(options.surveyLabels || []);
   const surveyCoverage = summarizeSurveyCoverage(options.surveyLabels || []);
   const consistentSurveyIssueCount = Math.max(
@@ -300,41 +382,18 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
     };
   }
 
-  const accelValues = [];
-  const decelValues = [];
-  const lateralGValues = [];
-
-  for (const trip of completed) {
-    const points = Array.isArray(trip.route_points) ? trip.route_points : [];
-    for (let i = 1; i < points.length; i++) {
-      const segment = calculateSegmentMetrics(points[i - 1], points[i], currentThresholds);
-      if (segment.dt <= 0 || segment.dt > 60 || segment.isNoise) continue;
-      const previousSpeed = Number(points[i - 1]?.speed_kmh);
-      const baselineSpeed = Number.isFinite(previousSpeed) ? previousSpeed : segment.reliableSpeedKmh;
-      const accel = calculateAcceleration(baselineSpeed, segment.reliableSpeedKmh, segment.dt);
-      if (!Number.isFinite(accel) || Math.max(baselineSpeed, segment.reliableSpeedKmh) <= 15) continue;
-      if (accel > 0) accelValues.push(accel);
-      if (accel < 0) decelValues.push(Math.abs(accel));
-    }
-
-    for (const event of trip.driving_events || []) {
-      const lateralG = Number(event.value);
-      if (event.type === 'sharp_turn' && Number.isFinite(lateralG)) lateralGValues.push(Math.abs(lateralG));
-    }
-  }
-
   const suggested = {
-    threshold_harsh_brake_ms2: round1(clampToCalibrationBounds('threshold_harsh_brake_ms2', percentile(decelValues, 0.90) ?? currentValue(currentThresholds, 'threshold_harsh_brake_ms2', 'HARSH_BRAKE_MS2'), 3.0, 7.0)),
-    threshold_rapid_accel_ms2: round1(clampToCalibrationBounds('threshold_rapid_accel_ms2', percentile(accelValues, 0.88) ?? currentValue(currentThresholds, 'threshold_rapid_accel_ms2', 'RAPID_ACCEL_MS2'), 2.0, 6.0)),
+    threshold_harsh_brake_ms2: round1(clampToCalibrationBounds('threshold_harsh_brake_ms2', decel.percentile(0.90) ?? currentValue(currentThresholds, 'threshold_harsh_brake_ms2', 'HARSH_BRAKE_MS2'), 3.0, 7.0)),
+    threshold_rapid_accel_ms2: round1(clampToCalibrationBounds('threshold_rapid_accel_ms2', accel.percentile(0.88) ?? currentValue(currentThresholds, 'threshold_rapid_accel_ms2', 'RAPID_ACCEL_MS2'), 2.0, 6.0)),
     threshold_sharp_turn_g_low: null,
     threshold_sharp_turn_g_medium: null,
     threshold_sharp_turn_g_high: null,
   };
 
-  if (lateralGValues.length >= 20) {
-    suggested.threshold_sharp_turn_g_low = round2(clampToCalibrationBounds('threshold_sharp_turn_g_low', percentile(lateralGValues, 0.70), 0.20, 0.50));
-    suggested.threshold_sharp_turn_g_medium = round2(clampToCalibrationBounds('threshold_sharp_turn_g_medium', percentile(lateralGValues, 0.85), 0.25, 0.70));
-    suggested.threshold_sharp_turn_g_high = round2(clampToCalibrationBounds('threshold_sharp_turn_g_high', percentile(lateralGValues, 0.95), 0.35, 0.90));
+  if (lateralG.count >= 20) {
+    suggested.threshold_sharp_turn_g_low = round2(clampToCalibrationBounds('threshold_sharp_turn_g_low', lateralG.percentile(0.70), 0.20, 0.50));
+    suggested.threshold_sharp_turn_g_medium = round2(clampToCalibrationBounds('threshold_sharp_turn_g_medium', lateralG.percentile(0.85), 0.25, 0.70));
+    suggested.threshold_sharp_turn_g_high = round2(clampToCalibrationBounds('threshold_sharp_turn_g_high', lateralG.percentile(0.95), 0.35, 0.90));
   }
 
   const current = {
@@ -430,7 +489,7 @@ export function computeCalibrationProfile(trips = [], /** @type {any} */ current
     confidence,
     tripsAnalyzed,
     kmAnalyzed,
-    eventsAnalyzed: accelValues.length + decelValues.length + lateralGValues.length,
+    eventsAnalyzed: accel.count + decel.count + lateralG.count,
     suggested,
     current,
     delta,

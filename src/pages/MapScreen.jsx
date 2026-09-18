@@ -1,8 +1,9 @@
 // @ts-check
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { tripDetailQueryOptions, tripQueryKeys, tripSummaryQueryOptions } from '@/api/trips';
+import { p7DetailQueryOptions, p7QueryKeys, tripQueryKeys } from '@/api/trips';
+import { mapScreenGeometryQuery } from '@/hooks/useMapScreenGeometry';
 import {
   AlertCircle,
   Car,
@@ -156,10 +157,16 @@ export default function MapScreen() {
   ])), [privacyZones]);
   const osrmConfigured = isOsrmMapMatchingConfigured(settings);
 
-  const { data: completedSummaries = [], isLoading: tripsLoading } = useQuery({
-    ...tripSummaryQueryOptions(),
-    select: (trips) => trips.filter(t => t.status === 'completed'),
-  });
+  // P7 Stage 7 (ledger entry #6, Annex C O35/O36): one bounded Q8 page. It
+  // replaces a flat `(200)` list plus an eight-deep Q2 detail fan-out issued
+  // purely to draw the overview routes — the fan-out decrypted eight complete
+  // trip payloads, points and events included, to render eight polylines. Q8
+  // selects through Q1 and hydrates exactly that page from the D2 owner in one
+  // batch, so the routes arrive with the list.
+  const geometryQuery = useQuery(mapScreenGeometryQuery());
+  const geometryPage = geometryQuery.data;
+  const tripsLoading = geometryQuery.isPending;
+  const completedSummaries = useMemo(() => geometryPage?.trips ?? [], [geometryPage]);
   const contextMutation = useMutation({
     mutationFn: async () => {
       if (!selectedTrip) throw new Error('Select a trip first.');
@@ -209,45 +216,37 @@ export default function MapScreen() {
     () => allCompleted.find(t => String(t.id) === String(secondaryTripId)),
     [allCompleted, secondaryTripId]
   );
+  // Q2, full fidelity, for the trip the user selected. Fixed by UX, not by N.
   const { data: selectedTripDetailRaw, isFetching: selectedTripLoading } = useQuery(
-    tripDetailQueryOptions(selectedTripId)
+    p7DetailQueryOptions(selectedTripId)
   );
   const selectedTripDetail = /** @type {any} */ (selectedTripDetailRaw);
   const { data: secondaryTripDetailRaw } = useQuery(
-    tripDetailQueryOptions(secondaryTripId)
+    p7DetailQueryOptions(secondaryTripId)
   );
   const secondaryTripDetail = /** @type {any} */ (secondaryTripDetailRaw);
   const overviewTripsForMap = useMemo(
     () => selectedTripId ? [] : completed.slice(0, MAP_OVERVIEW_ROUTE_LIMIT),
     [completed, selectedTripId]
   );
-  const overviewTripDetails = useQueries({
-    queries: overviewTripsForMap.map((trip) => ({
-      ...tripDetailQueryOptions(trip.id),
-    })),
-  });
-  const overviewDetailError = overviewTripDetails.some((query) => query.isError);
+  // The overview routes come from the Q8 page the list already read. There is
+  // no per-trip fan-out left to issue, so there is none to retry either — a
+  // geometry failure is the page's typed unavailable, not eight failures.
+  const overviewDetailError = Boolean(geometryPage?.unavailable);
   const retryOverviewDetails = () => {
-    overviewTripsForMap.forEach((trip) => {
-      qc.invalidateQueries({ queryKey: tripQueryKeys.detail(trip.id) });
-    });
+    qc.invalidateQueries({ queryKey: p7QueryKeys.geometry('map-screen') });
   };
-  const overviewMapTripKey = overviewTripDetails
-    .map((query) => {
-      const trip = /** @type {any} */ (query.data);
-      return trip?.id ? `${trip.id}:${trip.route_points?.length || 0}:${trip.updated_at || trip.end_time || ''}` : 'pending';
-    })
+  const overviewMapTripKey = overviewTripsForMap
+    .map((trip) => `${trip.id}:${trip.route_points?.length || 0}:${trip.updated_at || trip.end_time || ''}`)
     .join('|');
   if (overviewMapTripsRef.current.key !== overviewMapTripKey) {
     overviewMapTripsRef.current = {
       key: overviewMapTripKey,
-      trips: /** @type {any[]} */ (overviewTripDetails.map((query) => query.data).filter(hasPlayableRouteGps)),
+      trips: /** @type {any[]} */ (overviewTripsForMap.filter(hasPlayableRouteGps)),
     };
   }
   const overviewMapTrips = overviewMapTripsRef.current.trips;
-  const overviewDiagnosticsTrips = overviewTripsForMap.map((summary, index) => (
-    /** @type {any} */ (overviewTripDetails[index]?.data) || summary
-  ));
+  const overviewDiagnosticsTrips = overviewTripsForMap;
   const selectedTrip = selectedTripId ? (selectedTripDetail || selectedTripSummary || null) : null;
   const { results: speedLimitLocalKnowledgeResults } = useTripSpeedKnowledge(
     selectedTrip,
@@ -599,7 +598,7 @@ export default function MapScreen() {
                     units={units}
                     loading={selectedTrip
                       ? selectedTripLoading && !selectedTripDetail
-                      : overviewTripDetails.some((query) => query.isFetching && !query.data)}
+                      : geometryQuery.isFetching && !geometryPage}
                     onShowAll={selectedTrip ? () => setSelectedTripId(null) : undefined}
                     onDismiss={() => setShowPremiumRouteDiagnostics(false)}
                     overlay

@@ -65,7 +65,52 @@ const emitChanged = (detail) => {
   window.dispatchEvent(new CustomEvent(SPEED_GEOMETRY_INDEX_CHANGED_EVENT, { detail }));
 };
 
+/**
+ * D2 retirement boundary.
+ *
+ * A VERIFIED D2 owns preview geometry outright: routine reads go through the
+ * bounded P6 page reader and never hydrate the retired whole-geometry index.
+ * When D2 cannot serve, the owner revokes its own head and says so; this
+ * reader then reports that typed state rather than presenting the monolith as
+ * the normal steady state. Only a domain that has not claimed coverage —
+ * before its first build, or after a demotion — takes the legal v1
+ * compatibility path.
+ */
 export async function readSpeedGeometryIndex() {
+  const { queryP6GeometryPreviewPage } = await import('@/lib/p6TripDerivedState');
+  const p6 = await queryP6GeometryPreviewPage({ maxTrips: 80 });
+  if (p6?.available) {
+    return {
+      version: 2,
+      builtAt: 0,
+      // P7 Stage 7 (Annex C O36). This used to be
+      // `items.length + (nextCursor ? 1 : 0)`, which reported "81 available"
+      // from a bounded read of 80 no matter how much history existed, and the
+      // surface rendered it as a denominator. A bounded page cannot know the
+      // total, so it reports none and the surface states a floor instead.
+      totalAvailable: null,
+      indexedTripCount: p6.items.length,
+      truncated: Boolean(p6.nextCursor),
+      trips: p6.items,
+      nextCursor: p6.nextCursor,
+      p6Paged: true,
+    };
+  }
+  if (p6?.compatibilityAllowed !== true) {
+    return {
+      version: 2,
+      builtAt: 0,
+      totalAvailable: 0,
+      indexedTripCount: 0,
+      truncated: false,
+      trips: [],
+      nextCursor: null,
+      p6Paged: true,
+      unavailable: true,
+      state: p6?.state || null,
+      reason: p6?.reason || null,
+    };
+  }
   const stored = await getEncryptedJson(SPEED_GEOMETRY_INDEX_KEY, null);
   if (!stored || stored.version !== 1 || !Array.isArray(stored.trips)) {
     return { version: 1, builtAt: 0, totalAvailable: 0, indexedTripCount: 0, trips: [] };
@@ -88,6 +133,8 @@ export function rebuildSpeedGeometryIndex({
   if (activeBuild) return activeBuild;
   const generation = buildGeneration;
   activeBuild = (async () => {
+    const p6 = await readSpeedGeometryIndex();
+    if (p6.version === 2) return p6;
     const loader = loadBatch || (async (options) => {
       const { localTripRepository } = await import('@/lib/localTripRepository');
       return localTripRepository.listForSpeedMap(options);
@@ -137,6 +184,17 @@ export function rebuildSpeedGeometryIndex({
     activeBuild = null;
   });
   return activeBuild;
+}
+
+export async function readMoreP6SpeedGeometry(cursor, maxTrips = 80) {
+  const { queryP6GeometryPreviewPage } = await import('@/lib/p6TripDerivedState');
+  const page = await queryP6GeometryPreviewPage({ cursor, maxTrips });
+  return {
+    trips: page.items || [],
+    nextCursor: page.nextCursor || null,
+    p6Paged: page.available === true,
+    truncated: Boolean(page.nextCursor),
+  };
 }
 
 export async function clearSpeedGeometryIndex(reason = 'source_data_changed') {

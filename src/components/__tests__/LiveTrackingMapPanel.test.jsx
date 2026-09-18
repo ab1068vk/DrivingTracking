@@ -3,11 +3,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tanstack/react-query', () => ({
-  useQueries: () => [],
+  useQuery: () => ({ data: undefined, isFetching: false, isPending: false, isError: false }),
 }));
 
+// P7 Stage 7: the panel reads ONE D2 by-id batch for its bounded risk id set,
+// not a per-id detail fan-out.
 vi.mock('@/api/trips', () => ({
-  tripDetailQueryOptions: (id) => ({ queryKey: ['trip', id] }),
+  p7QueryKeys: { geometry: (queryId) => ['p7', 'geom', String(queryId), 'first', ''] },
+  p7TripQueries: { geometryByIds: async () => ({ data: [], unavailable: null }) },
 }));
 
 vi.mock('@/lib/localSpeedKnowledge', () => ({

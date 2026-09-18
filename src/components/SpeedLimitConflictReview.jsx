@@ -351,8 +351,15 @@ export async function persistIgnoredSpeedReviewSection({
   refreshKnowledgeChanges = refreshTripsForLocalSpeedKnowledgeChanges,
 } = {}) {
   if (!knowledge || !cell?.geohash) return { ok: false, reason: 'invalid_section' };
-  const beforeKnowledge = await knowledge.exportData().catch(() => null);
   const center = geohashCenter(cell.geohash);
+  // The before/after diff only has to cover the buckets this section falls in,
+  // so it is scoped to the edited geography rather than the whole model.
+  const scopePoints = [
+    { lat: Number.isFinite(Number(cell.lat)) ? Number(cell.lat) : center.lat,
+      lng: Number.isFinite(Number(cell.lng)) ? Number(cell.lng) : center.lng },
+    ...(Array.isArray(cell.sectionPoints) ? cell.sectionPoints : []),
+  ];
+  const beforeKnowledge = await knowledge.exportDataForPoints(scopePoints).catch(() => null);
   const exclusionKeys = speedSectionExclusionKeys(cell);
   const exclusionResult = await knowledge.excludeSpeedSection({
     ...cell,
@@ -364,7 +371,7 @@ export async function persistIgnoredSpeedReviewSection({
   if (!exclusionResult) return { ok: false, reason: 'persistence_failed' };
 
   const exclusion = typeof exclusionResult === 'object' ? exclusionResult.exclusion : null;
-  const afterKnowledge = await knowledge.exportData().catch(() => null);
+  const afterKnowledge = await knowledge.exportDataForPoints(scopePoints).catch(() => null);
   let refreshedTrips = null;
   let refreshFailed = false;
   if (beforeKnowledge && afterKnowledge) {
@@ -1183,7 +1190,17 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
     const restoreScroll = captureScrollRestorer();
     setBusyGeohash(draftKey);
     const historyGroup = `review-${draftKey}-${Date.now()}`;
-    const beforeKnowledge = await knowledge.exportData().catch(() => null);
+    // Scoped to the cells being reviewed, so the diff never spans geography
+    // this review does not touch.
+    const reviewScopePoints = uniqueCells.flatMap((cell) => {
+      const cellCenter = geohashCenter(cell.geohash);
+      return [
+        { lat: Number.isFinite(Number(cell.lat)) ? Number(cell.lat) : cellCenter.lat,
+          lng: Number.isFinite(Number(cell.lng)) ? Number(cell.lng) : cellCenter.lng },
+        ...(Array.isArray(cell.sectionPoints) ? cell.sectionPoints : []),
+      ];
+    });
+    const beforeKnowledge = await knowledge.exportDataForPoints(reviewScopePoints).catch(() => null);
     const results = await Promise.all(uniqueCells.map((cell) => saveCellLimit(cell, source, limitKmh, historyGroup)));
     const savedCount = results.filter(Boolean).length;
     if (savedCount) {
@@ -1219,7 +1236,7 @@ export default function SpeedLimitConflictReview({ trip = null, reviewMode = fal
       void (async () => {
         const shouldRefreshHere = !trip?.id || typeof onResolvedRef.current !== 'function';
         if (shouldRefreshHere) {
-          const afterKnowledge = await knowledge.exportData().catch(() => null);
+          const afterKnowledge = await knowledge.exportDataForPoints(reviewScopePoints).catch(() => null);
           if (beforeKnowledge && afterKnowledge) {
             await refreshTripsForLocalSpeedKnowledgeChanges(beforeKnowledge, afterKnowledge).catch(() => null);
           }

@@ -3,8 +3,9 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { calibrationLabelService } from '@/api/calibrationLabels';
-import { tripDetailQueryOptions, tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
-import { vehicleService } from '@/api/vehicles';
+import { tripDetailQueryOptions, tripQueryKeys, tripService } from '@/api/trips';
+import { vehicleQueryKeys, vehicleService } from '@/api/vehicles';
+import { useTripTagContext } from '@/hooks/useTripTagContext';
 import { motion } from 'framer-motion';
 import {
   ArrowLeft, Navigation, Clock, Gauge, TrendingDown, Zap, Car, MapPin,
@@ -27,7 +28,12 @@ import PremiumTripContextCard, {
 } from '@/components/PremiumTripContextCard';
 import SpeedLimitConflictReview from '@/components/SpeedLimitConflictReview';
 import SpeedSignEvidenceReview from '@/components/SpeedSignEvidenceReview';
-import { buildTripSpeedLimitReviewCells, speedLimitReviewNeededForTrip } from '@/lib/speedLimitReview';
+import { buildTripSpeedLimitReviewCells } from '@/lib/speedLimitReview';
+import {
+  hasSpeedLimitEvidencePoints,
+  routeDefaultCountries,
+  speedLimitReviewNeeded,
+} from '@/lib/routeDerivedContext';
 import {
   buildDrivingThresholds,
   calculateSegmentMetrics,
@@ -48,7 +54,7 @@ import { localSettings } from '@/lib/trackingStore';
 import { formatCurrencyAmount } from '@/lib/currency';
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { DAILY_FATIGUE_THRESHOLDS } from '@/lib/dailyFatigueEngine';
-import { buildFatigueHeatmapData, calculateFatigueRisk, detectTripStops, estimateTripEconomics } from '@/lib/tripInsights';
+import { buildFatigueHeatmapData, calculateFatigueRisk, estimateTripEconomics } from '@/lib/tripInsights';
 import { getPrivacyZones } from '@/lib/privacyZones';
 import { getSegmentsForTrip, loadRouteRiskIndex } from '@/lib/routeRiskIndex';
 import {
@@ -77,6 +83,7 @@ import {
 } from '@/lib/speedLimitSource';
 import { buildPhoneUsageAccessProvenance, buildPhoneUseFromTripEvidence, mergePhoneUseEventsIntoDrivingEvents } from '@/lib/phoneUsageAccess';
 import { summarizeTripPhoneUse } from '@/lib/phoneUseSummary';
+import { splitTripFromDetail, tripDetailExactResults } from '@/lib/tripDetailFullFidelity';
 import {
   TRIP_TAG_CATEGORIES,
   TRIP_TAG_OPTIONS,
@@ -137,6 +144,15 @@ import premiumTripSpeedCoverage from '@/assets/premium-trip-speed-coverage.webp'
 // - Added stronger posted-sign override wording for regional default and road-type estimates.
 
 const TripMap = lazy(() => import('@/components/TripMap'));
+
+/**
+ * HPR-018 — the page-local derived analysis family.
+ *
+ * Deliberately not under `['p7','detail',...]`: the canonical detail key owns the
+ * only Q2 query function, and this is a computation over a record already read,
+ * not a second way to fetch one.
+ */
+const tripAnalysisQueryKey = (tripId) => ['trip-analysis', String(tripId), 'full-fidelity'];
 
 const roadTypeConfig = {
   highway: { label: 'Highway', icon: Milestone, className: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800/50' },
@@ -319,6 +335,14 @@ function buildSpeedLimitSourceBreakdown(trip = {}, settings = {}, speedLimitCont
     const frozen = speedLimitSourceBreakdownFromSnapshot(trip.score_inputs);
     if (frozen) return frozen;
   }
+  if (trip?.route_overview_only === true) {
+    return {
+      basis: 'full_fidelity_pending',
+      sampleCount: 0,
+      rows: [],
+      summary: 'Exact speed-limit source analysis is loading from the canonical route.',
+    };
+  }
   const points = Array.isArray(trip.route_points) ? trip.route_points : [];
   const validIndexes = points
     .map((point, index) => ({ point, index }))
@@ -479,17 +503,51 @@ export default function TripDetail() {
   const invalidateTripLists = () => {
     qc.invalidateQueries({ queryKey: tripQueryKeys.summaries });
   };
+  /**
+   * HPR-018 — one place that says "this trip's canonical record changed".
+   *
+   * The canonical detail identity and this page's derived analysis are two
+   * families now, so both are named here rather than relying on one legacy prefix
+   * to happen to cover both.
+   */
+  const invalidateTripDetail = () => {
+    qc.invalidateQueries({ queryKey: tripQueryKeys.detail(id) });
+    qc.invalidateQueries({ queryKey: tripAnalysisQueryKey(String(id)) });
+  };
 
   const { data: trip, isLoading } = useQuery(tripDetailQueryOptions(id));
+  const nativeOverviewOnly = trip?.route_overview_only === true;
+  const {
+    data: fullFidelityAnalysis,
+    isPending: fullFidelityPending,
+    error: fullFidelityError,
+  } = useQuery({
+    // HPR-018: this is a page-local derived computation over the canonical record,
+    // not a second detail fetch, so it keeps its own family rather than sitting
+    // under the canonical detail key and owning a query function there. It used to
+    // live at `['trip', <id>, ...]` and was refreshed only because the detail
+    // invalidations of the day named that same prefix; `invalidateTripDetail`
+    // below keeps that coupling explicit now that detail has moved.
+    queryKey: tripAnalysisQueryKey(String(id)),
+    queryFn: () => tripService.analyzeFullFidelity(trip, {
+      minParkMinutes: 5,
+      thresholds: buildDrivingThresholds(localSettings.get()),
+    }),
+    enabled: Boolean(trip?.id && nativeOverviewOnly),
+    staleTime: Infinity,
+    gcTime: 5 * 60 * 1000,
+    retry: false,
+  });
   const {
     results: speedLimitLocalKnowledgeResults,
     failed: speedLimitKnowledgeFailed,
     reload: reloadSpeedLimitKnowledge,
   } = useTripSpeedKnowledge(trip, { context: 'trip_detail_local_speed_knowledge' });
-  const { data: tagLearningHistory = [] } = useQuery({
-    ...tripSummaryQueryOptions(),
-    select: (trips) => trips.filter((item) => item.status === 'completed'),
-  });
+  // P7 Stage 5: tag inference reads bounded Q7 tag context instead of pulling a
+  // 100-row summary list on every detail open. A detail page is a by-id
+  // consumer; fetching a list to render one trip is the read-inside-detail this
+  // phase removes.
+  const { trips: tagLearningHistory } = useTripTagContext();
   const tagIntelligence = useMemo(
     () => inferTripTags(trip || {}, tagLearningHistory),
     [tagLearningHistory, trip]
@@ -527,8 +585,17 @@ export default function TripDetail() {
   }, [reviewSpeedLimitConflicts, scrollToSpeedLimitReview]);
 
   const { data: vehicles = [] } = useQuery({
-    queryKey: ['vehicles'],
-    queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
+    // HPR-003/HPR-010. This page needs exactly one vehicle: the one this trip
+    // references. A 100-row page answered "no vehicle" for any fleet position
+    // beyond it, which silently changed the economics authority, so the lookup
+    // is id-addressed and complete.
+    // Keyed by the id it addresses, not by the trip that mentions it: the
+    // answer is a property of the vehicle, and a trip that changes its
+    // reference must read the new one rather than the previous trip-keyed hit.
+    queryKey: vehicleQueryKeys.byId(trip?.vehicle_id ?? ''),
+    queryFn: () => vehicleService.getById(trip?.vehicle_id),
+    enabled: Boolean(trip?.vehicle_id),
+    select: (resolved) => (resolved?.vehicle ? [resolved.vehicle] : []),
   });
 
   const deleteMutation = useMutation({
@@ -541,10 +608,8 @@ export default function TripDetail() {
   const splitMutation = useMutation({
     mutationFn: async (/** @type {{sourceTrip:any}} */ vars) => {
       const { sourceTrip } = vars;
-      const subTrips = splitTripAtStops(sourceTrip, 5);
-      await Promise.all(subTrips.map((subTrip) => tripService.create(subTrip)));
-      await tripService.delete(sourceTrip.id);
-      return subTrips;
+      if (fullFidelityError) throw new Error('Full-fidelity route analysis is not available yet.');
+      return splitTripFromDetail(sourceTrip, fullFidelityAnalysis);
     },
     onSuccess: () => {
       invalidateTripLists();
@@ -575,8 +640,8 @@ export default function TripDetail() {
       });
     },
     onSuccess: (updatedTrip) => {
-      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
-      qc.invalidateQueries({ queryKey: ['trip', id] });
+      if (updatedTrip) qc.setQueryData(tripQueryKeys.detail(id), updatedTrip);
+      invalidateTripDetail();
       invalidateTripLists();
       setMetadataDraft({
         nickname: updatedTrip?.nickname || trip?.nickname || '',
@@ -588,7 +653,7 @@ export default function TripDetail() {
   const metadataMutation = useMutation({
     mutationFn: (/** @type {any} */ patch) => tripService.update(id, patch),
     onSuccess: (updatedTrip) => {
-      qc.invalidateQueries({ queryKey: ['trip', id] });
+      invalidateTripDetail();
       invalidateTripLists();
       setMetadataDraft({
         nickname: updatedTrip?.nickname || '',
@@ -654,8 +719,8 @@ export default function TripDetail() {
     },
     onSuccess: (result, vars) => {
       const updatedTrip = result?.updatedTrip;
-      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
-      qc.invalidateQueries({ queryKey: ['trip', id] });
+      if (updatedTrip) qc.setQueryData(tripQueryKeys.detail(id), updatedTrip);
+      invalidateTripDetail();
       invalidateTripLists();
 
       if (!vars.isUndo) {
@@ -758,7 +823,7 @@ export default function TripDetail() {
     onSuccess: (result) => {
       const updatedTrip = result?.updatedTrip;
       if (updatedTrip) {
-        qc.setQueryData(['trip', id], updatedTrip);
+        qc.setQueryData(tripQueryKeys.detail(id), updatedTrip);
         qc.setQueriesData({ queryKey: tripQueryKeys.summaries }, (trips) => (
           Array.isArray(trips)
             ? trips.map((item) => (
@@ -774,7 +839,7 @@ export default function TripDetail() {
             : trips
         ));
       }
-      qc.invalidateQueries({ queryKey: ['trip', id] });
+      invalidateTripDetail();
       invalidateTripLists();
       qc.invalidateQueries({ queryKey: ['map-trips'] });
       const affectedCount = Array.isArray(result?.affectedTrips) ? result.affectedTrips.length : 0;
@@ -806,8 +871,8 @@ export default function TripDetail() {
     mutationFn: () => tripService.rescoreById(id, { reason: 'event_feedback_manual' }),
     onSuccess: (result) => {
       const updatedTrip = result?.updatedTrip;
-      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
-      qc.invalidateQueries({ queryKey: ['trip', id] });
+      if (updatedTrip) qc.setQueryData(tripQueryKeys.detail(id), updatedTrip);
+      invalidateTripDetail();
       invalidateTripLists();
       showFeedbackStatus(result?.skipped
         ? 'Could not re-score this trip (' + String(result.skippedReason || 'route data unavailable').replace(/_/g, ' ') + ').'
@@ -827,8 +892,8 @@ export default function TripDetail() {
       });
     },
     onSuccess: (updatedTrip) => {
-      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
-      qc.invalidateQueries({ queryKey: ['trip', id] });
+      if (updatedTrip) qc.setQueryData(tripQueryKeys.detail(id), updatedTrip);
+      invalidateTripDetail();
       invalidateTripLists();
       qc.invalidateQueries({ queryKey: ['map-trips'] });
     },
@@ -847,8 +912,8 @@ export default function TripDetail() {
       });
     },
     onSuccess: (updatedTrip) => {
-      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
-      qc.invalidateQueries({ queryKey: ['trip', id] });
+      if (updatedTrip) qc.setQueryData(tripQueryKeys.detail(id), updatedTrip);
+      invalidateTripDetail();
       invalidateTripLists();
       qc.invalidateQueries({ queryKey: ['map-trips'] });
       const weather = updatedTrip?.weather_context;
@@ -886,8 +951,8 @@ export default function TripDetail() {
       });
     },
     onSuccess: (updatedTrip) => {
-      if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
-      qc.invalidateQueries({ queryKey: ['trip', id] });
+      if (updatedTrip) qc.setQueryData(tripQueryKeys.detail(id), updatedTrip);
+      invalidateTripDetail();
       invalidateTripLists();
       qc.invalidateQueries({ queryKey: ['map-trips'] });
       setManualWeatherCondition(String(updatedTrip?.weather_context?.condition || ''));
@@ -919,7 +984,7 @@ export default function TripDetail() {
             excluded_from_driver_score: wasDriver === 'no',
             updated_at: new Date().toISOString(),
           });
-          if (updatedTrip) qc.setQueryData(['trip', id], updatedTrip);
+          if (updatedTrip) qc.setQueryData(tripQueryKeys.detail(id), updatedTrip);
           invalidateTripLists();
         } catch {
           // The local calibration label remains authoritative for this detail view.
@@ -974,17 +1039,27 @@ export default function TripDetail() {
     if (!confirmed) return;
     weatherMutation.mutate();
   };
-  const stops = useMemo(() => (
-    trip ? detectTripStops(trip.route_points || []) : []
-  ), [trip]);
+  const exactTripDetail = useMemo(
+    () => tripDetailExactResults(trip, fullFidelityAnalysis),
+    [fullFidelityAnalysis, trip]
+  );
+  const stops = exactTripDetail.stops;
   const parkStops = useMemo(() => (
     stops.filter((stop) => (stop.duration_seconds || 0) >= 5 * 60)
   ), [stops]);
   const splitPreviewTrips = useMemo(() => (
-    trip && parkStops.length ? splitTripAtStops(trip, 5) : []
-  ), [parkStops.length, trip]);
+    nativeOverviewOnly
+      ? (fullFidelityAnalysis?.splitSegments || []).map((segment) => ({
+        start_time: segment.startTime,
+        end_time: segment.endTime,
+        distance_km: segment.distanceKm ?? null,
+        duration_seconds: Math.max(0, Math.round((new Date(segment.endTime).getTime() - new Date(segment.startTime).getTime()) / 1000)),
+      }))
+      : (trip && parkStops.length ? splitTripAtStops(trip, 5) : [])
+  ), [fullFidelityAnalysis?.splitSegments, nativeOverviewOnly, parkStops.length, trip]);
   const speedZoneSummary = useMemo(() => {
     if (!trip) return [];
+    if (nativeOverviewOnly) return exactTripDetail.speedZoneSummary || [];
 
     const points = trip.route_points || [];
     // Must use the same thresholds as buildSpeedLimitSourceBreakdown, or the
@@ -1010,7 +1085,7 @@ export default function TripDetail() {
       byZone.set(key, current);
     }
     return [...byZone.values()].sort((a, b) => a.inferredZoneKmh - b.inferredZoneKmh);
-  }, [trip, settings]);
+  }, [exactTripDetail.speedZoneSummary, nativeOverviewOnly, trip, settings]);
   const fatigueHeatmapData = useMemo(() => (
     trip ? buildFatigueHeatmapData(trip) : []
   ), [trip]);
@@ -1315,11 +1390,12 @@ export default function TripDetail() {
   // The overlay renders from any point carrying a finite limit, so gating the
   // button on two specific sources greyed it out for trips whose limits came
   // from a regional default or learned local knowledge.
-  const rawSpeedLimitPoints = (trip.route_points || []).filter((point) => (
-    Number.isFinite(Number(point.speed_limit_kmh)) && Number(point.speed_limit_kmh) > 0
-  ));
+  // HPR-002. These answers depend on the route, not on whatever local state just
+  // rerendered this page, so they are derived once per route rather than rebuilt
+  // (and reallocated at route size) on every render.
+  const hasSpeedLimitLayerPoints = hasSpeedLimitEvidencePoints(trip.route_points);
   const hasLocalSpeedLimitKnowledge = speedLimitLocalKnowledgeResults.some((item) => Number(item?.limitKmh) > 0);
-  const hasSpeedLimitLayerData = rawSpeedLimitPoints.length > 0 || hasLocalSpeedLimitKnowledge;
+  const hasSpeedLimitLayerData = hasSpeedLimitLayerPoints || hasLocalSpeedLimitKnowledge;
   const effectiveSpeedLimits = [...new Set(
     speedLimitSourceBreakdown.rows
       .flatMap((row) => row.limits || [])
@@ -1337,13 +1413,7 @@ export default function TripDetail() {
     !hasLocalSpeedLimitKnowledge &&
     speedLimitCoverage.sampleCount > 0 &&
     osmCoveragePct < 20;
-  const speedLimitDefaultCountries = [...new Set([
-    speedLimitContext?.fallback_country,
-    ...(trip.route_points || []).map((point) => point.fallback_country),
-    ...(trip.route_points || []).map((point) => point.speed_limit_default_country),
-    ...(trip.driving_events || []).map((event) => event.fallback_country),
-    ...(trip.driving_events || []).map((event) => event.speed_limit_default_country),
-  ].filter(Boolean))].map((country) => String(country).toUpperCase());
+  const speedLimitDefaultCountries = routeDefaultCountries(trip, speedLimitContext?.fallback_country);
   const currentSpeedLimitFallbackCountry = speedLimitDefaultCountryKey(settings);
   const speedLimitDefaultCountryLabels = speedLimitDefaultCountries.map((country) => (
     SPEED_LIMIT_DEFAULT_COUNTRY_LABELS[String(country).toLowerCase()] || country
@@ -1416,13 +1486,25 @@ export default function TripDetail() {
     coverage: osmCoveragePct,
     hasPostedEvidence: hasPostedSpeedLimitEvidence,
     lookupEnabled: speedLimitLookupEnabled,
-    reviewNeeded: speedLimitReviewNeededForTrip(trip),
+    reviewNeeded: speedLimitReviewNeeded(trip),
     status: speedLimitContext?.status,
   });
   const premiumSensorArtwork = selectPremiumSensorArtwork(sensorFusionSummary);
   const driverAnomaly = trip.driver_anomaly || null;
   const possibleIncidentEvents = (trip.driving_events || []).filter((event) => event.type === 'possible_crash');
-  const displayPhoneUse = buildPhoneUseFromTripEvidence(trip, trip.route_points || [], trip.duration_seconds || 0, {});
+  const displayPhoneUse = nativeOverviewOnly
+    ? (exactTripDetail.phoneUse || {
+      phone_use_events: [],
+      phone_use_window_count: 0,
+      phone_use_total_seconds: 0,
+      phone_use_high_confidence_count: 0,
+      phone_use_risk: 'none',
+      phone_use_score: null,
+      phone_use_score_available: false,
+      phone_use_score_status: fullFidelityError ? 'full_fidelity_unavailable' : 'full_fidelity_loading',
+      phone_proxy_events: [],
+    })
+    : buildPhoneUseFromTripEvidence(trip, trip.route_points || [], trip.duration_seconds || 0, {});
   const livePhoneUsageAccessProvenance = buildPhoneUsageAccessProvenance(trip, currentUsageAccessGranted);
   const storedPhoneUsageAccessProvenance = trip.phone_usage_access_provenance?.changed
     ? trip.phone_usage_access_provenance
@@ -1812,7 +1894,7 @@ export default function TripDetail() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {parkStops.length > 0 && (
+          {parkStops.length > 0 && (!nativeOverviewOnly || !fullFidelityPending) && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <button className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60">
@@ -1843,7 +1925,7 @@ export default function TripDetail() {
                 <AlertDialogFooter>
                   <AlertDialogCancel disabled={splitMutation.isPending}>Cancel</AlertDialogCancel>
                   <AlertDialogAction
-                    disabled={splitMutation.isPending || splitPreviewTrips.length < 2}
+                    disabled={splitMutation.isPending || fullFidelityPending || Boolean(fullFidelityError) || splitPreviewTrips.length < 2}
                     onClick={() => splitMutation.mutate({ sourceTrip: trip })}
                   >
                     {splitMutation.isPending ? 'Splitting...' : 'Split Trip'}
@@ -1864,7 +1946,7 @@ export default function TripDetail() {
             >
               <Gauge className="h-4 w-4" />
               {reviewSpeedLimitConflicts ? 'Hide speed review' : (
-                speedLimitReviewNeededForTrip(trip) ? 'Review speed limits' : 'Check speed limits'
+                speedLimitReviewNeeded(trip) ? 'Review speed limits' : 'Check speed limits'
               )}
             </button>
           )}

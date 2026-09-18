@@ -13,6 +13,7 @@ import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import PremiumTripCard from '@/components/PremiumTripCard';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 import { formatScoreWithProvenance } from '@/lib/scoreDisplay';
+import { formatMeasurement, tripDistanceKm, tripDurationSeconds } from '@/lib/measurementAvailability';
 
 const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']);
 const evidenceLabel = (evidence) => `${evidence || 'unavailable'} evidence`;
@@ -112,8 +113,8 @@ export default function TripCard({
             )}
 
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1"><Navigation className="h-3.5 w-3.5" /><b className="text-foreground">{formatDistance(trip.distance_km || 0, units)}</b></span>
-              <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" />{formatDuration(trip.duration_seconds)}</span>
+              <span className="inline-flex items-center gap-1"><Navigation className="h-3.5 w-3.5" /><b className="text-foreground">{formatMeasurement(tripDistanceKm(trip), (km) => formatDistance(km, units))}</b></span>
+              <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" />{formatMeasurement(tripDurationSeconds(trip), formatDuration)}</span>
               <span className="inline-flex items-center gap-1"><Gauge className="h-3.5 w-3.5" />{formatSpeed(trip.avg_running_speed_kmh ?? trip.avg_speed_kmh ?? 0, units)}</span>
               {compactEventCount > 0 && <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300"><AlertTriangle className="h-3.5 w-3.5" />{compactEventCount} event{compactEventCount === 1 ? '' : 's'}</span>}
               {trip.notes && <span className="inline-flex items-center gap-1" title={trip.notes}><StickyNote className="h-3.5 w-3.5" />Note</span>}
@@ -262,11 +263,11 @@ export default function TripCard({
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <Navigation className="w-3.5 h-3.5" />
-              <span className="font-medium text-foreground">{formatDistance(trip.distance_km || 0, units)}</span>
+              <span className="font-medium text-foreground">{formatMeasurement(tripDistanceKm(trip), (km) => formatDistance(km, units))}</span>
             </div>
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <Clock className="w-3.5 h-3.5" />
-              <span>{formatDuration(trip.duration_seconds)}</span>
+              <span>{formatMeasurement(tripDurationSeconds(trip), formatDuration)}</span>
             </div>
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <Gauge className="w-3.5 h-3.5" />

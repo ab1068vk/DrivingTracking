@@ -13,6 +13,7 @@ const mockState = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/nativePlatform', () => ({
+  isAndroid: () => false,
   isNativePlatform: () => mockState.isNative,
 }));
 

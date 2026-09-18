@@ -80,6 +80,7 @@ describe('PremiumTripHistoryPanels', () => {
           totalDurationLabel: '13h 14m',
           averageScore: 67,
           averageScoreLabel: '67',
+          averageScoreDescription: 'Distance-weighted across 4 eligible scored trips represented in this History view. Passenger and manually excluded trips do not affect it.',
           scoreTrend: [72, 68, 75, 67],
           favoriteCount: 3,
           nightCount: 8,
@@ -93,6 +94,8 @@ describe('PremiumTripHistoryPanels', () => {
     expect(html).toContain('504.0 km');
     expect(html).toContain('13h 14m');
     expect(html).toContain('data-tone="score"');
+    expect(html).toContain('Driver score');
+    expect(html).toContain('Distance-weighted across 4 eligible scored trips represented in this History view. Passenger and manually excluded trips do not affect it.');
     expect(html).toContain('data-score-band="steady"');
     expect(html).toContain('data-time-band="extended"');
     expect(html).toContain('Adaptive drive-time scale: 0h, 8h, 15h+');

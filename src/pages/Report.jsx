@@ -1,15 +1,33 @@
 // @ts-check
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
-import { tripSummaryQueryOptions } from '@/api/trips';
-import { vehicleService } from '@/api/vehicles';
+import { p7TripQueries } from '@/api/trips';
+import { useReportData } from '@/hooks/useReportData';
+import { COACHING_CONTENT } from '@/lib/coachingContent';
+import {
+  carbonFromTerms,
+  componentScoreFromTerms,
+  dayOfWeekFromProfile,
+  economicsFromTerms,
+  efficiencyBandsFromProfile,
+  fatigueFromTerms,
+  movingSpeedFromTerms,
+  peakStressFromProfile,
+  reportInsightsFromTerms,
+  reportSummaryFromTerms,
+  roadTypeFromProfile,
+  scoreDistributionFromProfile,
+  timeOfDayFromProfile,
+  tipsFromTerms,
+} from '@/lib/reportTerms';
+import { vehicleQueryKeys, vehicleService } from '@/api/vehicles';
 import {
   BarChart3, TrendingUp, AlertTriangle,
   Download, Car, Clock, Navigation, Fuel, Leaf, Gauge, Award, FileText,
   Activity, CalendarDays, Route, ShieldCheck, Target
 } from 'lucide-react';
-import { generateReportSummary, formatDistance, formatDuration, formatDate, formatSpeed, getScoreColor, getTripComponentScore, tripsToCSV, downloadCSV } from '@/lib/tripEngine';
+import { formatDistance, formatDuration, formatDate, formatSpeed, getScoreColor, getTripComponentScore, createTripCsvWriter, downloadCSV } from '@/lib/tripEngine';
 import ScoreRing from '@/components/ScoreRing';
 import CalibrationStatusTag from '@/components/CalibrationStatusTag';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
@@ -28,20 +46,24 @@ import {
   formatPerDistanceRate,
 } from '@/lib/unitFormatting';
 import { formatCurrencyAmount } from '@/lib/currency';
-import { computeUBIReport } from '@/lib/ubiReport';
+import { computeUBIReportFromTerms } from '@/lib/ubiReport';
+import {
+  REPORT_STATE,
+  commonRiskCopy,
+  formatPartialTotal,
+  recommendedFocusCopy,
+  riskFocusChipCopy,
+  reportConclusionGates,
+  reportPresentationState,
+  showsGenuineEmptyState,
+  unavailableCopy,
+  withheldCopy,
+} from '@/lib/reportPresentation';
 import { notifyExportSaved } from '@/lib/notificationService';
 import { toast } from '@/components/ui/use-toast';
-import { isDriverMetricEligible } from '@/lib/phoneUseSummary';
 import {
-  analyzeDayOfWeek,
-  analyzeTimeOfDay,
-  buildScoreTips,
-  calculateFatigueRisk,
-  calculateCarbonImpact,
   computePersonalBaseline,
   estimateTripEconomics,
-  identifyCommutePatterns,
-  calculatePeakHourStress,
 } from '@/lib/tripInsights';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -97,97 +119,18 @@ function getRiskRows(summary = {}) {
   }));
 }
 
-function buildScoreDistribution(trips = []) {
-  const bands = [
-    { label: '90+', shortLabel: '90+', count: 0, color: 'bg-emerald-500' },
-    { label: '80-89', shortLabel: '80s', count: 0, color: 'bg-sky-500' },
-    { label: '70-79', shortLabel: '70s', count: 0, color: 'bg-amber-500' },
-    { label: '<70', shortLabel: '<70', count: 0, color: 'bg-red-500' },
-  ];
-  trips.forEach((trip) => {
-    const score = getTripComponentScore(trip, 'overall').value;
-    if (!Number.isFinite(Number(score))) return;
-    if (score >= 90) bands[0].count += 1;
-    else if (score >= 80) bands[1].count += 1;
-    else if (score >= 70) bands[2].count += 1;
-    else bands[3].count += 1;
-  });
-  const total = bands.reduce((sum, band) => sum + band.count, 0);
-  return bands.map((band) => ({
-    ...band,
-    percent: total > 0 ? (band.count / total) * 100 : 0,
-  }));
-}
-
-function averageComponentScore(trips = [], component) {
-  const scored = trips
-    .map((trip) => ({
-      score: getTripComponentScore(trip, component).value,
-      distance: Number(trip.distance_km) || 0,
-    }))
-    .filter((item) => Number.isFinite(Number(item.score)));
-  const totalDistance = scored.reduce((sum, item) => sum + item.distance, 0);
-  if (totalDistance > 0) {
-    return Math.round(scored.reduce((sum, item) => sum + Number(item.score) * item.distance, 0) / totalDistance);
+/** **O72** — the frozen next-action ladder, unchanged. */
+export function nextActionMessage(topRisk, peakHourStress) {
+  if (topRisk?.count > 0) {
+    if (topRisk.key === 'speeding') return 'Ease back before long open stretches; speeding is the biggest score drag this period.';
+    if (topRisk.key === 'harsh_brake') return 'Open following distance earlier; harsh braking is the clearest improvement lever.';
+    if (topRisk.key === 'rapid_acceleration') return 'Use gentler launches from lights and merges; acceleration spikes are leading the risk mix.';
+    return 'Smooth turn entry speed; sharp turns are the most common event right now.';
   }
-  return scored.length
-    ? Math.round(scored.reduce((sum, item) => sum + Number(item.score), 0) / scored.length)
-    : null;
-}
-
-function buildReportInsights({ trips, period, periodDays, summary, previousSummary, previousTrips, topRisk, timeOfDayData, dayOfWeekData, peakHourStress }) {
-  const totalEvents = getRiskRows(summary).reduce((sum, item) => sum + item.count, 0);
-  const totalKm = Number(summary.total_distance_km) || 0;
-  const activeDays = new Set(trips.map((trip) => new Date(trip.start_time).toDateString())).size;
-  const possibleDays = period === 'all' ? activeDays : periodDays;
-  const cleanTrips = trips.filter((trip) => (
-    (Number(trip.harsh_brakes_count) || 0) === 0 &&
-    (Number(trip.rapid_accel_count) || 0) === 0 &&
-    (Number(trip.sharp_turns_count) || 0) === 0 &&
-    (Number(trip.speeding_events_count) || 0) === 0
-  )).length;
-  const scoredTrips = trips.filter((trip) => getTripComponentScore(trip, 'overall').value != null).length;
-  const bestWindow = [...timeOfDayData].filter((item) => Number.isFinite(Number(item.avgScore))).sort((a, b) => b.avgScore - a.avgScore)[0];
-  const hardestDay = [...dayOfWeekData].filter((item) => Number.isFinite(Number(item.events))).sort((a, b) => b.events - a.events)[0];
-  const eventRate = totalKm > 0 ? (totalEvents / totalKm) * 100 : null;
-  const previousEventRows = getRiskRows(previousSummary);
-  const previousEventCount = previousEventRows.reduce((sum, item) => sum + item.count, 0);
-  const previousEventRate = previousSummary.total_distance_km > 0 ? (previousEventCount / previousSummary.total_distance_km) * 100 : null;
-  const eventRateDelta = eventRate != null && previousEventRate != null ? eventRate - previousEventRate : null;
-  const scoreDelta = summary.avg_score != null && previousSummary.avg_score != null ? summary.avg_score - previousSummary.avg_score : null;
-  const distanceDelta = previousTrips.length > 0 ? totalKm - previousSummary.total_distance_km : null;
-  const cleanTripPercent = trips.length ? (cleanTrips / trips.length) * 100 : 0;
-  const coveragePercent = possibleDays > 0 ? (activeDays / possibleDays) * 100 : 0;
-  const confidence =
-    totalKm >= 100 && scoredTrips >= 10 ? 'High' :
-      totalKm >= 25 && scoredTrips >= 3 ? 'Medium' :
-        'Early';
-  const nextAction = topRisk?.count > 0
-    ? topRisk.key === 'speeding'
-      ? 'Ease back before long open stretches; speeding is the biggest score drag this period.'
-      : topRisk.key === 'harsh_brake'
-        ? 'Open following distance earlier; harsh braking is the clearest improvement lever.'
-        : topRisk.key === 'rapid_acceleration'
-          ? 'Use gentler launches from lights and merges; acceleration spikes are leading the risk mix.'
-          : 'Smooth turn entry speed; sharp turns are the most common event right now.'
-    : peakHourStress.stress_ratio > 1.25
-      ? 'Peak-hour drives are costlier than off-peak. Leave a few minutes earlier when you can.'
-      : 'Keep the same rhythm. The report did not find a single dominant risk event.';
-
-  return {
-    activeDays,
-    cleanTripPercent,
-    confidence,
-    coveragePercent,
-    distanceDelta,
-    eventRate,
-    eventRateDelta,
-    hardestDay,
-    nextAction,
-    scoreDelta,
-    scoredTrips,
-    bestWindow,
-  };
+  if (peakHourStress.stress_ratio > 1.25) {
+    return 'Peak-hour drives are costlier than off-peak. Leave a few minutes earlier when you can.';
+  }
+  return 'Keep the same rhythm. The report did not find a single dominant risk event.';
 }
 
 export default function Reports() {
@@ -197,46 +140,119 @@ export default function Reports() {
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
 
-  const { data: completed = [], isLoading, isFetching } = useQuery({
-    ...tripSummaryQueryOptions(),
-    select: (trips) => trips.filter(t => t.status === 'completed' && isDriverMetricEligible(t)),
-  });
-
   const { data: vehicles = [] } = useQuery({
-    queryKey: ['vehicles'],
-    queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
+    // HPR-003. This page's economics callbacks are folded by reducers over rows
+    // the page never holds, so it cannot enumerate the ids it will be asked
+    // about. A 100-row prefix therefore answered "no vehicle" for any fleet
+    // position beyond it and silently dropped those trips from the CO2 term;
+    // the reference authority is the complete collection, read once.
+    queryKey: vehicleQueryKeys.reference,
+    queryFn: () => vehicleService.getAllForReference(),
   });
 
-  const vehicleById = new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle]));
+  const vehicleById = useMemo(
+    () => new Map(vehicles.map((vehicle) => [String(vehicle.id), vehicle])),
+    [vehicles]
+  );
 
-  // Filter by period
-  const now = Date.now();
   const periodDays = PERIODS.find(p => p.id === period)?.days || 7;
-  const cutoff = period === 'all' ? 0 : now - periodDays * 24 * 3600 * 1000;
-  const trips = completed.filter(t => new Date(t.start_time).getTime() >= cutoff);
-  const exportSummary = buildReportExportSummary(trips, period);
+
+  // P7 Stage 6.7 (ledger entry #8, Annex C O23-O26 and O42-O75). Every figure
+  // below used to be folded from one 200-row page while the heading above it
+  // named a period. Past 200 retained drives, "90 days" and "all time" both
+  // silently described the newest 200 drives. Each row now comes from the
+  // named reducer Annex C assigns it, bound to the selected window.
+  //
+  // The economics reducer folds with the page's own per-trip arithmetic, so
+  // O25 and O53 reproduce the numbers this page has always shown rather than
+  // a vehicle-blind approximation of them.
+  const economicsContext = useMemo(() => ({
+    estimate: (trip) => estimateTripEconomics(trip, vehicleById.get(String(trip.vehicle_id)), settings),
+    co2Saved: (trip) => {
+      if (!(Number(trip?.distance_km) > 0)) return null;
+      const vehicle = vehicleById.get(String(trip?.vehicle_id));
+      if (vehicleById.size && !vehicle) return null;
+      const estimated = estimateTripEconomics(trip, vehicle, settings).co2_saved_kg;
+      return Number.isFinite(estimated) ? estimated : null;
+    },
+  }), [settings, vehicleById]);
+
+  const reportData = useReportData({ period, periodDays, settings, economicsContext });
+  const { isLoading, isFetching } = reportData;
+  const terms = reportData.terms;
+  const profiles = terms.bucketProfiles?.profiles ?? null;
+
+  const summary = useMemo(() => reportSummaryFromTerms({
+    durationDistance: terms.durationDistance,
+    eventTotals: terms.eventTotals,
+    extrema: terms.summaryExtrema,
+  }), [terms]);
+
+  /**
+   * AUD-003. One gate — `summary.total_trips === 0` — used to answer three different
+   * questions at once, so a storage refusal and a partial tally both rendered as "no trips
+   * were recorded". These are now distinct states, and every derived conclusion is gated on
+   * the exactness signal it actually depends on rather than on the trip count.
+   */
+  const reportState = reportPresentationState({
+    unavailable: reportData.unavailable,
+    exact: reportData.exact,
+    totalTrips: summary.total_trips,
+    isLoading,
+  });
+  const isPartial = reportState === REPORT_STATE.PARTIAL;
+  const gates = reportConclusionGates({
+    state: reportState,
+    monthlyTrendExact: reportData.monthlyTrendExact,
+    baselineExact: reportData.baselineExact,
+    mileageWindowExact: reportData.mileageWindowExact,
+    recordsExact: reportData.recordsExact,
+    tipsExact: reportData.tipsExact,
+  });
+  const unavailableReport = unavailableCopy(reportData.unavailable);
+
+  // `trips` is no longer a fetched array. The three surfaces that genuinely
+  // need rows — the CSV/PDF exports and the personal baseline — each read the
+  // bounded window they declare, and nothing renders from a row fold.
+  const exportSummary = buildReportExportSummary([], period);
   const periodPdfLabel = `${exportSummary.periodLabel} PDF`;
 
-  const summary = generateReportSummary(trips);
-  const economics = trips.reduce((totals, trip) => {
-    const estimate = estimateTripEconomics(trip, vehicleById.get(String(trip.vehicle_id)), settings);
-    return {
-      cost: totals.cost + estimate.cost,
-      liters: totals.liters + estimate.liters,
-      co2: totals.co2 + estimate.co2_kg,
-      saved: totals.saved + (Number.isFinite(Number(estimate.fuel_saved_liters)) ? Number(estimate.fuel_saved_liters) : 0),
-      savedTripCount: totals.savedTripCount + (estimate.fuel_saved_available ? 1 : 0),
-    };
-  }, { cost: 0, liters: 0, co2: 0, saved: 0, savedTripCount: 0 });
-  const tips = buildScoreTips(trips);
-  const timeOfDayData = analyzeTimeOfDay(trips);
-  const dayOfWeekData = analyzeDayOfWeek(trips);
-  const fatigueRisk = calculateFatigueRisk(trips, settings);
-  const avgMovingSpeedKmh = trips.length
-    ? trips.reduce((sum, trip) => sum + (trip.avg_running_speed_kmh ?? trip.avg_speed_kmh ?? 0), 0) / trips.length
-    : 0;
-  // FIX: Compute report average speed from avg_running_speed_kmh, falling back only for legacy trips.
-  const baseline = computePersonalBaseline(completed);
+  const economics = economicsFromTerms(terms.economics);
+  // O47: every `buildScoreTips` branch, over the same `P-SCORETIP` population.
+  // The night and weighted-score terms come from two reducers narrowed to that
+  // population, so no branch is judged over a wider set of drives than another.
+  const tips = tipsFromTerms(terms.scoreTipTotals, {
+    night: terms.scoreTipNight,
+    weighted: terms.scoreTipWeighted,
+    windowTrips: terms.durationDistance?.trip_count ?? null,
+    // O47 ranks only at terminal EOF. Until then the frozen not-enough-data
+    // copy stands, and "Finish analysis" is what completes the tally.
+    exact: reportData.tipsExact,
+    messages: {
+      harsh_brake: COACHING_CONTENT.harsh_brakes.scoreTip,
+      rapid_acceleration: COACHING_CONTENT.rapid_accel.scoreTip,
+      sharp_turn: COACHING_CONTENT.sharp_turns.scoreTip,
+      speeding: COACHING_CONTENT.speeding.scoreTip,
+    },
+    emptyCopy: 'Not enough data yet. Record a few trips to unlock personalized coaching tips.',
+    ineligibleCopy: 'Not enough data yet. Complete a trip of at least 2 km for coaching tips.',
+    nightCopy: 'A large share of trips happen at night, where Road Sage applies extra safety risk. Keep routes familiar and take breaks on longer drives.',
+    highScoreCopy: 'Your recent average is excellent. Keep the streak going by protecting smooth starts and early braking.',
+    lowScoreCopy: COACHING_CONTENT.consistency.scoreTip,
+  });
+  const timeOfDayData = timeOfDayFromProfile(profiles);
+  const dayOfWeekData = dayOfWeekFromProfile(profiles);
+  const fatigueRisk = fatigueFromTerms(
+    terms.fatigue,
+    Number.isFinite(Number(settings.threshold_long_drive_minutes))
+      && Number(settings.threshold_long_drive_minutes) >= 0
+      ? Number(settings.threshold_long_drive_minutes)
+      : 120
+  );
+  const avgMovingSpeedKmh = movingSpeedFromTerms(terms.bucketProfiles);
+  // O52: the personal baseline is calendar windows, not the report period, so
+  // it reads its own bounded 12-week scan rather than the report's rows.
+  const baseline = computePersonalBaseline(reportData.baselineTrips);
   const baselineRangeLabel = baseline.baseline_includes_older_scores
     ? baseline.baseline_label
     : baseline.baseline_confidence_interval_label;
@@ -247,100 +263,59 @@ export default function Reports() {
       : baseline.delta == null
         ? `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)} (${baseline.baseline_confidence_interval_label} percentile range). No trip was recorded this week.`
         : `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)} (${baseline.baseline_confidence_interval_label} percentile range). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} points from it.`;
-  const carbonImpact = calculateCarbonImpact(trips, settings, vehicleById);
-  const commutePatterns = identifyCommutePatterns(trips);
-  const peakHourStress = calculatePeakHourStress(trips);
-  const roadTypeData = ['highway', 'urban', 'mixed', 'residential']
-    .map((type) => ({
-      name: type[0].toUpperCase() + type.slice(1),
-      value: trips.filter((trip) => trip.road_type === type).length,
-    }))
-    .filter((item) => item.value > 0);
+  const carbonImpact = carbonFromTerms(terms.economics, settings.tree_co2_kg_per_year);
+  // O59 renders empty on the shipping path because `route_points` is not in the
+  // projection, and the grouping is unbounded in distinct routes. P7 preserves
+  // that exactly: it neither populates the row nor issues N x Q2 to try.
+  const commutePatterns = [];
+  const peakHourStress = peakStressFromProfile(profiles);
+  const roadTypeData = roadTypeFromProfile(profiles);
   const roadColors = ['#3b82f6', '#f59e0b', '#64748b', '#22c55e'];
-  const complianceChartData = ['highway', 'urban', 'residential']
-    .map((type) => {
-      const values = trips
-        .map((trip) => trip[`${type}_compliance`]?.rate)
-        .filter((value) => Number.isFinite(value));
-      return {
-        name: type[0].toUpperCase() + type.slice(1),
-        rate: values.length ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 100) : null,
-      };
-    })
-    .filter((item) => item.rate != null);
-  const efficiencyBandsData = [{
-    name: 'Selected',
-    cityCrawl: trips.length ? Math.round(trips.reduce((sum, trip) => sum + (trip.city_crawl_ratio || 0), 0) / trips.length) : 0,
-    cruise: trips.length ? Math.round(trips.reduce((sum, trip) => sum + (trip.optimal_band_ratio || 0), 0) / trips.length) : 0,
-    highSpeed: trips.length ? Math.round(trips.reduce((sum, trip) => sum + (trip.high_speed_ratio || 0), 0) / trips.length) : 0,
-  }];
-  efficiencyBandsData[0].city = Math.max(0, 100 - efficiencyBandsData[0].cityCrawl - efficiencyBandsData[0].cruise - efficiencyBandsData[0].highSpeed);
+  // O58, frozen for the same reason: the `*_compliance` objects are not in the
+  // projection, so this has always rendered empty on the shipping path.
+  const complianceChartData = [];
+  const efficiencyBandsData = efficiencyBandsFromProfile(profiles, summary.total_trips);
   const peakComparisonData = [
       { label: 'Peak', rate: convertPerDistanceRate(peakHourStress.peak_trips_event_rate, units) },
       { label: 'Off-peak', rate: convertPerDistanceRate(peakHourStress.off_peak_trips_event_rate, units) },
   ];
-  const ubiReport = computeUBIReport(trips, settings, vehicles);
+  // O26 keeps `ubiReport.js`'s math unchanged and feeds it the eight declared
+  // terms, its own rolling 12-month mileage window, and the observed bounds of
+  // the report period.
+  const ubiReport = computeUBIReportFromTerms(terms.ubiTerms, settings, {
+    mileageWindowKm: reportData.mileageWindowKm,
+    periodStart: reportData.periodStart,
+    periodEnd: reportData.periodEnd,
+  });
   const ubiRadarData = Object.values(ubiReport.categories).map((item) => ({
     category: item.label.replace('Rapid acceleration', 'Acceleration').replace('Speed compliance', 'Speed'),
     score: item.score,
   }));
 
-  // Build 6-month monthly event trend data (always uses all completed trips)
-  const eventTrendData = (() => {
-    const months = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(1);
-      d.setMonth(d.getMonth() - i);
-      const label = d.toLocaleDateString('en-US', { month: 'short' });
-      const year = d.getFullYear();
-      const month = d.getMonth();
-      const monthTrips = completed.filter(t => {
-        const td = new Date(t.start_time);
-        return td.getFullYear() === year && td.getMonth() === month;
-      });
-      months.push({
-        month: label,
-        harshBrakes: monthTrips.reduce((s, t) => s + (t.harsh_brakes_count || 0), 0),
-        rapidAccels: monthTrips.reduce((s, t) => s + (t.rapid_accel_count || 0), 0),
-      });
-    }
-    return months;
-  })();
+  // O23 — six complete calendar months, local month basis, from the reducer.
+  const eventTrendData = (reportData.monthlyTrend ?? []).map((row) => ({
+    month: new Date(`${row.month}-01T00:00:00`).toLocaleDateString('en-US', { month: 'short' }),
+    harshBrakes: Number(row.harshBrakes) || 0,
+    rapidAccels: Number(row.rapidAccels) || 0,
+  }));
 
-  // Build daily chart data
-  const dailyData = (() => {
-    const days = period === 'all' ? 30 : periodDays;
-    const map = {};
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date(now - i * 86400000);
-      const key = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      map[key] = { date: key, distance: 0, trips: 0, score: 0, scoreDistance: 0, svi: 0, sviCount: 0 };
-    }
-    trips.forEach(t => {
-      const key = new Date(t.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      if (map[key]) {
-        map[key].distance += t.distance_km || 0;
-        map[key].trips += 1;
-        const overallScore = getTripComponentScore(t, 'overall').value;
-        if (overallScore != null) {
-          const distance = Number(t.distance_km) || 0;
-          map[key].score += overallScore * distance;
-          map[key].scoreDistance += distance;
-        }
-        if (t.svi_score != null && t.svi_score !== '' && Number.isFinite(Number(t.svi_score))) {
-          map[key].svi += Number(t.svi_score);
-          map[key].sviCount += 1;
-        }
-      }
-    });
-    return Object.values(map).map(d => ({
-      ...d,
-      distance: Math.round(convertDistanceKm(d.distance, units) * 10) / 10,
-      avgScore: d.scoreDistance > 0 ? Math.round(d.score / d.scoreDistance) : null,
-      avgSviScore: d.sviCount > 0 ? Math.round(d.svi / d.sviCount) : null,
-    }));
-  })();
+  // O57 — one bucket per declared local day, from the reducer. The buckets
+  // exist before a row is read, which is what keeps the accumulator fixed.
+  // O57: the complete selected window, merged from its bounded segments. A
+  // 90-day selection charts 90 local days; it is never silently shortened.
+  // The "so far" count is the days whose segment reached terminal EOF, not the
+  // merged row count: the reducer preinitializes every declared bucket, so its
+  // first partial answer already has one row per day and would read as done.
+  const dailyWindowLabel = reportData.dailyComplete
+    ? `last ${reportData.dailyDays.length} days`
+    : `last ${reportData.dailyDaysSettled ?? 0} of ${reportData.dailyDays.length} days so far`;
+  const dailyData = (reportData.dailySeries ?? []).map((day) => ({
+    date: new Date(`${day.date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    distance: Math.round(convertDistanceKm(Number(day.distance) || 0, units) * 10) / 10,
+    trips: Number(day.trips) || 0,
+    avgScore: day.avgScore == null ? null : Math.round(day.avgScore),
+    avgSviScore: day.avgSviScore == null ? null : Math.round(day.avgSviScore),
+  }));
 
   const riskLabels = {
     harsh_brake: 'Harsh Braking',
@@ -355,8 +330,67 @@ export default function Reports() {
     close_proximity: 'Brake-Turn Alerts',
   };
 
+  /**
+   * **O60 / O27** — the export scan.
+   *
+   * An explicit, user-triggered Q1 scan of the report window, one bounded page
+   * per turn. A scan that does not reach terminal EOF may not be exported as a
+   * complete period export, so the export refuses rather than writing a short
+   * file that looks complete.
+   */
+  const scanExportWindow = async (onPage) => {
+    let cursor = null;
+    for (let turn = 0; turn < 5000; turn += 1) {
+      const page = await p7TripQueries.historyPage({
+        sort: '-start_time', status: 'completed', limit: 200,
+        range: reportData.window, cursor,
+      });
+      if (page.unavailable) return false;
+      onPage(page.data ?? []);
+      // Q1's `completeness` describes **this page**: it is `EXACT` whenever a
+      // full page was filled, and carries a continuation when more remains.
+      // So the terminal signal for a scan is a null continuation and nothing
+      // else — treating `EXACT` as the end stops after the first page and
+      // calls a 50-row slice a complete export.
+      if (!page.continuation) return true;
+      cursor = page.continuation;
+    }
+    return false;
+  };
+
+  const refuseShortExport = () => toast({
+    title: 'Export not written',
+    description: 'The full period could not be read, and a partial scan is not exported as a complete period export. Your saved trips were not changed.',
+    variant: 'destructive',
+  });
+
+  /**
+   * AUD-003. `gates.exportExact` was computed and never consumed.
+   *
+   * The export scan already refuses a window it could not finish, but the REPORT's own
+   * state is a second, independent way for an export to be a lie: a period that is
+   * unavailable or still being totalled cannot produce a complete-period artifact however
+   * well the scan goes. Both exports refuse, rather than writing a file that looks final.
+   */
+  const refusePartialExport = () => toast({
+    title: 'Export not written',
+    description: reportState === REPORT_STATE.UNAVAILABLE
+      ? 'This report period could not be read, so it cannot be exported. Your saved trips were not changed.'
+      : 'This report period has not been fully totalled, so it cannot be exported as a complete period. Choose "Finish analysis" first.',
+    variant: 'destructive',
+  });
+
   const handleExport = async () => {
-    const csv = tripsToCSV(trips, { includeTelemetry: false });
+    if (!gates.exportExact) { refusePartialExport(); return; }
+    // One trip resident at a time: the writer emits a line per row and the
+    // page is released before the next one is read.
+    const writer = createTripCsvWriter({ includeTelemetry: false });
+    const lines = writer.headerLines();
+    const complete = await scanExportWindow((rows) => {
+      rows.forEach((trip) => lines.push(writer.rowLine(trip)));
+    });
+    if (!complete) { refuseShortExport(); return; }
+    const csv = lines.join('\n');
     const result = await downloadCSV(csv, `road-sage-report-${period}-${new Date().toISOString().split('T')[0]}.csv`);
     toast({
       title: 'Export saved',
@@ -375,10 +409,15 @@ export default function Reports() {
   };
 
   const handlePdfExport = async () => {
+    if (!gates.exportExact) { refusePartialExport(); return; }
     setPdfLoading(true);
     try {
+      // The same bounded scan. The PDF builder folds summaries, never payloads.
+      const rows = [];
+      const complete = await scanExportWindow((page) => { rows.push(...page); });
+      if (!complete) { refuseShortExport(); return; }
       const { exportMonthlyReportPDF } = await import('@/lib/pdfExport');
-      const result = await exportMonthlyReportPDF(trips, period, settings);
+      const result = await exportMonthlyReportPDF(rows, period, settings);
       toast({
         title: 'PDF saved',
         description: result?.native
@@ -399,6 +438,9 @@ export default function Reports() {
   };
 
   const handleUbiExport = async () => {
+    // The score card IS the composed conclusion, so it takes the grade gate, not merely
+    // the export gate.
+    if (!gates.grade) { refusePartialExport(); return; }
     setUbiLoading(true);
     try {
       const { exportUBIReportPDF } = await import('@/lib/pdfExport');
@@ -426,49 +468,73 @@ export default function Reports() {
   const worstTripScore = summary.worst_trip ? getTripComponentScore(summary.worst_trip, 'overall') : null;
   const { color: bestColor } = bestTripScore?.value == null ? { color: 'text-muted-foreground' } : getScoreColor(bestTripScore.value);
   const { color: worstColor } = worstTripScore?.value == null ? { color: 'text-muted-foreground' } : getScoreColor(worstTripScore.value);
-  const previousTrips = (() => {
-    if (period === 'all') return [];
-    const previousCutoff = cutoff - periodDays * 24 * 3600 * 1000;
-    return completed.filter((trip) => {
-      const time = new Date(trip.start_time).getTime();
-      return time >= previousCutoff && time < cutoff;
-    });
-  })();
-  const previousSummary = generateReportSummary(previousTrips);
+  // O62 — the prior window is read by its own reducers, and is absent by
+  // design when the period is `all`. The UI keeps its "Need prior period"
+  // copy in that case rather than showing a 0 delta.
+  const previousSummary = useMemo(() => reportSummaryFromTerms({
+    durationDistance: reportData.previousTerms.durationDistance,
+    eventTotals: reportData.previousTerms.eventTotals,
+  }), [reportData.previousTerms]);
+  const hasPrevious = reportData.hasPrevious && previousSummary.total_trips > 0;
   const riskRows = getRiskRows(summary);
   const topRisk = riskRows
     .map(({ key, label, count }) => ({ key, label, count }))
     .sort((a, b) => b.count - a.count)[0];
-  const reportInsights = buildReportInsights({
-    trips,
+  const reportInsights = reportInsightsFromTerms({
     period,
     periodDays,
     summary,
     previousSummary,
-    previousTrips,
-    topRisk,
+    hasPrevious,
+    // O69: a distinct LOCAL day count from the reducer, never a UTC bucket.
+    activeLocalDays: terms.activityStats?.active_local_days ?? 0,
+    // O66/O67: the Report four-counter clean predicate and the scored-row
+    // count, both declared by the one event reducer.
+    cleanTripCount: terms.eventTotals?.report_clean_trip_count ?? 0,
+    scoredTripCount: terms.eventTotals?.scored_trip_count ?? 0,
     timeOfDayData,
     dayOfWeekData,
     peakHourStress,
+    riskRowsOf: getRiskRows,
+    // AUD-003: the recommended focus is a PERIOD-level conclusion — it names the biggest
+    // score drag "this period" and its negative branch says the report found no dominant
+    // risk. Both are terminal claims, and over a partial tally both describe whatever
+    // happened to be counted first. Only the frozen O72 ladder's terminal answers are
+    // gated; the ladder itself is unchanged.
+    nextActionFor: () => recommendedFocusCopy({
+      allowed: gates.tips,
+      terminalMessage: nextActionMessage(topRisk, peakHourStress),
+    }).text,
   });
-  const scoreDistribution = buildScoreDistribution(trips);
+  const scoreDistribution = scoreDistributionFromProfile(profiles);
   const componentScores = [
-    { label: 'Safety', value: averageComponentScore(trips, 'safety'), icon: ShieldCheck },
-    { label: 'Smoothness', value: averageComponentScore(trips, 'smoothness'), icon: Activity },
+    { label: 'Safety', value: componentScoreFromTerms(terms.durationDistance, 'safety'), icon: ShieldCheck },
+    { label: 'Smoothness', value: componentScoreFromTerms(terms.durationDistance, 'smoothness'), icon: Activity },
   ];
   const distanceDeltaLabel = reportInsights.distanceDelta == null
     ? 'Need prior period'
     : `${reportInsights.distanceDelta > 0 ? '+' : reportInsights.distanceDelta < 0 ? '-' : ''}${formatDistance(Math.abs(reportInsights.distanceDelta), units)} vs prior`;
   const reportTakeaways = [
+    // AUD-003: "No trips were recorded" is a TERMINAL claim. It is true only of an exact
+    // empty period; a partial tally that has not yet counted one is a different fact, and
+    // saying the terminal sentence there tells the driver their trips are missing.
     summary.total_trips > 0
-      ? `${summary.total_trips} trips covered ${formatDistance(summary.total_distance_km, units)} with an average score of ${formatEstimatedScore(summary.avg_score, { empty: 'unavailable' })}.`
-      : 'No trips were recorded in this report period.',
-    previousTrips.length > 0 && summary.avg_score != null && previousSummary.avg_score != null
+      ? isPartial
+        ? `At least ${summary.total_trips} trips covering at least ${formatDistance(summary.total_distance_km, units)} counted so far; this period is still being totalled.`
+        : `${summary.total_trips} trips covered ${formatDistance(summary.total_distance_km, units)} with an average score of ${formatEstimatedScore(summary.avg_score, { empty: 'unavailable' })}.`
+      : isPartial
+        ? 'No trips counted so far - this report period is still being totalled.'
+        : 'No trips were recorded in this report period.',
+    hasPrevious && summary.avg_score != null && previousSummary.avg_score != null
       ? `Compared with the previous period, score ${summary.avg_score >= previousSummary.avg_score ? 'improved' : 'dropped'} by ${Math.abs(reportInsights.scoreDelta)} points.`
       : 'Complete another matching period to unlock period-over-period comparison.',
-    topRisk?.count > 0
-      ? `Main thing to work on: ${topRisk.label.toLowerCase()} (${topRisk.count} event${topRisk.count === 1 ? '' : 's'}).`
-      : 'No dominant risk event stood out in this period.',
+    // A dominant risk named over a partial tally is a conclusion about whatever happened
+    // to be counted, and "none stood out" is a terminal claim the same way.
+    gates.tips
+      ? topRisk?.count > 0
+        ? `Main thing to work on: ${topRisk.label.toLowerCase()} (${topRisk.count} event${topRisk.count === 1 ? '' : 's'}).`
+        : 'No dominant risk event stood out in this period.'
+      : withheldCopy('A dominant risk event for the period'),
   ];
 
   return (
@@ -482,14 +548,17 @@ export default function Reports() {
         <div className="grid grid-cols-1 gap-2 sm:min-w-[13rem]">
           <button
             onClick={handleExport}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-secondary"
+            disabled={!gates.exportExact}
+            title={gates.exportExact ? 'Export this period as CSV' : 'The period must be fully totalled before it can be exported'}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-secondary disabled:opacity-60"
           >
             <Download className="w-4 h-4" />
-            Export {trips.length} Trips
+            {/* AUD-003: the count on the button is itself a claim about the period. */}
+            {gates.exportExact ? `Export ${summary.total_trips} Trips` : 'Export unavailable'}
           </button>
           <button
             onClick={handlePdfExport}
-            disabled={pdfLoading}
+            disabled={pdfLoading || !gates.exportExact}
             title={`Export ${exportSummary.periodLabel.toLowerCase()} report as PDF`}
             className="flex items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
           >
@@ -498,8 +567,10 @@ export default function Reports() {
           </button>
           <button
             onClick={handleUbiExport}
-            disabled={ubiLoading}
-            title={ubiReport.insufficientData ? 'Export score card PDF with the current insufficient-data status' : 'Export score card as PDF'}
+            disabled={ubiLoading || !gates.grade}
+            title={!gates.grade
+              ? 'The score card needs the full period before it can be exported'
+              : ubiReport.insufficientData ? 'Export score card PDF with the current insufficient-data status' : 'Export score card as PDF'}
             className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-secondary disabled:opacity-60"
           >
             <Award className="w-4 h-4" />
@@ -551,8 +622,20 @@ export default function Reports() {
         <div className="space-y-4">
           {[1, 2, 3].map(i => <div key={i} className="h-32 bg-secondary/50 rounded-2xl animate-pulse" />)}
         </div>
-      ) : trips.length === 0 ? (
-        <div className="flex flex-col items-center rounded-3xl border border-dashed border-border bg-card py-16 px-4 text-center">
+      ) : reportState === REPORT_STATE.UNAVAILABLE ? (
+        /* AUD-003: a refusal is not an empty period. Nothing here claims the driver did
+           not drive, because that is exactly what could not be read. */
+        <div
+          data-testid="report-unavailable"
+          className="flex flex-col items-center rounded-3xl border border-dashed border-destructive/50 bg-card py-16 px-4 text-center"
+        >
+          <BarChart3 className="mb-3 h-12 w-12 text-muted-foreground" />
+          <div className="font-semibold">{unavailableReport.title}</div>
+          <div className="mt-1 max-w-sm text-sm text-muted-foreground">{unavailableReport.detail}</div>
+        </div>
+      ) : showsGenuineEmptyState(reportState) ? (
+        /* The ONLY truthful no-trips state: the period was totalled and is empty. */
+        <div data-testid="report-exact-empty" className="flex flex-col items-center rounded-3xl border border-dashed border-border bg-card py-16 px-4 text-center">
           <BarChart3 className="w-12 h-12 text-muted-foreground mb-3" />
           <div className="font-semibold">No report data yet</div>
           <div className="mt-1 max-w-xs text-muted-foreground text-sm">
@@ -561,6 +644,19 @@ export default function Reports() {
         </div>
       ) : (
         <>
+          {isPartial && (
+            /* AUD-003: every figure below is a FLOOR until the tally reaches terminal EOF.
+               Saying so once, prominently, is what stops the page reading as complete. */
+            <div
+              data-testid="report-partial-notice"
+              className="rounded-2xl border border-dashed border-border bg-secondary/40 px-4 py-3 text-sm text-muted-foreground"
+            >
+              <span className="font-semibold text-foreground">Totals so far.</span>{' '}
+              This period has not been fully totalled, so every number below is at least
+              what is shown, never the complete figure. Choose &quot;Finish analysis&quot;
+              to complete the tally.
+            </div>
+          )}
           <section className="rounded-3xl border border-border bg-card shadow-sm">
             <div className="grid gap-0 lg:grid-cols-[1.15fr_0.85fr]">
               <div className="border-b border-border p-5 lg:border-b-0 lg:border-r">
@@ -576,8 +672,11 @@ export default function Reports() {
                 </div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {[
-                    { icon: TrendingUp, label: 'Avg score', value: formatEstimatedScore(summary.avg_score), sub: previousTrips.length ? `${formatSignedNumber(reportInsights.scoreDelta, ' pts')} vs prior` : 'Need prior period' },
-                    { icon: Navigation, label: 'Distance', value: formatDistance(summary.total_distance_km, units), sub: previousTrips.length ? distanceDeltaLabel : `${summary.total_trips} trips` },
+                    // AUD-003: an average over a partial tally is not the period's average,
+                    // and a partial distance is a floor. Both say so rather than rounding
+                    // into a figure that reads as the finished number.
+                    { icon: TrendingUp, label: 'Avg score', value: formatEstimatedScore(summary.avg_score), sub: isPartial ? 'Over trips counted so far' : hasPrevious ? `${formatSignedNumber(reportInsights.scoreDelta, ' pts')} vs prior` : 'Need prior period' },
+                    { icon: Navigation, label: 'Distance', value: formatPartialTotal(formatDistance(summary.total_distance_km, units), reportState), sub: isPartial ? `${summary.total_trips} trips counted so far` : hasPrevious ? distanceDeltaLabel : `${summary.total_trips} trips` },
                     { icon: Activity, label: `Events / 100 ${distanceUnitLabel(units)}`, value: reportInsights.eventRate == null ? '-' : convertPerDistanceRate(reportInsights.eventRate, units).toFixed(1), sub: reportInsights.eventRateDelta == null ? 'Rate unlocks with prior' : `${formatSignedNumber(convertPerDistanceRate(reportInsights.eventRateDelta, units), '')} vs prior` },
                     { icon: ShieldCheck, label: 'Clean trips', value: formatPercent(reportInsights.cleanTripPercent), sub: `${reportInsights.confidence} confidence` },
                   ].map(({ icon: Icon, label, value, sub }) => (
@@ -731,7 +830,18 @@ export default function Reports() {
                     Visible limitation: UBI-style score is an internal coaching estimate, not an insurer rating.
                   </p>
                 </div>
-                {ubiReport.insufficientData ? (
+                {!gates.grade ? (
+                  /* AUD-003: the score and its radar FOLD the period totals and the mileage
+                     window. Over a partial or refused input the number is wrong, not merely
+                     imprecise, so the composed conclusion is withheld with a stated reason
+                     rather than rendered with a caveat beside it. */
+                  <div
+                    data-testid="report-ubi-withheld"
+                    className="text-sm font-semibold text-muted-foreground sm:max-w-[14rem] sm:text-right"
+                  >
+                    {withheldCopy('A score-card score')}
+                  </div>
+                ) : ubiReport.insufficientData ? (
                   <div className="text-sm font-semibold text-muted-foreground sm:text-right">Insufficient data</div>
                 ) : (
                   <div className="min-w-0 text-left sm:max-w-[12rem] sm:text-right">
@@ -767,9 +877,10 @@ export default function Reports() {
               {!ubiReport.insufficientData && ubiReport.assumptions && (
                 <p className="mt-3 rounded-xl bg-secondary/50 p-3 text-xs text-muted-foreground">
                   Mileage score assumes {formatDistanceScope(ubiReport.assumptions.optimalAnnualKm, units, 0)}/year as the optimal annual distance. Adjust the UBI mileage assumption in Settings if your region or use case differs.
+                  {!gates.mileage && ` The mileage window is still being totalled, so this input is a floor - ${withheldCopy('a rate-based mileage score')}`}
                 </p>
               )}
-              {!ubiReport.insufficientData && (
+              {gates.grade && !ubiReport.insufficientData && (
                 <DeferredRecharts height={220}>
                   {({ ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar, Tooltip }) => (
                     <ResponsiveContainer width="100%" height={220}>
@@ -789,7 +900,9 @@ export default function Reports() {
             </div>
             <h2 className="font-semibold mb-1">Vs. Your Baseline</h2>
             <p className="text-xs text-muted-foreground mb-4">
-              {baselineText}
+              {gates.baseline
+                ? baselineText
+                : `${baselineText} ${withheldCopy('A comparable baseline')}`}
             </p>
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-secondary/50 rounded-xl p-3">
@@ -1089,7 +1202,10 @@ export default function Reports() {
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
             >
             <h2 className="font-semibold mb-1">Daily Distance</h2>
-            <p className="text-xs text-muted-foreground mb-4">{units === 'imperial' ? 'Miles' : 'Kilometers'} driven per day</p>
+            {/* O57: the subtitle names the window the chart actually covers,
+                and while segments are still settling it says so rather than
+                presenting a short series as the selected period. */}
+            <p className="text-xs text-muted-foreground mb-4">{units === 'imperial' ? 'Miles' : 'Kilometers'} driven per day &middot; {dailyWindowLabel}</p>
             <DeferredRecharts height={160}>
               {({ ResponsiveContainer, AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip }) => (
                 <ResponsiveContainer width="100%" height={160}>
@@ -1122,7 +1238,7 @@ export default function Reports() {
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
             >
             <h2 className="font-semibold mb-1">Score Trend</h2>
-            <p className="text-xs text-muted-foreground mb-4">Average daily driving score</p>
+            <p className="text-xs text-muted-foreground mb-4">Average daily driving score &middot; {dailyWindowLabel}</p>
             <DeferredRecharts height={140}>
               {({ ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip }) => (
                 <ResponsiveContainer width="100%" height={140}>
@@ -1150,7 +1266,13 @@ export default function Reports() {
             className="bg-card border border-border rounded-3xl p-5 shadow-sm"
             >
             <h2 className="font-semibold mb-1">Event Trends - Last 6 Months</h2>
-            <p className="text-xs text-muted-foreground mb-4">Harsh braking vs rapid acceleration per month</p>
+            {/* AUD-003: a trend read off a non-terminal reducer is a trend over whatever
+                happened to be counted, not over six months. It carries its own signal. */}
+            <p className="text-xs text-muted-foreground mb-4" data-testid="report-trend-caption">
+              {gates.trend
+                ? 'Harsh braking vs rapid acceleration per month'
+                : 'Harsh braking vs rapid acceleration per month, counted so far - these bars are floors, not the finished months.'}
+            </p>
             <DeferredRecharts height={170}>
               {({ ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip }) => (
                 <ResponsiveContainer width="100%" height={170}>
@@ -1190,9 +1312,14 @@ export default function Reports() {
                     : `${formatPerDistanceRate(reportInsights.eventRate, units, { suffix: 'events' })} in this period.`}
                 </p>
               </div>
+              {/* AUD-003: "Focus: X" is the same period conclusion in a chip. Over a
+                  partial tally it says so rather than naming a winner. */}
               {topRisk?.count > 0 && (
-                <span className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700 dark:bg-orange-950/30 dark:text-orange-300">
-                  Focus: {topRisk.label}
+                <span
+                  data-testid={gates.tips ? 'report-risk-focus' : 'report-risk-focus-partial'}
+                  className="rounded-full bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700 dark:bg-orange-950/30 dark:text-orange-300"
+                >
+                  {riskFocusChipCopy({ allowed: gates.tips, label: topRisk.label }).text}
                 </span>
               )}
             </div>
@@ -1221,20 +1348,37 @@ export default function Reports() {
                 );
               })}
             </div>
+            {/* AUD-003: "Most common risk" plus "Focus on improving this" is a
+                whole-period conclusion and its own instruction. One section of the page
+                may not decline to name a dominant risk while this one names it. */}
             {summary.most_common_risk && (
-              <div className="mt-4 p-3 bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800/40 rounded-xl text-sm">
+              <div
+                data-testid={gates.tips ? 'report-common-risk' : 'report-common-risk-partial'}
+                className="mt-4 p-3 bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800/40 rounded-xl text-sm"
+              >
                 <div className="text-orange-600 dark:text-orange-400 font-medium">
-                  Most common risk: {riskLabels[summary.most_common_risk]}
+                  {commonRiskCopy({ allowed: gates.tips, label: riskLabels[summary.most_common_risk] }).text}
                 </div>
                 <div className="text-orange-500 dark:text-orange-500/80 text-xs mt-0.5">
-                  Focus on improving this for a better score
+                  {commonRiskCopy({ allowed: gates.tips, label: riskLabels[summary.most_common_risk] }).detail}
                 </div>
               </div>
             )}
           </motion.div>
 
           {/* Best & Worst */}
-          {summary.best_trip && (
+          {/* AUD-003: "best and worst trip of the period" ranks over the whole period. Over
+              a partial tally it names the best of whatever was counted first, which reads
+              as a period record and is not one. */}
+          {!gates.records && (
+            <div
+              data-testid="report-records-withheld"
+              className="rounded-2xl border border-dashed border-border bg-secondary/30 px-4 py-3 text-sm text-muted-foreground"
+            >
+              {withheldCopy('Best and worst trip for the period')}
+            </div>
+          )}
+          {gates.records && summary.best_trip && (
             <motion.div
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}

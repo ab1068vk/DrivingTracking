@@ -9,8 +9,30 @@ export const DIAGNOSTICS_EVENT_KINDS = Object.freeze([
   'app_experience',
 ]);
 
+export const DIAGNOSTICS_PRIVACY_CLASSES = Object.freeze([
+  'sensitive',
+  'standard',
+]);
+
 export const MAX_FLUSH_BATCH = 64;
 export const MAX_PRUNE_DELETES_PER_TX = 128;
+
+export const deleteDiagnosticsDatabase = (indexedDbFactory = globalThis.indexedDB) => new Promise((resolve, reject) => {
+  if (!indexedDbFactory || typeof indexedDbFactory.deleteDatabase !== 'function') {
+    resolve({ deleted: false, reason: 'indexeddb_unavailable' });
+    return;
+  }
+  let request;
+  try {
+    request = indexedDbFactory.deleteDatabase(DIAGNOSTICS_DB_NAME);
+  } catch (error) {
+    reject(error);
+    return;
+  }
+  request.onsuccess = () => resolve({ deleted: true, database: DIAGNOSTICS_DB_NAME });
+  request.onerror = () => reject(request.error ?? new Error('Diagnostics database deletion failed.'));
+  request.onblocked = () => reject(new Error('Diagnostics database deletion was blocked.'));
+});
 
 export const DIAGNOSTICS_EVENT_INDEXES = Object.freeze([
   Object.freeze({
@@ -46,7 +68,9 @@ export const DIAGNOSTICS_EVENT_INDEXES = Object.freeze([
 ]);
 
 const INGEST_SEQUENCE_META_KEY = 'ingest_sequence';
+const MIGRATION_EVENT_UID_PREFIX = 'migration:';
 const EVENT_KIND_SET = new Set(DIAGNOSTICS_EVENT_KINDS);
+const PRIVACY_CLASS_SET = new Set(DIAGNOSTICS_PRIVACY_CLASSES);
 
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 
@@ -65,6 +89,23 @@ const requireFiniteNumber = (value, label) => {
 const requireNonNegativeInteger = (value, label) => {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new TypeError(`${label} must be a non-negative safe integer.`);
+  }
+  return value;
+};
+
+const requireEventUid = (value, { allowMigration = false, label = 'eventUid' } = {}) => {
+  if (typeof value !== 'string' || !value.trim() || value !== value.trim()) {
+    throw new TypeError(`${label} must be a non-empty, whitespace-trimmed string.`);
+  }
+  if (!allowMigration && value.startsWith(MIGRATION_EVENT_UID_PREFIX)) {
+    throw new TypeError(`${label} uses the reserved migration namespace.`);
+  }
+  return value;
+};
+
+const requirePrivacyClass = (value) => {
+  if (!PRIVACY_CLASS_SET.has(value)) {
+    throw new TypeError(`privacyClass must be one of: ${DIAGNOSTICS_PRIVACY_CLASSES.join(', ')}.`);
   }
   return value;
 };
@@ -144,9 +185,6 @@ const validatePreparedEvent = (record) => {
     throw new TypeError('A prepared diagnostics event must be an object.');
   }
   requireEventKind(record.kind);
-  if (typeof record.eventUid !== 'string' || !record.eventUid) {
-    throw new TypeError('eventUid must be a non-empty string.');
-  }
   requireFiniteNumber(record.payloadTimestampMs, 'payloadTimestampMs');
   requireNonNegativeInteger(record.clearEpoch, 'clearEpoch');
   if (!hasOwn(record, 'payload')) throw new TypeError('A prepared diagnostics event must contain payload.');
@@ -160,17 +198,61 @@ const validatePreparedEvent = (record) => {
   if (hasOwn(record, 'migrationOrdinal')) {
     requireNonNegativeInteger(record.migrationOrdinal, 'migrationOrdinal');
   }
+  const migrationUid = typeof record.eventUid === 'string'
+    && record.eventUid.startsWith(MIGRATION_EVENT_UID_PREFIX);
+  if (migrationUid) {
+    if (!hasOwn(record, 'migrationGeneration') || !hasOwn(record, 'migrationOrdinal')) {
+      throw new TypeError('A migration eventUid requires deterministic migration metadata.');
+    }
+    const expectedUid = createDeterministicLegacyEventUid(
+      record.kind,
+      record.migrationGeneration,
+      record.migrationOrdinal,
+    );
+    if (record.eventUid !== expectedUid) {
+      throw new TypeError('A migration eventUid must match its deterministic migration metadata.');
+    }
+    requireEventUid(record.eventUid, { allowMigration: true });
+  } else {
+    requireEventUid(record.eventUid);
+  }
+  if (record.kind === 'system_log' || hasOwn(record, 'privacyClass')) {
+    requirePrivacyClass(record.privacyClass);
+  }
   return record;
+};
+
+const logicalValuesEqual = (left, right, seen = new WeakMap()) => {
+  if (Object.is(left, right)) return true;
+  if (
+    left === null
+    || right === null
+    || typeof left !== 'object'
+    || typeof right !== 'object'
+  ) return false;
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (!Array.isArray(left)) {
+    const leftPrototype = Object.getPrototypeOf(left);
+    const rightPrototype = Object.getPrototypeOf(right);
+    const plainLeft = leftPrototype === Object.prototype || leftPrototype === null;
+    const plainRight = rightPrototype === Object.prototype || rightPrototype === null;
+    if (!plainLeft || !plainRight || leftPrototype !== rightPrototype) return false;
+  }
+  const priorRight = seen.get(left);
+  if (priorRight !== undefined) return priorRight === right;
+  seen.set(left, right);
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key, index) => (
+    key === rightKeys[index] && logicalValuesEqual(left[key], right[key], seen)
+  ));
 };
 
 const recordsMatchForRetry = (stored, prepared) => {
   if (!stored || typeof stored !== 'object') return false;
   const { ingestSeq: _storedIngestSeq, ...storedPrepared } = stored;
-  try {
-    return JSON.stringify(storedPrepared) === JSON.stringify(prepared);
-  } catch {
-    return false;
-  }
+  return logicalValuesEqual(storedPrepared, prepared);
 };
 
 const readHighWater = (metaRecord) => {
@@ -189,12 +271,47 @@ const globalIndexedDb = () => {
   }
 };
 
+const globalKeyRange = () => {
+  try {
+    return typeof IDBKeyRange === 'undefined' ? null : IDBKeyRange;
+  } catch {
+    return null;
+  }
+};
+
+const createRange = (factory, descriptor) => {
+  if (!descriptor) return null;
+  if (!factory) throw new Error('IndexedDB key ranges are unavailable.');
+  if (hasOwn(descriptor, 'only')) return factory.only(descriptor.only);
+  if (hasOwn(descriptor, 'lower') && hasOwn(descriptor, 'upper')) {
+    return factory.bound(
+      descriptor.lower,
+      descriptor.upper,
+      Boolean(descriptor.lowerOpen),
+      Boolean(descriptor.upperOpen),
+    );
+  }
+  if (hasOwn(descriptor, 'lower')) return factory.lowerBound(descriptor.lower, Boolean(descriptor.lowerOpen));
+  if (hasOwn(descriptor, 'upper')) return factory.upperBound(descriptor.upper, Boolean(descriptor.upperOpen));
+  throw new TypeError('Invalid diagnostics key-range descriptor.');
+};
+
+const requireBoundedCount = (value, label, maximum) => {
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new RangeError(`${label} must be between 1 and ${maximum}.`);
+  }
+  return value;
+};
+
 export const createDiagnosticsStorage = (options = {}) => {
   const indexedDbFactory = hasOwn(options, 'indexedDbFactory')
     ? options.indexedDbFactory
     : globalIndexedDb();
   const now = options.now ?? (() => Date.now());
   const uidFactory = options.uidFactory ?? createDefaultUidFactory();
+  const keyRangeFactory = hasOwn(options, 'keyRangeFactory')
+    ? options.keyRangeFactory
+    : globalKeyRange();
   let connection = null;
   let openPromise = null;
 
@@ -276,7 +393,7 @@ export const createDiagnosticsStorage = (options = {}) => {
     return typeof queued === 'function' ? queued() : queued;
   };
 
-  const prepareEvent = (kind, payload, eventOptions = {}) => {
+  const buildPreparedEvent = (kind, payload, eventOptions = {}, { allowMigrationUid = false } = {}) => {
     requireEventKind(kind);
     const nowMs = requireFiniteNumber(now(), 'Diagnostics clock');
     const payloadTimestampMs = hasOwn(eventOptions, 'payloadTimestampMs')
@@ -286,18 +403,20 @@ export const createDiagnosticsStorage = (options = {}) => {
       ? requireNonNegativeInteger(eventOptions.clearEpoch, 'clearEpoch')
       : 0;
     const suppliedUid = eventOptions.eventUid;
-    const uidPart = suppliedUid === undefined ? uidFactory({ kind, nowMs }) : null;
-    if (suppliedUid === undefined && (typeof uidPart !== 'string' || !uidPart)) {
-      throw new TypeError('Diagnostics UID factory must return a non-empty string.');
-    }
-    const generatedUid = suppliedUid ?? `live:${kind}:${uidPart}`;
-    if (typeof generatedUid !== 'string' || !generatedUid) {
-      throw new TypeError('Diagnostics UID factory must return a non-empty value.');
+    let eventUid;
+    if (suppliedUid === undefined) {
+      const uidPart = requireEventUid(uidFactory({ kind, nowMs }), {
+        allowMigration: true,
+        label: 'Diagnostics UID factory result',
+      });
+      eventUid = `live:${kind}:${uidPart}`;
+    } else {
+      eventUid = requireEventUid(suppliedUid, { allowMigration: allowMigrationUid });
     }
 
     const record = {
       kind,
-      eventUid: generatedUid,
+      eventUid,
       payloadTimestampMs,
       clearEpoch,
     };
@@ -315,6 +434,10 @@ export const createDiagnosticsStorage = (options = {}) => {
     return validatePreparedEvent(record);
   };
 
+  const prepareEvent = (kind, payload, eventOptions = {}) => (
+    buildPreparedEvent(kind, payload, eventOptions)
+  );
+
   const prepareMigratedEvent = (kind, payload, eventOptions) => {
     if (!eventOptions || typeof eventOptions !== 'object') {
       throw new TypeError('Migration event options are required.');
@@ -322,15 +445,15 @@ export const createDiagnosticsStorage = (options = {}) => {
     const migrationGeneration = String(eventOptions.migrationGeneration ?? '');
     const migrationOrdinal = requireNonNegativeInteger(eventOptions.migrationOrdinal, 'migrationOrdinal');
     if (!migrationGeneration) throw new TypeError('migrationGeneration must not be empty.');
-    return prepareEvent(kind, payload, {
+    return buildPreparedEvent(kind, payload, {
       ...eventOptions,
       eventUid: createDeterministicLegacyEventUid(kind, migrationGeneration, migrationOrdinal),
       migrationGeneration,
       migrationOrdinal,
-    });
+    }, { allowMigrationUid: true });
   };
 
-  const appendPreparedEvents = async (records) => {
+  const appendPreparedEvents = async (records, instrumentation = {}) => {
     if (!Array.isArray(records)) throw new TypeError('Diagnostics event batch must be an array.');
     if (records.length > MAX_FLUSH_BATCH) {
       throw new RangeError(`Diagnostics event batch exceeds MAX_FLUSH_BATCH (${MAX_FLUSH_BATCH}).`);
@@ -343,7 +466,12 @@ export const createDiagnosticsStorage = (options = {}) => {
       uids.add(eventUid);
     });
 
+    const syncNow = instrumentation.now ?? (() => Date.now());
+    const recordSync = typeof instrumentation.recordSync === 'function'
+      ? instrumentation.recordSync
+      : null;
     const db = await open();
+    const scheduleStart = recordSync ? syncNow() : 0;
     const transaction = db.transaction(
       [DIAGNOSTICS_EVENTS_STORE, DIAGNOSTICS_META_STORE],
       'readwrite',
@@ -372,6 +500,7 @@ export const createDiagnosticsStorage = (options = {}) => {
       const finishReads = () => {
         pendingReads -= 1;
         if (pendingReads !== 0 || failed) return;
+        const callbackStart = recordSync ? syncNow() : 0;
         try {
           let highWater = readHighWater(highWaterRecord);
           let insertedAny = false;
@@ -390,8 +519,10 @@ export const createDiagnosticsStorage = (options = {}) => {
             return stored;
           });
           if (insertedAny) meta.put({ key: INGEST_SEQUENCE_META_KEY, value: highWater });
+          if (recordSync) recordSync('diag_transform', callbackStart, syncNow());
           resolve(storedRecords);
         } catch (error) {
+          if (recordSync) recordSync('diag_transform', callbackStart, syncNow());
           fail(error);
         }
       };
@@ -412,6 +543,7 @@ export const createDiagnosticsStorage = (options = {}) => {
         request.onerror = () => fail(request.error ?? new Error(`Failed to read diagnostics event ${record.eventUid}.`));
       });
     });
+    if (recordSync) recordSync('diag_set', scheduleStart, syncNow());
 
     try {
       const storedRecords = await staged;
@@ -439,13 +571,113 @@ export const createDiagnosticsStorage = (options = {}) => {
     },
   );
 
+  const deleteMeta = (key) => runTransaction(
+    DIAGNOSTICS_META_STORE,
+    'readwrite',
+    ({ objectStore }) => {
+      objectStore(DIAGNOSTICS_META_STORE).delete(key);
+    },
+  );
+
+  const readEventsByIndex = (indexName, {
+    range = null,
+    limit = 5000,
+    direction = 'next',
+  } = {}) => {
+    requireBoundedCount(limit, 'Indexed diagnostics read limit', 10000);
+    if (!['next', 'prev'].includes(direction)) throw new TypeError('Unsupported diagnostics index direction.');
+    let request;
+    return runTransaction(DIAGNOSTICS_EVENTS_STORE, 'readonly', ({ objectStore }) => {
+      const index = objectStore(DIAGNOSTICS_EVENTS_STORE).index(indexName);
+      request = index.getAll(createRange(keyRangeFactory, range), limit);
+      return () => {
+        const records = Array.isArray(request.result) ? request.result : [];
+        return direction === 'prev' ? records.reverse() : records;
+      };
+    });
+  };
+
+  const readEventsByUids = (eventUids) => {
+    if (!Array.isArray(eventUids)) throw new TypeError('Diagnostics point-read keys must be an array.');
+    if (eventUids.length > MAX_PRUNE_DELETES_PER_TX) {
+      throw new RangeError(
+        `Diagnostics point-read batch exceeds MAX_PRUNE_DELETES_PER_TX (${MAX_PRUNE_DELETES_PER_TX}).`,
+      );
+    }
+    if (eventUids.length === 0) return Promise.resolve([]);
+    const normalizedUids = eventUids.map((eventUid) => (
+      requireEventUid(eventUid, { allowMigration: true })
+    ));
+    let requests;
+    return runTransaction(DIAGNOSTICS_EVENTS_STORE, 'readonly', ({ objectStore }) => {
+      const events = objectStore(DIAGNOSTICS_EVENTS_STORE);
+      requests = normalizedUids.map((eventUid) => events.get(eventUid));
+      return () => requests
+        .map((request) => request.result)
+        .filter((record) => record !== undefined);
+    });
+  };
+
+  const readEventKeysByIndex = (indexName, { range = null, limit = MAX_PRUNE_DELETES_PER_TX } = {}) => {
+    requireBoundedCount(limit, 'Indexed diagnostics key limit', MAX_PRUNE_DELETES_PER_TX);
+    let request;
+    return runTransaction(DIAGNOSTICS_EVENTS_STORE, 'readonly', ({ objectStore }) => {
+      const index = objectStore(DIAGNOSTICS_EVENTS_STORE).index(indexName);
+      request = index.getAllKeys(createRange(keyRangeFactory, range), limit);
+      return () => (Array.isArray(request.result) ? request.result : []);
+    });
+  };
+
+  const countEventsByIndex = (indexName, { range = null } = {}) => {
+    let request;
+    return runTransaction(DIAGNOSTICS_EVENTS_STORE, 'readonly', ({ objectStore }) => {
+      const index = objectStore(DIAGNOSTICS_EVENTS_STORE).index(indexName);
+      request = index.count(createRange(keyRangeFactory, range));
+      return () => Number(request.result) || 0;
+    });
+  };
+
+  const deleteEventUids = (eventUids) => {
+    if (!Array.isArray(eventUids)) throw new TypeError('Diagnostics delete keys must be an array.');
+    if (eventUids.length > MAX_PRUNE_DELETES_PER_TX) {
+      throw new RangeError(`Diagnostics delete batch exceeds MAX_PRUNE_DELETES_PER_TX (${MAX_PRUNE_DELETES_PER_TX}).`);
+    }
+    return runTransaction(DIAGNOSTICS_EVENTS_STORE, 'readwrite', ({ objectStore }) => {
+      const events = objectStore(DIAGNOSTICS_EVENTS_STORE);
+      eventUids.forEach((eventUid) => events.delete(requireEventUid(eventUid, { allowMigration: true })));
+    });
+  };
+
+  const putStoredEvents = (records) => {
+    if (!Array.isArray(records)) throw new TypeError('Stored diagnostics update must be an array.');
+    if (records.length > MAX_PRUNE_DELETES_PER_TX) {
+      throw new RangeError(`Stored diagnostics update exceeds MAX_PRUNE_DELETES_PER_TX (${MAX_PRUNE_DELETES_PER_TX}).`);
+    }
+    records.forEach((record) => {
+      const { ingestSeq, ...prepared } = record ?? {};
+      validatePreparedEvent(prepared);
+      requireNonNegativeInteger(ingestSeq, 'ingestSeq');
+    });
+    return runTransaction(DIAGNOSTICS_EVENTS_STORE, 'readwrite', ({ objectStore }) => {
+      const events = objectStore(DIAGNOSTICS_EVENTS_STORE);
+      records.forEach((record) => events.put(record));
+    });
+  };
+
   return Object.freeze({
     appendPreparedEvents,
     close,
+    countEventsByIndex,
+    deleteEventUids,
+    deleteMeta,
     getMeta,
     open,
     prepareEvent,
     prepareMigratedEvent,
+    putStoredEvents,
+    readEventKeysByIndex,
+    readEventsByIndex,
+    readEventsByUids,
     runTransaction,
     setMeta,
   });

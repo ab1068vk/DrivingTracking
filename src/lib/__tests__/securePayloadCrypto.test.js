@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  decryptSensitiveValues,
   decryptSensitiveValue,
+  encryptSensitiveValues,
   encryptSensitiveValue,
   isEncryptedPayload,
 } from '@/lib/securePayloadCrypto';
@@ -31,5 +33,20 @@ describe('securePayloadCrypto', () => {
 
     await expect(decryptSensitiveValue(tampered, 'trip:one')).rejects.toThrow();
     await expect(decryptSensitiveValue(encrypted, 'trip:two')).rejects.toThrow();
+  });
+
+  it('preserves ordered bounded array behavior with nonextractable WebCrypto keys', async () => {
+    const entries = Array.from({ length: 17 }, (_, index) => ({
+      value: { id: index, route_points: [{ lat: 43 + index / 100, lng: -79 }] },
+      context: `trip:${index}`,
+    }));
+    const encrypted = await encryptSensitiveValues(entries);
+    expect(encrypted).toHaveLength(entries.length);
+    expect(encrypted.every((payload) => payload.key_provider === 'webcrypto-nonextractable')).toBe(true);
+    const decrypted = await decryptSensitiveValues(encrypted.map((payload, index) => ({
+      payload,
+      context: `trip:${index}`,
+    })));
+    expect(decrypted).toEqual(entries.map((entry) => entry.value));
   });
 });

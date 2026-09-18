@@ -369,7 +369,9 @@ describe('speedKnowledgeRepository native mirror', () => {
             id: 'candidate-50',
             source: 'local_road_memory',
             limitKmh: 50,
-            confidence: 0.7,
+            confidence: 0.68,
+            evidenceConfidence: 0.72,
+            canAffectScoreAndAlerts: true,
             tripCount: 4,
             stage: 'operational',
             intelligenceValidated: true,
@@ -630,7 +632,7 @@ describe('speedKnowledgeRepository native mirror', () => {
     );
   });
 
-  it('reads valid canonical IndexedDB data when the native migration marker write fails', async () => {
+  it('reads valid IndexedDB authority without implicitly running migration or mirror writes', async () => {
     isNativePlatform.mockReturnValue(true);
     getJson.mockResolvedValue(null);
     setJson.mockImplementation(async (key) => {
@@ -688,16 +690,13 @@ describe('speedKnowledgeRepository native mirror', () => {
       corrections: [expect.objectContaining({ id: 'canonical-rule', limitKmh: 50 })],
     });
 
-    expect(setJson).toHaveBeenCalledWith(SPEED_KNOWLEDGE_NATIVE_MIRROR_INITIALIZED_KEY, true);
+    expect(setJson).not.toHaveBeenCalledWith(SPEED_KNOWLEDGE_NATIVE_MIRROR_INITIALIZED_KEY, true);
     expect(removeJson).not.toHaveBeenCalledWith(SPEED_KNOWLEDGE_STORAGE_KEY);
     expect(getNativeSpeedKnowledgeMirrorStatus()).toMatchObject({
-      state: 'error',
-      error: 'Preferences marker unavailable',
+      state: 'unknown',
     });
-    expect(logSystemFailure).toHaveBeenCalledWith(
-      'speed_knowledge_native_mirror_migration',
-      expect.objectContaining({ message: 'Preferences marker unavailable' }),
-      expect.objectContaining({ phase: 'existing_indexeddb' })
+    expect(logSystemFailure).not.toHaveBeenCalledWith(
+      'speed_knowledge_native_mirror_migration', expect.anything(), expect.anything()
     );
   });
 

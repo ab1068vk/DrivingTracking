@@ -238,9 +238,15 @@ describe('Android auto-tracking stats parity', () => {
     const repositorySource = readFileSync(new URL('../localTripRepository.js', import.meta.url), 'utf8');
 
     expect(journalSource).toContain('MAX_ENCRYPTED_CHUNK_BYTES = 512 * 1024');
-    expect(journalSource).toContain('MAX_TOTAL_JOURNAL_BYTES = 32L * 1024L * 1024L');
+    expect(journalSource).not.toContain('MAX_TOTAL_JOURNAL_BYTES');
+    expect(journalSource).toContain('STORAGE_RESERVE_BYTES = 256L * 1024L * 1024L');
+    expect(journalSource).toContain('hasStorageAdmission');
     expect(journalSource).toContain('new AtomicFile(file)');
-    expect(journalSource).toContain('chunks failed pre-commit verification');
+    // P3.5 verifies the complete authenticated plaintext stream before the
+    // manifest becomes authoritative, then verifies it again through the
+    // public journal stream after the atomic manifest commit.
+    expect(journalSource).toContain('streamManifestTo(journalDirectory, stem, manifest, NULL_OUTPUT);');
+    expect(journalSource).toContain('JournalStreamResult verified = streamCompletedTripTo');
     expect(journalSource).toContain('restoreManifest(manifestFile, previousManifest)');
     expect(repositorySource).toContain('verifyTripsPersistedForNativeAcknowledge(importedTrips)');
     expect(repositorySource).toContain('acknowledgeNativeCompletedTrips(acknowledgedTripIds)');
@@ -249,11 +255,19 @@ describe('Android auto-tracking stats parity', () => {
 
   it('re-arms opted-in background tracking after reboot or an app update', () => {
     const receiverSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseBootReceiver.java', import.meta.url), 'utf8');
+    const serviceSource = readFileSync(new URL('../../../android/app/src/main/java/com/drivesense/app/DriveSenseAutoTrackingService.java', import.meta.url), 'utf8');
     const manifestSource = readFileSync(new URL('../../../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
 
-    expect(receiverSource).toContain('DriveSenseNativeTripStore.isServiceEnabled(context)');
-    expect(receiverSource).toContain('DriveSenseAutoTrackingService.start(context)');
+    const enabledGateAt = receiverSource.indexOf('if (!DriveSenseNativeTripStore.isServiceEnabled(context)) return;');
+    const recoveryStartAt = receiverSource.indexOf('DriveSenseAutoTrackingService.startForRecovery(context)');
+    expect(enabledGateAt).toBeGreaterThanOrEqual(0);
+    expect(recoveryStartAt).toBeGreaterThan(enabledGateAt);
+    expect(receiverSource).not.toContain('DriveSenseNativeTripStore.setServiceEnabled');
+    expect(receiverSource).toContain('Intent.ACTION_BOOT_COMPLETED.equals(action)');
+    expect(receiverSource).toContain('Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)');
     expect(receiverSource).toContain('service_restart_skipped');
+    expect(serviceSource).toContain('static boolean startForRecovery(Context context)');
+    expect(serviceSource).toContain('recoveryStartIntent(context)');
     expect(manifestSource).toContain('android.intent.action.BOOT_COMPLETED');
     expect(manifestSource).toContain('android.intent.action.MY_PACKAGE_REPLACED');
   });

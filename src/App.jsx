@@ -19,6 +19,12 @@ import { APP_LOCK_SETTING_EVENT } from '@/lib/appConstants';
 import { Lock, Route as RouteIcon } from 'lucide-react';
 import { beginMeasure, measureAsync, measureSync } from '@/lib/performanceTriage';
 import { recordP0Lifecycle } from '@/lib/p0Probe';
+import {
+  admitP4BootstrapWork,
+  APP_WORK_TRIGGER_ORIGINS,
+  P4_LIFECYCLE_JOB_KEYS,
+  startP4LifecycleWorkIntegration,
+} from '@/lib/appLifecycleWork';
 
 import Layout from '@/components/Layout';
 import SectionErrorBoundary from '@/components/SectionErrorBoundary';
@@ -36,12 +42,22 @@ import {
 
 const TRIP_SUMMARIES_QUERY_KEY = ['trip-summaries'];
 const consumeInitialAppUrl = createInitialAppUrlConsumer();
+const P35_NATIVE_AUTHORITY_ENABLED = import.meta.env.VITE_P35_NATIVE_AUTHORITY === 'true';
 
 const startNativeAutoTrackingFromApp = () => import('@/lib/activityRecognition')
   .then(({ startNativeAutoTracking }) => startNativeAutoTracking());
 
-const checkAndRotateEncryptionKeyFromApp = () => import('@/lib/keyRotationManager')
-  .then(({ checkAndRotateEncryptionKey }) => checkAndRotateEncryptionKey());
+/**
+ * P4-C-F04: raw-GPS retention is now a bounded window of the coordinator-owned
+ * repository maintenance job on every platform, so this resume task must not
+ * also run the whole-history pass. On Android the indexed native implementation
+ * remains P5 work and the local copy is disposable, so nothing runs here at all.
+ */
+const enforceBoundedRawGpsRetentionFromApp = () => Promise.resolve(
+  isAndroid()
+    ? { deferredToNativeIndexedMaintenance: true }
+    : { deferredToCoordinatorRepositoryMaintenance: true }
+);
 
 const setScreenCaptureAllowedFromApp = (allowed) => import('@/lib/screenSecurity')
   .then(({ setScreenCaptureAllowed }) => setScreenCaptureAllowed(allowed));
@@ -57,9 +73,16 @@ const openExportLocationFromApp = (options) => import('@/lib/nativeDownloads')
 
 async function syncNativeCompletedTripsToLocalStore({ reconcileExisting = false } = {}) {
   if (!isAndroid()) return;
+  if (P35_NATIVE_AUTHORITY_ENABLED) {
+    return { importedTrips: [], nativeCanonicalReceipts: [], coordinated: true };
+  }
   const result = await measureAsync('app.nativeTripSync', async () => {
     const { syncNativeCompletedTripsAndMilestones } = await import('@/lib/milestoneNotificationCoordinator');
-    return syncNativeCompletedTripsAndMilestones({ reconcileExisting });
+    // P4-B-F01-A: this is a lifecycle-owned reconciliation, so it reads the
+    // bounded aggregate surfaces and never enters the explicit whole-history
+    // rebuild. Repairing an invalid aggregate is the coordinated milestone
+    // job's bounded work, admitted alongside this call.
+    return syncNativeCompletedTripsAndMilestones({ reconcileExisting, lifecycleBounded: true });
   });
   if (result.importedTrips.length) {
     const { markLatestTripForPostDriveReview } = await import('@/lib/postDriveReview');
@@ -262,6 +285,8 @@ const AuthenticatedApp = () => {
   const backgroundedAtRef = useRef(0);
   const navigate = useNavigate();
 
+  useEffect(() => startP4LifecycleWorkIntegration(), []);
+
   useEffect(() => {
     let disposed = false;
     const cancelDeferredTasks = [];
@@ -295,8 +320,16 @@ const AuthenticatedApp = () => {
         .catch((error) => logSystemFailure('active_trip_hydrate', error));
       // reconcileExisting so milestones crossed by locally-recorded trips (which
       // never appear in the native import list) are still evaluated.
-      syncNativeCompletedTripsToLocalStore({ reconcileExisting: true })
-        .catch((error) => logSystemFailure('native_completed_trips_boot_sync', error));
+      if (P35_NATIVE_AUTHORITY_ENABLED) {
+        admitP4BootstrapWork(P4_LIFECYCLE_JOB_KEYS.NATIVE_JOURNAL_INGEST);
+      } else {
+        syncNativeCompletedTripsToLocalStore({ reconcileExisting: true })
+          .catch((error) => logSystemFailure('native_completed_trips_boot_sync', error));
+        // Without native authority the journal never settles, so this is the
+        // branch's own admission of the same bounded milestone job. It is what
+        // repairs an invalid achievement aggregate here, one page per turn.
+        admitP4BootstrapWork(P4_LIFECYCLE_JOB_KEYS.MILESTONE_RECONCILIATION);
+      }
       notificationService
         .then(({ syncReminderNotifications }) => syncReminderNotifications(settings, { requestPermission: false }))
         .catch((error) => logSystemFailure('reminder_notifications_sync', error));
@@ -307,24 +340,62 @@ const AuthenticatedApp = () => {
 
       if (!disposed) {
         cancelDeferredTasks.push(
+          // Step 15: the quiet-period gate stays — it is interaction-aware and
+          // is what keeps cold boot from competing with the user — but each
+          // task body is now one coordinator admission instead of its own
+          // unbounded pass. Consolidating the 12/22/30 s offsets themselves is
+          // the optional S4 cleanup and is deliberately not done here.
           scheduleAfterQuietPeriod(
-            () => measureAsync('app.bootstrap.tripRepositoryMaintenance', () => import('@/lib/localTripRepository')
-              .then(({ runTripRepositoryMaintenance }) => runTripRepositoryMaintenance()))
-              .catch((error) => logSystemFailure('trip_repository_maintenance', error)),
+            () => measureAsync('app.bootstrap.tripRepositoryMaintenance', async () => {
+              admitP4BootstrapWork(P4_LIFECYCLE_JOB_KEYS.REPOSITORY_MAINTENANCE);
+              if (isAndroid() && P35_NATIVE_AUTHORITY_ENABLED) {
+                admitP4BootstrapWork(P4_LIFECYCLE_JOB_KEYS.NATIVE_PROJECTION);
+              }
+            }).catch((error) => logSystemFailure('trip_repository_maintenance', error)),
             { quietMs: 12_000 }
           ),
           scheduleAfterQuietPeriod(
-            () => measureAsync('app.bootstrap.keyRotation', () => checkAndRotateEncryptionKeyFromApp())
-              .catch((error) => logSystemFailure('encryption_key_rotation_check', error)),
+            () => measureAsync('app.bootstrap.keyRotation', async () => {
+              admitP4BootstrapWork(P4_LIFECYCLE_JOB_KEYS.KEY_ROTATION);
+            }).catch((error) => logSystemFailure('encryption_key_rotation_check', error)),
             { quietMs: 22_000 }
           ),
           scheduleAfterQuietPeriod(async () => {
-            await measureAsync('app.bootstrap.roadContextQueue', () => import('@/lib/roadContextQueue')
-              .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs()))
-              .catch((error) => logSystemFailure('road_context_queue_resume', error));
+            // P4-C-F06: the monolithic v1 road-context and rescoring documents
+            // are explicit compatibility sessions, never bounded lifecycle
+            // work. This quiet-period boot step is their owner; the coordinator
+            // turns below only ever see the paged representations.
+            await measureAsync('app.bootstrap.legacyQueueConversion', async () => {
+              const [roadContext, rescoring] = await Promise.all([
+                import('@/lib/roadContextQueue'),
+                import('@/lib/rescoringQueue'),
+              ]);
+              await roadContext.convertLegacyRoadContextQueue();
+              await rescoring.convertLegacyRescoringQueue();
+            }).catch((error) => logSystemFailure('legacy_queue_conversion', error));
+            // P4-C-F04/F05: the same explicit owner for the monolithic fallback
+            // trip archive. The bounded repository and KEK turns report that
+            // obligation as ownerless; this is the owner that discharges it -
+            // encrypt a still-plaintext archive, rewrap one on a superseded key,
+            // then release any key version that was retained only for it.
+            await measureAsync('app.bootstrap.monolithicTripCompatibility', async () => {
+              const repository = await import('@/lib/localTripRepository');
+              const outcome = await repository.runMonolithicTripCompatibilityMaintenance();
+              if (outcome.encrypted || outcome.rotated) {
+                const { releaseRetainedKeyVersions } = await import('@/lib/keyRotationManager');
+                await releaseRetainedKeyVersions();
+              }
+            }).catch((error) => logSystemFailure('monolithic_trip_compatibility', error));
+            await measureAsync('app.bootstrap.roadContextQueue', async () => {
+              admitP4BootstrapWork(P4_LIFECYCLE_JOB_KEYS.ROAD_CONTEXT);
+            }).catch((error) => logSystemFailure('road_context_queue_resume', error));
+            // The rescoring *worker* is a domain contract, not a scheduler: it
+            // supplies `rescoreTrip`. Registering it stays; only its private
+            // next-turn scheduling was surrendered to the coordinator.
             await import('@/lib/rescoringWorker')
               .then(({ startRescoringWorker }) => startRescoringWorker())
               .catch((error) => logSystemFailure('rescoring_worker_start', error));
+            admitP4BootstrapWork(P4_LIFECYCLE_JOB_KEYS.RESCORING);
           }, { quietMs: 30_000 })
         );
       }
@@ -395,14 +466,23 @@ const AuthenticatedApp = () => {
           .catch((error) => logSystemFailure('app_resume_settings_hydrate', error));
         measureAsync('app.resume.privacyZoneSweep', () => sweepExpiredZonesOnForeground(), { source: 'appStateChange' })
           .catch((error) => logSystemFailure('app_resume_privacy_zone_expiry', error));
-        measureAsync('app.resume.nativeTripSync', () => syncNativeCompletedTripsToLocalStore({ reconcileExisting: true }), { source: 'appStateChange' })
-          .catch((error) => logSystemFailure('app_resume_native_completed_trips_sync', error));
-        measureAsync('app.resume.keyRotation', () => checkAndRotateEncryptionKeyFromApp(), { source: 'appStateChange' })
-          .catch((error) => logSystemFailure('app_resume_key_rotation_check', error));
-        scheduleIdleResumeTask('roadContextQueue', () => import('@/lib/roadContextQueue')
-          .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs()), 'appStateChange');
-        scheduleIdleResumeTask('rawGpsRetention', () => import('@/lib/localTripRepository')
-          .then(({ enforceRawGpsRetention }) => enforceRawGpsRetention()), 'appStateChange');
+        if (!P35_NATIVE_AUTHORITY_ENABLED) {
+          measureAsync('app.resume.nativeTripSync', () => syncNativeCompletedTripsToLocalStore({ reconcileExisting: true }), { source: 'appStateChange' })
+            .catch((error) => logSystemFailure('app_resume_native_completed_trips_sync', error));
+          // Same bounded milestone job as bootstrap: without native authority
+          // no journal settlement admits it, and it owns the aggregate repair.
+          admitP4BootstrapWork(
+            P4_LIFECYCLE_JOB_KEYS.MILESTONE_RECONCILIATION,
+            APP_WORK_TRIGGER_ORIGINS.RESUME
+          );
+        }
+        // Step 15: key rotation and road-context continuation are admitted by
+        // the effective-lifecycle subscription (one epoch per physical
+        // transition), so the two raw handlers no longer launch them directly.
+        // `rawGpsRetention` remains here as the reviewed-allowlist ownerless
+        // entry only: P4-C-F04 moved the actual sweep into the bounded
+        // repository-maintenance turn, so this handler starts no history work.
+        scheduleIdleResumeTask('rawGpsRetention', enforceBoundedRawGpsRetentionFromApp, 'appStateChange');
       }
       if (!appLockEnabled) return;
       if (!isActive) {
@@ -432,12 +512,7 @@ const AuthenticatedApp = () => {
           .catch((error) => logSystemFailure('visibility_settings_hydrate', error));
         measureAsync('app.resume.privacyZoneSweep', () => sweepExpiredZonesOnForeground(), { source: 'visibilitychange' })
           .catch((error) => logSystemFailure('visibility_privacy_zone_expiry', error));
-        measureAsync('app.resume.keyRotation', () => checkAndRotateEncryptionKeyFromApp(), { source: 'visibilitychange' })
-          .catch((error) => logSystemFailure('visibility_key_rotation_check', error));
-        scheduleIdleResumeTask('roadContextQueue', () => import('@/lib/roadContextQueue')
-          .then(({ resumePendingRoadContextJobs }) => resumePendingRoadContextJobs()), 'visibilitychange');
-        scheduleIdleResumeTask('rawGpsRetention', () => import('@/lib/localTripRepository')
-          .then(({ enforceRawGpsRetention }) => enforceRawGpsRetention()), 'visibilitychange');
+        scheduleIdleResumeTask('rawGpsRetention', enforceBoundedRawGpsRetentionFromApp, 'visibilitychange');
       }
     };
     document.addEventListener('visibilitychange', onVisibilityChange);

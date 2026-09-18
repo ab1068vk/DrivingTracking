@@ -2,11 +2,12 @@ import { lazy, Suspense, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, ArrowLeft, Clock, Database, Gauge, Map, Route, ShieldCheck } from 'lucide-react';
-import { tripDetailQueryOptions, tripSummaryQueryOptions } from '@/api/trips';
+import { tripDetailQueryOptions } from '@/api/trips';
 import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
 import TrackingTelemetryCharts from '@/components/TrackingTelemetryCharts';
 import SessionForensicsPane from '@/components/tracking/SessionForensicsPane';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { useTripComparisonCandidates } from '@/hooks/useTripComparisonCandidates';
 import { formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import { buildSourceEvidenceRows } from '@/lib/trackingEvidence';
 import { formatTrackingEventTime, normalizeTrackingEventRows } from '@/lib/trackingEvents';
@@ -41,7 +42,10 @@ export default function TrackingTripDetail() {
   const units = settings.units || 'metric';
   const query = useQuery(tripDetailQueryOptions(id));
 
-  const summariesQuery = useQuery(tripSummaryQueryOptions());
+  // P7 Stage 5: the comparison picker takes Q6 adjacency candidates under the
+  // ledger's cap of 2 — the trip before and the trip after — instead of a
+  // 100-row summary list fetched on every open.
+  const { candidates: comparisonCandidates } = useTripComparisonCandidates(id);
   const comparisonQuery = useQuery(tripDetailQueryOptions(comparisonId));
   const trip = query.data;
   const events = useMemo(() => trip ? normalizeTrackingEventRows(trip, { settings }) : [], [settings, trip]);
@@ -61,7 +65,7 @@ export default function TrackingTripDetail() {
   const mapRoutes = hasRoute ? [{ id: trip.id, label: trackingTripDisplayName(trip), selected: true, color: '#2563eb', route_points: trip.route_points, rawPointCount: trip.route_points_raw_count }] : [];
   const mapEvents = events.filter((row) => !row.diagnostic && row.privacyStatus !== 'privacy masked').map((row) => row.rawEvent);
   const availableSources = sources.filter((row) => row.confidence !== 'unavailable' && row.value !== 'unavailable').length;
-  const comparisonOptions = (summariesQuery.data || []).filter((row) => String(row.id) !== String(trip.id));
+  const comparisonOptions = comparisonCandidates.filter((row) => String(row.id) !== String(trip.id));
   const selectEvent = (event) => {
     const value = event?.timestamp ?? event?.time ?? event?.start_time ?? event?.startTime;
     const timestamp = new Date(value || 0).getTime();

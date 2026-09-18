@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { CalendarDays, CheckCircle2, Clock3, Flag, MapPinned, Route, ShieldAlert, Smartphone } from 'lucide-react';
 import { isDriverMetricEligible, summarizePhoneUseAcrossTrips } from '@/lib/phoneUseSummary';
 import { buildCommuteDetections, buildGoalStatus, buildRoadTypeBreakdown, buildRouteComparisons, buildTripCalendarMonth } from '@/lib/mediumInsights';
@@ -19,34 +19,32 @@ const weekTripsFor = (trips) => {
   return trips.filter((trip) => new Date(trip.start_time).getTime() >= start.getTime());
 };
 
-const initialCalendarMonthOffset = (trips) => {
-  const now = new Date();
-  const completedDates = trips
-    .filter((trip) => trip.status === 'completed')
-    .map((trip) => new Date(trip.start_time || trip.end_time || trip.created_at || 0))
-    .filter((date) => Number.isFinite(date.getTime()))
-    .sort((left, right) => right.getTime() - left.getTime());
-  if (!completedDates.length) return 0;
-  const hasCurrentMonth = completedDates.some((date) => (
-    date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth()
-  ));
-  if (hasCurrentMonth) return 0;
-  const latest = completedDates[0];
-  return (latest.getFullYear() - now.getFullYear()) * 12 + latest.getMonth() - now.getMonth();
-};
-
-export function InsightHistoryPanels({ trips = [], settings = {}, units = 'metric', onOpenTrip }) {
-  const [monthOffset, setMonthOffset] = useState(() => initialCalendarMonthOffset(trips));
+/**
+ * The calendar is a **complete local date window**, so its rows come from the
+ * page's bounded Q1 scan of exactly the grid on screen (P7 Stage 6.5) rather
+ * than from whichever analysis rows happen to be loaded. The month selection
+ * lives with the caller for the same reason: moving months changes which
+ * window is queried, not which loaded rows are filtered.
+ */
+export function InsightHistoryPanels({
+  trips = [], calendarTrips = null, monthOffset = 0, onMonthOffsetChange,
+  settings = {}, units = 'metric', onOpenTrip,
+}) {
   const monthDate = useMemo(() => {
     const date = new Date();
     date.setDate(1);
-    date.setMonth(date.getMonth() + monthOffset);
+    date.setMonth(date.getMonth() + Number(monthOffset || 0));
     return date;
   }, [monthOffset]);
+  const setMonthOffset = useCallback((update) => {
+    if (typeof onMonthOffsetChange !== 'function') return;
+    onMonthOffsetChange(typeof update === 'function' ? update(Number(monthOffset || 0)) : update);
+  }, [monthOffset, onMonthOffsetChange]);
   const drivers = useMemo(() => trips.filter(isDriverMetricEligible), [trips]);
   const routes = useMemo(() => buildRouteComparisons(drivers), [drivers]);
   const commutes = useMemo(() => buildCommuteDetections(drivers), [drivers]);
-  const calendar = useMemo(() => buildTripCalendarMonth(trips, monthDate), [trips, monthDate]);
+  const calendarRows = calendarTrips ?? trips;
+  const calendar = useMemo(() => buildTripCalendarMonth(calendarRows, monthDate), [calendarRows, monthDate]);
   const roads = useMemo(() => buildRoadTypeBreakdown(drivers), [drivers]);
   const goals = useMemo(() => buildGoalStatus(weekTripsFor(drivers), settings), [drivers, settings]);
   const phone = useMemo(() => summarizePhoneUseAcrossTrips(trips), [trips]);

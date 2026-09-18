@@ -16,6 +16,8 @@ import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.MediaStore;
 import android.provider.Settings;
@@ -74,6 +76,8 @@ import android.util.Log;
 )
 public class DriveSenseActivityRecognitionPlugin extends Plugin {
     private static final String TAG = "ActivityRecognition";
+    private static final long DELIBERATE_STOP_TIMEOUT_MS = 15_000L;
+    private static final long DELIBERATE_STOP_POLL_MS = 50L;
     private static WeakReference<DriveSenseActivityRecognitionPlugin> instance;
     private ActivityRecognitionClient activityClient;
     private PendingIntent activityIntent;
@@ -201,7 +205,10 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             : System.currentTimeMillis();
         String tripId = call.getString("tripId", "");
         try {
-            DriveSenseAutoTrackingService.startManualTrip(getContext(), startTimeMs, tripId);
+            if (!DriveSenseAutoTrackingService.startManualTrip(getContext(), startTimeMs, tripId)) {
+                call.reject("Android could not durably supersede the prior tracking stop.");
+                return;
+            }
         } catch (Exception error) {
             call.reject(error.getMessage());
             return;
@@ -234,10 +241,44 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
 
     @PluginMethod
     public void stopNativeAutoTracking(PluginCall call) {
-        DriveSenseAutoTrackingService.stop(getContext());
-        JSObject payload = new JSObject();
-        payload.put("enabled", false);
-        call.resolve(payload);
+        String requestId = DriveSenseAutoTrackingService.stop(getContext());
+        awaitDeliberateStop(call, requestId, System.currentTimeMillis() + DELIBERATE_STOP_TIMEOUT_MS);
+    }
+
+    private void awaitDeliberateStop(PluginCall call, String requestId, long deadlineMs) {
+        JSONObject status = DriveSenseAutoTrackingService.deliberateStopStatus(getContext());
+        String state = status.optString("state", "NONE");
+        boolean matchingRequest = requestId != null && requestId.equals(status.optString("requestId", ""));
+        boolean checkpointPresent = DriveSenseActiveTripCheckpointStore.getStatus(
+            getContext(), System.currentTimeMillis()).optBoolean("present", false);
+        boolean terminalTruth = !DriveSenseNativeTripStore.isServiceEnabled(getContext()) && !checkpointPresent;
+
+        if ((matchingRequest && DriveSenseAutoTrackingService.DELIBERATE_STOP_SUCCEEDED.equals(state)) || terminalTruth) {
+            JSObject payload = new JSObject();
+            payload.put("enabled", false);
+            payload.put("stopped", true);
+            payload.put("durableTerminal", true);
+            payload.put("hadActiveTrip", status.optBoolean("hadActiveTrip", false));
+            payload.put("requestId", requestId);
+            call.resolve(payload);
+            return;
+        }
+        if (matchingRequest && DriveSenseAutoTrackingService.DELIBERATE_STOP_FAILED.equals(state)) {
+            call.reject("Android could not begin the durable tracking stop: " + status.optString("detail", "unknown error"));
+            return;
+        }
+        if (matchingRequest && DriveSenseAutoTrackingService.DELIBERATE_STOP_SUPERSEDED.equals(state)) {
+            call.reject("Tracking was enabled again before this stop completed.");
+            return;
+        }
+        if (System.currentTimeMillis() >= deadlineMs) {
+            call.reject("Trip completion is still pending. Tracking remains enabled so Road Sage can retry safely.");
+            return;
+        }
+        new Handler(Looper.getMainLooper()).postDelayed(
+            () -> awaitDeliberateStop(call, requestId, deadlineMs),
+            DELIBERATE_STOP_POLL_MS
+        );
     }
 
     @PluginMethod
@@ -673,9 +714,9 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
             "activeTripCheckpoint",
             DriveSenseActiveTripCheckpointStore.getStatus(getContext(), System.currentTimeMillis())
         );
-        org.json.JSONArray completedTrips = DriveSenseNativeTripStore.getCompletedTrips(getContext());
-        payload.put("completedTripsCount", completedTrips.length());
-        payload.put("completedTripJournal", DriveSenseNativeTripStore.getCompletedTripJournalStatus(getContext()));
+        org.json.JSONObject journalStatus = DriveSenseNativeTripStore.getCompletedTripJournalStatus(getContext());
+        payload.put("completedTripsCount", journalStatus.optInt("entryCount", journalStatus.optInt("count", 0)));
+        payload.put("completedTripJournal", journalStatus);
         payload.put("diagnosticEventsCount", DriveSenseNativeTripStore.getDiagnosticEvents(getContext()).length());
         call.resolve(payload);
     }
@@ -819,16 +860,75 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         call.resolve();
     }
 
+    /** AUD-005: one bounded compatibility page per bridge read. */
+    private static final int DEFAULT_COMPLETED_TRIP_PAGE = 4;
+    private static final int MAX_COMPLETED_TRIP_PAGE = 16;
+
     @PluginMethod
     public void getNativeCompletedTrips(PluginCall call) {
+        if (DriveSenseP35Flags.nativeAuthorityEnabled()) {
+            // P5 keeps the P3.5 unbounded payload API retired while exposing
+            // only the O(1) journal control-plane observation needed to admit
+            // J2 or surface the explicit pre-P5 bootstrap. Canonical trip
+            // payloads still never cross this compatibility bridge.
+            JSObject payload = new JSObject();
+            payload.put("trips", new JSONArray());
+            payload.put("queueStatus", DriveSenseNativeTripStore.getCompletedTripJournalStatus(getContext()));
+            payload.put("canonicalPayloadApiRetired", true);
+            call.resolve(payload);
+            return;
+        }
+        // AUD-005. The legacy compatibility bridge publishes a BOUNDED page, never the
+        // whole pending queue. One payload carrying everything that had accumulated made
+        // the cost of opening the app proportional to the backlog, and a failure anywhere
+        // in it acknowledged nothing, so the next attempt paid the same cost again.
+        // Nothing is dropped to stay bounded: what is not in this page stays queued, and
+        // `hasMore` says so.
+        int requested = call.getInt("maxItems", DEFAULT_COMPLETED_TRIP_PAGE) == null
+            ? DEFAULT_COMPLETED_TRIP_PAGE
+            : call.getInt("maxItems", DEFAULT_COMPLETED_TRIP_PAGE);
+        int maxItems = Math.max(1, Math.min(MAX_COMPLETED_TRIP_PAGE, requested));
+        JSONObject page = DriveSenseNativeTripStore.getCompletedTripPage(getContext(), maxItems);
+        JSONObject queueStatus = DriveSenseNativeTripStore.getCompletedTripJournalStatus(getContext());
+        JSONArray trips = page.optJSONArray("trips");
+        if (trips == null) trips = new JSONArray();
+
+        // AUD-005 round 2. `hasMore` and the blocked/unreadable state are the JOURNAL's
+        // answer, not something JavaScript may infer from how many trips it received. A
+        // queue holding only preserved-unreadable entries returns zero trips, and
+        // inferring "drained" from that would quietly abandon them.
         JSObject payload = new JSObject();
-        payload.put("trips", DriveSenseNativeTripStore.getCompletedTrips(getContext()));
-        payload.put("queueStatus", DriveSenseNativeTripStore.getCompletedTripJournalStatus(getContext()));
+        payload.put("trips", trips);
+        payload.put("queueStatus", queueStatus);
+        payload.put("pageSize", maxItems);
+        payload.put("plaintextBytes", page.optLong("plaintextBytes", 0L));
+        payload.put("maxPageBytes", page.optLong("maxPageBytes", 0L));
+        payload.put("oversizedTripIds", page.optJSONArray("oversizedTripIds") == null
+            ? new JSONArray() : page.optJSONArray("oversizedTripIds"));
+        payload.put("unreadableTripIds", page.optJSONArray("unreadableTripIds") == null
+            ? new JSONArray() : page.optJSONArray("unreadableTripIds"));
+        long preservedUnreadable = Math.max(
+            page.optLong("preservedUnreadableCount", 0L),
+            queueStatus.optLong("unreadableCount", 0L));
+        payload.put("preservedUnreadableCount", preservedUnreadable);
+        payload.put("blocked", page.optBoolean("blocked", false)
+            || page.optJSONArray("oversizedTripIds") != null
+                && page.optJSONArray("oversizedTripIds").length() > 0
+            || preservedUnreadable > 0L);
+        // Round 3: `blocked` and `hasMore:false` must never coexist. Preserved work of any
+        // class is unresolved work, and unresolved work is not a drained queue.
+        payload.put("hasMore", page.optBoolean("hasMore", false)
+            || preservedUnreadable > 0L
+            || queueStatus.optInt("pendingCount", trips.length()) > trips.length());
         call.resolve(payload);
     }
 
     @PluginMethod
     public void acknowledgeNativeCompletedTrips(PluginCall call) {
+        if (DriveSenseP35Flags.nativeAuthorityEnabled()) {
+            call.reject("NATIVE_CANONICAL_ACK_IS_INTERNAL_ONLY");
+            return;
+        }
         org.json.JSONArray tripIds = call.getData().optJSONArray("tripIds");
         if (tripIds == null) {
             call.reject("tripIds must be an array.");
@@ -857,13 +957,18 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
 
     @PluginMethod
     public void eraseNativeLocalData(PluginCall call) {
-        DriveSenseAutoTrackingService.stopForDataErasure(getContext());
-        SpeedSignEvidenceStore.erase(getContext());
-        eraseAllParkingPhotos();
-        DriveSenseNativeTripStore.eraseAllForDataRights(getContext());
-        JSObject payload = new JSObject();
-        payload.put("erased", true);
-        call.resolve(payload);
+        try {
+            DriveSenseAutoTrackingService.stopForDataErasure(getContext());
+            SpeedSignEvidenceStore.erase(getContext());
+            eraseAllParkingPhotos();
+            DriveSenseNativeTripStore.eraseAllForDataRights(getContext());
+            DriveSenseActiveTripSpool.eraseAllForDataRights(getContext());
+            JSObject payload = new JSObject();
+            payload.put("erased", true);
+            call.resolve(payload);
+        } catch (Exception error) {
+            call.reject("Native local data erasure did not complete", "NATIVE_ERASURE_INCOMPLETE", error);
+        }
     }
 
     @PluginMethod

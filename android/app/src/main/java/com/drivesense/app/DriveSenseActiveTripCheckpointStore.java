@@ -154,7 +154,6 @@ final class DriveSenseActiveTripCheckpointStore {
                 payload.optJSONArray("route_points") == null ||
                 payload.optJSONArray("route_points").length() < 2
             ) {
-                atomicFile.delete();
                 return null;
             }
             return payload;
@@ -162,7 +161,6 @@ final class DriveSenseActiveTripCheckpointStore {
             return null;
         } catch (Exception error) {
             Log.e(TAG, "Could not load active trip checkpoint", error);
-            atomicFile.delete();
             return null;
         }
     }
@@ -186,7 +184,9 @@ final class DriveSenseActiveTripCheckpointStore {
             long encryptedBytes = Math.max(0L, baseFile.length());
             JSONObject payload = load(context, nowMs);
             if (payload == null) {
-                status.put("state", "invalid_removed");
+                status.put("state", "invalid_preserved");
+                status.put("present", true);
+                status.put("encryptedBytes", encryptedBytes);
                 return status;
             }
 

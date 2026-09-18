@@ -95,6 +95,59 @@ export function buildTripPrivacyPreview(trip = {}, zones = []) {
   };
 }
 
+/**
+ * Streaming historical-exposure accumulator.
+ *
+ * The summary is a pure counter reduction and the preview list is capped at
+ * `MAX_PREVIEW_TRIPS`, so both are computed one trip at a time. Previews are
+ * kept in a bounded buffer that is re-trimmed as it fills rather than sorting
+ * a preview for every retained trip at the end.
+ */
+export function createHistoricalPrivacyExposureAccumulator(zones = []) {
+  const summary = {
+    scannedTripCount: 0,
+    affectedTripCount: 0,
+    exposedPointCount: 0,
+    exposedEventCount: 0,
+    alreadyProtectedPointCount: 0,
+    alreadyProtectedEventCount: 0,
+  };
+  let previews = [];
+
+  const rank = (a, b) => (
+    Number(b.affected) - Number(a.affected) ||
+    b.exposureCount - a.exposureCount ||
+    b.sortTimestamp - a.sortTimestamp
+  );
+
+  return {
+    addTrip(trip = {}) {
+      const preview = { ...buildTripPrivacyPreview(trip, zones), sortTimestamp: timestampMs(trip) };
+      summary.scannedTripCount += 1;
+      summary.affectedTripCount += preview.affected ? 1 : 0;
+      summary.exposedPointCount += preview.before.exposedPoints;
+      summary.exposedEventCount += preview.before.exposedEvents;
+      summary.alreadyProtectedPointCount += preview.before.protectedPoints;
+      summary.alreadyProtectedEventCount += preview.before.protectedEvents;
+      previews.push(preview);
+      // Trim on a hysteresis band so the sort runs once per batch of retained
+      // trips instead of once per trip.
+      if (previews.length >= MAX_PREVIEW_TRIPS * 4) {
+        previews.sort(rank);
+        previews = previews.slice(0, MAX_PREVIEW_TRIPS);
+      }
+    },
+    result() {
+      previews.sort(rank);
+      return {
+        summary,
+        previews: previews.slice(0, MAX_PREVIEW_TRIPS)
+          .map(({ sortTimestamp: _sortTimestamp, ...preview }) => preview),
+      };
+    },
+  };
+}
+
 export function buildHistoricalPrivacyExposure(trips = [], zones = []) {
   const allPreviews = (Array.isArray(trips) ? trips : [])
     .map((trip) => ({

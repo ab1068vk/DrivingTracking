@@ -51,8 +51,13 @@ import {
   recordParkingHistoryState,
 } from '@/lib/parkingHistory';
 import ActivityRecognition from '@/lib/driveSenseNativePlugin';
-import { isNativePlatform } from '@/lib/nativePlatform';
+import { isAndroid, isNativePlatform } from '@/lib/nativePlatform';
 import { recordParkingDiagnostic } from '@/lib/parkingDiagnostics';
+import {
+  browserActiveTripSpool,
+  RSAS_OVERVIEW_POINTS,
+  RSAS_RECENT_POINTS,
+} from '@/lib/browserActiveTripSpool';
 
 // CHANGES (session):
 // - Added Phase 2 speed estimate guidance defaults and validation ranges.
@@ -67,11 +72,89 @@ export const SETTINGS_CHANGED_EVENT = 'roadsage-settings-changed';
 export const ACTIVE_TRIP_CHANGED_EVENT = 'roadsage-active-trip-changed';
 export const PARKED_LOCATION_PRIVACY_GUARD_M = 50;
 let lastNativeSettingsSync = '';
+let nativeSettingsWriteInFlight = null;
+let queuedNativeSettingsSync = null;
+let unconfirmedLocalSettingsSync = null;
+let localSettingsRevision = 0;
+/** AUD-004: bumped by every data-rights erasure; fences in-flight native writes. */
+let settingsErasureGeneration = 0;
+/**
+ * AUD-004 round 3: OWNERSHIP, not a boolean.
+ *
+ * Round 2 raised a single flag. Two overlapping erasures both raised it, and the first to
+ * finish lowered it while the second was still inside its own removal-to-proof window — so
+ * a settings writer could walk straight into a live erasure. A boolean cannot express "two
+ * owners", and the fence has to stay raised until the LAST one leaves.
+ *
+ * Tokens make mispairing visible: ending with a foreign or already-ended token changes
+ * nothing and reports false, rather than silently releasing somebody else's ownership. The
+ * argument-less form is kept for callers that pair their own begin/end in a single scope;
+ * it releases the newest outstanding owner.
+ */
+const settingsErasureOwners = new Set();
+let settingsErasureOwnerOrder = [];
+
+/**
+ * Does the LOCAL authority still hold settings?
+ *
+ * The native store is a MIRROR of local settings. If local no longer has them — because
+ * data rights removed them — then a native write that settles afterwards is mirroring
+ * nothing, and writing it back resurrects exactly what was erased. Round 1's generation
+ * bump happened inside `clearSettingsMemoryForErasure()`, i.e. AFTER the destructive
+ * removal, so a write settling in between saw its own generation as current and
+ * republished. This check closes that interval without depending on call ordering.
+ */
+const localSettingsAuthorityPresent = () => {
+  try {
+    const storage = settingsStorage();
+    if (storage) return storage.getItem(SETTINGS_KEY) != null;
+    return memorySettings != null;
+  } catch {
+    return true;   // cannot tell => do not treat a legitimate write as stale
+  }
+};
+
+/**
+ * Raise the erasure fence BEFORE the first destructive settings removal, and lower it
+ * only after final verification. While it is raised no native settings write may publish.
+ */
+export function beginSettingsErasureFence() {
+  const token = Symbol('settings-erasure-owner');
+  settingsErasureOwners.add(token);
+  settingsErasureOwnerOrder.push(token);
+  settingsErasureGeneration += 1;
+  return token;
+}
+
+/**
+ * @param {symbol} [token] the token this owner was given. Omitted releases the newest
+ *   outstanding owner.
+ * @returns {boolean} whether an owner was actually released.
+ */
+export function endSettingsErasureFence(token) {
+  let released = token;
+  if (released === undefined) {
+    released = settingsErasureOwnerOrder[settingsErasureOwnerOrder.length - 1];
+    if (released === undefined) return false;
+  }
+  if (!settingsErasureOwners.delete(released)) return false;
+  settingsErasureOwnerOrder = settingsErasureOwnerOrder.filter(
+    (candidate) => settingsErasureOwners.has(candidate),
+  );
+  return true;
+}
+
+export function isSettingsErasureFenceRaised() {
+  return settingsErasureOwners.size > 0;
+}
+let settingsHydrationInFlight = null;
 let settingsCache = null;
 let settingsCacheSerialized = '';
 let memorySettings = null;
 let activeTripMemory = null;
+let pendingBrowserFinalizationMemory = null;
 let activeTripWriteQueue = Promise.resolve();
+const ANDROID_NATIVE_ACTIVE_OWNER = isAndroid() && import.meta.env.VITE_P35_NATIVE_AUTHORITY === 'true';
 const CURRENT_SETTINGS_DEFAULTS_VERSION = 24;
 const SYSTEM_THEME_QUERY = '(prefers-color-scheme: dark)';
 const THEME_MODE_VALUES = Object.freeze(['system', 'light', 'dark']);
@@ -236,28 +319,72 @@ const shouldPreserveHigherConfidenceParking = (existingState, incomingState) => 
   return existingState.verified === true || existingScore > incomingScore;
 };
 
-const syncSettingsForNative = (settings, serialized = JSON.stringify(settings)) => {
-  if (typeof window === 'undefined') return;
-  if (serialized === lastNativeSettingsSync) return;
-  lastNativeSettingsSync = serialized;
+const hasPendingNativeSettingsWrite = () => Boolean(
+  nativeSettingsWriteInFlight || queuedNativeSettingsSync
+);
+
+const startNativeSettingsWrite = ({ settings, serialized }) => {
+  nativeSettingsWriteInFlight = { settings, serialized };
+  // AUD-004. A native settings write is dispatched asynchronously and lands later. Data
+  // rights removed the key and then cleared in-memory settings, but an ALREADY DISPATCHED
+  // `Preferences.set` still held the pre-erasure bytes and wrote them straight back — so
+  // an erasure that reported success repopulated the very settings it had erased. The
+  // generation is the fence: a write that began in an earlier one may not publish, and if
+  // it has already published by the time it notices, it undoes itself.
+  const generationAtStart = settingsErasureGeneration;
   import('@capacitor/core')
     .then(({ Capacitor }) => {
-      if (!Capacitor.isNativePlatform()) return null;
+      if (!Capacitor.isNativePlatform()) return false;
       return import('@capacitor/preferences');
     })
-    .then((module) => {
-      if (!module?.Preferences) return;
-      module.Preferences.set({ key: SETTINGS_KEY, value: serialized }).catch((error) => {
-        logError('settings_native_sync_write', error, {
-          requested_key_count: Object.keys(settings || {}).length,
-        });
-      });
+    .then(async (module) => {
+      if (!module?.Preferences) return false;
+      if (settingsErasureGeneration !== generationAtStart || isSettingsErasureFenceRaised()) return false;
+      await module.Preferences.set({ key: SETTINGS_KEY, value: serialized });
+      if (
+        settingsErasureGeneration !== generationAtStart
+        || isSettingsErasureFenceRaised()
+        || !localSettingsAuthorityPresent()
+      ) {
+        // Either an erasure landed while this write was in flight, or the local authority
+        // this write mirrors is already gone. What we just wrote is exactly what data
+        // rights removed, so take it back out rather than leave it.
+        await module.Preferences.remove({ key: SETTINGS_KEY });
+        return false;
+      }
+      lastNativeSettingsSync = serialized;
+      if (unconfirmedLocalSettingsSync?.serialized === serialized) {
+        unconfirmedLocalSettingsSync = null;
+      }
+      return true;
     })
     .catch((error) => {
-      logError('settings_native_sync_init', error, {
+      logError('settings_native_sync_write', error, {
         requested_key_count: Object.keys(settings || {}).length,
       });
+    })
+    .finally(() => {
+      nativeSettingsWriteInFlight = null;
+      const next = queuedNativeSettingsSync;
+      queuedNativeSettingsSync = null;
+      if (next) syncSettingsForNative(next.settings, next.serialized);
     });
+};
+
+const syncSettingsForNative = (settings, serialized = JSON.stringify(settings)) => {
+  if (typeof window === 'undefined') return;
+  if (!hasPendingNativeSettingsWrite() && serialized === lastNativeSettingsSync) {
+    if (unconfirmedLocalSettingsSync?.serialized === serialized) {
+      unconfirmedLocalSettingsSync = null;
+    }
+    return;
+  }
+  const request = { settings, serialized };
+  if (nativeSettingsWriteInFlight) {
+    queuedNativeSettingsSync = request;
+    return;
+  }
+  startNativeSettingsWrite(request);
 };
 
 const dispatchSettingsChanged = (settings, detail = {}) => {
@@ -1635,30 +1762,56 @@ export async function saveLastParkedLocation({
 // ─── Local Settings Store ──────────────────────────────────────────────────────
 export const localSettings = {
   async hydrateFromNative() {
-    try {
-      const { Capacitor } = await import('@capacitor/core');
-      if (!Capacitor.isNativePlatform()) return this.get();
-
-      const { Preferences } = await import('@capacitor/preferences');
-      const { value } = await Preferences.get({ key: SETTINGS_KEY });
-      if (!value) return this.get();
-
-      if (settingsCache && value === settingsCacheSerialized) return settingsCache;
-      const parsed = JSON.parse(value);
-      const { settings: merged, changed } = migrateDefaultSettings(parsed);
-      const serialized = JSON.stringify(merged);
-      const previousSerialized = localStorage.getItem(SETTINGS_KEY);
-      localStorage.setItem(SETTINGS_KEY, serialized);
-      if (changed) await Preferences.set({ key: SETTINGS_KEY, value: serialized });
-      lastNativeSettingsSync = serialized;
-      settingsCache = merged;
-      settingsCacheSerialized = serialized;
-      if (serialized !== previousSerialized) {
-        dispatchSettingsChanged(merged, { source: 'native_hydrate' });
+    if (hasPendingNativeSettingsWrite() || unconfirmedLocalSettingsSync) {
+      if (!hasPendingNativeSettingsWrite() && unconfirmedLocalSettingsSync) {
+        syncSettingsForNative(
+          unconfirmedLocalSettingsSync.settings,
+          unconfirmedLocalSettingsSync.serialized,
+        );
       }
-      return merged;
-    } catch {
       return this.get();
+    }
+    if (settingsHydrationInFlight) return settingsHydrationInFlight;
+
+    const revisionAtStart = localSettingsRevision;
+    const hydration = (async () => {
+      try {
+        const { Capacitor } = await import('@capacitor/core');
+        if (!Capacitor.isNativePlatform()) return this.get();
+
+        const { Preferences } = await import('@capacitor/preferences');
+        const { value } = await Preferences.get({ key: SETTINGS_KEY });
+        if (!value) return this.get();
+        if (hasPendingNativeSettingsWrite() || localSettingsRevision !== revisionAtStart) {
+          return this.get();
+        }
+
+        if (settingsCache && value === settingsCacheSerialized) {
+          lastNativeSettingsSync = value;
+          return settingsCache;
+        }
+        const parsed = JSON.parse(value);
+        const { settings: merged, changed } = migrateDefaultSettings(parsed);
+        const serialized = JSON.stringify(merged);
+        const previousSerialized = localStorage.getItem(SETTINGS_KEY);
+        localStorage.setItem(SETTINGS_KEY, serialized);
+        settingsCache = merged;
+        settingsCacheSerialized = serialized;
+        if (changed) syncSettingsForNative(merged, serialized);
+        else lastNativeSettingsSync = serialized;
+        if (serialized !== previousSerialized) {
+          dispatchSettingsChanged(merged, { source: 'native_hydrate' });
+        }
+        return merged;
+      } catch {
+        return this.get();
+      }
+    })();
+    settingsHydrationInFlight = hydration;
+    try {
+      return await hydration;
+    } finally {
+      if (settingsHydrationInFlight === hydration) settingsHydrationInFlight = null;
     }
   },
   get() {
@@ -1699,13 +1852,21 @@ export const localSettings = {
     try {
       const { settings: normalized } = migrateDefaultSettings(data);
       const serialized = JSON.stringify(normalized);
+      const previousSerialized = settingsCacheSerialized;
       const storage = settingsStorage();
       if (storage) storage.setItem(SETTINGS_KEY, serialized);
       else memorySettings = normalized;
       settingsCache = normalized;
       settingsCacheSerialized = serialized;
+      if (serialized !== previousSerialized) {
+        localSettingsRevision += 1;
+        unconfirmedLocalSettingsSync = { settings: normalized, serialized };
+      }
       syncSettingsForNative(normalized, serialized);
       dispatchSettingsChanged(normalized, { source: 'set' });
+      import('@/lib/p6TripDerivedState')
+        .then(({ invalidateP6AnalyticsForSettings }) => invalidateP6AnalyticsForSettings('SETTINGS_CHANGED'))
+        .catch(() => {});
       return normalized;
     } catch (error) {
       logError('settings_local_persist', error, {
@@ -1767,7 +1928,12 @@ export function clearSettingsMemoryForErasure() {
   settingsCache = null;
   settingsCacheSerialized = '';
   activeTripMemory = null;
+  pendingBrowserFinalizationMemory = null;
   lastNativeSettingsSync = '';
+  queuedNativeSettingsSync = null;
+  unconfirmedLocalSettingsSync = null;
+  localSettingsRevision += 1;
+  settingsErasureGeneration += 1;
 }
 
 const normalizeThemeMode = (mode) => (THEME_MODE_VALUES.includes(mode) ? mode : DEFAULT_SETTINGS.dark_mode);
@@ -1850,8 +2016,21 @@ export const activeTripStore = {
   async hydrate() {
     const recovered = await getEncryptedJson(ACTIVE_TRIP_KEY, null);
     activeTripMemory = recovered ? sanitizeTripForPrivacyStorage(recovered) : null;
+    if (!ANDROID_NATIVE_ACTIVE_OWNER && activeTripMemory?.rsas_session_id) {
+      const spoolView = await browserActiveTripSpool.hydrate(activeTripMemory.rsas_session_id).catch((error) => {
+        logError('browser_active_spool_recovery', error, { tripId: activeTripMemory?.id || null });
+        return { rsas_lifecycle_state: 'UNAVAILABLE' };
+      });
+      activeTripMemory = {
+        ...activeTripMemory,
+        ...(spoolView || { rsas_lifecycle_state: 'UNAVAILABLE' }),
+      };
+    }
     if (recovered && JSON.stringify(recovered) !== JSON.stringify(activeTripMemory)) {
       await setEncryptedJson(ACTIVE_TRIP_KEY, activeTripMemory);
+    }
+    if (!ANDROID_NATIVE_ACTIVE_OWNER) {
+      pendingBrowserFinalizationMemory = await browserActiveTripSpool.pendingFinalization();
     }
     dispatchActiveTripChanged();
     return activeTripMemory;
@@ -1859,8 +2038,43 @@ export const activeTripStore = {
   get() {
     return activeTripMemory;
   },
+  getPendingBrowserFinalization() {
+    if (ANDROID_NATIVE_ACTIVE_OWNER) return null;
+    const owner = browserActiveTripSpool.status();
+    if (owner?.state !== 'SEALED' || owner.sessionId !== activeTripMemory?.rsas_session_id ||
+        owner.tripId !== activeTripMemory?.id) {
+      return pendingBrowserFinalizationMemory;
+    }
+    // Keep the original bounded record and session. Callers retry create() with
+    // their completion metadata; neither begin() nor route hydration is involved.
+    return activeTripMemory.rsas_lifecycle_state === 'SEALED'
+      ? activeTripMemory : browserActiveTripSpool.view(activeTripMemory);
+  },
   set(trip) {
-    activeTripMemory = sanitizeTripForPrivacyStorage(trip);
+    let sanitized = sanitizeTripForPrivacyStorage(trip);
+    const points = Array.isArray(sanitized?.route_points) ? sanitized.route_points : [];
+    const latestPoint = points.at(-1) || null;
+    if (!ANDROID_NATIVE_ACTIVE_OWNER && sanitized) {
+      const previousOwner = browserActiveTripSpool.status();
+      if (previousOwner?.state === 'SEALED' && previousOwner.tripId !== sanitized.id) {
+        pendingBrowserFinalizationMemory = browserActiveTripSpool.view(activeTripMemory || {});
+      }
+      browserActiveTripSpool.begin(sanitized);
+      sanitized = { ...sanitized, id: browserActiveTripSpool.view().id };
+      if (latestPoint) browserActiveTripSpool.append(latestPoint, sanitized);
+    }
+    const spoolView = !ANDROID_NATIVE_ACTIVE_OWNER && sanitized
+      ? browserActiveTripSpool.view(sanitized)
+      : null;
+    const bounded = sanitized ? {
+      ...sanitized,
+      ...(spoolView || {}),
+      route_points: (spoolView?.route_points || points).slice(-RSAS_RECENT_POINTS),
+      route_preview: (spoolView?.route_preview || (Array.isArray(sanitized.route_preview) ? sanitized.route_preview : points)).slice(-RSAS_OVERVIEW_POINTS),
+      active_route_is_bounded_preview: true,
+      active_route_point_count: spoolView ? spoolView.route_point_count : Number(sanitized.active_route_point_count) || points.length,
+    } : null;
+    activeTripMemory = bounded;
     const tripSnapshot = activeTripMemory;
     dispatchActiveTripChanged();
     activeTripWriteQueue = activeTripWriteQueue
@@ -1872,9 +2086,13 @@ export const activeTripStore = {
           route_point_count: Array.isArray(tripSnapshot?.route_points) ? tripSnapshot.route_points.length : 0,
         });
       });
+    return bounded;
   },
   clear() {
+    const pending = this.getPendingBrowserFinalization();
     activeTripMemory = null;
+    pendingBrowserFinalizationMemory = pending;
+    browserActiveTripSpool.resetMemory();
     dispatchActiveTripChanged();
     activeTripWriteQueue = activeTripWriteQueue
       .then(() => removeEncryptedJson(ACTIVE_TRIP_KEY))
@@ -1882,15 +2100,69 @@ export const activeTripStore = {
         logError('active_trip_clear_persist', error);
       });
   },
-  flush() {
-    return activeTripWriteQueue;
+  flush({ commitBuffer = false } = {}) {
+    return Promise.all([activeTripWriteQueue, browserActiveTripSpool.flush({ commitBuffer })]).then(() => undefined);
   },
   addPoint(point) {
+    if (ANDROID_NATIVE_ACTIVE_OWNER) {
+      const error = new Error('Android native service owns the active-trip producer.');
+      error.code = 'ACTIVE_PRODUCER_NOT_OWNER';
+      throw error;
+    }
     const trip = this.get();
     if (!trip) return;
-    trip.route_points = trip.route_points || [];
-    trip.route_points.push(redactRoutePointForPrivacyStorage(point));
-    this.set(trip);
+    const storedPoint = redactRoutePointForPrivacyStorage(point);
+    browserActiveTripSpool.append(storedPoint, trip);
+    const bounded = browserActiveTripSpool.view(trip);
+    activeTripMemory = {
+      ...trip,
+      ...bounded,
+      route_points: bounded.route_points.slice(-RSAS_RECENT_POINTS),
+      route_preview: bounded.route_preview.slice(0, RSAS_OVERVIEW_POINTS),
+      active_route_is_bounded_preview: true,
+      active_route_point_count: bounded.route_point_count,
+    };
+    dispatchActiveTripChanged();
+  },
+  async completeBrowserCanonical(metadata = {}) {
+    if (ANDROID_NATIVE_ACTIVE_OWNER) {
+      const error = new Error('Android native service owns the active-trip producer.');
+      error.code = 'ACTIVE_PRODUCER_NOT_OWNER';
+      throw error;
+    }
+    const currentTrip = this.get();
+    if (metadata.rsas_session_id && metadata.rsas_session_id !== currentTrip?.rsas_session_id) {
+      const completed = await browserActiveTripSpool.completePendingFinalization(metadata);
+      pendingBrowserFinalizationMemory = await browserActiveTripSpool.pendingFinalization();
+      return completed;
+    }
+    if (!currentTrip?.rsas_session_id) throw new Error('ACTIVE_SPOOL_NOT_OPEN');
+    const completed = await browserActiveTripSpool.complete({ ...currentTrip, ...metadata });
+    if (this.get()?.rsas_session_id !== completed.rsas_session_id) {
+      // Another lifecycle was admitted while this session finalized. Its active
+      // slot is independent; CANONICAL durability already owns the older result.
+      pendingBrowserFinalizationMemory = await browserActiveTripSpool.pendingFinalization();
+      return completed;
+    }
+    activeTripMemory = completed;
+    dispatchActiveTripChanged();
+    const terminalSnapshot = activeTripMemory;
+    const terminalWrite = activeTripWriteQueue
+      .then(() => setEncryptedJson(ACTIVE_TRIP_KEY, terminalSnapshot));
+    activeTripWriteQueue = terminalWrite.catch((error) => {
+      logError('active_trip_terminal_persist', error, {
+        trip_id_present: terminalSnapshot?.id != null,
+        rsas_lifecycle_state: terminalSnapshot?.rsas_lifecycle_state || null,
+      });
+    });
+    // CANONICAL must be durable in both lifecycle authorities before callers can
+    // proceed to repository publication or any awaited post-drive UI.
+    await terminalWrite;
+    pendingBrowserFinalizationMemory = await browserActiveTripSpool.pendingFinalization();
+    return completed;
+  },
+  streamBrowserCanonicalPoints(sessionId = activeTripMemory?.rsas_session_id) {
+    return browserActiveTripSpool.readPoints(sessionId);
   },
 };
 

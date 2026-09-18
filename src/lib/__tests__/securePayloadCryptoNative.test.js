@@ -15,7 +15,9 @@ describe('securePayloadCrypto native platform gate', () => {
     }));
 
     const {
+      decryptSensitiveValues,
       decryptSensitiveValue,
+      encryptSensitiveValues,
       encryptSensitiveValue,
     } = await import('@/lib/securePayloadCrypto');
 
@@ -29,6 +31,13 @@ describe('securePayloadCrypto native platform gate', () => {
     }, 'trip:ios')).rejects.toThrow(
       'Native secure payload encryption is not implemented for ios'
     );
+    await expect(encryptSensitiveValues([
+      { value: { lat: 43.65 }, context: 'trip:ios' },
+    ])).rejects.toThrow('Native secure payload encryption is not implemented for ios');
+    await expect(decryptSensitiveValues([{
+      payload: { encrypted: true, version: 1, ciphertext: 'not-used' },
+      context: 'trip:ios',
+    }])).rejects.toThrow('Native secure payload encryption is not implemented for ios');
   });
 
   it('routes Android payload encryption and decryption through the secure bridge', async () => {
@@ -52,7 +61,11 @@ describe('securePayloadCrypto native platform gate', () => {
       isAndroid: () => true,
       isNativePlatform: () => true,
     }));
-    vi.doMock('@/lib/secureBridge', () => ({ secureCall }));
+    vi.doMock('@/lib/secureBridge', () => ({
+      secureCall,
+      withSecureBulkAdmission: (task) => task(),
+      yieldSecureBulkTurn: async () => {},
+    }));
 
     const {
       decryptSensitiveValue,

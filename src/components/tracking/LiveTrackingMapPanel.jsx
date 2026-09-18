@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
-import { useQueries } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Layers, MapPin, ShieldAlert, Gauge } from 'lucide-react';
-import { tripDetailQueryOptions } from '@/api/trips';
+import { p7QueryKeys, p7TripQueries } from '@/api/trips';
 import { loadDangerZones } from '@/lib/dangerZoneEngine';
 import { buildRouteRiskIndex, getSegmentsForTrip } from '@/lib/routeRiskIndex';
 import { getPrivacyZones } from '@/lib/privacyZones';
@@ -110,11 +110,24 @@ export default function LiveTrackingMapPanel({ snapshot, recentTrips = EMPTY_LIS
       : EMPTY_LIST),
     [recentTrips, showRisk]
   );
-  const riskTripQueries = useQueries({
-    queries: riskTripSummaries.map((trip) => tripDetailQueryOptions(trip.id)),
+  // P7 Stage 7 (ledger entry #27, B6.14): **one** D2 by-id batch for the whole
+  // bounded id set, in place of a per-id `tripDetailQueryOptions` fan-out. The
+  // fan-out decrypted up to four complete trip payloads — points, events,
+  // everything — on the live driving screen, to shade route risk. The batch
+  // returns bounded previews and performs **zero full-trip decrypts**.
+  const riskTripIds = riskTripSummaries.map((trip) => String(trip.id)).filter(Boolean);
+  const riskGeometryQuery = useQuery({
+    queryKey: p7QueryKeys.geometry(`live-risk:${riskTripIds.join(',')}`),
+    queryFn: async () => {
+      if (!riskTripIds.length) return { trips: EMPTY_LIST };
+      const batch = await p7TripQueries.geometryByIds(riskTripIds, { maxPoints: 160 });
+      if (batch.unavailable) return { trips: EMPTY_LIST, unavailable: batch.unavailable };
+      return { trips: batch.data ?? EMPTY_LIST, unavailable: null };
+    },
+    enabled: riskTripIds.length > 0,
+    staleTime: 5 * 60 * 1000,
   });
-  const riskTrips = riskTripQueries
-    .map((query) => query.data)
+  const riskTrips = (riskGeometryQuery.data?.trips ?? EMPTY_LIST)
     .filter((trip) => Array.isArray(trip?.route_points) && trip.route_points.length > 1);
 
   const routeRiskSegments = useMemo(() => {

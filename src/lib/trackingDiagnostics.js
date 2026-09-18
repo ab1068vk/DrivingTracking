@@ -213,6 +213,28 @@ export function buildParkingTimeline(trip = {}) {
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
+/**
+ * AUD-006. The checkpoint states this consumer actually understands, keyed by the exact
+ * string `DriveSenseActiveTripCheckpointStore.getStatus()` writes.
+ *
+ * It is a map rather than a ternary chain so `CHECKPOINT_STATES_HANDLED` cannot drift
+ * from the handling itself: the exported list IS the set of keys below. A regression
+ * parses the Java emitter and asserts every state it can produce appears here, which is
+ * what would have caught `invalid_removed` — a state the consumer tested for and the
+ * producer never emitted — before it shipped.
+ *
+ * @type {Record<string, (present: boolean, idle: string) => string>}
+ */
+const CHECKPOINT_STATE_MAP = {
+  // A protected checkpoint that reports no file is a contradiction, not a clean slate.
+  protected: (present) => (present ? 'protected' : 'unknown'),
+  invalid_preserved: () => 'retained_unreadable',
+  unknown: () => 'unknown',
+  none: (present, idle) => (present ? 'retained_unrecognized' : idle),
+};
+
+export const CHECKPOINT_STATES_HANDLED = Object.freeze(Object.keys(CHECKPOINT_STATE_MAP));
+
 export function buildTrackingHealth(/** @type {any} */ { permissionStatus = {}, nativeStatus = {}, batteryStatus = {}, latestTrip = null } = {}) {
   const pendingNativeTrips = Number(nativeStatus?.completedTripsCount);
   const pendingNativeTripsKnown = Number.isFinite(pendingNativeTrips);
@@ -242,8 +264,6 @@ export function buildTrackingHealth(/** @type {any} */ { permissionStatus = {}, 
     completedJournalAvailableBytes < 100 * 1024 * 1024;
   const checkpoint = nativeStatus?.activeTripCheckpoint;
   const checkpointKnown = checkpoint?.supported === true && typeof checkpoint?.state === 'string';
-  const checkpointProtected = checkpointKnown && checkpoint.state === 'protected' && checkpoint.present === true;
-  const checkpointInvalidRemoved = checkpointKnown && checkpoint.state === 'invalid_removed';
   const checkpointBytes = Number(checkpoint?.encryptedBytes);
   const checkpointAgeSeconds = Number(checkpoint?.ageSeconds);
   const checkpointMaxAgeSeconds = Number(checkpoint?.maxAgeSeconds);
@@ -258,15 +278,29 @@ export function buildTrackingHealth(/** @type {any} */ { permissionStatus = {}, 
       ? 'less than a minute ago'
       : `${Math.floor(checkpointAgeSeconds / 60)} minute${Math.floor(checkpointAgeSeconds / 60) === 1 ? '' : 's'} ago`
     : null;
+  // AUD-006. The consumer used to test for `invalid_removed`, which the shipping Android
+  // emitter never produces; its real preserved-but-unreadable state, `invalid_preserved`,
+  // fell through to the default branch and rendered as green, "None stored", "No
+  // temporary active-trip recovery file is retained." -- while a retained encrypted file
+  // sat on the device. Reporting the opposite of the truth is worse than reporting
+  // nothing, so an unrecognised state is never allowed to mean "absent":
+  //
+  //   present === true  -> something IS retained, say so, whatever the label
+  //   present === false -> nothing is retained, which is truthful to report as absent
+  //   present unknown   -> unknown, never good
+  const checkpointPresent = checkpoint?.present === true;
+  const checkpointAbsent = checkpoint?.present === false;
+  const checkpointIdle = nativeStatus?.recordingActive ? 'waiting' : 'none';
   const checkpointState = !checkpointKnown
     ? 'unknown'
-    : checkpointProtected
-      ? 'protected'
-      : checkpointInvalidRemoved
-        ? 'removed'
-        : nativeStatus?.recordingActive
-          ? 'waiting'
-          : 'none';
+    : CHECKPOINT_STATE_MAP[checkpoint.state]
+      ? CHECKPOINT_STATE_MAP[checkpoint.state](checkpointPresent, checkpointIdle)
+      // A state this build has never heard of. Retained bytes are still retained.
+      : checkpointPresent
+        ? 'retained_unrecognized'
+        : checkpointAbsent
+          ? checkpointIdle
+          : 'unknown';
   const checks = [
     {
       id: 'native',
@@ -329,20 +363,24 @@ export function buildTrackingHealth(/** @type {any} */ { permissionStatus = {}, 
         ? 'Protected'
         : checkpointState === 'waiting'
           ? 'Waiting'
-          : checkpointState === 'removed'
-            ? 'Removed'
-            : checkpointState === 'none'
-              ? 'None stored'
-              : 'Unknown',
+          : checkpointState === 'retained_unreadable'
+            ? 'Retained, unreadable'
+            : checkpointState === 'retained_unrecognized'
+              ? 'Retained'
+              : checkpointState === 'none'
+                ? 'None stored'
+                : 'Unknown',
       detail: checkpointState === 'protected'
         ? `An encrypted recovery checkpoint was saved ${checkpointAgeLabel || 'recently'}${checkpointSizeLabel ? ` (${checkpointSizeLabel}, maximum 512 KB)` : ''}. It is removed after verified recovery, or expires after ${checkpointMaxAgeDays} days. No route details are shown here.`
         : checkpointState === 'waiting'
           ? 'A trip is active, but its first confirmed recovery checkpoint has not been saved yet. It normally appears within about one minute after confirmation.'
-          : checkpointState === 'removed'
-            ? 'An expired or unreadable checkpoint was safely removed. A new confirmed trip will create a fresh protected checkpoint.'
-            : checkpointState === 'none'
-              ? 'No temporary active-trip recovery file is retained.'
-              : 'Checkpoint status is available in the Android app.',
+          : checkpointState === 'retained_unreadable'
+            ? `An encrypted active-trip recovery file${checkpointSizeLabel ? ` (${checkpointSizeLabel})` : ''} is still on the device but could not be read. Road Sage preserves it rather than discarding it, in case it can still be recovered; it is cleared only once a trip is verified. No route details are shown here.`
+            : checkpointState === 'retained_unrecognized'
+              ? `Android reports an active-trip recovery file${checkpointSizeLabel ? ` (${checkpointSizeLabel})` : ''} in a state this version of Road Sage does not recognise${typeof checkpoint?.state === 'string' ? ` ("${checkpoint.state}")` : ''}. It is retained, not discarded. No route details are shown here.`
+              : checkpointState === 'none'
+                ? 'No temporary active-trip recovery file is retained.'
+                : 'Checkpoint status is available in the Android app.',
     },
     {
       id: 'location',

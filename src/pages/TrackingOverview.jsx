@@ -1,6 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
   AlertTriangle,
@@ -17,7 +17,6 @@ import {
   Signal,
   Waves,
 } from 'lucide-react';
-import { tripSummaryQueryOptions } from '@/api/trips';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { ACTIVE_TRIP_CHANGED_EVENT, activeTripStore } from '@/lib/trackingStore';
 import { getPermissionStatus } from '@/lib/permissions';
@@ -57,6 +56,7 @@ import {
 import { Button } from '@/components/ui/button';
 import PostDriveReviewCard from '@/components/PostDriveReviewCard';
 import usePendingPostDriveReview from '@/hooks/usePendingPostDriveReview';
+import { useTrackingOverviewData } from '@/hooks/useTrackingOverviewData';
 
 const OVERVIEW_TRIP_LIMIT = 30;
 const RECENT_TRIP_TABLE_LIMIT = 8;
@@ -232,14 +232,24 @@ export default function TrackingOverview() {
   const [nativeStatus, setNativeStatus] = useState(() => ({ enabled: false, recordingActive: false, activeTrip: null, completedTripsCount: 0 }));
   const diagnostics = useMemo(() => getTrackingDiagnostics(), []);
 
-  const summariesQuery = useQuery(tripSummaryQueryOptions());
-  // Memoized so the empty-state fallback keeps a stable identity; a fresh []
-  // on every render invalidated every downstream memo.
-  const allTrips = useMemo(
-    () => (Array.isArray(summariesQuery.data) ? summariesQuery.data : []),
-    [summariesQuery.data]
+  // P7 Stage 6 (Annex C O07): one bounded Q1 page for the visible list, plus Q4
+  // over the D1 day buckets for the week figures. The page used to read 200
+  // rows, slice 30 for the list, and fold the same builder twice so the week
+  // chips could be merged back in — which quietly computed them over a
+  // truncation once history passed 200 trips.
+  const {
+    recentTrips,
+    recentUnavailable,
+    week: weekTotals,
+    weekExact,
+    weekUnavailable,
+    isPending: overviewPending,
+    refetch: refetchOverview,
+  } = useTrackingOverviewData({ rows: OVERVIEW_TRIP_LIMIT });
+  const summariesQuery = useMemo(
+    () => ({ isLoading: overviewPending, refetch: refetchOverview }),
+    [overviewPending, refetchOverview]
   );
-  const recentTrips = useMemo(() => allTrips.slice(0, OVERVIEW_TRIP_LIMIT), [allTrips]);
   const {
     dismiss: dismissPostDriveReview,
     showTrip: showPostDriveReview,
@@ -249,15 +259,15 @@ export default function TrackingOverview() {
     () => convertTrendUnits(buildTrackingTrendSeries(recentTrips), units),
     [recentTrips, units]
   );
-  const intelligence = useMemo(() => {
-    const recent = buildOverviewIntelligence(recentTrips);
-    const completeHistory = buildOverviewIntelligence(allTrips);
-    return {
-      ...recent,
-      weekTrips: completeHistory.weekTrips,
-      weekDistanceKm: completeHistory.weekDistanceKm,
-    };
-  }, [allTrips, recentTrips]);
+  const intelligence = useMemo(() => ({
+    // One fold, over the bounded list only. Route coverage, event rate and the
+    // confidence label are properties of the recent list and always were; the
+    // week figures are an aggregate over a complete date window and now come
+    // from the owner that keys them.
+    ...buildOverviewIntelligence(recentTrips),
+    weekTrips: weekTotals.trips,
+    weekDistanceKm: weekTotals.distanceKm,
+  }), [recentTrips, weekTotals]);
   const latestTrip = recentTrips[0] || null;
   const nativeActiveTrip = normalizeNativeActiveTrip(nativeStatus);
   const activeTrip = webActiveTrip || nativeActiveTrip;
@@ -523,13 +533,17 @@ export default function TrackingOverview() {
         />
       )}
 
-      {summariesQuery.isError && (
-        <section role="alert" className="flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900 sm:flex-row sm:items-center sm:justify-between dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+      {recentUnavailable && (
+        <section role="status" className="flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900 sm:flex-row sm:items-center sm:justify-between dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
           <div>
             <h2 className="font-semibold">Recent trips could not be loaded</h2>
-            <p className="mt-1 text-sm opacity-80">Your recordings are still stored locally. Retry the trip summary without leaving this screen.</p>
+            {/* A typed unavailable is shown as its own state. An empty table
+                here would claim there are no recordings, which is untrue. */}
+            <p className="mt-1 text-sm opacity-80">
+              The stored summaries could not be read ({recentUnavailable.code}). Your recordings are still stored locally.
+            </p>
           </div>
-          <Button variant="outline" onClick={() => summariesQuery.refetch()} loading={summariesQuery.isFetching} loadingText="Retrying...">
+          <Button variant="outline" onClick={() => summariesQuery.refetch()} loadingText="Retrying...">
             Retry loading trips
           </Button>
         </section>
@@ -557,8 +571,10 @@ export default function TrackingOverview() {
           <IntelligenceCard
             icon={Route}
             label="Last 7 days"
-            value={formatTripDistance(intelligence.weekDistanceKm, units)}
-            detail={`${intelligence.weekTrips} tracked drive${intelligence.weekTrips === 1 ? '' : 's'} in the last week`}
+            value={weekUnavailable ? 'Unavailable' : formatTripDistance(intelligence.weekDistanceKm, units)}
+            detail={weekUnavailable
+              ? 'The weekly ledger is still being prepared. Your drives were not changed.'
+              : `${intelligence.weekTrips} tracked drive${intelligence.weekTrips === 1 ? '' : 's'} in the last 7 days${weekExact ? '' : ' so far'}`}
           />
           <IntelligenceCard
             icon={Signal}

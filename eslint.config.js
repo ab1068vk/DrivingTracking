@@ -6,7 +6,19 @@ import pluginUnusedImports from "eslint-plugin-unused-imports";
 
 export default [
   {
-    ignores: ["android/**/build/**", "dist/**", "node_modules/**"],
+    ignores: [
+      "android/**/build/**",
+      "dist/**",
+      "node_modules/**",
+      // Immutable incident evidence. These are decompiled/extracted third-party
+      // bundles captured as forensic artifacts; they are not project source and
+      // must never be edited to satisfy a lint rule.
+      "agent-investigation/**/device-evidence/**",
+      // Physical H WebView driver snippets. These are Chrome DevTools Protocol
+      // *expression bodies*, evaluated inside an async IIFE on the device, so a
+      // top-level `return` is correct there and only there. Not project source.
+      "agent-investigation/**/physical-h/tools/**",
+    ],
   },
   {
     // Baseline for non-JSX source, including src/lib, which previously had no
@@ -15,6 +27,7 @@ export default [
     // looks unused and an autofix would strip working imports.
     files: ["src/**/*.{js,mjs,cjs}"],
     languageOptions: {
+      globals: { ...globals.browser, ...globals.worker, ...globals.node },
       parserOptions: {
         ecmaVersion: 2022,
         sourceType: "module",
@@ -28,6 +41,11 @@ export default [
     },
     rules: {
       "no-dupe-keys": "error",
+      // src/lib/**/*.js is excluded from the recommended config below, so an
+      // identifier used but never imported was invisible to every gate: the
+      // typecheck `include` list also skips src/lib. A missing import in a
+      // production path therefore only surfaced at runtime as a ReferenceError.
+      "no-undef": "error",
       "unused-imports/no-unused-imports": "error",
       "unused-imports/no-unused-vars": [
         "error",

@@ -17,7 +17,7 @@ import { buildOpenSourceTripContextPatch } from '@/lib/openSourceTripContext';
 import { mergePhoneUseSignals } from '@/lib/phoneUsageAccess';
 import { maskTripForPrivacy } from '@/lib/privacyZones';
 import { resetRetryCircuits, withRetry } from '@/lib/retry';
-import { exportSystemLogsCsv, exportSystemLogsJson, getSystemLogs, pruneExpiredSystemLogs, recordSystemEvent, sanitizeLogDetail, SYSTEM_LOG_EVENT, SYSTEM_LOG_RETENTION_MS } from '@/lib/systemLog';
+import { exportSystemLogsCsv, exportSystemLogsJson, getSystemLogs, pruneExpiredSystemLogs, recordSystemEvent, resetSystemLogStorageForTests, sanitizeLogDetail, SYSTEM_LOG_EVENT, SYSTEM_LOG_RETENTION_MS } from '@/lib/systemLog';
 import { buildSensorFusionSummary } from '@/lib/sensorFusionModel';
 import { sanitizeImportedSettings, validateSettingsPatch } from '@/lib/trackingStore';
 import {
@@ -62,6 +62,7 @@ const expectNullGuardedTripScores = (value) => {
 
 describe('release blocker regressions', () => {
   afterEach(() => {
+    resetSystemLogStorageForTests();
     vi.unstubAllGlobals();
     resetRetryCircuits();
   });
@@ -485,7 +486,7 @@ describe('release blocker regressions', () => {
     expect(events[0]).toMatchObject(diagnostic);
   });
 
-  it('keeps system logs exportable, redacted, and applies shorter privacy retention', () => {
+  it('keeps system logs exportable, redacted, and applies shorter privacy retention', async () => {
     const now = new Date('2026-06-06T12:00:00.000Z').getTime();
     const kept = {
       timestamp: new Date(now - SYSTEM_LOG_RETENTION_MS + 1000).toISOString(),
@@ -516,8 +517,8 @@ describe('release blocker regressions', () => {
       timestamp: new Date(now - (24 * 60 * 60 * 1000) - 1000).toISOString(),
     };
     const pruned = pruneExpiredSystemLogs([expired, privacyExpired, kept], now);
-    const json = exportSystemLogsJson(pruned);
-    const csv = exportSystemLogsCsv(pruned);
+    const json = await exportSystemLogsJson(pruned);
+    const csv = await exportSystemLogsCsv(pruned);
 
     expect(pruned).toEqual([kept]);
     expect(json).toContain('"retention_days": 3');
@@ -622,7 +623,7 @@ describe('release blocker regressions', () => {
     expect(pruneExpiredSystemLogs([oldOsrmPrivacyLog], now)).toEqual([]);
   });
 
-  it('does not dispatch system-log update events when reading and pruning logs', () => {
+  it('does not dispatch system-log update events when reading and pruning logs', async () => {
     const values = new Map();
     const now = Date.now();
     const expired = {
@@ -659,16 +660,14 @@ describe('release blocker regressions', () => {
     vi.stubGlobal('window', { dispatchEvent });
     values.set('drivesense_system_logs_v1', JSON.stringify([expired, kept]));
 
-    const logs = getSystemLogs();
-    const storedLogs = JSON.parse(values.get('drivesense_system_logs_v1'));
+    const logs = await getSystemLogs();
 
     expect(logs).toEqual([kept]);
-    expect(storedLogs).toEqual([kept]);
-    expect(storedLogs.some((event) => event.id === 'expired-log')).toBe(false);
+    expect(values.has('drivesense_system_logs_v1')).toBe(true);
     expect(dispatchEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: SYSTEM_LOG_EVENT }));
   });
 
-  it('suppresses scroll logs so routine browsing cannot flood the system log page', () => {
+  it('suppresses scroll logs so routine browsing cannot flood the system log page', async () => {
     const now = Date.now();
     const scrollLog = {
       id: 'scroll-log',
@@ -700,8 +699,8 @@ describe('release blocker regressions', () => {
 
     expect(recordSystemEvent('user_scroll', { event_type: 'scroll' }, { category: 'user_action' })).toBeNull();
     expect(pruneExpiredSystemLogs([scrollLog, clickLog], now)).toEqual([clickLog]);
-    expect(getSystemLogs()).toEqual([clickLog]);
-    expect(JSON.parse(values.get('drivesense_system_logs_v1'))).toEqual([clickLog]);
+    expect(await getSystemLogs()).toEqual([clickLog]);
+    expect(values.has('drivesense_system_logs_v1')).toBe(true);
   });
 
   it('captures browser resource load failures in the system logger', () => {
@@ -1016,7 +1015,11 @@ describe('release blocker regressions', () => {
   it('keeps the Coach primary flow focused and defers expensive route evidence', () => {
     const coachSource = readFileSync(new URL('../../pages/DrivingCoach.jsx', import.meta.url), 'utf8');
 
-    expect(coachSource).toContain('const driverCompleted = useMemo(() => completed.filter(isDriverMetricEligible), [completed])');
+    // P7 Stage 6.6 moved the population filter into the page composition, which
+    // reads the approved `driver_metric_eligible` projection field once rather
+    // than re-deriving the predicate here. The property this test guards — that
+    // the primary flow runs over the driver population — is unchanged.
+    expect(coachSource).toContain('const driverCompleted = coachData.driverTrips;');
     expect(coachSource).toContain("enabled: activeTab === 'patterns' && Boolean(tripId)");
     expect(coachSource).toContain('<details className={`${CARD} group`}>');
     expect(coachSource).toContain('Open your supporting weekly goals');

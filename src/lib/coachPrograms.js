@@ -210,7 +210,16 @@ const roundMetric = (value) => value == null || !Number.isFinite(Number(value))
   ? null
   : Math.round(Number(value) * 10) / 10;
 
-export function buildCoachEvidenceAudit(allTrips = [], eligibleTrips = allTrips) {
+/**
+ * @param {Array} allTrips the bounded window
+ * @param {Array} eligibleTrips the `P-DRIVER` rows of that window
+ * @param {{lifetime?: {totalCompleted: number|null, driverEligible: number|null, exact: boolean}}} [options]
+ *   the lifetime counts from their owners (Annex C **O21**). `totalCompleted`
+ *   is `P-COMPLETED` and comes from the D1 aggregate; `driverEligible` is
+ *   `P-DRIVER` and comes from a named reducer, because no aggregate owner can
+ *   express that population (§C1a.0). Omitted, the counts describe the window.
+ */
+export function buildCoachEvidenceAudit(allTrips = [], eligibleTrips = allTrips, options = {}) {
   const allCompleted = (allTrips || []).filter((trip) => trip?.status === 'completed');
   const eligibleCompleted = (eligibleTrips || []).filter((trip) => trip?.status === 'completed');
   // Zone coordinates/events are masked before storage and scoring, so local
@@ -224,14 +233,24 @@ export function buildCoachEvidenceAudit(allTrips = [], eligibleTrips = allTrips)
   ));
   const routeReady = trendEligible.filter((trip) => Boolean(routeKeyForTrip(trip)));
   const coachReadyIds = new Set([...scoreReady, ...eventReady].map((trip) => trip.id));
+  // The two counts an owner can answer exactly. The per-trip readiness terms
+  // below have no owner and no reducer, so they stay window-scoped and the
+  // surface says so rather than presenting a sample as a history.
+  const lifetime = options.lifetime ?? null;
+  const totalCompleted = Number.isFinite(lifetime?.totalCompleted)
+    ? lifetime.totalCompleted : allCompleted.length;
+  const driverEligible = Number.isFinite(lifetime?.driverEligible)
+    ? lifetime.driverEligible : eligibleCompleted.length;
   return {
-    totalCompleted: allCompleted.length,
-    driverEligible: eligibleCompleted.length,
+    totalCompleted,
+    driverEligible,
+    lifetimeExact: Boolean(lifetime?.exact),
+    windowTrips: allCompleted.length,
     trendEligible: trendEligible.length,
     scoreReady: scoreReady.length,
     eventReady: eventReady.length,
     routeReady: routeReady.length,
-    excludedDriver: Math.max(0, allCompleted.length - eligibleCompleted.length),
+    excludedDriver: Math.max(0, totalCompleted - driverEligible),
     excludedPrivacy: 0,
     privacyProtected,
     missingCoachMeasurements: trendEligible.filter((trip) => !coachReadyIds.has(trip.id)).length,

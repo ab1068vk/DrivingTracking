@@ -59,7 +59,10 @@ describe('privacy zone editor network privacy', () => {
     expect(settingsSource).toContain('const withoutA = await removePrivacyZone(pair.a.id, mergeOperation.settings);');
     expect(settingsSource).toContain('buildPrivacyCleanupPresentation(operation).description');
     expect(settingsSource).toContain('buildHeightenedPrivacyCleanupPresentation(result)');
-    expect(settingsSource).toContain('purgeLocalSpeedKnowledgeForPrivacyZones([privacyDeleteZone])');
+    // The streamed archive purge owns the saved-speed cleanup now, and hands
+    // its result back so the dialog can still report what was erased.
+    expect(settingsSource).toContain('purgePrivacyZoneAcrossArchive(privacyDeleteZone)');
+    expect(settingsSource).toContain('purgeResult?.speedKnowledgeCleanup');
     expect(settingsSource).toContain('purged_speed_knowledge_count');
     expect(settingsSource).toContain('Erase Private Data & Delete Zone');
   });

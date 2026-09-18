@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -9,9 +10,13 @@ import {
   Search,
   Shield,
 } from 'lucide-react';
-import { limitedTripSummaryQueryOptions, tripDetailQueryOptions } from '@/api/trips';
+import { p7DetailQueryOptions } from '@/api/trips';
+import { useBoundedTripWindow } from '@/hooks/useBoundedTripWindow';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { formatDistance, formatSpeed } from '@/lib/tripEngine';
+import {
+  readRequestedTripId, resolveTrackingTripSubject, trackingTripPickerOptions, trackingTripSubjectState,
+} from '@/lib/trackingTripSubject';
 import {
   filterTrackingEventRows,
   formatTrackingEventTime,
@@ -34,6 +39,7 @@ const formatTripLabel = (trip = {}, units = 'metric') => {
 const compactValue = (value) => (value == null || value === '' ? 'source unavailable' : String(value));
 
 export default function TrackingEvents() {
+  const [searchParams] = useSearchParams();
   const settings = useLocalSettings();
   const units = settings.units || 'metric';
   const [selectedTripId, setSelectedTripId] = useState('');
@@ -48,14 +54,29 @@ export default function TrackingEvents() {
   const deferredFilters = useDeferredValue(filters);
   const filtersPending = deferredFilters !== filters;
 
-  const { data: summaries = [], isLoading: summariesLoading } = useQuery({
-    ...limitedTripSummaryQueryOptions(SUMMARY_LIMIT),
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
+  // P7 Stage 8: one bounded Q1 window, labelled `latest N`, plus the Q2
+  // read for the one trip the user selected. Nothing here folds a history.
+  const summaryWindow = useBoundedTripWindow({
+    queryId: 'tracking-events', limit: SUMMARY_LIMIT, status: 'completed',
   });
+  const summaries = summaryWindow.trips;
+  const summariesLoading = summaryWindow.isLoading;
 
-  const effectiveSelectedTripId = selectedTripId || (summaries[0]?.id ? String(summaries[0].id) : '');
-  const { data: selectedTripRaw, isLoading: selectedTripLoading } = useQuery(tripDetailQueryOptions(effectiveSelectedTripId));
-  const selectedTrip = selectedTripRaw || summaries.find((trip) => String(trip.id) === String(effectiveSelectedTripId)) || null;
+  // HPR-017: the link that opened this screen names its subject. The bounded
+  // window above is the picker's options, never the answer to "which trip".
+  const requestedTrip = readRequestedTripId(searchParams);
+  const subject = resolveTrackingTripSubject({ requested: requestedTrip, selectedTripId, summaries });
+  const effectiveSelectedTripId = subject.tripId;
+  const detailQuery = useQuery(p7DetailQueryOptions(effectiveSelectedTripId));
+  const selectedTripLoading = detailQuery.isLoading;
+  const subjectState = trackingTripSubjectState({ subject, summaries, detail: detailQuery });
+  const selectedTrip = subjectState.trip || subjectState.summary;
+  const tripOptions = trackingTripPickerOptions({
+    summaries,
+    tripId: effectiveSelectedTripId,
+    subjectTrip: selectedTrip,
+    formatLabel: (trip) => formatTripLabel(trip, units),
+  });
 
   const rows = useMemo(
     () => selectedTrip ? normalizeTrackingEventRows(selectedTrip, { settings }) : [],
@@ -111,9 +132,9 @@ export default function TrackingEvents() {
               }}
               className="h-9 rounded-md border border-border bg-card px-2 text-sm text-foreground"
             >
-              {!summaries.length && <option value="">No completed trips</option>}
-              {summaries.map((trip) => (
-                <option key={trip.id} value={trip.id}>{formatTripLabel(trip, units)}</option>
+              {!tripOptions.length && <option value="">No completed trips</option>}
+              {tripOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </label>
@@ -151,6 +172,11 @@ export default function TrackingEvents() {
             />
           </label>
         </div>
+        {subjectState.status === 'unavailable' && (
+          <p role="status" className="mt-2 rounded-md border border-amber-800/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-200">
+            {subjectState.notice}
+          </p>
+        )}
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_21rem]">
@@ -222,7 +248,7 @@ export default function TrackingEvents() {
                   {!filteredRows.length && (
                     <tr>
                       <td colSpan={8} className="px-4 py-14 text-center text-sm text-muted-foreground">
-                        {selectedTrip ? 'No events recorded for the selected filters.' : 'No completed trip selected.'}
+                        {subjectState.notice || (selectedTrip ? 'No events recorded for the selected filters.' : 'No completed trip selected.')}
                       </td>
                     </tr>
                   )}

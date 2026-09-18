@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ stored: null }));
+const state = vi.hoisted(() => ({ stored: null, p6: null }));
 
 vi.mock('@/lib/securePayloadCrypto', () => ({
   getEncryptedJson: vi.fn(async (_key, fallback) => state.stored || fallback),
@@ -10,6 +10,15 @@ vi.mock('@/lib/securePayloadCrypto', () => ({
   setEncryptedJson: vi.fn(async (_key, value) => {
     state.stored = structuredClone(value);
   }),
+}));
+
+vi.mock('@/lib/p6TripDerivedState', () => ({
+  queryP6GeometryPreviewPage: vi.fn(async () => state.p6 || ({
+    // A domain that never claimed coverage: the frozen v1 compatibility path
+    // is the legal disposition, so the double says so explicitly.
+    available: false, state: 'REBUILD_REQUIRED', items: [], nextCursor: null,
+    compatibilityAllowed: true,
+  })),
 }));
 
 import {
@@ -23,6 +32,46 @@ import { buildCorrectionImpactPreview } from '@/lib/speedLimitIntelligence';
 describe('speed geometry index', () => {
   beforeEach(() => {
     state.stored = null;
+    state.p6 = null;
+  });
+
+  it('retires the legacy full-history builder as soon as D2 is independently verified', async () => {
+    state.stored = { version: 1, trips: [{ id: 'legacy-must-not-serve', route_points: [] }] };
+    state.p6 = {
+      available: true,
+      state: 'VERIFIED',
+      items: [{ id: 'p6-head', route_points: [{ lat: 43.1, lng: -79.1 }, { lat: 43.2, lng: -79.2 }] }],
+      nextCursor: 'D2_GEOMETRY:p6-head',
+    };
+    const loadBatch = vi.fn();
+
+    await expect(readSpeedGeometryIndex()).resolves.toMatchObject({
+      version: 2, p6Paged: true, indexedTripCount: 1,
+      trips: [{ id: 'p6-head' }],
+    });
+    await expect(rebuildSpeedGeometryIndex({ loadBatch })).resolves.toMatchObject({
+      version: 2, p6Paged: true,
+    });
+    expect(loadBatch).not.toHaveBeenCalled();
+  });
+
+  it('never hydrates the retired monolith after a VERIFIED D2 fails to serve', async () => {
+    state.stored = { version: 1, trips: [{ id: 'legacy-must-not-serve', route_points: [] }] };
+    // The owner revoked its own head and named the failure, so the retired
+    // whole-geometry hydrate is not what the reader falls back to.
+    state.p6 = {
+      available: false, state: 'REBUILD_REQUIRED', reason: 'DERIVED_GEOMETRY_UNREADABLE',
+      items: [], nextCursor: null, compatibilityAllowed: false,
+    };
+    const loadBatch = vi.fn();
+
+    await expect(readSpeedGeometryIndex()).resolves.toMatchObject({
+      version: 2, unavailable: true, trips: [], reason: 'DERIVED_GEOMETRY_UNREADABLE',
+    });
+    await expect(rebuildSpeedGeometryIndex({ loadBatch })).resolves.toMatchObject({
+      version: 2, unavailable: true,
+    });
+    expect(loadBatch).not.toHaveBeenCalled();
   });
 
   it('keeps compact public geometry and drops private points', () => {

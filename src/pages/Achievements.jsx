@@ -1,15 +1,14 @@
 // @ts-check
 import { useEffect, useMemo, useState } from 'react';
 import { MotionConfig, motion, useReducedMotion } from 'framer-motion';
-import { useQuery } from '@tanstack/react-query';
 import confetti from 'canvas-confetti';
 import {
   Activity, Award, BadgeCheck, Brain, CalendarClock, CarFront, Check, ChevronRight,
   CircleGauge, Gauge, History, LockKeyhole, Medal, Route, ShieldCheck,
   SlidersHorizontal, Sparkles, Target, TrendingDown, TrendingUp, Trophy, Zap,
 } from 'lucide-react';
-import { limitedTripSummaryQueryOptions, tripSummaryQueryOptions } from '@/api/trips';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { useAchievementsData } from '@/hooks/useAchievementsData';
 import { formatDistance } from '@/lib/tripEngine';
 import {
   convertDistanceKm,
@@ -20,16 +19,21 @@ import {
   buildDriverProgression,
   acknowledgeDriverProgressionCelebration,
   loadDriverProgressionLedger,
+  PROGRESSION_NOTIFICATION_PAGE,
   syncDriverProgressionLedger,
   updateDriverProgressionMissionSelection,
 } from '@/lib/driverProgression';
+import { emptyLedger as emptyProgressionLedger } from '@/lib/driverProgressionLedger';
+import { progressionMigrationNeeded } from '@/lib/driverProgressionMigration';
+import { runExplicitProgressionMigration } from '@/lib/milestoneNotificationCoordinator';
+import { logSystemFailure } from '@/lib/systemLog';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
-import InlineLoadError from '@/components/InlineLoadError';
 import { PageEmptyState, PageHeader } from '@/components/PageChrome';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
+import { SCORE_ESTIMATE_NOTICE, formatScoreWithProvenance, isApproximateScoreOutput } from '@/lib/scoreDisplay';
 
 const TRACK_ICONS = {
   braking: ShieldCheck,
@@ -150,7 +154,39 @@ function MissionCard({ mission, index, onOpen }) {
   );
 }
 
-function MasteryCard({ track, index, onOpen }) {
+/**
+ * Current Form's score readout and its method note.
+ *
+ * The estimate notice is coupled to the score actually shown: it appears only
+ * when a score exists and that score's own derived provenance is approximate or
+ * unknown under the central display contract. Gating it on the panel instead
+ * told a calibrated reading, and a page with no eligible form score at all,
+ * that they were estimates.
+ */
+export function CurrentFormReadout({ currentForm }) {
+  const score = currentForm?.score;
+  const estimated = score != null && isApproximateScoreOutput(currentForm?.scoreProvenance);
+  return (
+    <>
+      <div className="mt-4 flex flex-wrap items-end gap-x-4 gap-y-2">
+        <div>
+          <div className="text-xs font-bold uppercase tracking-[0.18em] text-muted-foreground">Current form</div>
+          <h2 className="mt-1 font-grotesk text-3xl font-bold sm:text-4xl">{currentForm.rank.label}</h2>
+        </div>
+        <div className="pb-1 font-grotesk text-3xl font-bold text-primary">{score == null ? '—' : formatScoreWithProvenance(score, currentForm.scoreProvenance)}</div>
+        <span className={`mb-1.5 inline-flex items-center gap-1 text-xs font-semibold ${currentForm.trend.direction === 'improving' ? 'text-emerald-600 dark:text-emerald-300' : currentForm.trend.direction === 'declining' ? 'text-orange-600 dark:text-orange-300' : 'text-muted-foreground'}`}>
+          {currentForm.trend.direction === 'improving' ? <TrendingUp className="h-4 w-4" /> : currentForm.trend.direction === 'declining' ? <TrendingDown className="h-4 w-4" /> : null}
+          {currentForm.trend.label}
+        </span>
+      </div>
+      <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">
+        Form uses your latest 20 eligible trips and can move in either direction. Mastery tiers stay permanent once earned.{estimated ? ` ${SCORE_ESTIMATE_NOTICE}.` : ''}
+      </p>
+    </>
+  );
+}
+
+export function MasteryCard({ track, index, onOpen }) {
   const Icon = TRACK_ICONS[track.icon] || CircleGauge;
   return (
     <motion.button
@@ -175,7 +211,7 @@ function MasteryCard({ track, index, onOpen }) {
                     {track.currentTier.label}
                   </span>
                 ) : <span className="text-[11px] font-medium text-muted-foreground">Unranked</span>}
-                <span className="text-xs text-muted-foreground">Form {track.score ?? '—'}</span>
+                <span className="text-xs text-muted-foreground">Form {track.score == null ? '—' : formatScoreWithProvenance(track.score, track.scoreProvenance)}</span>
               </div>
             </div>
             <div className={`flex items-center gap-1 text-[11px] font-semibold ${track.trend.direction === 'improving' ? 'text-emerald-600 dark:text-emerald-300' : track.trend.direction === 'declining' ? 'text-orange-600 dark:text-orange-300' : 'text-muted-foreground'}`}>
@@ -296,32 +332,71 @@ export default function Achievements() {
   const [selection, setSelection] = useState(null);
   const [missionPickerOpen, setMissionPickerOpen] = useState(false);
   const [selectedMissionIds, setSelectedMissionIds] = useState([]);
-  const [ledger, setLedger] = useState(() => loadDriverProgressionLedger());
+  // P4-B-F01-3-A. Milestones is an explicit, user-requested view of this data,
+  // so it owns the legacy conversion - but it must never run it synchronously.
+  // The initializer only asks the O(1) marker whether debt exists; when it does
+  // the page renders a preparing state immediately and the conversion runs from
+  // an effect, one bounded chunk per yield, off the first-paint path.
+  const [progressionPreparing, setProgressionPreparing] = useState(() => progressionMigrationNeeded());
+  const [ledger, setLedger] = useState(() => (
+    progressionMigrationNeeded() ? emptyProgressionLedger() : loadDriverProgressionLedger()
+  ));
+  /** Explicit history paging: the tab starts at one page and grows on request. */
+  const [historyLimit, setHistoryLimit] = useState(PROGRESSION_NOTIFICATION_PAGE);
+  // P7 Stage 6.3 (Annex C C5.2): one bounded Q1 window wide enough for every
+  // trip-count window progression declares, plus the lifetime figures from the
+  // owners that key them. The page used to rebuild all of progression —
+  // including its lifetime eligibility block — from a 200-row page, which
+  // described a truncation once history passed that.
   const {
-    data: recentCompleted = [], isLoading, isFetching: recentFetching, isSuccess: recentTripsLoaded,
-    isError: recentTripsError, refetch: refetchRecentTrips,
-  } = useQuery({
-    ...limitedTripSummaryQueryOptions(50),
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
-  });
-  const {
-    data: fullHistoryCompleted = [], isFetching: fullHistoryFetching,
-    isError: fullHistoryError, refetch: refetchFullHistory,
-  } = useQuery({
-    ...tripSummaryQueryOptions(), enabled: recentTripsLoaded,
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
-  });
-  const completed = fullHistoryCompleted.length > 0 ? fullHistoryCompleted : recentCompleted;
-  const isFetching = recentFetching || fullHistoryFetching;
+    windowTrips: completed,
+    windowUnavailable: progressionUnavailable,
+    lifetime: progressionLifetime,
+    lifetimeExact: progressionLifetimeExact,
+    finishLifetime: finishProgressionLifetime,
+    finishingLifetime: finishingProgressionLifetime,
+    isLoading,
+    isFetching,
+    isError: recentTripsError,
+    refetch: refetchRecentTrips,
+  } = useAchievementsData();
   const progression = useMemo(
-    () => buildDriverProgression(completed, settings, { ledger }),
-    [completed, settings, ledger]
+    () => buildDriverProgression(completed, settings, {
+      ledger,
+      historyLimit,
+      lifetime: progressionLifetime,
+    }),
+    [completed, settings, ledger, historyLimit, progressionLifetime]
   );
 
   useEffect(() => {
-    const result = syncDriverProgressionLedger(progression, ledger);
-    if (result.changed) setLedger(result.ledger);
-  }, [progression, ledger]);
+    if (!progressionPreparing) return undefined;
+    let cancelled = false;
+    runExplicitProgressionMigration()
+      .then(() => {
+        if (cancelled) return;
+        setLedger(loadDriverProgressionLedger());
+        setProgressionPreparing(false);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        logSystemFailure('progression_migration_milestones_page', error);
+        setProgressionPreparing(false);
+      });
+    return () => { cancelled = true; };
+  }, [progressionPreparing]);
+
+  useEffect(() => {
+    if (progressionPreparing) return;
+    try {
+      const result = syncDriverProgressionLedger(progression, ledger);
+      if (result.changed) setLedger(result.ledger);
+    } catch (error) {
+      // A durable progression write failed; the page stays readable and the
+      // next reconciliation retries rather than reporting a phantom save.
+      logSystemFailure('progression_ledger_sync', error);
+    }
+  }, [progression, ledger, progressionPreparing]);
 
   useEffect(() => {
     if (!progression.pendingCelebration || reduceMotion) return;
@@ -337,12 +412,20 @@ export default function Achievements() {
   };
   const saveMissionSelection = () => {
     if (selectedMissionIds.length !== 3) return;
-    setLedger(updateDriverProgressionMissionSelection(progression.missionPlan.weekKey, selectedMissionIds, ledger));
+    try {
+      setLedger(updateDriverProgressionMissionSelection(progression.missionPlan.weekKey, selectedMissionIds, ledger));
+    } catch (error) {
+      logSystemFailure('progression_mission_selection_save', error);
+    }
     setMissionPickerOpen(false);
   };
   const closeCelebration = () => {
     if (!progression.pendingCelebration) return;
-    setLedger(acknowledgeDriverProgressionCelebration(progression.pendingCelebration.id, ledger));
+    try {
+      setLedger(acknowledgeDriverProgressionCelebration(progression.pendingCelebration.id, ledger));
+    } catch (error) {
+      logSystemFailure('progression_celebration_acknowledge', error);
+    }
   };
 
   const unlockedTiers = progression.masteryTracks.reduce((sum, track) => sum + track.tiers.filter((tier) => tier.unlocked).length, 0);
@@ -350,7 +433,9 @@ export default function Achievements() {
   const recommendedMission = [...progression.missions]
     .filter((mission) => !mission.completed)
     .sort((a, b) => b.progress - a.progress)[0] || progression.missions[0] || null;
-  const milestoneLoadFailed = recentTripsError && completed.length === 0;
+  // "The stored trips could not be read" and "you have no qualifying trips" are
+  // different facts; the page must not render the first as the second.
+  const milestoneLoadFailed = (recentTripsError || Boolean(progressionUnavailable)) && completed.length === 0;
 
 
   return (
@@ -365,16 +450,30 @@ export default function Achievements() {
         status={(
           <div className="flex flex-wrap items-center gap-2">
             <InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing milestones" />
-            <InlineLoadError
-              visible={fullHistoryError && !recentTripsError}
-              message="Full milestone history could not refresh."
-              onRetry={refetchFullHistory}
-            />
+            {!isLoading && !progressionUnavailable && !progressionLifetimeExact && (
+              <button
+                type="button"
+                onClick={() => finishProgressionLifetime()}
+                disabled={finishingProgressionLifetime}
+                className="rounded-lg border border-border px-2 py-1 text-xs font-semibold disabled:opacity-50"
+              >
+                {/* The lifetime tally is a floor until it reaches terminal EOF,
+                    and finishing it is an explicit user action — a render never
+                    drains it. */}
+                {finishingProgressionLifetime ? 'Counting lifetime…' : 'Finish lifetime totals'}
+              </button>
+            )}
           </div>
         )}
       />
 
-      {isLoading ? (
+      {progressionPreparing ? (
+        <section className="rounded-2xl border border-border bg-card p-6">
+          <h2 className="font-grotesk text-xl font-bold">Preparing progression history</h2>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Your saved XP ledger is being moved to the paged store. This runs once and keeps every unlock.</p>
+          <div className="mt-4 h-2 overflow-hidden rounded-full bg-secondary/60"><div className="h-full w-1/3 animate-pulse rounded-full bg-primary" /></div>
+        </section>
+      ) : isLoading ? (
         <div className="space-y-4">
           <div className="h-56 animate-pulse rounded-3xl bg-secondary/60" />
           <div className="grid gap-3 md:grid-cols-3">{[1, 2, 3].map((item) => <div key={item} className="h-40 animate-pulse rounded-2xl bg-secondary/60" />)}</div>
@@ -401,20 +500,7 @@ export default function Achievements() {
                     {progression.eligibility.confidence} evidence
                   </span>
                 </div>
-                <div className="mt-4 flex flex-wrap items-end gap-x-4 gap-y-2">
-                  <div>
-                    <div className="text-xs font-bold uppercase tracking-[0.18em] text-muted-foreground">Current form</div>
-                    <h2 className="mt-1 font-grotesk text-3xl font-bold sm:text-4xl">{progression.currentForm.rank.label}</h2>
-                  </div>
-                  <div className="pb-1 font-grotesk text-3xl font-bold text-primary">{progression.currentForm.score ?? '—'}</div>
-                  <span className={`mb-1.5 inline-flex items-center gap-1 text-xs font-semibold ${progression.currentForm.trend.direction === 'improving' ? 'text-emerald-600 dark:text-emerald-300' : progression.currentForm.trend.direction === 'declining' ? 'text-orange-600 dark:text-orange-300' : 'text-muted-foreground'}`}>
-                    {progression.currentForm.trend.direction === 'improving' ? <TrendingUp className="h-4 w-4" /> : progression.currentForm.trend.direction === 'declining' ? <TrendingDown className="h-4 w-4" /> : null}
-                    {progression.currentForm.trend.label}
-                  </span>
-                </div>
-                <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">
-                  Form uses your latest 20 eligible trips and can move in either direction. Mastery tiers stay permanent once earned.
-                </p>
+                <CurrentFormReadout currentForm={progression.currentForm} />
                 {recommendedMission && (
                   <button
                     type="button"
@@ -459,7 +545,10 @@ export default function Achievements() {
                 <div className="col-span-2 rounded-2xl border border-border/70 bg-background/70 p-4 backdrop-blur">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="font-grotesk text-xl font-bold">{progression.eligibility.eligibleTrips}/{progression.eligibility.completedTrips} qualifying trips</div>
+                      <div className="font-grotesk text-xl font-bold">
+                        {progressionLifetimeExact ? '' : 'at least '}
+                        {progression.eligibility.eligibleTrips}/{progression.eligibility.completedTrips} qualifying trips
+                      </div>
                       <div className="mt-1 text-xs text-muted-foreground">{formatDistance(progression.eligibility.distanceKm, units)} evidence · {progression.eligibility.excludedTrips} excluded low-evidence trip{progression.eligibility.excludedTrips === 1 ? '' : 's'}</div>
                     </div>
                     <CircleGauge className="h-7 w-7 text-primary" />
@@ -530,7 +619,7 @@ export default function Achievements() {
                     {progression.masteryTracks.map((track) => {
                       const Icon = TRACK_ICONS[track.icon] || CircleGauge;
                       return <button key={track.id} type="button" onClick={() => setSelection({ type: 'mastery', item: track })} className="group text-left">
-                        <div className="mb-2 flex items-center justify-between gap-3 text-xs"><span className="flex items-center gap-2 font-semibold"><Icon className="h-4 w-4 text-primary" />{track.label}</span><span className="font-grotesk text-base font-bold">{track.score ?? '—'}</span></div>
+                        <div className="mb-2 flex items-center justify-between gap-3 text-xs"><span className="flex items-center gap-2 font-semibold"><Icon className="h-4 w-4 text-primary" />{track.label}</span><span className="font-grotesk text-base font-bold">{track.score == null ? '—' : formatScoreWithProvenance(track.score, track.scoreProvenance)}</span></div>
                         <div className="h-2 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary transition-all group-hover:bg-primary/80" style={{ width: `${track.score || 0}%` }} /></div>
                       </button>;
                     })}
@@ -559,6 +648,7 @@ export default function Achievements() {
               <div className="mb-3"><h2 className="font-grotesk text-xl font-bold">XP transaction ledger</h2><p className="mt-1 text-xs text-muted-foreground">Every mastery, mission, and seasonal XP award is recorded once with its source and timestamp.</p></div>
               {progression.history.length ? <div className="rounded-2xl border border-border bg-card p-4">
                 <div className="space-y-1">{progression.history.map((entry, index) => <div key={entry.id} className="relative flex gap-3 pb-5 last:pb-0"><div className="relative z-10 mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-full bg-primary/10 text-primary">{entry.type === 'mission' ? <Target className="h-4 w-4" /> : <Trophy className="h-4 w-4" />}</div>{index < progression.history.length - 1 && <div className="absolute bottom-0 left-[15px] top-8 w-px bg-border" />}<div className="min-w-0 flex-1"><div className="flex flex-wrap items-start justify-between gap-2"><div><div className="text-sm font-semibold">{entry.title}</div><div className="mt-1 text-xs text-muted-foreground">{entry.detail}</div></div><span className="text-[11px] font-medium text-muted-foreground">{formatDate(entry.earnedAt)}</span></div></div></div>)}</div>
+                {progression.historyHasMore && <button type="button" onClick={() => setHistoryLimit((current) => current + PROGRESSION_NOTIFICATION_PAGE)} className="mt-3 min-h-9 w-full rounded-xl border border-border bg-background/70 px-3 text-xs font-semibold text-primary transition hover:border-primary/40">Load older entries</button>}
               </div> : <div className="rounded-2xl border border-dashed border-border p-8 text-center"><History className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-semibold">Your first advanced unlock is ahead</p><p className="mt-1 text-xs text-muted-foreground">Meet every evidence requirement in a mastery tier or adaptive mission.</p></div>}
             </TabsContent>
           </Tabs>

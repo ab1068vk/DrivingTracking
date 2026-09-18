@@ -194,6 +194,11 @@ describe('p0 export privacy fuzzing', () => {
       'Dentist appointment',
       '<div id="secret-token">https://example.com/secret-token</div>',
       'secret-token',
+      '__proto__',
+      'constructor',
+      'toString',
+      'hasOwnProperty',
+      'valueOf',
     ];
 
     hostileStrings.forEach((hostile) => {

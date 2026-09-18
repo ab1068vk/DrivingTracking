@@ -6,10 +6,23 @@ const state = vi.hoisted(() => ({
   update: vi.fn(),
 }));
 
+// The refresh path is now a bounded cursor scan: it pages completed trip ids
+// and streams one payload at a time, so the fake repository exposes the same
+// paging and payload-stream surface the real repositories do.
 vi.mock('@/api/trips', () => ({
   tripService: {
-    getById: vi.fn(),
-    listAll: vi.fn(async () => state.trips),
+    getById: vi.fn(async (id) => state.trips.find((trip) => String(trip.id) === String(id))),
+    queryHistoryPage: vi.fn(async ({ status = '' } = {}) => ({
+      rows: state.trips.filter((trip) => !status || trip.status === status),
+      nextCursor: null,
+      hasMore: false,
+    })),
+    getPayloadStream: vi.fn(async (id) => {
+      const trip = state.trips.find((item) => String(item.id) === String(id));
+      return (async function* points() {
+        for (const point of trip?.route_points || []) yield point;
+      })();
+    }),
     update: state.update,
   },
 }));
@@ -62,7 +75,10 @@ describe('local speed score refresh', () => {
 
     expect(updated).toHaveLength(1);
     expect(state.buildPatch).toHaveBeenCalledTimes(1);
-    expect(state.buildPatch).toHaveBeenCalledWith(state.trips[0], {});
+    expect(state.buildPatch).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'matching' }),
+      {},
+    );
     expect(state.update).toHaveBeenCalledWith('matching', {
       score_overall: 88,
       needs_rescore: false,
@@ -354,8 +370,9 @@ describe('local speed score refresh', () => {
     expect((await getRescoringQueue()).at(-1)).toMatchObject({
       status: 'complete',
       total: 25,
+      // P4-C-F06: the durable job keeps a scalar pending count, not an array.
+      pending: 0,
       completed: 25,
-      remainingTripIds: [],
     });
   });
 });

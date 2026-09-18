@@ -117,8 +117,19 @@ function nearestRoutePoint(routePoints = [], targetMs = null) {
   return { point: bestPoint, deltaMs: bestDelta };
 }
 
-function movingUsageWindows(routePoints = [], sessionStartMs, sessionEndMs) {
-  const points = routePoints
+/**
+ * The route prepared for moving-window analysis, cached by route identity.
+ *
+ * One entry per route array; the point objects themselves are referenced, never
+ * copied. A route that changes produces a new array and therefore a new entry.
+ */
+const movingUsageRouteCache = new WeakMap();
+
+function movingUsageRoute(routePoints = []) {
+  if (!Array.isArray(routePoints) || !routePoints.length) return [];
+  const cached = movingUsageRouteCache.get(routePoints);
+  if (cached && cached.length === routePoints.length) return cached.prepared;
+  const prepared = routePoints
     .map((point) => ({
       point,
       timestamp: timestampMs(point?.timestamp ?? point?.time),
@@ -127,11 +138,39 @@ function movingUsageWindows(routePoints = [], sessionStartMs, sessionEndMs) {
     }))
     .filter((entry) => entry.timestamp != null)
     .sort((left, right) => left.timestamp - right.timestamp);
+  movingUsageRouteCache.set(routePoints, { length: routePoints.length, prepared });
+  return prepared;
+}
+
+/** First pair index whose later point can still reach `sessionStartMs`. */
+function firstOverlappingPair(points, sessionStartMs) {
+  if (!Number.isFinite(sessionStartMs) || points.length < 2) return 0;
+  let low = 0;
+  let high = points.length - 1;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if (points[mid + 1].timestamp <= sessionStartMs) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+function movingUsageWindows(routePoints = [], sessionStartMs, sessionEndMs) {
+  // HPR-007. This preparation — map, filter and sort of every route point — used
+  // to run again for each usage session, allocating one object per point per
+  // session. It depends only on the route, so it is built once per route array
+  // and shared; the session-bounded walk below is unchanged.
+  const points = movingUsageRoute(routePoints);
 
   const windows = [];
-  for (let index = 0; index < points.length - 1; index += 1) {
+  // Only pairs that can overlap the session produce a window: every other pair
+  // hits the `endMs <= startMs` guard and leaves `previous` untouched, so
+  // starting at the first pair that can reach the session and stopping after the
+  // last one is exactly the same walk without the unreachable iterations.
+  for (let index = firstOverlappingPair(points, sessionStartMs); index < points.length - 1; index += 1) {
     const current = points[index];
     const next = points[index + 1];
+    if (current.timestamp >= sessionEndMs) break;
     const sampleDurationMs = next.timestamp - current.timestamp;
     const inaccurate = Number.isFinite(current.accuracyM) && current.accuracyM > MAX_USAGE_ROUTE_ACCURACY_M;
     if (
@@ -455,7 +494,59 @@ export function mergeManyPhoneUseSignals(signals = [], tripDurationSeconds = 0) 
   );
 }
 
+/**
+ * HPR-002. Trip Detail derives its display phone evidence in the render body,
+ * below the page's early returns where a hook cannot live, so an unrelated
+ * rerender used to walk every overlapping prepared pair again and rescan a long
+ * session's window. The result is reused on the authority of the inputs this
+ * function actually reads:
+ *
+ *  - the **trip record identity**, which covers every `native_phone_usage_*`,
+ *    `phone_use_*` and `driving_events` field it consults — React Query replaces
+ *    the record when any of them changes and keeps it when none does;
+ *  - the **route array identity**, because the route arrives as its own argument;
+ *  - the trip duration, which the caller passes separately;
+ *  - the detection evidence, keyed by identity, with "no own keys" treated as one
+ *    key so the caller's fresh `{}` per render is not a new question.
+ *
+ * No route content is hashed, stringified or compared; the cache is reached
+ * before any route work.
+ */
+const evidenceCache = new WeakMap();
+const detectionTokens = new WeakMap();
+const NO_ROUTE_POINTS = Object.freeze([]);
+let detectionTokenSeq = 0;
+
+const detectionKey = (detectionPhoneUse) => {
+  if (!detectionPhoneUse || typeof detectionPhoneUse !== 'object') return 'none';
+  if (!Object.keys(detectionPhoneUse).length) return 'none';
+  let token = detectionTokens.get(detectionPhoneUse);
+  if (!token) {
+    detectionTokenSeq += 1;
+    token = `detection-${detectionTokenSeq}`;
+    detectionTokens.set(detectionPhoneUse, token);
+  }
+  return token;
+};
+
 export function buildPhoneUseFromTripEvidence(trip = {}, routePoints = [], tripDurationSeconds = 0, detectionPhoneUse = {}) {
+  if (trip && typeof trip === 'object') {
+    const route = Array.isArray(routePoints) && routePoints.length ? routePoints : NO_ROUTE_POINTS;
+    const byRoute = evidenceCache.get(trip) || new WeakMap();
+    if (!evidenceCache.has(trip)) evidenceCache.set(trip, byRoute);
+    const entry = byRoute.get(route);
+    const key = `${Number(tripDurationSeconds) || 0}|${detectionKey(detectionPhoneUse)}`;
+    if (entry && entry.length === route.length && entry.results.has(key)) return entry.results.get(key);
+    const computed = computePhoneUseFromTripEvidence(trip, routePoints, tripDurationSeconds, detectionPhoneUse);
+    const results = entry && entry.length === route.length ? entry.results : new Map();
+    results.set(key, computed);
+    byRoute.set(route, { length: route.length, results });
+    return computed;
+  }
+  return computePhoneUseFromTripEvidence(trip, routePoints, tripDurationSeconds, detectionPhoneUse);
+}
+
+function computePhoneUseFromTripEvidence(trip = {}, routePoints = [], tripDurationSeconds = 0, detectionPhoneUse = {}) {
   const nativeUsage = buildPhoneUseFromAndroidUsage({
     usage_access_granted: trip.native_phone_usage_access_granted === true,
     events: Array.isArray(trip.native_phone_usage_events) ? trip.native_phone_usage_events : [],
@@ -486,6 +577,129 @@ export function buildPhoneUseFromTripEvidence(trip = {}, routePoints = [], tripD
     : emptyPhoneUse();
 
   return mergeManyPhoneUseSignals([detectionPhoneUse, nativeUsage, storedEvents, summaryOnly], tripDurationSeconds);
+}
+
+/**
+ * Full-fidelity phone-use evidence without retaining the route.  Android
+ * usage sessions are bounded payload metadata; each session keeps only its
+ * current moving overlap window while canonical points are consumed once.
+ */
+export async function buildPhoneUseFromTripEvidenceStream(
+  trip = {},
+  routePoints,
+  tripDurationSeconds = 0,
+  detectionPhoneUse = {}
+) {
+  const sessions = (Array.isArray(trip.native_phone_usage_events) ? trip.native_phone_usage_events : [])
+    .filter((session) => !isPassiveUsagePackage(session?.package_name || ''))
+    .map((session) => ({
+      session,
+      startMs: Number(session.start_ms) || timestampMs(session.start_time),
+      endMs: Number(session.end_ms) || timestampMs(session.end_time),
+      window: null,
+      windows: [],
+    }))
+    .filter((entry) => Number.isFinite(entry.startMs) && Number.isFinite(entry.endMs) && entry.endMs > entry.startMs);
+  let previous = null;
+  let scanned = 0;
+  let maximumResidentRoutePoints = 0;
+
+  const addOverlap = (state, point, pointMs, nextMs, speedKmh) => {
+    const startMs = Math.max(state.startMs, pointMs);
+    const endMs = Math.min(state.endMs, nextMs);
+    if (endMs <= startMs) return;
+    const durationMs = endMs - startMs;
+    if (state.window && startMs - state.window.endMs <= MOVING_WINDOW_GAP_MERGE_MS) {
+      state.window.endMs = endMs;
+      state.window.movingDurationMs += durationMs;
+      state.window.weightedSpeedMs += speedKmh * durationMs;
+      state.window.maxSpeedKmh = Math.max(state.window.maxSpeedKmh, speedKmh);
+      return;
+    }
+    if (state.window) state.windows.push(state.window);
+    state.window = {
+      startMs,
+      endMs,
+      movingDurationMs: durationMs,
+      weightedSpeedMs: speedKmh * durationMs,
+      maxSpeedKmh: speedKmh,
+      representativePoint: {
+        lat: point?.lat,
+        lng: point?.lng,
+      },
+    };
+  };
+
+  for await (const point of routePoints) {
+    scanned += 1;
+    if (previous) {
+      const pointMs = timestampMs(previous?.timestamp ?? previous?.time);
+      const nextMs = timestampMs(point?.timestamp ?? point?.time);
+      const speedKmh = Math.max(0, Number(previous?.speed_kmh ?? previous?.speedKmh) || 0);
+      const accuracyM = Number(previous?.accuracy ?? previous?.accuracy_m);
+      if (
+        pointMs != null && nextMs != null && nextMs > pointMs &&
+        nextMs - pointMs <= MAX_ROUTE_EVENT_DELTA_MS &&
+        !(Number.isFinite(accuracyM) && accuracyM > MAX_USAGE_ROUTE_ACCURACY_M) &&
+        speedKmh >= MOVING_USAGE_SPEED_KMH
+      ) {
+        for (const state of sessions) addOverlap(state, previous, pointMs, nextMs, speedKmh);
+      }
+    }
+    previous = point;
+    maximumResidentRoutePoints = Math.max(maximumResidentRoutePoints, previous ? 1 : 0);
+  }
+
+  const nativeEvents = [];
+  for (const state of sessions) {
+    if (state.window) state.windows.push(state.window);
+    for (const window of state.windows) {
+      if (window.movingDurationMs < MIN_USAGE_SESSION_SECONDS * 1000) continue;
+      const durationS = Math.max(1, Math.round(window.movingDurationMs / 1000));
+      const speedKmh = window.weightedSpeedMs / Math.max(1, window.movingDurationMs);
+      const retainsStartContext = window.startMs - state.startMs <= SCREEN_CONTEXT_WINDOW_MS;
+      const confidence = durationS >= PHONE_USE_SEVERITY_THRESHOLDS.MEDIUM_DURATION_SECONDS ? 0.92 : 0.82;
+      nativeEvents.push({
+        type: 'phone_use',
+        source: 'android_usage_access',
+        startTime: new Date(window.startMs).toISOString(),
+        endTime: new Date(window.endMs).toISOString(),
+        timestamp: new Date(window.startMs).toISOString(),
+        durationS,
+        duration_seconds: durationS,
+        lat: window.representativePoint.lat,
+        lng: window.representativePoint.lng,
+        speed_kmh: Math.round(speedKmh),
+        max_speed_kmh: Math.round(window.maxSpeedKmh),
+        started_after_unlock: retainsStartContext && state.session.started_after_unlock === true,
+        started_after_screen_on: retainsStartContext && state.session.started_after_screen_on === true,
+        confidence,
+        confidence_level: 'high',
+        severity: phoneUseSeverity(durationS, speedKmh),
+        value: confidence,
+      });
+    }
+    state.windows.length = 0;
+    state.window = null;
+  }
+
+  const nativeUsage = buildPhoneUseFromEvents(nativeEvents, tripDurationSeconds, 'none');
+  if (trip.native_phone_usage_access_granted === true && nativeEvents.length === 0) {
+    nativeUsage.phone_use_score_available = true;
+    nativeUsage.phone_use_score_status = 'android_usage_access';
+    nativeUsage.phone_use_score = 100;
+    nativeUsage.data_sources = ['android_usage_access'];
+  }
+  const storedOnly = buildPhoneUseFromTripEvidence({
+    ...trip,
+    native_phone_usage_access_granted: false,
+    native_phone_usage_events: [],
+  }, [], tripDurationSeconds, detectionPhoneUse);
+  return {
+    ...mergeManyPhoneUseSignals([nativeUsage, storedOnly], tripDurationSeconds),
+    full_fidelity_route_points_scanned: scanned,
+    maximum_resident_route_points: maximumResidentRoutePoints,
+  };
 }
 
 export function buildPhoneUsageAccessProvenance(trip = {}, currentUsageAccessGranted = null) {

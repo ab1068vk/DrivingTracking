@@ -248,7 +248,7 @@ export function PremiumFilteredSnapshot({ summary, filterLabel, tagLabel }) {
       art: premiumHistorySnapshotTrips,
       key: 'trips',
       label: 'Matching trips',
-      value: String(summary.count),
+      value: summary.population?.countLabel ?? String(summary.count),
       tone: 'route',
     },
     {
@@ -268,7 +268,7 @@ export function PremiumFilteredSnapshot({ summary, filterLabel, tagLabel }) {
     {
       art: premiumHistorySnapshotScore,
       key: 'score',
-      label: 'Avg score',
+      label: 'Driver score',
       value: summary.averageScoreLabel,
       tone: 'score',
     },
@@ -291,7 +291,7 @@ export function PremiumFilteredSnapshot({ summary, filterLabel, tagLabel }) {
             <span className="premium-history-snapshot-emblem"><Activity aria-hidden="true" /></span>
             Filtered snapshot
           </h2>
-          <p>All completed trips matching your current search and filters.</p>
+          <p>{summary.population?.scopeSentence ?? 'All completed trips matching your current search and filters.'}</p>
           <div className="premium-history-filter-tags" aria-label="Active filters">
             <span><CalendarDays aria-hidden="true" /> {filterLabel === 'All Trips' ? 'Any date' : filterLabel}</span>
             {tagLabel !== 'All tags' && <span><Tag aria-hidden="true" /> {tagLabel}</span>}
@@ -383,6 +383,16 @@ export function PremiumFilteredSnapshot({ summary, filterLabel, tagLabel }) {
           </article>
         ))}
       </div>
+
+      <p className="premium-history-snapshot-note">
+        {summary.averageScoreDescription}
+      </p>
+
+      {summary.measurementCoverageNote && (
+        <p className="premium-history-snapshot-note">
+          {summary.measurementCoverageNote}
+        </p>
+      )}
 
       {(summary.favoriteCount > 0 || summary.nightCount > 0) && (
         <p className="premium-history-snapshot-note">

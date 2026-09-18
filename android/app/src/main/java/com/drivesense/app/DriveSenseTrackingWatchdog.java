@@ -124,8 +124,7 @@ public final class DriveSenseTrackingWatchdog extends BroadcastReceiver {
 
     private static boolean attemptForegroundRestart(Context context) {
         try {
-            Intent intent = new Intent(context, DriveSenseAutoTrackingService.class)
-                .setAction(DriveSenseAutoTrackingService.ACTION_START);
+            Intent intent = DriveSenseAutoTrackingService.recoveryStartIntent(context);
             ContextCompat.startForegroundService(context, intent);
             return true;
         } catch (Exception ignored) {
@@ -143,8 +142,7 @@ public final class DriveSenseTrackingWatchdog extends BroadcastReceiver {
         }
         ensureRecoveryChannel(context);
 
-        Intent resume = new Intent(context, DriveSenseAutoTrackingService.class)
-            .setAction(DriveSenseAutoTrackingService.ACTION_START);
+        Intent resume = DriveSenseAutoTrackingService.recoveryStartIntent(context);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
         // Starting the foreground service from a notification tap is always permitted.
         PendingIntent resumeIntent = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O

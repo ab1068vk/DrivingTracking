@@ -1,9 +1,5 @@
-import { LocalSpeedKnowledge } from '@/lib/localSpeedKnowledge';
-import { speedKnowledgeStore } from '@/lib/speedKnowledgeRepository';
-import { getPrivacyZones } from '@/lib/privacyZones';
 import { localSettings } from '@/lib/trackingStore';
 import { logSystemFailure } from '@/lib/systemLog';
-import { speedLimitLadderUnits } from '@/lib/speed/speedLimitLadder';
 
 let synchronizationChain = Promise.resolve();
 let historyBackfillPromise = null;
@@ -13,39 +9,20 @@ async function synchronize(trips = [], { rescore = true, force = false } = {}) {
     .filter((trip) => trip?.status === 'completed' && Array.isArray(trip?.route_points));
   if (!completed.length) return { changed: false, changedCandidates: [] };
 
-  const knowledge = new LocalSpeedKnowledge(speedKnowledgeStore);
   const settings = localSettings.get();
-  // The kill switch covers the automatic path only. `force` is how an explicit
-  // "learn from my trip history" press still works — that is the driver asking
-  // for one pass, not for the background learner to come back on.
   if (!force && settings?.road_memory_learning_enabled === false) {
     return { changed: false, changedCandidates: [], skipped: 'learning_disabled' };
   }
-  const result = await knowledge.learnRoadMemoryFromTrips(
-    completed,
-    getPrivacyZones(settings),
-    // Picks the speed-limit ladder, so a road posted in mph is learned on mph
-    // rungs. Snapping 35 mph onto the metric ladder produced 60 km/h.
-    { units: speedLimitLadderUnits(settings) }
-  );
-  if (!result.changed || !result.changedCandidates?.length || rescore === false) return result;
-
-  // A candidate that just became inactive or conflicted can change historical
-  // scores just as much as one that became active, so rescore every changed
-  // corridor rather than filtering only by its new state.
-  const scoreRelevantCandidates = result.changedCandidates.filter(Boolean);
-  if (scoreRelevantCandidates.length) {
-    void import('@/lib/localSpeedScoreRefresh')
-      .then(({ refreshTripsForLocalSpeedCorrections }) => (
-        refreshTripsForLocalSpeedCorrections(scoreRelevantCandidates)
-      ))
-      .catch((error) => {
-        logSystemFailure('road_memory_trip_rescore', error, {
-          candidate_count: scoreRelevantCandidates.length,
-        });
-      });
-  }
-  return result;
+  // Canonical commit/import already wrote exact P6 desired rows in its owner
+  // transaction. J1/J2 consume those rows; replaying the payload here would
+  // restore the retired whole-model learner and double-apply evidence.
+  return {
+    changed: false,
+    changedCandidates: [],
+    delegated: 'p6RoadMemoryUpdates',
+    queuedTripCount: completed.length,
+    rescoreRequested: rescore === true,
+  };
 }
 
 export function synchronizeLocalRoadMemory(trips = [], options = {}) {
@@ -62,58 +39,70 @@ export function synchronizeLocalRoadMemory(trips = [], options = {}) {
 }
 
 export function backfillLocalRoadMemoryFromTripHistory({
-  batchSize = 80,
-  maxTrips = 800,
-  loadBatch = null,
+  signal = null,
+  onProgress = null,
 } = {}) {
   if (historyBackfillPromise) return historyBackfillPromise;
 
   historyBackfillPromise = (async () => {
-    const safeBatchSize = Math.max(1, Math.min(200, Math.floor(Number(batchSize) || 80)));
-    const safeMaxTrips = Math.max(safeBatchSize, Math.floor(Number(maxTrips) || 800));
-    const loader = loadBatch || (async (options) => {
-      const { localTripRepository } = await import('@/lib/localTripRepository');
-      return localTripRepository.listForSpeedMap(options);
-    });
-    const trips = [];
-    let offset = 0;
-    let totalAvailable = 0;
-
-    while (offset < safeMaxTrips) {
-      const result = await loader({
-        sort: '-start_time',
-        offset,
-        limit: Math.min(safeBatchSize, safeMaxTrips - offset),
-      });
-      const batch = Array.isArray(result?.trips) ? result.trips : [];
-      totalAvailable = Math.max(totalAvailable, Number(result?.totalAvailable) || 0);
-      trips.push(...batch);
-      const nextOffset = Math.max(offset + batch.length, Number(result?.nextOffset) || 0);
-      if (!batch.length || nextOffset <= offset || nextOffset >= totalAvailable) break;
-      offset = nextOffset;
-    }
-
-    if (!trips.length) {
-      return {
-        changed: false,
-        processedTripCount: 0,
-        observationCount: 0,
-        scannedTripCount: 0,
-        totalAvailable,
-        truncated: totalAvailable > safeMaxTrips,
-        changedCandidates: [],
+    const [{
+      startKnownP6ExplicitOperation,
+      runKnownP6ExplicitOperationTurn,
+      cancelP6ExplicitOperation,
+      resumeP6ExplicitOperation,
+    }, {
+      P6_EXPLICIT_OPERATION_STATES,
+      P6_EXPLICIT_OPERATION_TYPES,
+    }, { isAndroid }, speedStore] = await Promise.all([
+      import('@/lib/p6ExplicitOperations'),
+      import('@/lib/p6Contracts'),
+      import('@/lib/nativePlatform'),
+      import('@/lib/speedKnowledgeRepository'),
+    ]);
+    const terminal = new Set([
+      P6_EXPLICIT_OPERATION_STATES.COMPLETED,
+      P6_EXPLICIT_OPERATION_STATES.CANCELLED,
+      P6_EXPLICIT_OPERATION_STATES.FAILED,
+    ]);
+    const runToPause = async (type) => {
+      let operation = await startKnownP6ExplicitOperation(type);
+      if ([P6_EXPLICIT_OPERATION_STATES.PAUSED_AFTER_RESTART,
+        P6_EXPLICIT_OPERATION_STATES.PAUSED_HIDDEN].includes(operation.state)) {
+        operation = await resumeP6ExplicitOperation(operation.operationId);
+      }
+      while (!terminal.has(operation.state)) {
+        if (signal?.aborted) await cancelP6ExplicitOperation(operation.operationId);
+        operation = await runKnownP6ExplicitOperationTurn(operation.operationId);
+        onProgress?.(operation);
+        if ([P6_EXPLICIT_OPERATION_STATES.PAUSED_HIDDEN,
+          P6_EXPLICIT_OPERATION_STATES.WAITING_FOR_OWNER].includes(operation.state)) break;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      if (operation.state === P6_EXPLICIT_OPERATION_STATES.FAILED) {
+        const error = new Error(operation.failure?.message || 'P6 explicit operation failed');
+        error.code = operation.failure?.code || 'P6_EXPLICIT_OPERATION_FAILED';
+        throw error;
+      }
+      return operation;
+    };
+    if (!isAndroid() && !await speedStore.isP6BrowserSpeedV2Authority()) {
+      const migration = await runToPause(P6_EXPLICIT_OPERATION_TYPES.BROWSER_SPEED_MIGRATION);
+      if (migration.state !== P6_EXPLICIT_OPERATION_STATES.COMPLETED) return {
+        changed: false, state: migration.state, operation: migration,
+        scannedTripCount: 0, processedTripCount: 0, observationCount: 0,
       };
     }
-
-    // Share the same chain as live trip completion. Otherwise a history import
-    // can race a newly completed trip and the two whole-model writes can clobber
-    // one another.
-    const result = await synchronizeLocalRoadMemory(trips, { rescore: true, force: true });
+    const result = await runToPause(P6_EXPLICIT_OPERATION_TYPES.RETAINED_HISTORY_LEARNING);
     return {
-      ...result,
-      scannedTripCount: trips.length,
-      totalAvailable: Math.max(totalAvailable, trips.length),
-      truncated: totalAvailable > trips.length,
+      changed: result.state === P6_EXPLICIT_OPERATION_STATES.COMPLETED,
+      state: result.state,
+      operation: result,
+      scannedTripCount: Number(result.progress?.itemsWorked) || 0,
+      processedTripCount: Number(result.progress?.itemsWorked) || 0,
+      observationCount: 0,
+      totalAvailable: null,
+      truncated: result.state !== P6_EXPLICIT_OPERATION_STATES.COMPLETED,
+      changedCandidates: [],
     };
   })().finally(() => {
     historyBackfillPromise = null;

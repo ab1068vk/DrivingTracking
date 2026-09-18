@@ -2,8 +2,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { limitedTripSummaryQueryOptions, tripDetailQueryOptions, tripQueryKeys, tripService, tripSummaryQueryOptions } from '@/api/trips';
-import { vehicleService } from '@/api/vehicles';
+import { tripDetailQueryOptions, tripQueryKeys, tripService } from '@/api/trips';
+import { vehicleQueryKeys, vehicleService } from '@/api/vehicles';
 import { Search, Car, Tag, Star, CalendarDays, TrendingUp, X, ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react';
 import TripCard from '@/components/TripCard';
 import {
@@ -24,14 +24,22 @@ import {
   buildTripSearchText,
   calculateRecentBrakingImprovement,
   getTripTagOption,
-  isHighRiskTrip,
   normalizeTripTags,
 } from '@/lib/tripMetadata';
 import { getEffectiveTripTags } from '@/lib/tripTagIntelligence';
+import { useTripHistoryPageData } from '@/hooks/useTripHistoryPageData';
 import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
 import { PageHeader } from '@/components/PageChrome';
 import { getPremiumTripScoreDelta } from '@/lib/premiumTripPresentation';
+import { P7_POPULATION_PREDICATES } from '@/lib/queryReducers/populations';
+import { summarizeDistanceWeightedScore } from '@/lib/driverScoreSummary';
+import {
+  measurementCoverageNote,
+  summarizeMeasurementCoverage,
+  tripDistanceKm,
+  tripDurationSeconds,
+} from '@/lib/measurementAvailability';
 
 const SORT_OPTIONS = [
   { id: 'date_desc', label: 'Newest First' },
@@ -71,42 +79,146 @@ const sortableScore = (trip, direction = 'desc') => {
   return value;
 };
 
+/**
+ * The classic (non-premium) filtered snapshot.
+ *
+ * Extracted from the page body so the population-completeness and
+ * measurement-coverage claims it makes can be rendered and asserted directly.
+ */
+export function TripHistoryFilteredSnapshot({
+  summary,
+  activeDateLabel,
+  activeFilterLabel,
+  activeTagLabel,
+  filterBy,
+  selectedTags = [],
+  hasActiveFilters = false,
+  onClearFilters = () => {},
+}) {
+  return (
+    <section aria-label="Filtered trip history snapshot" className="rounded-2xl border border-border bg-card p-3 shadow-sm sm:p-4">
+      <span className="sr-only">{summary.population.countLabel} matching trips</span>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Filtered snapshot</div>
+          <div className="mt-0.5 text-[11px] text-muted-foreground">{summary.population.scopeSentence}</div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">{activeDateLabel}</span>
+          {filterBy !== 'all' && <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">{activeFilterLabel}</span>}
+          {selectedTags.length > 0 && <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">{activeTagLabel}</span>}
+          {hasActiveFilters && (
+            <button type="button" onClick={onClearFilters} className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-muted-foreground hover:bg-secondary" aria-label="Clear all trip filters">
+              <X className="h-3.5 w-3.5" />
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="rounded-xl bg-secondary/50 px-3 py-2.5">
+          <div className="text-[11px] text-muted-foreground">Matching trips</div>
+          <div className="font-grotesk text-xl font-bold">{summary.population.countLabel}</div>
+        </div>
+        <div className="rounded-xl bg-secondary/50 px-3 py-2.5">
+          <div className="text-[11px] text-muted-foreground">Matching distance</div>
+          <div className="font-grotesk text-xl font-bold">{summary.totalDistanceLabel}</div>
+        </div>
+        <div className="rounded-xl bg-secondary/50 px-3 py-2.5">
+          <div className="text-[11px] text-muted-foreground">Drive time</div>
+          <div className="font-grotesk text-xl font-bold">{summary.totalDurationLabel}</div>
+        </div>
+        <div className="rounded-xl bg-secondary/50 px-3 py-2.5">
+          <div className="text-[11px] text-muted-foreground">Driver score</div>
+          <div className="font-grotesk text-xl font-bold">{summary.averageScoreLabel}</div>
+        </div>
+      </div>
+      <p className="mt-2 text-[11px] text-muted-foreground">{summary.averageScoreDescription}</p>
+      {summary.measurementCoverageNote && (
+        <p className="mt-1 text-[11px] text-muted-foreground">{summary.measurementCoverageNote}</p>
+      )}
+    </section>
+  );
+}
+
 export function scoreDeltaForTrip(trip, tripsByRecentOrder = []) {
   return getPremiumTripScoreDelta(trip, tripsByRecentOrder);
 }
 
-export function buildTripHistorySummary(trips = [], units = 'metric') {
+const POPULATION_STATES = new Set(['COMPLETE', 'MORE_AVAILABLE', 'COMPLETENESS_UNKNOWN']);
+
+const POPULATION_SCOPE_SENTENCE = {
+  COMPLETE: () => 'All completed trips matching the search and filters above.',
+  MORE_AVAILABLE: (count) => (
+    `The ${count} matching trip${count === 1 ? '' : 's'} read so far - more matching history has not been read yet.`
+  ),
+  COMPLETENESS_UNKNOWN: (count) => (
+    `The ${count} matching trip${count === 1 ? '' : 's'} read so far - more matching history could not be read, so this is not known to be all of it.`
+  ),
+};
+
+export function buildTripHistorySummary(trips = [], units = 'metric', options = {}) {
   const safeTrips = Array.isArray(trips) ? trips : [];
-  const totalDistanceKm = safeTrips.reduce((sum, trip) => sum + (Number(trip?.distance_km) || 0), 0);
-  const totalDurationSeconds = safeTrips.reduce((sum, trip) => sum + (Number(trip?.duration_seconds) || 0), 0);
-  const scores = safeTrips.map((trip) => scoreValue(trip)).filter(Number.isFinite);
-  const scoreTrend = safeTrips
-    .map((trip, index) => ({
-      index,
-      score: scoreValue(trip),
-      time: new Date(trip?.start_time).getTime(),
-    }))
-    .filter(({ score }) => Number.isFinite(score))
-    .sort((a, b) => {
-      const aTime = Number.isFinite(a.time) ? a.time : a.index;
-      const bTime = Number.isFinite(b.time) ? b.time : b.index;
-      return aTime - bTime;
-    })
-    .slice(-12)
-    .map(({ score }) => score);
-  const averageScore = scores.length
-    ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)
-    : null;
+  // HPR-001. Completeness is a property of the *population read*, so the state
+  // arrives from the pagination authority and is never re-derived here. Local
+  // filtering cannot promote a prefix, and neither can a failed continuation:
+  // an unread page that could not be read is unknown, not exhausted. An absent
+  // state is treated conservatively rather than as a complete population.
+  const populationState = POPULATION_STATES.has(options?.populationState)
+    ? options.populationState
+    : 'COMPLETENESS_UNKNOWN';
+  const complete = populationState === 'COMPLETE';
+  const population = {
+    state: populationState,
+    complete,
+    moreAvailable: populationState === 'MORE_AVAILABLE',
+    representedCount: safeTrips.length,
+    countLabel: complete ? `${safeTrips.length}` : `at least ${safeTrips.length}`,
+    scopeSentence: POPULATION_SCOPE_SENTENCE[populationState](safeTrips.length),
+  };
+  // HPR-008. A measurement the projection could not supply is unknown, not zero.
+  // The totals below are the sum of what is actually known, and the coverage
+  // objects carry how much of the represented set that was.
+  const distanceCoverage = summarizeMeasurementCoverage(safeTrips, tripDistanceKm);
+  const durationCoverage = summarizeMeasurementCoverage(safeTrips, tripDurationSeconds);
+  const totalDistanceKm = distanceCoverage.total;
+  const totalDurationSeconds = durationCoverage.total;
+  // Q1 projections already carry the frozen P-DRIVER decision. An absent
+  // marker is unknown and stays excluded; this surface must not re-derive
+  // eligibility from whichever canonical fields happen to fit a projection.
+  const driverScore = summarizeDistanceWeightedScore(
+    safeTrips,
+    (trip) => getTripComponentScore(trip, 'overall'),
+    {
+      includeTrip: P7_POPULATION_PREDICATES['P-DRIVER'],
+      trendLimit: 12,
+    },
+  );
+  const averageScore = driverScore.avgScore;
+  const scoreTripLabel = `${driverScore.scoredTripCount} eligible scored ${driverScore.scoredTripCount === 1 ? 'trip' : 'trips'}`;
+  const averageScoreDescription = averageScore == null
+    ? `No eligible scored trip with recorded distance is represented in this History view. Passenger and manually excluded trips do not affect the driver score.`
+    : `Distance-weighted across ${scoreTripLabel} represented in this History view. Passenger and manually excluded trips do not affect it.`;
 
   return {
     count: safeTrips.length,
+    population,
+    distanceCoverage,
+    durationCoverage,
+    measurementCoverageNote: measurementCoverageNote([
+      { label: 'distance', coverage: distanceCoverage },
+      { label: 'drive time', coverage: durationCoverage },
+    ]),
     totalDistanceKm,
     totalDurationSeconds,
     averageScore,
+    averageScoreBasis: driverScore.basis,
+    averageScoreTripCount: driverScore.scoredTripCount,
     totalDistanceLabel: formatDistance(totalDistanceKm, units),
     totalDurationLabel: formatDuration(totalDurationSeconds),
     averageScoreLabel: averageScore == null ? 'No score yet' : `${averageScore}`,
-    scoreTrend,
+    averageScoreDescription,
+    scoreTrend: driverScore.scoreTrend,
     favoriteCount: safeTrips.filter((trip) => trip?.is_favorite === true).length,
     nightCount: safeTrips.filter((trip) => trip?.night_driving || normalizeTripTags(trip).includes('night')).length,
   };
@@ -123,15 +235,6 @@ const startOfMonth = () => {
   date.setHours(0, 0, 0, 0);
   date.setDate(1);
   return date.getTime();
-};
-
-const matchesQuickFilter = (trip, filter) => {
-  if (filter === 'best') return (scoreValue(trip) ?? Number.NEGATIVE_INFINITY) >= 85;
-  if (filter === 'worst') return (scoreValue(trip) ?? Number.POSITIVE_INFINITY) < 60;
-  if (filter === 'night') return trip.night_driving || normalizeTripTags(trip).includes('night');
-  if (filter === 'high_risk') return isHighRiskTrip(trip);
-  if (filter === 'favorites') return trip.is_favorite === true;
-  return true;
 };
 
 const parseLocalDate = (value) => {
@@ -315,36 +418,51 @@ export default function TripHistory() {
   const qc = useQueryClient();
   const reviewSpeedLimitConflicts = new URLSearchParams(location.search || '').get('review') === 'speed-limit-conflicts';
 
+  // P7 Stage 4: one canonical Q1 composition with a real cursor, replacing the
+  // `(100)` page plus gated `(200)` page that were fetched in full and then
+  // filtered, sorted and sliced in JS. Beyond 200 retained trips that window
+  // was silently not the history, and the page reported "all" over it.
+  //
+  // Status and the date range are index-served; the quick filter and the tag
+  // selection are the registered named budgeted filters. Anything the scan has
+  // not finished is reported as more-available rather than presented complete.
   const {
-    data: recentCompleted = [],
-    isLoading,
-    isFetching: recentFetching,
-    isSuccess: recentTripsLoaded,
+    rows: storedCompleted,
+    hasMore: historyHasMore,
+    populationState: historyPopulationState,
+    unavailable: historyUnavailable,
+    loadMore: loadMoreHistory,
+    loadingMore: historyLoadingMore,
+    isPending: isLoading,
+    isFetching,
     isError: recentTripsError,
     error: recentTripError,
     refetch: retryRecentTrips,
-  } = useQuery({
-    ...limitedTripSummaryQueryOptions(100),
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
+  } = useTripHistoryPageData({
+    sortBy,
+    quickFilter: filterBy,
+    dateFilter,
+    dateFrom,
+    dateTo,
+    selectedTags,
+    tagMatchMode,
   });
-  const {
-    data: fullHistoryCompleted = [],
-    isFetching: fullHistoryFetching,
-  } = useQuery({
-    ...tripSummaryQueryOptions(),
-    enabled: recentTripsLoaded && recentCompleted.length >= 100,
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
-  });
-  const storedCompleted = fullHistoryCompleted.length > 0 ? fullHistoryCompleted : recentCompleted;
   const completed = useMemo(() => storedCompleted.map((trip) => ({
     ...trip,
     tags: getEffectiveTripTags(trip, storedCompleted),
   })), [storedCompleted]);
-  const isFetching = recentFetching || fullHistoryFetching;
 
+  const referencedVehicleIds = useMemo(
+    () => [...new Set(completed.map((trip) => trip?.vehicle_id).filter(Boolean).map(String))],
+    [completed],
+  );
   const { data: vehicles = [] } = useQuery({
-    queryKey: ['vehicles'],
-    queryFn: () => vehicleService.list({ sort: '-created_date', limit: 100 }),
+    // HPR-003. These rows only need labels for the vehicles they actually
+    // reference, so the distinct ids of the loaded trips are resolved by
+    // identity instead of hoping they fall inside a 100-row prefix.
+    queryKey: vehicleQueryKeys.byIds(referencedVehicleIds),
+    queryFn: () => vehicleService.getByIds(referencedVehicleIds),
+    enabled: referencedVehicleIds.length > 0,
   });
 
   const vehicleById = useMemo(
@@ -389,10 +507,11 @@ export default function TripHistory() {
 
   const normalizedSearch = search.trim().toLowerCase();
   const sorted = useMemo(() => {
+    // Status, the date range, the quick filter and the tag selection were all
+    // applied by Q1 — on the index where an index exists, and inside the page
+    // budget where it does not. Only the free-text search stays here, because
+    // its haystack needs the page's bounded vehicle join.
     const filtered = completed.filter((trip) => {
-      if (!matchesQuickFilter(trip, filterBy)) return false;
-      if (!matchesTripDateFilter(trip, dateFilter, dateFrom, dateTo)) return false;
-      if (!matchesTripTags(trip, selectedTags, tagMatchMode)) return false;
       if (normalizedSearch) {
         const indexedText = tripSearchIndex.get(String(trip.id)) || '';
         if (!matchesTripSearchText(indexedText, normalizedSearch)) return false;
@@ -400,6 +519,10 @@ export default function TripHistory() {
       return true;
     });
 
+    // A date ordering is the cursor's own order and is already correct. A score
+    // or distance ordering is not index-served, so it orders what has been
+    // scanned so far — which is why such a view stays "more available" until
+    // the scan reaches the end of the range.
     return [...filtered].sort((a, b) => {
       switch (sortBy) {
         case 'date_desc': return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
@@ -411,7 +534,10 @@ export default function TripHistory() {
         default: return 0;
       }
     });
-  }, [completed, dateFilter, dateFrom, dateTo, filterBy, normalizedSearch, selectedTags, sortBy, tagMatchMode, tripSearchIndex]);
+    // `completed` already reflects the status, date, quick-filter and tag
+    // controls, because Q1 applied them. Listing them here again would claim a
+    // dependency this memo does not have.
+  }, [completed, normalizedSearch, sortBy, tripSearchIndex]);
   const pageCount = Math.max(1, Math.ceil(sorted.length / TRIP_HISTORY_PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pageStart = safePage * TRIP_HISTORY_PAGE_SIZE;
@@ -422,7 +548,7 @@ export default function TripHistory() {
     () => sorted.slice(pageWindow.offset, pageWindow.end),
     [pageWindow.end, pageWindow.offset, sorted]
   );
-  const historySummary = useMemo(() => buildTripHistorySummary(sorted, units), [sorted, units]);
+  const historySummary = useMemo(() => buildTripHistorySummary(sorted, units, { populationState: historyPopulationState }), [sorted, units, historyPopulationState]);
   const activeFilterLabel = QUICK_FILTERS.find((option) => option.id === filterBy)?.label || 'Custom filter';
   const exactDateLabel = dateFrom
     ? parseLocalDate(dateFrom)?.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
@@ -845,44 +971,16 @@ export default function TripHistory() {
           tagLabel={activeTagLabel}
         />
       ) : (
-        <section aria-label="Filtered trip history snapshot" className="rounded-2xl border border-border bg-card p-3 shadow-sm sm:p-4">
-          <span className="sr-only">{historySummary.count} matching trips</span>
-          <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Filtered snapshot</div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground">All completed trips matching the search and filters above.</div>
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-1.5">
-              <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">{activeDateLabel}</span>
-              {filterBy !== 'all' && <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">{activeFilterLabel}</span>}
-              {selectedTags.length > 0 && <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-medium text-muted-foreground">{activeTagLabel}</span>}
-              {hasActiveFilters && (
-                <button type="button" onClick={clearFilters} className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-muted-foreground hover:bg-secondary" aria-label="Clear all trip filters">
-                  <X className="h-3.5 w-3.5" />
-                  Clear
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <div className="rounded-xl bg-secondary/50 px-3 py-2.5">
-              <div className="text-[11px] text-muted-foreground">Matching trips</div>
-              <div className="font-grotesk text-xl font-bold">{historySummary.count}</div>
-            </div>
-            <div className="rounded-xl bg-secondary/50 px-3 py-2.5">
-              <div className="text-[11px] text-muted-foreground">Matching distance</div>
-              <div className="font-grotesk text-xl font-bold">{historySummary.totalDistanceLabel}</div>
-            </div>
-            <div className="rounded-xl bg-secondary/50 px-3 py-2.5">
-              <div className="text-[11px] text-muted-foreground">Drive time</div>
-              <div className="font-grotesk text-xl font-bold">{historySummary.totalDurationLabel}</div>
-            </div>
-            <div className="rounded-xl bg-secondary/50 px-3 py-2.5">
-              <div className="text-[11px] text-muted-foreground">Avg score</div>
-              <div className="font-grotesk text-xl font-bold">{historySummary.averageScoreLabel}</div>
-            </div>
-          </div>
-        </section>
+        <TripHistoryFilteredSnapshot
+          summary={historySummary}
+          activeDateLabel={activeDateLabel}
+          activeFilterLabel={activeFilterLabel}
+          activeTagLabel={activeTagLabel}
+          filterBy={filterBy}
+          selectedTags={selectedTags}
+          hasActiveFilters={hasActiveFilters}
+          onClearFilters={clearFilters}
+        />
       ))}
       {isLoading && (
         <div className="space-y-3">
@@ -902,7 +1000,22 @@ export default function TripHistory() {
         </div>
       )}
 
-      {!isLoading && !recentTripsError && completed.length === 0 && (
+      {!isLoading && historyUnavailable && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" role="status">
+          <div className="font-semibold">Trip history is not available right now</div>
+          {/* A typed unavailable is never rendered as "no trips": an empty list
+              here would assert that the history is empty, which is a different
+              and untrue claim. */}
+          <div className="mt-1 text-sm">
+            The stored history could not be read ({historyUnavailable.code}). Your saved trips were not changed.
+          </div>
+          <button type="button" onClick={() => retryRecentTrips()} className="mt-3 rounded-xl bg-amber-900 px-3 py-2 text-sm font-semibold text-white dark:bg-amber-200 dark:text-amber-950">
+            Try again
+          </button>
+        </div>
+      )}
+
+      {!isLoading && !recentTripsError && !historyUnavailable && completed.length === 0 && (
         <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card py-16 text-center">
           <div className="w-16 h-16 bg-secondary rounded-3xl flex items-center justify-center mb-4">
             <Car className="w-8 h-8 text-muted-foreground" />
@@ -912,11 +1025,25 @@ export default function TripHistory() {
         </div>
       )}
 
-      {!isLoading && completed.length > 0 && sorted.length === 0 && (
+      {!isLoading && !historyUnavailable && completed.length > 0 && sorted.length === 0 && (
         <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card py-16 text-center">
           <CalendarDays className="w-10 h-10 text-muted-foreground mb-3" />
-          <div className="font-semibold mb-1">No matching trips</div>
-          <div className="max-w-xs text-muted-foreground text-sm">Try a different search, score range, tag, or quick filter.</div>
+          <div className="font-semibold mb-1">{historyHasMore ? 'No matches in the trips read so far' : 'No matching trips'}</div>
+          <div className="max-w-xs text-muted-foreground text-sm">
+            {historyHasMore
+              ? 'More history has not been read yet, so a match may still be further back.'
+              : 'Try a different search, score range, tag, or quick filter.'}
+          </div>
+          {historyHasMore && (
+            <button
+              type="button"
+              onClick={() => loadMoreHistory()}
+              disabled={historyLoadingMore}
+              className="mt-4 rounded-xl bg-secondary px-3 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              {historyLoadingMore ? 'Reading more…' : 'Keep looking'}
+            </button>
+          )}
           <button onClick={clearFilters} className="mt-4 rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground">
             Clear filters
           </button>
@@ -924,8 +1051,28 @@ export default function TripHistory() {
       )}
 
       <div className="sr-only" aria-live="polite">
-        {isLoading ? 'Loading trip history' : `${sorted.length} trips shown`}
+        {isLoading
+          ? 'Loading trip history'
+          : `${historyHasMore ? 'at least ' : ''}${sorted.length} trips shown`}
       </div>
+
+      {!isLoading && !historyUnavailable && sorted.length > 0 && historyHasMore && (
+        <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border bg-card/60 p-4 text-center">
+          {/* Truthful partiality: the count above is a floor, not a total, and
+              the user can drive the scan to the end deliberately. */}
+          <div className="text-sm text-muted-foreground">
+            Showing at least {sorted.length} trips — more history has not been read yet.
+          </div>
+          <button
+            type="button"
+            onClick={() => loadMoreHistory()}
+            disabled={historyLoadingMore}
+            className="rounded-xl bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50"
+          >
+            {historyLoadingMore ? 'Reading more…' : 'Load more trips'}
+          </button>
+        </div>
+      )}
 
       {!isLoading && sorted.length > 0 && (
         premiumVisuals ? (

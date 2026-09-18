@@ -11,7 +11,10 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
+import org.json.JSONTokener;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
@@ -23,12 +26,15 @@ import java.security.SecureRandom;
 import java.security.spec.ECGenParameterSpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Iterator;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyAgreement;
 import javax.crypto.SecretKey;
+import javax.crypto.AEADBadTagException;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -165,6 +171,15 @@ public class SecureBridgePlugin extends Plugin {
         try {
             P0CallTiming p0Timing = startP0Timing(call);
             BridgeEnvelope envelope = decryptBridgePayload(call, "SecureBridge", "encryptSensitivePayload", p0Timing);
+            if (envelope.payload.has("items")) {
+                JSONArray items = validateBatch(envelope, true);
+                long p0WorkStart = p0Timing != null ? p0Timing.nanoTime() : 0L;
+                JSObject result = processEncryptBatch(items);
+                if (p0Timing != null) p0Timing.addMethodWork(p0Timing.nanoTime() - p0WorkStart);
+                requireBoundedBatchResponse(result);
+                resolveWithP0(call, result, p0Timing);
+                return;
+            }
             String plaintext = envelope.payload.optString("plaintext", null);
             String context = envelope.payload.optString("context", "drivesense");
             int keyVersion = envelope.payload.optInt("keyVersion", 1);
@@ -183,8 +198,10 @@ public class SecureBridgePlugin extends Plugin {
             resolveWithP0(call, result, p0Timing);
         } catch (SecurityException error) {
             call.reject(error.getMessage());
+        } catch (BatchContractException error) {
+            call.reject(error.code);
         } catch (Exception error) {
-            call.reject("SECURE_BRIDGE_ENCRYPT_FAILED", error);
+            call.reject("SECURE_BRIDGE_ENCRYPT_FAILED");
         }
     }
 
@@ -193,6 +210,17 @@ public class SecureBridgePlugin extends Plugin {
         try {
             P0CallTiming p0Timing = startP0Timing(call);
             BridgeEnvelope envelope = decryptBridgePayload(call, "SecureBridge", "decryptSensitivePayload", p0Timing);
+            if (envelope.payload.has("items")) {
+                JSONArray items = validateBatch(envelope, false);
+                long p0WorkStart = p0Timing != null ? p0Timing.nanoTime() : 0L;
+                JSObject result = processDecryptBatch(items);
+                if (p0Timing != null) p0Timing.addMethodWork(p0Timing.nanoTime() - p0WorkStart);
+                requireBoundedBatchResponse(result);
+                // Decrypt results contain plaintext. This path must never be
+                // replaced by resolveWithP0; JS independently enforces it too.
+                resolveEncrypted(call, envelope, "SecureBridge", "decryptSensitivePayload", result);
+                return;
+            }
             String ciphertext = envelope.payload.optString("ciphertext", null);
             String context = envelope.payload.optString("context", "drivesense");
             int keyVersion = envelope.payload.optInt("keyVersion", 0);
@@ -210,8 +238,187 @@ public class SecureBridgePlugin extends Plugin {
             resolveEncrypted(call, envelope, "SecureBridge", "decryptSensitivePayload", result);
         } catch (SecurityException error) {
             call.reject(error.getMessage());
+        } catch (BatchContractException error) {
+            call.reject(error.code);
         } catch (Exception error) {
-            call.reject("SECURE_BRIDGE_DECRYPT_FAILED", error);
+            call.reject("SECURE_BRIDGE_DECRYPT_FAILED");
+        }
+    }
+
+    private JSONArray validateBatch(BridgeEnvelope envelope, boolean encrypt) throws BatchContractException {
+        JSONObject payload = envelope.payload;
+        if (envelope.requestUtf8Bytes > SecureBatchContract.MAX_METHOD_JSON_BYTES) {
+            throw new BatchContractException("SECURE_BATCH_REQUEST_TOO_LARGE");
+        }
+        if (!SecureBatchContract.validVersion(payload.opt("batchVersion"))) {
+            throw new BatchContractException("SECURE_BATCH_VERSION_UNSUPPORTED");
+        }
+        if (!hasOnlyKeys(payload, "batchVersion", "items")) {
+            throw new BatchContractException("SECURE_BATCH_SHAPE_INVALID");
+        }
+        if (payload.has("plaintext") || payload.has("ciphertext")) {
+            throw new BatchContractException("SECURE_BATCH_SHAPE_INVALID");
+        }
+        JSONArray items = payload.optJSONArray("items");
+        if (items == null || !SecureBatchContract.validCount(items.length())) {
+            throw new BatchContractException("SECURE_BATCH_COUNT_INVALID");
+        }
+
+        long logicalBytes = 0L;
+        for (int index = 0; index < items.length(); index += 1) {
+            JSONObject item = items.optJSONObject(index);
+            if (item == null || !SecureBatchContract.validOrdinal(item.opt("ordinal"), index)) {
+                throw new BatchContractException("SECURE_BATCH_ORDINAL_INVALID");
+            }
+            if (!hasOnlyKeys(item, "ordinal", encrypt ? "plaintext" : "ciphertext", "context", "keyVersion")) {
+                throw new BatchContractException("SECURE_BATCH_ITEM_INVALID");
+            }
+            Object contextValue = item.opt("context");
+            if (!(contextValue instanceof String) || !SecureBatchContract.validContext((String) contextValue)) {
+                throw new BatchContractException("SECURE_BATCH_CONTEXT_INVALID");
+            }
+            Object keyVersionValue = item.opt("keyVersion");
+            if (!SecureBatchContract.validKeyVersion(keyVersionValue, encrypt)) {
+                throw new BatchContractException("SECURE_BATCH_KEY_VERSION_INVALID");
+            }
+            if (encrypt) {
+                if (item.has("ciphertext") || !(item.opt("plaintext") instanceof String)) {
+                    throw new BatchContractException("SECURE_BATCH_ITEM_INVALID");
+                }
+                String plaintext = item.optString("plaintext", null);
+                if (!isCompactJsonValue(plaintext)) {
+                    throw new BatchContractException("SECURE_BATCH_JSON_INVALID");
+                }
+                logicalBytes += SecureBatchContract.utf8Bytes(plaintext);
+            } else {
+                if (item.has("plaintext") || !(item.opt("ciphertext") instanceof String)) {
+                    throw new BatchContractException("SECURE_BATCH_ITEM_INVALID");
+                }
+                int upperBound = SecureBatchContract.conservativePlaintextBytes(item.optString("ciphertext", null));
+                if (upperBound < 0) throw new BatchContractException("SECURE_BATCH_CIPHERTEXT_INVALID");
+                logicalBytes += upperBound;
+            }
+            if (!SecureBatchContract.withinLogicalLimit(logicalBytes)) {
+                throw new BatchContractException("SECURE_BATCH_LOGICAL_LIMIT");
+            }
+        }
+        return items;
+    }
+
+    private static boolean hasOnlyKeys(JSONObject object, String... allowed) {
+        java.util.HashSet<String> allowedKeys = new java.util.HashSet<>();
+        java.util.Collections.addAll(allowedKeys, allowed);
+        java.util.Iterator<String> keys = object.keys();
+        int count = 0;
+        while (keys.hasNext()) {
+            count += 1;
+            if (!allowedKeys.contains(keys.next())) return false;
+        }
+        return count == allowedKeys.size();
+    }
+
+    private static boolean isCompactJsonValue(String plaintext) {
+        if (plaintext == null) return false;
+        try {
+            JSONTokener tokener = new JSONTokener(plaintext);
+            Object value = tokener.nextValue();
+            return value != null && tokener.nextClean() == 0;
+        } catch (JSONException error) {
+            return false;
+        }
+    }
+
+    private JSObject processEncryptBatch(JSONArray items) {
+        JSObject result = new JSObject();
+        JSONArray results = new JSONArray();
+        result.put("batchVersion", SecureBatchContract.VERSION);
+        List<JSONObject> input = new ArrayList<>(items.length());
+        for (int index = 0; index < items.length(); index += 1) input.add(items.optJSONObject(index));
+        List<SecureBatchDispatcher.Result<EncryptedBatchValue>> dispatched = SecureBatchDispatcher.run(
+            input,
+            item -> {
+                int keyVersion = item.optInt("keyVersion", 1);
+                String ciphertext = DriveSensePayloadCrypto.encrypt(
+                    item.optString("plaintext", null),
+                    item.optString("context", "drivesense"),
+                    keyVersion
+                );
+                return new EncryptedBatchValue(ciphertext, keyVersion);
+            },
+            SecureBridgePlugin::batchErrorCode
+        );
+        for (SecureBatchDispatcher.Result<EncryptedBatchValue> dispatchedItem : dispatched) {
+            JSObject itemResult = new JSObject();
+            itemResult.put("ordinal", dispatchedItem.ordinal);
+            if (dispatchedItem.succeeded()) {
+                itemResult.put("ok", true);
+                itemResult.put("ciphertext", dispatchedItem.value.ciphertext);
+                itemResult.put("keyVersion", dispatchedItem.value.keyVersion);
+            } else {
+                itemResult.put("ok", false);
+                itemResult.put("errorCode", dispatchedItem.errorCode);
+            }
+            results.put(itemResult);
+        }
+        result.put("results", results);
+        return result;
+    }
+
+    private JSObject processDecryptBatch(JSONArray items) {
+        JSObject result = new JSObject();
+        JSONArray results = new JSONArray();
+        result.put("batchVersion", SecureBatchContract.VERSION);
+        List<JSONObject> input = new ArrayList<>(items.length());
+        for (int index = 0; index < items.length(); index += 1) input.add(items.optJSONObject(index));
+        List<SecureBatchDispatcher.Result<String>> dispatched = SecureBatchDispatcher.run(
+            input,
+            item -> DriveSensePayloadCrypto.decrypt(
+                item.optString("ciphertext", null),
+                item.optString("context", "drivesense"),
+                item.optInt("keyVersion", 0)
+            ),
+            SecureBridgePlugin::batchErrorCode
+        );
+        for (SecureBatchDispatcher.Result<String> dispatchedItem : dispatched) {
+            JSObject itemResult = new JSObject();
+            itemResult.put("ordinal", dispatchedItem.ordinal);
+            if (dispatchedItem.succeeded()) {
+                itemResult.put("ok", true);
+                itemResult.put("plaintext", dispatchedItem.value);
+            } else {
+                itemResult.put("ok", false);
+                itemResult.put("errorCode", dispatchedItem.errorCode);
+            }
+            results.put(itemResult);
+        }
+        result.put("results", results);
+        return result;
+    }
+
+    private static final class EncryptedBatchValue {
+        final String ciphertext;
+        final int keyVersion;
+
+        EncryptedBatchValue(String ciphertext, int keyVersion) {
+            this.ciphertext = ciphertext;
+            this.keyVersion = keyVersion;
+        }
+    }
+
+    private static String batchErrorCode(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof AEADBadTagException) return "AUTHENTICATION_FAILED";
+            if (current instanceof IllegalStateException) return "KEY_UNAVAILABLE";
+            if (current instanceof IllegalArgumentException) return "INVALID_INPUT";
+            current = current.getCause();
+        }
+        return "CRYPTO_FAILED";
+    }
+
+    private static void requireBoundedBatchResponse(JSObject result) throws BatchContractException {
+        if (!SecureBatchContract.withinMethodJsonLimit(result.toString())) {
+            throw new BatchContractException("SECURE_BATCH_RESPONSE_TOO_LARGE");
         }
     }
 
@@ -300,7 +507,8 @@ public class SecureBridgePlugin extends Plugin {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.DECRYPT_MODE, session.key, new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv));
         cipher.updateAAD(associatedData(sessionId, pluginName, method, nonce).getBytes(StandardCharsets.UTF_8));
-        String plaintext = new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8);
+        byte[] plaintextBytes = cipher.doFinal(encrypted);
+        String plaintext = new String(plaintextBytes, StandardCharsets.UTF_8);
         long p0ParseStart = timing != null ? timing.nanoTime() : 0L;
 
         synchronized (session) {
@@ -315,7 +523,7 @@ public class SecureBridgePlugin extends Plugin {
             timing.addTransportAesDecrypt(p0ParseStart - p0AesStart);
             timing.addEnvelopeJsonParse(timing.nanoTime() - p0ParseStart);
         }
-        BridgeEnvelope envelope = new BridgeEnvelope(parsedPayload, session, sessionId);
+        BridgeEnvelope envelope = new BridgeEnvelope(parsedPayload, session, sessionId, plaintextBytes.length);
         envelope.timing = timing;
         return envelope;
     }
@@ -401,12 +609,23 @@ public class SecureBridgePlugin extends Plugin {
         final JSONObject payload;
         final BridgeSession session;
         final String sessionId;
+        final int requestUtf8Bytes;
         P0CallTiming timing;
 
-        BridgeEnvelope(JSONObject payload, BridgeSession session, String sessionId) {
+        BridgeEnvelope(JSONObject payload, BridgeSession session, String sessionId, int requestUtf8Bytes) {
             this.payload = payload;
             this.session = session;
             this.sessionId = sessionId;
+            this.requestUtf8Bytes = requestUtf8Bytes;
+        }
+    }
+
+    private static final class BatchContractException extends Exception {
+        final String code;
+
+        BatchContractException(String code) {
+            super(code);
+            this.code = code;
         }
     }
 

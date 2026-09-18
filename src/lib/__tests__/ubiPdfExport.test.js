@@ -20,6 +20,7 @@ vi.mock('jspdf', () => ({
 }));
 
 vi.mock('@/lib/nativePlatform', () => ({
+  isAndroid: () => false,
   isNativePlatform: () => false,
 }));
 

@@ -1,19 +1,6 @@
 import { recordHistoricalAppExperienceEvent } from '@/lib/appExperienceDiagnostics';
-import {
-  bufferSuppressedDiagnostics,
-  closeP0Span,
-  markP0SpanFailure,
-  openP0Span,
-  recordP0Phase,
-  tagP0DiagnosticsJob,
-} from '@/lib/p0Probe';
+import { createDiagnosticsHistoryStore } from '@/lib/diagnosticsHistoryStore';
 import { suppressDiagnosticsPersistence } from '@/lib/p0ProbeArms';
-
-const p0Now = () => (
-  typeof performance !== 'undefined' && typeof performance.now === 'function'
-    ? performance.now()
-    : Date.now()
-);
 
 const SYSTEM_LOG_KEY = 'drivesense_system_logs_v1';
 const SETTINGS_KEY = 'drivesense_settings';
@@ -22,14 +9,20 @@ export const SYSTEM_LOG_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 export const PRIVACY_LOG_DEFAULT_RETENTION_HOURS = 24;
 export const PRIVACY_LOG_RETENTION_SETTING_KEY = 'privacy_log_retention_hours';
 const MAX_STORED_LOGS = 2500;
-const MAX_PENDING_LOGS = 500;
-const FLUSH_DELAY_MS = 750;
+export const SYSTEM_LOG_PRIVACY_RULES_VERSION = 1;
 
-let pendingLogs = [];
-let flushTimer = null;
+let systemHistoryStore = null;
+let privacyReconciliationPromise = null;
+let privacyReconciliationRequested = false;
 let initialized = false;
 let fetchWrapped = false;
 let lastLongTaskLogAt = 0;
+
+export const resetSystemLogStorageForTests = () => {
+  systemHistoryStore = null;
+  privacyReconciliationPromise = null;
+  privacyReconciliationRequested = false;
+};
 
 const safeNow = () => new Date().toISOString();
 const SENSITIVE_DETAIL_KEY = /(^|[_-])(token|password|secret|auth|email|phone|address|lat|lng|longitude|latitude|coordinate|coordinates|route_points|driving_events|search|query|returnTo)($|[_-])|phone_number|phoneNumber|contact_phone|mobile_number/i;
@@ -74,31 +67,6 @@ const canUseStorage = () => {
   }
 };
 
-const parseLogs = (raw, p0Span = null) => {
-  try {
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    // Same rule as the other stores: the empty-list degradation is preserved,
-    // the false `success` measurement is not.
-    markP0SpanFailure(p0Span);
-    return [];
-  }
-};
-
-const readStoredLogs = (p0Span = null) => {
-  if (!canUseStorage()) return [];
-  if (!p0Span) return parseLogs(localStorage.getItem(SYSTEM_LOG_KEY));
-  const getStart = p0Now();
-  const raw = localStorage.getItem(SYSTEM_LOG_KEY);
-  const getEnd = p0Now();
-  const parsed = parseLogs(raw, p0Span);
-  recordP0Phase(p0Span, 'diag_get', getStart, getEnd);
-  recordP0Phase(p0Span, 'diag_parse', getEnd, p0Now());
-  p0Span.entry_count_before = parsed.length;
-  return parsed;
-};
-
 const eventTimestamp = (event) => {
   const ms = new Date(event?.timestamp || 0).getTime();
   return Number.isFinite(ms) ? ms : 0;
@@ -120,7 +88,7 @@ const retentionMsForEvent = (event) => (
     : SYSTEM_LOG_RETENTION_MS
 );
 
-export function pruneExpiredSystemLogs(logs = readStoredLogs(), nowMs = Date.now()) {
+export function pruneExpiredSystemLogs(logs = [], nowMs = Date.now()) {
   return logs
     .filter((event) => !isSuppressedSystemLog(event))
     .filter((event) => {
@@ -131,58 +99,6 @@ export function pruneExpiredSystemLogs(logs = readStoredLogs(), nowMs = Date.now
     .sort((a, b) => eventTimestamp(b) - eventTimestamp(a))
     .slice(0, MAX_STORED_LOGS);
 }
-
-/**
- * @param {any[]} logs
- * @param {{ notify?: boolean, p0Job?: string | null, p0Span?: any }} [options]
- *   `p0Job` marks this as an *implicit* recurring/rewrite-on-read write, which
- *   P0 arms B/C suppress. Explicit user actions (clearing logs) pass no job and
- *   always write — suppressing those would be a functional change, not a
- *   measurement one.
- */
-const writeStoredLogs = (logs, { notify = true, p0Job = null, p0Span = null } = {}) => {
-  if (!canUseStorage()) return;
-  if (p0Job && suppressDiagnosticsPersistence()) {
-    // `logs` is the batch this write would have persisted; it moves into the
-    // bounded volatile buffer instead of being pruned, stringified and written.
-    bufferSuppressedDiagnostics(p0Job, logs);
-    return;
-  }
-  try {
-    const pruneStart = p0Span ? p0Now() : 0;
-    const pruned = pruneExpiredSystemLogs(logs);
-    const pruneEnd = p0Span ? p0Now() : 0;
-    const serialized = JSON.stringify(pruned);
-    const stringifyEnd = p0Span ? p0Now() : 0;
-    // Phases are committed before the write, and the write interval is recorded
-    // on both paths: a quota-exceeded `setItem` is one of the more expensive
-    // things this function can do, and it must not measure as free.
-    if (p0Span) {
-      recordP0Phase(p0Span, 'diag_prune_b', pruneStart, pruneEnd);
-      recordP0Phase(p0Span, 'diag_stringify', pruneEnd, stringifyEnd);
-      // The string already exists; no encoder or second traversal is added.
-      p0Span.serialized_code_units = serialized.length;
-    }
-    try {
-      localStorage.setItem(SYSTEM_LOG_KEY, serialized);
-    } catch (error) {
-      if (p0Span) recordP0Phase(p0Span, 'diag_set', stringifyEnd, p0Now());
-      throw error;
-    }
-    if (p0Span) recordP0Phase(p0Span, 'diag_set', stringifyEnd, p0Now());
-    if (notify && typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
-      window.dispatchEvent?.(new CustomEvent(SYSTEM_LOG_EVENT, { detail: { count: pruned.length } }));
-    }
-  } catch {
-    // The half-size retry is existing application behaviour and is preserved.
-    // The measurement is not: the intended write failed, and that stays true
-    // even when the retry succeeds.
-    markP0SpanFailure(p0Span);
-    try {
-      localStorage.setItem(SYSTEM_LOG_KEY, JSON.stringify(pruneExpiredSystemLogs(logs).slice(0, Math.floor(MAX_STORED_LOGS / 2))));
-    } catch {}
-  }
-};
 
 const summarizeTarget = (target) => {
   if (!target || typeof target !== 'object') return {};
@@ -319,39 +235,124 @@ const isSuppressedSystemLog = (event = {}) => {
   return operation === 'user_scroll' || eventType === 'scroll';
 };
 
-const flushPendingLogs = () => {
-  flushTimer = null;
-  if (!pendingLogs.length) return;
-  const batch = pendingLogs;
-  pendingLogs = [];
-  // P0 arms B/C short-circuit here, at job entry, before the first storage read
-  // and before any full-history transform. The already-collected batch is
-  // dropped into the volatile counter rather than parsed, pruned twice, sorted
-  // and stringified. Suppressing only the write would leave all of that in place.
-  if (suppressDiagnosticsPersistence()) {
-    bufferSuppressedDiagnostics('system_log_flush', batch);
-    return;
-  }
-  const p0Span = openP0Span('diagnostics_job');
-  if (p0Span) tagP0DiagnosticsJob(p0Span, 'system_log_flush');
-  let p0Outcome = 'error';
-  try {
-    const stored = readStoredLogs(p0Span);
-    const pruneStart = p0Span ? p0Now() : 0;
-    const next = pruneExpiredSystemLogs([...batch, ...stored]);
-    if (p0Span) recordP0Phase(p0Span, 'diag_prune_a', pruneStart, p0Now());
-    writeStoredLogs(next, { p0Job: 'system_log_flush', p0Span });
-    p0Outcome = 'success';
-  } finally {
-    // A read/parse/prune failure must surface as an error span rather than a
-    // clean-looking measurement of work that did not complete.
-    if (p0Span) closeP0Span(p0Span, p0Outcome);
-  }
+const systemRecordOptions = (event) => {
+  const payloadTimestampMs = eventTimestamp(event);
+  const sensitive = isPrivacySensitiveLog(event);
+  return {
+    payloadTimestampMs,
+    privacyClass: sensitive ? 'sensitive' : 'standard',
+    privacyRulesVersion: SYSTEM_LOG_PRIVACY_RULES_VERSION,
+    ...(!sensitive ? { expiresAtMs: payloadTimestampMs + SYSTEM_LOG_RETENTION_MS } : {}),
+  };
 };
 
-const scheduleFlush = () => {
-  if (flushTimer) return;
-  flushTimer = setTimeout(flushPendingLogs, FLUSH_DELAY_MS);
+const getSystemHistoryStore = () => {
+  if (systemHistoryStore) return systemHistoryStore;
+  systemHistoryStore = createDiagnosticsHistoryStore({
+    kind: 'system_log',
+    legacyKey: SYSTEM_LOG_KEY,
+    capacity: MAX_STORED_LOGS,
+    pendingCap: 500,
+    flushDelayMs: 750,
+    jobName: 'system_log_flush',
+    orderIndex: 'by_kind_payload_time',
+    orderWidth: 3,
+    direction: 'prev',
+    mapLegacy: (logs, nowMs) => pruneExpiredSystemLogs(logs, nowMs)
+      .map((event) => ({ payload: event, options: systemRecordOptions(event) }))
+      .reverse(),
+    afterFlush: ({ batch }) => {
+      if (typeof window === 'undefined' || typeof CustomEvent === 'undefined') return;
+      // Consumers use this event as a refresh signal. Keep its bounded numeric
+      // detail without counting the retained index on every ordinary flush.
+      window.dispatchEvent?.(new CustomEvent(SYSTEM_LOG_EVENT, { detail: { count: batch.length } }));
+    },
+    finalizeRead: (records, nowMs) => {
+      const privacyRetentionMs = getPrivacyLogRetentionMs();
+      return records
+        .filter((record) => !isSuppressedSystemLog(record.payload))
+        .filter((record) => {
+          const retentionMs = isPrivacySensitiveLog(record.payload)
+            ? privacyRetentionMs
+            : SYSTEM_LOG_RETENTION_MS;
+          return retentionMs > 0 && record.payloadTimestampMs >= nowMs - retentionMs;
+        })
+        .sort((left, right) => right.payloadTimestampMs - left.payloadTimestampMs || right.ingestSeq - left.ingestSeq);
+    },
+  });
+  return systemHistoryStore;
+};
+
+export const reconcileSystemLogPrivacyRetention = async () => {
+  if (suppressDiagnosticsPersistence()) return;
+  const repository = getSystemHistoryStore();
+  const storage = repository.storage;
+  const cursorKey = 'system_log_privacy_reclass_cursor';
+  const rulesKey = 'system_log_privacy_rules_version';
+  const storedVersion = Number(await storage.getMeta(rulesKey) ?? 0);
+  let repeat = false;
+  if (storedVersion !== SYSTEM_LOG_PRIVACY_RULES_VERSION) {
+    const afterSeq = Number(await storage.getMeta(cursorKey) ?? 0);
+    const records = await storage.readEventsByIndex('by_kind_ingest_seq', {
+      range: {
+        lower: ['system_log', Math.max(0, afterSeq + 1)],
+        upper: ['system_log', Number.MAX_SAFE_INTEGER],
+      },
+      limit: 128,
+    });
+    if (records.length) {
+      const updated = records.map((record) => {
+        const sensitive = isPrivacySensitiveLog(record.payload);
+        const next = {
+          ...record,
+          privacyClass: sensitive ? 'sensitive' : 'standard',
+          privacyRulesVersion: SYSTEM_LOG_PRIVACY_RULES_VERSION,
+        };
+        if (sensitive) delete next.expiresAtMs;
+        else next.expiresAtMs = record.payloadTimestampMs + SYSTEM_LOG_RETENTION_MS;
+        return next;
+      });
+      await storage.putStoredEvents(updated);
+      await storage.setMeta(cursorKey, records.at(-1).ingestSeq);
+      // A subsequent bounded pass either continues or commits the version.
+      repeat = true;
+    } else {
+      await storage.setMeta(rulesKey, SYSTEM_LOG_PRIVACY_RULES_VERSION);
+      await storage.deleteMeta(cursorKey);
+    }
+  }
+
+  const retentionMs = getPrivacyLogRetentionMs();
+  const cutoff = retentionMs <= 0 ? Number.MAX_SAFE_INTEGER : Date.now() - retentionMs;
+  const keys = await storage.readEventKeysByIndex('by_kind_privacy_time', {
+    range: {
+      lower: ['system_log', 'sensitive', Number.MIN_SAFE_INTEGER, Number.MIN_SAFE_INTEGER],
+      upper: ['system_log', 'sensitive', cutoff, Number.MIN_SAFE_INTEGER],
+      upperOpen: retentionMs > 0,
+    },
+    limit: 128,
+  });
+  if (keys.length) await storage.deleteEventUids(keys);
+  if (keys.length === 128) repeat = true;
+  return repeat;
+};
+
+const schedulePrivacyReconciliation = () => {
+  if (suppressDiagnosticsPersistence()) return;
+  if (privacyReconciliationPromise) {
+    privacyReconciliationRequested = true;
+    return;
+  }
+  privacyReconciliationPromise = reconcileSystemLogPrivacyRetention()
+    .then((repeat) => { privacyReconciliationRequested ||= Boolean(repeat); })
+    .catch(() => {})
+    .finally(() => {
+      privacyReconciliationPromise = null;
+      if (privacyReconciliationRequested) {
+        privacyReconciliationRequested = false;
+        setTimeout(schedulePrivacyReconciliation, 0);
+      }
+    });
 };
 
 export function recordSystemLog(event = {}) {
@@ -360,10 +361,7 @@ export function recordSystemLog(event = {}) {
   const category = event.category || 'app';
   const privacySensitive = isPrivacySensitiveLog({ ...event, category });
   if (privacySensitive && getPrivacyLogRetentionMs() <= 0) {
-    // Zero-hour privacy retention: the rewrite is what enforces immediate
-    // expiry. It is an implicit recurring write, so arms B/C suppress it — the
-    // retention *policy* itself is untouched, only the storage write.
-    writeStoredLogs(readStoredLogs(), { p0Job: 'system_log_write' });
+    schedulePrivacyReconciliation();
     return null;
   }
 
@@ -385,9 +383,12 @@ export function recordSystemLog(event = {}) {
 
   recordHistoricalAppExperienceEvent(next);
 
-  pendingLogs.unshift(next);
-  if (pendingLogs.length > MAX_PENDING_LOGS) pendingLogs = pendingLogs.slice(0, MAX_PENDING_LOGS);
-  scheduleFlush();
+  try {
+    getSystemHistoryStore().enqueue(next, {
+      eventUid: `system_log:${next.id}`,
+      ...systemRecordOptions(next),
+    });
+  } catch {}
   return next;
 }
 
@@ -420,49 +421,54 @@ export function logSystemFailure(operation, error, details = {}) {
   });
 }
 
-export function getSystemLogs() {
-  // Rewrite-on-read: the explicitly requested display read still happens in every
-  // arm, but arms B/C cannot write. Callers see identical data either way.
-  const p0Span = openP0Span('diagnostics_job');
-  if (p0Span) tagP0DiagnosticsJob(p0Span, 'system_log_get');
-  let p0Outcome = 'error';
+export async function getSystemLogs() {
   try {
-    const stored = readStoredLogs(p0Span);
-    const pruneStart = p0Span ? p0Now() : 0;
-    const logs = pruneExpiredSystemLogs(stored);
-    if (p0Span) recordP0Phase(p0Span, 'diag_prune_a', pruneStart, p0Now());
-    writeStoredLogs(logs, { notify: false, p0Job: 'system_log_get', p0Span });
-    p0Outcome = 'success';
-    return logs;
-  } finally {
-    if (p0Span) closeP0Span(p0Span, p0Outcome);
+    const records = await getSystemHistoryStore().read();
+    schedulePrivacyReconciliation();
+    return records.map((record) => record.payload).slice(0, MAX_STORED_LOGS);
+  } catch {
+    return [];
   }
 }
 
-export function clearSystemLogs() {
-  pendingLogs = [];
-  if (flushTimer) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
+export function clearSystemLogs({ previousLogCount } = {}) {
+  let cleared = false;
+  try {
+    cleared = getSystemHistoryStore().clear();
+  } catch {}
+  if (!cleared) return false;
+  if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+    window.dispatchEvent?.(new CustomEvent(SYSTEM_LOG_EVENT, { detail: { count: 0 } }));
   }
-  writeStoredLogs([]);
+  recordSystemEvent('system_logs_cleared', {
+    ...(Number.isFinite(previousLogCount)
+      ? { previous_log_count: Math.max(0, Math.floor(previousLogCount)) }
+      : {}),
+  }, {
+    category: 'storage',
+    severity: 'warn',
+    title: 'System logs cleared',
+  });
+  return true;
 }
 
-export function exportSystemLogsJson(logs = getSystemLogs()) {
+export async function exportSystemLogsJson(logs) {
+  const resolvedLogs = Array.isArray(logs) ? logs : await getSystemLogs();
   return JSON.stringify({
     exported_at: safeNow(),
     retention_days: 3,
     privacy_retention_hours: Math.round(getPrivacyLogRetentionMs() / (60 * 60 * 1000)),
-    count: logs.length,
-    logs,
+    count: resolvedLogs.length,
+    logs: resolvedLogs,
   }, null, 2);
 }
 
-export function exportSystemLogsCsv(logs = getSystemLogs()) {
+export async function exportSystemLogsCsv(logs) {
+  const resolvedLogs = Array.isArray(logs) ? logs : await getSystemLogs();
   const escape = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
   const rows = [
     ['timestamp', 'severity', 'category', 'source', 'operation', 'title', 'message', 'page', 'details'].map(escape).join(','),
-    ...logs.map((event) => [
+    ...resolvedLogs.map((event) => [
       event.timestamp,
       event.severity,
       event.category,
@@ -621,7 +627,8 @@ function logResourceLoadFailure(event) {
 export function initializeSystemLogging() {
   if (typeof window === 'undefined' || initialized) return;
   initialized = true;
-  getSystemLogs();
+  getSystemHistoryStore().startBackgroundMigration();
+  schedulePrivacyReconciliation();
   initializeFetchFailureLogging();
   initializePerformanceFailureLogging();
 
@@ -658,6 +665,10 @@ export function initializeSystemLogging() {
   }, true);
   window.addEventListener('online', () => recordSystemEvent('network_online', {}, { category: 'background' }));
   window.addEventListener('offline', () => recordSystemEvent('network_offline', {}, { category: 'background', severity: 'warn' }));
+  window.addEventListener('roadsage-settings-changed', schedulePrivacyReconciliation);
+  window.addEventListener('storage', (event) => {
+    if (event.key === SETTINGS_KEY) schedulePrivacyReconciliation();
+  });
   document.addEventListener('visibilitychange', () => recordSystemEvent('document_visibility', {
     visibilityState: document.visibilityState,
   }, { category: 'background' }));

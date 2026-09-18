@@ -48,6 +48,7 @@ const CARD_DEFINITIONS = [
  *    serviceDueCount: number,
  *    totalKm: number,
  *  },
+ *  vehicleCountLabel?: string,
  *  formattedMonthlyCost: string,
  *  formattedTotalDistance: string,
  *  loading?: boolean,
@@ -55,13 +56,16 @@ const CARD_DEFINITIONS = [
  */
 export default function PremiumVehicleOverview({
   summary,
+  // HPR-003. The garage figure is whatever the page can honestly claim: a
+  // total when the fleet is fully represented, a lower bound when it is not.
+  vehicleCountLabel = null,
   formattedMonthlyCost,
   formattedTotalDistance,
   loading = false,
 }) {
   const cards = {
     garage: {
-      value: String(summary.vehicleCount),
+      value: vehicleCountLabel ?? String(summary.vehicleCount),
       description: `${summary.completedTripCount} completed trip${summary.completedTripCount === 1 ? '' : 's'}`,
       state: summary.vehicleCount > 0 ? 'active' : 'empty',
     },

@@ -1,20 +1,6 @@
 import { summarizePerformanceTriage } from '@/lib/performanceTriage';
-import {
-  bufferSuppressedDiagnostics,
-  closeP0Span,
-  exportP0Trace,
-  markP0SpanFailure,
-  openP0Span,
-  recordP0Phase,
-  tagP0DiagnosticsJob,
-} from '@/lib/p0Probe';
-import { suppressDiagnosticsPersistence } from '@/lib/p0ProbeArms';
-
-const p0Now = () => (
-  typeof performance !== 'undefined' && typeof performance.now === 'function'
-    ? performance.now()
-    : Date.now()
-);
+import { createDiagnosticsHistoryStore } from '@/lib/diagnosticsHistoryStore';
+import { exportP0Trace } from '@/lib/p0Probe';
 
 export const APP_EXPERIENCE_REPORT_KIND = 'roadsage_app_experience_diagnostics';
 export const APP_EXPERIENCE_REPORT_VERSION = 1;
@@ -24,8 +10,7 @@ const EXPERIENCE_EVENTS_KEY = 'roadsage_app_experience_events_v1';
 const MAX_IMPORTED_REPORTS = 5;
 const MAX_EXPERIENCE_EVENTS = 4000;
 const EXPERIENCE_EVENT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
-let pendingExperienceEvents = [];
-let experienceFlushTimer = null;
+let experienceHistoryStore = null;
 
 const finite = (value) => {
   const number = Number(value);
@@ -451,100 +436,58 @@ const canUseStorage = () => {
   }
 };
 
-const readStoredExperienceEvents = (nowMs = Date.now(), p0Span = null) => {
-  if (!canUseStorage()) return [];
-  const mark = () => (p0Span ? p0Now() : 0);
-  try {
-    const getStart = mark();
-    const raw = localStorage.getItem(EXPERIENCE_EVENTS_KEY) || '[]';
-    const getEnd = mark();
-    // Committed before the parse so a throwing parse keeps the read interval.
-    if (p0Span) recordP0Phase(p0Span, 'diag_get', getStart, getEnd);
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (error) {
-      if (p0Span) recordP0Phase(p0Span, 'diag_parse', getEnd, p0Now());
-      throw error;
-    }
-    const parseEnd = mark();
-    if (p0Span) recordP0Phase(p0Span, 'diag_parse', getEnd, parseEnd);
-    if (!Array.isArray(parsed)) return [];
-    if (p0Span) p0Span.entry_count_before = parsed.length;
-    const cutoff = nowMs - EXPERIENCE_EVENT_RETENTION_MS;
-    const sanitized = parsed
+const mapExperienceEvent = (event) => ({
+  timestamp: new Date(event.timestamp).toISOString(),
+  severity: ['error', 'warn', 'info'].includes(event.severity) ? event.severity : 'info',
+  category: safeOperation(event.category || 'app'),
+  source: safeOperation(event.source || 'web'),
+  operation: safeOperation(event.operation),
+  page: safePage(event.page),
+  details: safeEventDetail(event.details),
+});
+
+const getExperienceHistoryStore = () => {
+  if (experienceHistoryStore) return experienceHistoryStore;
+  experienceHistoryStore = createDiagnosticsHistoryStore({
+    kind: 'app_experience',
+    legacyKey: EXPERIENCE_EVENTS_KEY,
+    capacity: MAX_EXPERIENCE_EVENTS,
+    pendingCap: 250,
+    flushDelayMs: 1000,
+    jobName: 'experience_events_flush',
+    orderIndex: 'by_kind_ingest_seq',
+    orderWidth: 2,
+    direction: 'prev',
+    mapLegacy: (events, nowMs) => events
       .filter((event) => Number.isFinite(new Date(event?.timestamp).getTime()))
-      .filter((event) => new Date(event.timestamp).getTime() >= cutoff)
+      .filter((event) => new Date(event.timestamp).getTime() >= nowMs - EXPERIENCE_EVENT_RETENTION_MS)
       .slice(0, MAX_EXPERIENCE_EVENTS)
-      .map((event) => ({
-        timestamp: new Date(event.timestamp).toISOString(),
-        severity: ['error', 'warn', 'info'].includes(event.severity) ? event.severity : 'info',
-        category: safeOperation(event.category || 'app'),
-        source: safeOperation(event.source || 'web'),
-        operation: safeOperation(event.operation),
-        page: safePage(event.page),
-        details: safeEventDetail(event.details),
-      }));
-    if (p0Span) recordP0Phase(p0Span, 'diag_transform', parseEnd, p0Now());
-    return sanitized;
+      .map((event) => {
+        const payload = mapExperienceEvent(event);
+        const payloadTimestampMs = new Date(payload.timestamp).getTime();
+        return {
+          payload,
+          options: { payloadTimestampMs, expiresAtMs: payloadTimestampMs + EXPERIENCE_EVENT_RETENTION_MS },
+        };
+      })
+      .reverse(),
+    finalizeRead: (records, nowMs) => records
+      .filter((record) => record.payloadTimestampMs >= nowMs - EXPERIENCE_EVENT_RETENTION_MS)
+      .sort((left, right) => right.ingestSeq - left.ingestSeq),
+  });
+  return experienceHistoryStore;
+};
+
+export async function getHistoricalAppExperienceEvents(nowMs = Date.now()) {
+  try {
+    const records = await getExperienceHistoryStore().read({ nowMs });
+    return records.map((record) => record.payload).slice(0, MAX_EXPERIENCE_EVENTS);
   } catch {
-    markP0SpanFailure(p0Span);
     return [];
   }
-};
-
-const flushHistoricalAppExperienceEvents = () => {
-  experienceFlushTimer = null;
-  if (!canUseStorage() || !pendingExperienceEvents.length) return;
-  const batch = pendingExperienceEvents;
-  pendingExperienceEvents = [];
-  // P0 arms B/C short-circuit here, at job entry, before the first storage read
-  // and before re-sanitizing up to MAX_EXPERIENCE_EVENTS rows.
-  if (suppressDiagnosticsPersistence()) {
-    bufferSuppressedDiagnostics('experience_events_flush', batch);
-    return;
-  }
-  const p0Span = openP0Span('diagnostics_job');
-  if (p0Span) tagP0DiagnosticsJob(p0Span, 'experience_events_flush');
-  let p0Outcome = 'error';
-  try {
-    const stored = readStoredExperienceEvents(Date.now(), p0Span);
-    const transformStart = p0Span ? p0Now() : 0;
-    const next = [...batch, ...stored].slice(0, MAX_EXPERIENCE_EVENTS);
-    const transformEnd = p0Span ? p0Now() : 0;
-    const serialized = JSON.stringify(next);
-    const stringifyEnd = p0Span ? p0Now() : 0;
-    if (p0Span) {
-      recordP0Phase(p0Span, 'diag_transform', transformStart, transformEnd);
-      recordP0Phase(p0Span, 'diag_stringify', transformEnd, stringifyEnd);
-      // The string already exists; no encoder or second traversal is added.
-      p0Span.serialized_code_units = serialized.length;
-    }
-    try {
-      localStorage.setItem(EXPERIENCE_EVENTS_KEY, serialized);
-    } catch (error) {
-      if (p0Span) recordP0Phase(p0Span, 'diag_set', stringifyEnd, p0Now());
-      throw error;
-    }
-    if (p0Span) recordP0Phase(p0Span, 'diag_set', stringifyEnd, p0Now());
-    p0Outcome = 'success';
-  } catch {
-    // Historical diagnostics are best-effort and must not interfere with the app.
-    markP0SpanFailure(p0Span);
-  } finally {
-    if (p0Span) closeP0Span(p0Span, p0Outcome);
-  }
-};
-
-export function getHistoricalAppExperienceEvents(nowMs = Date.now()) {
-  const cutoff = nowMs - EXPERIENCE_EVENT_RETENTION_MS;
-  return [...pendingExperienceEvents, ...readStoredExperienceEvents(nowMs)]
-    .filter((event) => new Date(event.timestamp).getTime() >= cutoff)
-    .slice(0, MAX_EXPERIENCE_EVENTS);
 }
 
 export function recordHistoricalAppExperienceEvent(event = {}) {
-  if (!canUseStorage()) return null;
   const safe = {
     timestamp: Number.isFinite(new Date(event.timestamp).getTime())
       ? new Date(event.timestamp).toISOString()
@@ -557,19 +500,21 @@ export function recordHistoricalAppExperienceEvent(event = {}) {
     details: safeEventDetail(event.details || event),
   };
   if (safe.category === 'user_action' || /^user_(input|focusin|focusout|keydown|copy|cut|paste|click)$/.test(safe.operation)) return null;
-  pendingExperienceEvents.unshift(safe);
-  if (pendingExperienceEvents.length > 250) pendingExperienceEvents.length = 250;
-  if (!experienceFlushTimer) experienceFlushTimer = setTimeout(flushHistoricalAppExperienceEvents, 1000);
+  try {
+    const payloadTimestampMs = new Date(safe.timestamp).getTime();
+    getExperienceHistoryStore().enqueue(safe, {
+      ...(event.id ? { eventUid: `app_experience:${String(event.id).slice(0, 180)}` } : {}),
+      payloadTimestampMs,
+      expiresAtMs: payloadTimestampMs + EXPERIENCE_EVENT_RETENTION_MS,
+    });
+  } catch {}
   return safe;
 }
 
 export function clearHistoricalAppExperienceEvents() {
-  pendingExperienceEvents = [];
-  if (experienceFlushTimer) {
-    clearTimeout(experienceFlushTimer);
-    experienceFlushTimer = null;
-  }
-  if (canUseStorage()) localStorage.removeItem(EXPERIENCE_EVENTS_KEY);
+  try {
+    getExperienceHistoryStore().clear();
+  } catch {}
 }
 
 export function getImportedAppExperienceReports() {

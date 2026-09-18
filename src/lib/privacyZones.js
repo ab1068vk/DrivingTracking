@@ -2,6 +2,7 @@ import { localSettings } from '@/lib/trackingStore';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { clearMapMatchingCache } from '@/lib/mapMatching';
 import { encryptSensitiveValue, getEncryptedJson, setEncryptedJson } from '@/lib/securePayloadCrypto';
+import { withDurableKeyPublication } from '@/lib/browserKeyReferences';
 import { secureSetPreference } from '@/lib/secureBridge';
 import { appendPrivacyEvent } from '@/lib/hashChainLog';
 import { SecureGpsBuffer } from '@/lib/SecureGpsBuffer';
@@ -233,6 +234,98 @@ const zoneFromPrivacyMetadata = (item = {}, statsByZone = new Map(), zones = [])
   const matchedZone = zones.find((zone) => metadataMatchesZone(item, zone));
   return matchedZone ? statsByZone.get(matchedZone.id) || null : null;
 };
+
+/**
+ * Streaming zone-statistics accumulator.
+ *
+ * Zone stats are a pure per-point reduction, so they never required the whole
+ * trip history in memory — only every point, once. This accumulator keeps one
+ * bounded counter set per configured zone and consumes trips one at a time,
+ * which is what lets privacy analysis run as a bounded checkpointed job
+ * instead of `listAll()` + `forEach`.
+ *
+ * `deriveZoneStatsFromTrips` is now a thin wrapper over it, so the array path
+ * and the streamed path cannot drift apart.
+ */
+export function createZoneStatsAccumulator(settings = localSettings.get()) {
+  const zones = getPrivacyZones(settings);
+  const today = startOfDay();
+  const week = startOfWeek();
+  const statsByZone = new Map(zones.map((zone) => [zone.id, {
+    ...zone,
+    today: { hidden: 0, events: 0, addresses: 0 },
+    week: { hidden: 0, events: 0, addresses: 0 },
+    allTime: { hidden: 0, events: 0 },
+    riskLevel: 'Low',
+    lastActive: null,
+  }]));
+
+  const protectedZoneForRoutePoint = (point) => {
+    if (point?.privacy_boundary === true) return null;
+    if (
+      point?.masked_for_privacy === true ||
+      point?.privacy_gap === true ||
+      point?.privacy_purged === true ||
+      point?.privacy_live_redacted === true ||
+      point?.privacy_zone_id ||
+      point?.privacy_zone_label
+    ) {
+      const metadataZone = zoneFromPrivacyMetadata(point, statsByZone, zones);
+      if (metadataZone) return metadataZone;
+    }
+    const zone = isPointInPrivacyZone(point, zones);
+    if (zone) return statsByZone.get(zone.id) || null;
+    const fallbackZone = zones.find((candidate) => isRoutePointInsidePrivacyZone(point, candidate));
+    return fallbackZone ? statsByZone.get(fallbackZone.id) || null : null;
+  };
+
+  const protectedZoneForEvent = (event) => {
+    if (
+      event?.privacy_event_redacted === true ||
+      event?.masked_for_privacy === true ||
+      event?.privacy_zone_id ||
+      event?.privacy_zone_label
+    ) {
+      const metadataZone = zoneFromPrivacyMetadata(event, statsByZone, zones);
+      if (metadataZone) return metadataZone;
+    }
+    const zone = isPointInPrivacyZone(event, zones, ZONE_EVENT_GUARD_M);
+    if (zone) return statsByZone.get(zone.id) || null;
+    const fallbackZone = zones.find((candidate) => isRoutePointInsidePrivacyZone(event, candidate, ZONE_EVENT_GUARD_M));
+    return fallbackZone ? statsByZone.get(fallbackZone.id) || null : null;
+  };
+
+  const countOne = (item, field, zoneForItem, tripTime) => {
+    const zone = zoneForItem(item);
+    if (!zone) return;
+    const itemTime = zoneStatsTimestampMs(item?.timestamp ?? item?.time, tripTime);
+    zone.allTime[field] += 1;
+    if (itemTime >= week) zone.week[field] += 1;
+    if (itemTime >= today) zone.today[field] += 1;
+    zone.lastActive = Math.max(Number(zone.lastActive) || 0, itemTime || tripTime) || null;
+  };
+
+  return {
+    zones,
+    addRoutePoint(point, tripTime) {
+      countOne(point, 'hidden', protectedZoneForRoutePoint, tripTime);
+    },
+    addDrivingEvent(event, tripTime) {
+      countOne(event, 'events', protectedZoneForEvent, tripTime);
+    },
+    /** Consume one trip whose points may arrive as an async iterable. */
+    async addTrip({ trip = {}, points = null, events = null } = {}) {
+      const tripTime = zoneStatsTimestampMs(trip?.end_time, trip?.start_time);
+      const pointSource = points ?? trip?.route_points ?? [];
+      for await (const point of pointSource) this.addRoutePoint(point, tripTime);
+      const eventSource = events ?? trip?.driving_events ?? [];
+      for await (const event of eventSource) this.addDrivingEvent(event, tripTime);
+    },
+    result() {
+      return Array.from(statsByZone.values());
+    },
+  };
+}
 
 export function deriveZoneStatsFromTrips(trips = [], settings = localSettings.get()) {
   const zones = getPrivacyZones(settings);
@@ -489,6 +582,60 @@ const hasExactCorridorGeometry = (zone = {}) => (
 const hasExactZoneGeometry = (zone = {}) => (
   hasExactCircleGeometry(zone) || hasExactCorridorGeometry(zone)
 );
+
+/**
+ * Streaming near-miss accumulator for zone effectiveness.
+ *
+ * Same reduction as `getZoneEffectiveness`, evaluated for every zone in one
+ * pass so a bounded job reads each point once rather than once per zone.
+ */
+export function createZoneEffectivenessAccumulator(zones = []) {
+  const tracked = (Array.isArray(zones) ? zones : []).map((zone) => {
+    const radiusM = zoneWidthM(zone);
+    return {
+      zone,
+      radiusM,
+      outerRadiusM: Math.min(PRIVACY_RADIUS_MAX_M, radiusM + ZONE_EVENT_GUARD_M * 2),
+      nearMissCount: 0,
+      farthestNearMissM: radiusM,
+    };
+  });
+
+  const inspect = (item) => {
+    if (
+      finiteNumber(item?.lat) == null ||
+      finiteNumber(item?.lng) == null ||
+      item?.masked_for_privacy === true ||
+      item?.privacy_gap === true ||
+      item?.privacy_boundary === true ||
+      item?.privacy_purged === true ||
+      item?.privacy_event_redacted === true
+    ) return;
+    for (const entry of tracked) {
+      const pointDistanceM = privacyZoneGeometryDistanceM(item, entry.zone);
+      if (pointDistanceM <= entry.radiusM || pointDistanceM > entry.outerRadiusM) continue;
+      entry.nearMissCount += 1;
+      entry.farthestNearMissM = Math.max(entry.farthestNearMissM, pointDistanceM);
+    }
+  };
+
+  return {
+    add: inspect,
+    async addTrip({ trip = {}, points = null, events = null } = {}) {
+      for await (const point of points ?? trip?.route_points ?? []) inspect(point);
+      for await (const event of events ?? trip?.driving_events ?? []) inspect(event);
+    },
+    /** Effectiveness keyed by zone id, in the same shape `getZoneEffectiveness` returns. */
+    resultById() {
+      return new Map(tracked.map((entry) => [entry.zone.id, {
+        nearMissCount: entry.nearMissCount,
+        suggestedRadiusM: entry.nearMissCount
+          ? Math.min(PRIVACY_RADIUS_MAX_M, Math.ceil(entry.farthestNearMissM))
+          : null,
+      }]));
+    },
+  };
+}
 
 export function getZoneEffectiveness(zone, trips = []) {
   const radiusM = zoneWidthM(zone);
@@ -903,11 +1050,18 @@ export async function syncZonesToNative(zones = getPrivacyZones()) {
         encryptAtRest: true,
       });
     } else {
-      const encryptedNativeZones = await encryptSensitiveValue(nativeZones, NATIVE_PRIVACY_ZONES_CONTEXT);
-      const { Preferences } = await import('@capacitor/preferences');
-      await Preferences.set({
-        key: NATIVE_PRIVACY_ZONES_KEY,
-        value: JSON.stringify(encryptedNativeZones),
+      // AUD-007 round 6: capture -> encrypt -> durable native write under ONE token.
+      // Splitting them let a finalization land between the encrypt and the Preferences
+      // write, so the zone wrapper named a version that was already gone.
+      await withDurableKeyPublication(async () => {
+        const encryptedNativeZones = await encryptSensitiveValue(
+          nativeZones, NATIVE_PRIVACY_ZONES_CONTEXT,
+        );
+        const { Preferences } = await import('@capacitor/preferences');
+        await Preferences.set({
+          key: NATIVE_PRIVACY_ZONES_KEY,
+          value: JSON.stringify(encryptedNativeZones),
+        });
       });
     }
     localSettings.update({
@@ -1680,6 +1834,73 @@ export function countTripsAffectedByPrivacyZone(trips = [], zone) {
   return tripIdsAffectedByPrivacyZone(trips, zone).length;
 }
 
+/** True when any of this trip's points or events fall inside the zone. */
+export function tripAffectedByPrivacyZone(trip, zone) {
+  if (!zone || !trip) return false;
+  return (
+    (Array.isArray(trip?.route_points) && trip.route_points.some((point) => isRoutePointInsidePrivacyZone(point, zone))) ||
+    (Array.isArray(trip?.driving_events) && trip.driving_events.some((event) => isRoutePointInsidePrivacyZone(event, zone)))
+  );
+}
+
+/**
+ * Streamed zone-impact scan.
+ *
+ * The Settings delete dialog needs a count, and the delete itself needs the
+ * affected ids. Both come from one bounded pass; ids are handed to `onMatch`
+ * in batches so the caller can flush them to the durable rescore queue rather
+ * than holding every id.
+ */
+export async function scanTripsAffectedByPrivacyZone(zone, {
+  signal = null,
+  onProgress = null,
+  onMatch = null,
+  batchSize = 200,
+} = {}) {
+  const { clearBoundedJobCheckpoint, runBoundedTripJob } = await import('@/lib/boundedTripJob');
+  const jobKey = `privacy_zone_impact_${zone?.id || 'unknown'}`;
+  let tripCount = 0;
+  let pending = [];
+
+  const flush = async () => {
+    if (!pending.length || !onMatch) { pending = []; return; }
+    const batch = pending;
+    pending = [];
+    await onMatch(batch);
+  };
+
+  const outcome = await runBoundedTripJob({
+    jobKey,
+    fingerprint: `zone-impact:${zone?.id || ''}:${zone?.updated_at || ''}`,
+    status: '',
+    loadFullTrip: true,
+    signal,
+    onProgress,
+    resume: false,
+    initialState: () => ({}),
+    onTrip: async ({ trip }) => {
+      if (!tripAffectedByPrivacyZone(trip, zone)) return;
+      tripCount += 1;
+      pending.push(String(trip.id));
+      if (pending.length >= batchSize) await flush();
+    },
+  });
+
+  await flush();
+  if (outcome.completed) await clearBoundedJobCheckpoint(jobKey);
+  return { tripCount, processed: outcome.processed, cancelled: outcome.cancelled };
+}
+
+/**
+ * Purge one zone across the whole archive as a bounded checkpointed job.
+ *
+ * Exposed so Settings can run the same streamed purge the heightened-privacy
+ * sweep uses, instead of loading every trip to pass into the array helper.
+ */
+export function purgePrivacyZoneAcrossArchive(zone, options = {}) {
+  return purgeZoneFromTripRepository(zone, options);
+}
+
 export function tripIdsAffectedByPrivacyZone(trips = [], zone) {
   if (!zone || !Array.isArray(trips)) return [];
   return trips.filter((trip) => (
@@ -2269,41 +2490,120 @@ export function routeTouchesPrivacyZone(routePoints = [], zone, guardM = 0) {
   return false;
 }
 
-async function purgeZoneFromTripRepository(zone) {
+/**
+ * Trip ids queued for rescore per flush. Purge affects an unbounded number of
+ * trips in principle, so matches go to the durable rescore queue in batches
+ * rather than accumulating in memory or in checkpointed job state.
+ */
+const PURGE_RESCORE_FLUSH_BATCH = 200;
+
+/**
+ * Streamed, checkpointed purge of one zone across the whole archive.
+ *
+ * Each trip is loaded, purged and written back individually, so exactly one
+ * trip is resident. Purging is idempotent — a trip with no remaining points
+ * inside the zone reports `changed: false` — which is what makes resuming from
+ * a checkpoint after process death safe rather than merely convenient.
+ */
+async function purgeZoneFromTripRepository(zone, { signal = null, onProgress = null } = {}) {
   const [
     { tripService },
     { enqueueRescoreJob },
     { rescoreTripForQueue },
     { purgeLocalSpeedKnowledgeForPrivacyZones },
+    { clearBoundedJobCheckpoint, runBoundedTripJob },
   ] = await Promise.all([
     import('@/api/trips'),
     import('@/lib/rescoringQueue'),
     import('@/lib/rescoringWorker'),
     import('@/lib/speedKnowledgePrivacy'),
+    import('@/lib/boundedTripJob'),
   ]);
-  const trips = await tripService.listAll({ sort: '-start_time' });
   const purgeZone = { ...zone };
   delete purgeZone.expiresAt;
   // Derived road knowledge contains precise cells and traced geometry just as
   // raw trip GPS does. Erase it before route points are masked so the cleanup
   // can still identify and rescore every affected public trip correctly.
   const speedKnowledgeCleanup = await purgeLocalSpeedKnowledgeForPrivacyZones([purgeZone]);
-  const result = await purgeGpsWithinPrivacyZone(
-    trips,
-    purgeZone,
-    (id, patch) => tripService.update(id, patch)
-  );
-  if (result.tripIdsAffected.length) {
-    void enqueueRescoreJob({
+
+  const totals = { tripsAffected: 0, pointsPurged: 0, eventsPurged: 0 };
+  const tripIdsAffected = [];
+
+  const flush = async (ids) => {
+    if (!ids.length) return;
+    await enqueueRescoreJob({
       reason: 'privacy_zone_purged',
       zoneId: zone.id,
-      tripIds: result.tripIdsAffected,
+      tripIds: ids,
     }, { rescoreTrip: rescoreTripForQueue });
+  };
+
+  const jobKey = `privacy_purge_${zone.id}`;
+  const outcome = await runBoundedTripJob({
+    jobKey,
+    fingerprint: `purge:${zone.id}:${zone.updated_at || ''}`,
+    status: '',
+    loadFullTrip: true,
+    signal,
+    onProgress,
+    initialState: () => ({ pending: [], tripsAffected: 0, pointsPurged: 0, eventsPurged: 0 }),
+    onTrip: async ({ trip, state }) => {
+      const result = purgeTripGpsWithinPrivacyZone(trip, purgeZone);
+      if (!result.changed) return state;
+      await tripService.update(trip.id, {
+        route_points: result.trip.route_points,
+        route_points_raw_count: result.trip.route_points_raw_count,
+        route_points_map_count: result.trip.route_points_map_count,
+        driving_events: result.trip.driving_events,
+        privacy_purged_zone_ids: result.trip.privacy_purged_zone_ids,
+        privacy_purged_at: result.trip.privacy_purged_at,
+        needs_rescore: result.trip.needs_rescore,
+      });
+      state.tripsAffected += 1;
+      state.pointsPurged += result.purgedPoints;
+      state.eventsPurged += result.purgedEvents;
+      state.pending.push(String(trip.id));
+      tripIdsAffected.push(String(trip.id));
+      if (state.pending.length >= PURGE_RESCORE_FLUSH_BATCH) {
+        await flush(state.pending.splice(0, state.pending.length));
+      }
+      return state;
+    },
+  });
+
+  await flush(outcome.state.pending.splice(0, outcome.state.pending.length));
+  totals.tripsAffected = outcome.state.tripsAffected;
+  totals.pointsPurged = outcome.state.pointsPurged;
+  totals.eventsPurged = outcome.state.eventsPurged;
+  if (outcome.completed) await clearBoundedJobCheckpoint(jobKey);
+
+  if (totals.tripsAffected > 0) {
+    appendPrivacyAuditEvent({
+      op: 'PRIVATE_GPS_PURGED',
+      zoneId: zone?.id,
+      zoneLabel: zone?.label,
+      hiddenCount: totals.pointsPurged + totals.eventsPurged,
+      details: {
+        affected_trip_count: totals.tripsAffected,
+        purged_point_count: totals.pointsPurged,
+        purged_event_count: totals.eventsPurged,
+      },
+    });
   }
-  return { ...result, speedKnowledgeCleanup };
+
+  return {
+    ...totals,
+    tripIdsAffected,
+    cancelled: outcome.cancelled,
+    completed: outcome.completed,
+    speedKnowledgeCleanup,
+  };
 }
 
-export async function purgeExistingGpsForHeightenedPrivacy(settings = localSettings.get()) {
+export async function purgeExistingGpsForHeightenedPrivacy(
+  settings = localSettings.get(),
+  { signal = null, onProgress = null } = {}
+) {
   const zones = await getHydratedPrivacyZones(settings);
   const totals = {
     zoneCount: zones.length,
@@ -2311,10 +2611,12 @@ export async function purgeExistingGpsForHeightenedPrivacy(settings = localSetti
     pointsPurged: 0,
     eventsPurged: 0,
     speedKnowledgeRecordsPurged: 0,
+    cancelled: false,
   };
 
   for (const zone of zones) {
-    const result = await purgeZoneFromTripRepository(zone);
+    const result = await purgeZoneFromTripRepository(zone, { signal, onProgress });
+    if (result.cancelled) totals.cancelled = true;
     totals.tripsAffected += result.tripsAffected;
     totals.pointsPurged += result.pointsPurged;
     totals.eventsPurged += result.eventsPurged;

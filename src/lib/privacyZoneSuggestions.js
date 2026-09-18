@@ -1,5 +1,4 @@
 import { clusterByProximity } from '@/lib/geo/proximityClusters';
-import { localTripRepository } from '@/lib/localTripRepository';
 import {
   getHydratedPrivacyZones,
   PRIVACY_RADIUS_DEFAULT_M,
@@ -69,6 +68,40 @@ const tripEndpoints = (trips = []) => (
 );
 
 /**
+ * Most recent endpoints retained for clustering.
+ *
+ * Suggestion clustering is inherently global over endpoints, so a streamed
+ * scan keeps a bounded newest-first window rather than the whole archive's
+ * endpoints. Two entries per trip means this covers 25,000 trips. It bounds a
+ * heuristic advisory input only: no trip, route, or saved setting is affected,
+ * and the retained window is the one that matches "places you currently visit".
+ */
+export const MAX_SUGGESTION_ENDPOINTS = 50_000;
+
+/**
+ * Collect trip endpoints from a streamed scan.
+ *
+ * Trips arrive newest-first, so once the window is full the remaining (older)
+ * endpoints are dropped rather than displacing newer ones.
+ */
+export function createTripEndpointCollector({ limit = MAX_SUGGESTION_ENDPOINTS } = {}) {
+  const endpoints = [];
+  let dropped = 0;
+  return {
+    addTrip(trip = {}) {
+      for (const edge of ['start', 'end']) {
+        const endpoint = endpointFromTrip(trip, edge);
+        if (!endpoint) continue;
+        if (endpoints.length >= limit) { dropped += 1; continue; }
+        endpoints.push(endpoint);
+      }
+    },
+    get truncated() { return dropped > 0; },
+    result() { return endpoints; },
+  };
+}
+
+/**
  * The union-find bucket sweep this used to hold inline now lives in
  * `@/lib/geo/proximityClusters`, extracted so the repeated-event-area engine
  * clusters by the same rule instead of by a rounded grid. `privacyZoneDistanceM`
@@ -128,13 +161,22 @@ const activeDismissals = async (now) => {
 
 export async function getPrivacyZoneSuggestions({
   trips = null,
+  endpoints = null,
   zones = null,
   now = Date.now(),
 } = {}) {
   try {
-    const sourceTrips = Array.isArray(trips)
-      ? trips
-      : await localTripRepository.listAll({ sort: '-start_time' });
+    // Endpoints are the streamed path: a bounded scan has already reduced each
+    // trip to its two raw endpoints. A caller-supplied trip array is the
+    // browser/dev path. Neither one reads the archive here, and there is no
+    // whole-history fallback: without either input there is nothing to cluster
+    // and reporting no suggestions is correct.
+    const sourceEndpoints = Array.isArray(endpoints)
+      ? endpoints
+      : Array.isArray(trips)
+        ? tripEndpoints(trips)
+        : [];
+    if (!sourceEndpoints.length) return [];
     const existingZones = Array.isArray(zones)
       ? zones
       : await getHydratedPrivacyZones(localSettings.get()).catch((error) => {
@@ -145,7 +187,7 @@ export async function getPrivacyZoneSuggestions({
     const dismissed = new Set(dismissals.map((item) => item.fingerprint));
     const candidates = [];
 
-    for (const points of clusterEndpoints(tripEndpoints(sourceTrips))) {
+    for (const points of clusterEndpoints(sourceEndpoints)) {
       const occurrenceDays = new Set(points.map((point) => point.dayKey)).size;
       if (occurrenceDays < PRIVACY_ZONE_SUGGESTION_MIN_OCCURRENCE_DAYS) continue;
       const suggestedCenter = clusterCenter(points);

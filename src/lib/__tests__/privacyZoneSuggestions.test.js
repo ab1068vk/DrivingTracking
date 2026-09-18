@@ -22,8 +22,10 @@ vi.mock('@/lib/systemLog', () => ({
 }));
 
 import {
+  createTripEndpointCollector,
   dismissPrivacyZoneSuggestion,
   getPrivacyZoneSuggestions,
+  MAX_SUGGESTION_ENDPOINTS,
   PRIVACY_ZONE_SUGGESTION_DISMISSAL_MS,
   privacyZoneDraftFromSuggestion,
 } from '@/lib/privacyZoneSuggestions';
@@ -63,6 +65,28 @@ describe('privacy zone suggestions', () => {
       zones: [],
       now: Date.parse('2026-02-01T12:00:00.000Z'),
     })).resolves.toEqual([]);
+  });
+
+  it('returns no advisory suggestion without explicit bounded input', async () => {
+    await expect(getPrivacyZoneSuggestions()).resolves.toEqual([]);
+  });
+
+  it('bounds only the advisory endpoint window and reports truncation', () => {
+    const collector = createTripEndpointCollector();
+    const tripCount = (MAX_SUGGESTION_ENDPOINTS / 2) + 3;
+    for (let index = 0; index < tripCount; index += 1) {
+      collector.addTrip({
+        id: `bounded-${index}`,
+        start_time: new Date(1_700_000_000_000 + index * 60_000).toISOString(),
+        end_time: new Date(1_700_000_030_000 + index * 60_000).toISOString(),
+        route_points: [
+          { lat: 43.6, lng: -79.4 },
+          { lat: 43.61, lng: -79.39 },
+        ],
+      });
+    }
+    expect(collector.result()).toHaveLength(MAX_SUGGESTION_ENDPOINTS);
+    expect(collector.truncated).toBe(true);
   });
 
   it('contains no network request path', () => {

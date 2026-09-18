@@ -34,7 +34,8 @@ describe('SpeedLimitConflictReview smart speed behavior', () => {
       ],
     };
     const knowledge = {
-      exportData: vi.fn()
+      // Scoped to the edited section rather than the whole saved-road model.
+      exportDataForPoints: vi.fn()
         .mockResolvedValueOnce(beforeKnowledge)
         .mockResolvedValueOnce(afterKnowledge),
       excludeSpeedSection: vi.fn().mockResolvedValue({ exclusion }),

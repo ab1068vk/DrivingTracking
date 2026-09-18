@@ -1,9 +1,9 @@
 import { useDeferredValue, useEffect, useMemo, useState, useTransition } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { Activity, Clock, Database, Route, Search } from 'lucide-react';
-import { tripSummaryQueryOptions } from '@/api/trips';
 import useLocalSettings from '@/hooks/useLocalSettings';
+import { useTripHistoryPageData } from '@/hooks/useTripHistoryPageData';
+import { useTripHistoryTotals } from '@/hooks/useTripHistoryTotals';
 import { formatDistance, formatDuration, formatSpeed } from '@/lib/tripEngine';
 import {
   trackingTripDisplayName, trackingTripEventCount, trackingTripEvidenceStatus,
@@ -51,13 +51,11 @@ export default function TrackingTripHistory() {
   const [sort, setSort] = useState('newest');
   const [page, setPage] = useState(0);
   const [isFilterPending, startFilterTransition] = useTransition();
-  const query = useQuery({
-    ...tripSummaryQueryOptions(),
-    select: (rows) => rows.filter((trip) => trip.status === 'completed'),
-  });
-  // Memoized so the empty-state fallback keeps a stable identity; a fresh []
-  // on every render invalidated the visible/totals memos below.
-  const trips = useMemo(() => query.data || [], [query.data]);
+  // P7 Stage 4: one cursor-paged Q1 composition instead of a flat `(200)` read.
+  // Beyond 200 retained trips the old window was silently not the history, and
+  // the footer chips below reduced over it as if it were.
+  const query = useTripHistoryPageData({ sortBy: 'date_desc', status: 'completed' });
+  const trips = query.rows;
   const deferredSearch = useDeferredValue(search.trim().toLowerCase());
   const visible = useMemo(() => trips.filter((trip) => {
     const route = trackingTripRouteStatus(trip);
@@ -84,12 +82,25 @@ export default function TrackingTripHistory() {
   useEffect(() => {
     if (page >= pageCount) setPage(pageCount - 1);
   }, [page, pageCount]);
+  // Annex C O08: the footer is an aggregate over the whole population, not over
+  // the rows this page happens to have fetched. It comes from the named reducer
+  // `p7.history.filteredTotals@1`, which declares exactly these five terms, and
+  // it is labelled "at least" until the tally reaches terminal EOF.
+  const {
+    totals: historyTotals,
+    exact: totalsExact,
+    unavailable: totalsUnavailable,
+    finish: finishTotals,
+    finishing: totalsFinishing,
+  } = useTripHistoryTotals({ status: 'completed' });
   const totals = useMemo(() => ({
-    distance: trips.reduce((sum, trip) => sum + (trackingTripNumericValue(trip, 'distance_km') || 0), 0),
-    duration: trips.reduce((sum, trip) => sum + (trackingTripNumericValue(trip, 'duration_seconds') || 0), 0),
-    events: trips.reduce((sum, trip) => sum + trackingTripEventCount(trip), 0),
-    retained: trips.filter((trip) => trackingTripRouteStatus(trip).key === 'retained').length,
-  }), [trips]);
+    distance: historyTotals.distance,
+    duration: historyTotals.duration,
+    events: historyTotals.event_count,
+    retained: historyTotals.route_retained_count,
+    count: historyTotals.count,
+  }), [historyTotals]);
+  const atLeast = (value) => (totalsExact ? value : `at least ${value}`);
 
   return <div className="min-w-0">
     <header className="border-b border-border pb-3">
@@ -99,10 +110,10 @@ export default function TrackingTripHistory() {
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Recorded measurements, observations, privacy state, and evidence availability. No driver grades or rankings are shown here.</p>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Chip icon={Route} label="Distance" value={formatDistance(totals.distance, units)} />
-          <Chip icon={Clock} label="Recorded time" value={formatDuration(totals.duration)} />
-          <Chip icon={Activity} label="Observations" value={String(totals.events)} />
-          <Chip icon={Database} label="Routes retained" value={`${totals.retained}/${trips.length}`} />
+          <Chip icon={Route} label="Distance" value={totalsUnavailable ? 'Unavailable' : atLeast(formatDistance(totals.distance, units))} />
+          <Chip icon={Clock} label="Recorded time" value={totalsUnavailable ? 'Unavailable' : atLeast(formatDuration(totals.duration))} />
+          <Chip icon={Activity} label="Observations" value={totalsUnavailable ? 'Unavailable' : atLeast(String(totals.events))} />
+          <Chip icon={Database} label="Routes retained" value={totalsUnavailable ? 'Unavailable' : atLeast(`${totals.retained}/${totals.count}`)} />
         </div>
       </div>
       <div className="mt-4 grid gap-2 md:grid-cols-[minmax(15rem,1fr)_12rem_13rem]">
@@ -113,6 +124,15 @@ export default function TrackingTripHistory() {
         <select aria-label="Sort trips" value={sort} onChange={(e) => startFilterTransition(() => { setSort(e.target.value); setPage(0); })} className="h-10 rounded-md border border-border bg-card px-3 text-sm">{sorts.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       </div>
     </header>
+    {query.unavailable && (
+      <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" role="status">
+        <div className="font-semibold">Trip history is not available right now</div>
+        {/* Never an empty table: "unreadable" and "you have no trips" are
+            different facts and must not look the same. */}
+        <div className="mt-1">The stored history could not be read ({query.unavailable.code}). Your saved trips were not changed.</div>
+        <button type="button" onClick={() => query.refetch()} className="mt-3 h-9 rounded-md bg-amber-900 px-3 font-semibold text-white dark:bg-amber-200 dark:text-amber-950">Try again</button>
+      </div>
+    )}
     {query.isError && (
       <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" role="alert">
         <div className="font-semibold">Trip history could not be opened</div>
@@ -122,7 +142,35 @@ export default function TrackingTripHistory() {
     )}
     <div className="mt-3 overflow-hidden rounded-lg border border-border bg-card/60">
       <div className="flex min-h-9 items-center justify-between gap-3 border-b border-border px-3 py-2 text-xs text-muted-foreground" aria-live="polite">
-        <span>{query.isLoading ? 'Reading local trip summaries…' : `${visible.length} of ${trips.length} trips`}</span>
+        <span>
+          {query.isPending
+            ? 'Reading local trip summaries…'
+            : `${visible.length} of ${query.hasMore ? 'at least ' : ''}${trips.length} trips`}
+        </span>
+        {!query.isPending && (query.hasMore || !totalsExact) && !totalsUnavailable && (
+          <span className="flex items-center gap-2">
+            {query.hasMore && (
+              <button
+                type="button"
+                onClick={() => query.loadMore()}
+                disabled={query.loadingMore}
+                className="h-7 rounded-md border border-border px-2 font-semibold disabled:opacity-50"
+              >
+                {query.loadingMore ? 'Reading…' : 'Load more'}
+              </button>
+            )}
+            {!totalsExact && (
+              <button
+                type="button"
+                onClick={() => finishTotals()}
+                disabled={totalsFinishing}
+                className="h-7 rounded-md border border-border px-2 font-semibold disabled:opacity-50"
+              >
+                {totalsFinishing ? 'Counting…' : 'Finish totals'}
+              </button>
+            )}
+          </span>
+        )}
         <span>{isFilterPending ? 'Updating trip list…' : query.isFetching && !query.isLoading ? 'Refreshing local data…' : visible.length > PAGE_SIZE ? `Page ${page + 1} of ${pageCount}` : ''}</span>
       </div>
       <div className="overflow-x-auto"><table className="w-full min-w-[72rem] border-collapse text-left text-xs">

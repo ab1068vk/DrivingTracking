@@ -20,6 +20,10 @@ describe('PremiumHistoricalEvidenceAuditCard', () => {
       scoreReady: 68,
       eventReady: 66,
       routeReady: 64,
+      // P7 Stage 6.6: the first two counts come from their lifetime owners,
+      // the last three from the bounded window they were measured over.
+      lifetimeExact: true,
+      windowTrips: 200,
     });
 
     expect(model.metrics.map(({ id, value, label, measured }) => ({
@@ -30,9 +34,25 @@ describe('PremiumHistoricalEvidenceAuditCard', () => {
     }))).toEqual([
       { id: 'completed', value: '77', label: 'completed trips found', measured: true },
       { id: 'driver', value: '71', label: 'driver trips eligible', measured: true },
-      { id: 'score', value: '68 trips', label: 'score evidence', measured: true },
-      { id: 'events', value: '66 trips', label: 'event evidence', measured: true },
-      { id: 'route', value: '64 trips', label: 'route evidence', measured: true },
+      { id: 'score', value: '68 trips', label: 'score evidence (latest 200)', measured: true },
+      { id: 'events', value: '66 trips', label: 'event evidence (latest 200)', measured: true },
+      { id: 'route', value: '64 trips', label: 'route evidence (latest 200)', measured: true },
+    ]);
+  });
+
+  it('says "so far" while a lifetime count has not reached the end of history', () => {
+    // A reducer short of terminal EOF is a floor, not a total, and the card
+    // must not present it as the number of drives the driver has taken.
+    const partial = buildPremiumHistoricalEvidenceAuditViewModel({
+      totalCompleted: 77,
+      driverEligible: 71,
+      lifetimeExact: false,
+      windowTrips: 200,
+    });
+
+    expect(partial.metrics.slice(0, 2).map(({ label }) => label)).toEqual([
+      'completed trips found so far',
+      'driver trips eligible so far',
     ]);
   });
 

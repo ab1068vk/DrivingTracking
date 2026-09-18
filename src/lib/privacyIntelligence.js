@@ -4,13 +4,16 @@ import {
 } from '@/lib/hashChainLog';
 import {
   getHydratedPrivacyZones,
+  createZoneEffectivenessAccumulator,
+  createZoneStatsAccumulator,
+  getPrivacyZones,
   getZoneEffectiveness,
   getZoneStatsSnapshot,
   isPointInPrivacyZone,
 } from '@/lib/privacyZones';
-import { getPrivacyZoneSuggestions } from '@/lib/privacyZoneSuggestions';
+import { createTripEndpointCollector, getPrivacyZoneSuggestions } from '@/lib/privacyZoneSuggestions';
 import { loadTransmissionLog } from '@/lib/transmissionLog';
-import { tripService } from '@/api/trips';
+import { runBoundedTripJob } from '@/lib/boundedTripJob';
 import { localSettings } from '@/lib/trackingStore';
 import {
   checkAuditLog,
@@ -38,7 +41,7 @@ import {
 import { getKeyRotationStatus } from '@/lib/keyRotationManager';
 import { isNativePlatform } from '@/lib/nativePlatform';
 import { getEncryptedJson, setEncryptedJson } from '@/lib/securePayloadCrypto';
-import { buildHistoricalPrivacyExposure } from '@/lib/privacyTripRemediation';
+import { createHistoricalPrivacyExposureAccumulator } from '@/lib/privacyTripRemediation';
 import { logSystemFailure } from '@/lib/systemLog';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -643,10 +646,11 @@ export async function getZoneStats(trips = null) {
   const settings = localSettings.get();
   const hydratedZones = await getHydratedPrivacyZones(settings).catch(() => []);
   const zoneSettings = hydratedZones.length ? { ...settings, privacy_zones: hydratedZones } : settings;
-  const sourceTrips = Array.isArray(trips)
-    ? trips
-    : await tripService.listAll({ sort: '-start_time' }).catch(() => []);
-  return getZoneStatsSnapshot(zoneSettings, sourceTrips);
+  if (Array.isArray(trips)) return getZoneStatsSnapshot(zoneSettings, trips);
+  // Without an explicit trip array this reads the durable per-zone counters
+  // rather than deriving them from the whole archive. Deriving needs every
+  // point of every trip and belongs to the explicit bounded job below.
+  return getZoneStatsSnapshot(zoneSettings, null);
 }
 
 export async function buildZoneIntelligenceSnapshot(settings, trips = []) {
@@ -655,6 +659,99 @@ export async function buildZoneIntelligenceSnapshot(settings, trips = []) {
     ...zone,
     effectiveness: getZoneEffectiveness(zone, trips),
   }));
+}
+
+/**
+ * One bounded pass over the archive feeding every privacy consumer at once.
+ *
+ * Zone statistics, near-miss effectiveness, historical exposure, the driving
+ * readout and zone-suggestion endpoints are all per-trip reductions with
+ * bounded outputs. Running them together means each trip is read exactly once
+ * and exactly one trip is resident at a time, replacing the former
+ * `listAllForExport()` array that every one of these consumers shared.
+ */
+export async function runPrivacyArchiveScan(settings, { signal = null, onProgress = null, now = Date.now() } = {}) {
+  const geometryZones = getPrivacyZones(settings);
+  const statsAccumulator = createZoneStatsAccumulator(settings);
+  const effectiveness = createZoneEffectivenessAccumulator(geometryZones);
+  const exposure = createHistoricalPrivacyExposureAccumulator(geometryZones);
+  const readout = createDrivingPrivacyReadoutAccumulator(geometryZones, now);
+  const endpoints = createTripEndpointCollector();
+
+  const outcome = await runBoundedTripJob({
+    jobKey: 'privacy_archive_scan',
+    fingerprint: `zones:${geometryZones.map((zone) => zone.id).sort().join(',')}`,
+    status: 'completed',
+    loadFullTrip: true,
+    signal,
+    onProgress,
+    // Accumulators are in-memory; a resume must re-derive them from the start
+    // rather than replay a partial tally, so this job does not resume.
+    resume: false,
+    initialState: () => ({}),
+    onTrip: async ({ trip }) => {
+      await statsAccumulator.addTrip({ trip });
+      await effectiveness.addTrip({ trip });
+      exposure.addTrip(trip);
+      readout.addTrip(trip);
+      endpoints.addTrip(trip);
+    },
+  });
+
+  const byZone = effectiveness.resultById();
+  const zones = statsAccumulator.result().map((zone) => ({
+    ...zone,
+    effectiveness: byZone.get(zone.id) || { nearMissCount: 0, suggestedRadiusM: null },
+  }));
+
+  return {
+    zones,
+    exposure: exposure.result(),
+    readout: readout.result(zones),
+    endpoints: endpoints.result(),
+    endpointsTruncated: endpoints.truncated,
+    processed: outcome.processed,
+    cancelled: outcome.cancelled,
+  };
+}
+
+/**
+ * Bounded, checkpointed replacement for
+ * `buildZoneIntelligenceSnapshot(settings, await listAllForExport())`.
+ *
+ * Zone statistics and near-miss effectiveness are both per-point reductions,
+ * so one streamed pass over the archive produces the identical result while
+ * holding exactly one trip at a time. The job is explicit: nothing on a normal
+ * page open or resume may start it.
+ */
+export async function runZoneIntelligenceJob(settings, { signal = null, onProgress = null } = {}) {
+  const statsAccumulator = createZoneStatsAccumulator(settings);
+  const effectiveness = createZoneEffectivenessAccumulator(statsAccumulator.zones);
+
+  const outcome = await runBoundedTripJob({
+    jobKey: 'privacy_zone_intelligence',
+    fingerprint: `zones:${statsAccumulator.zones.map((zone) => zone.id).sort().join(',')}`,
+    status: 'completed',
+    loadFullTrip: true,
+    signal,
+    onProgress,
+    // Counters live in the accumulators, not in checkpointed state, so a
+    // resume re-derives from the recorded cursor rather than persisting a
+    // partial per-zone tally that could double-count on replay.
+    resume: false,
+    initialState: () => ({}),
+    onTrip: async ({ trip }) => {
+      await statsAccumulator.addTrip({ trip });
+      await effectiveness.addTrip({ trip });
+    },
+  });
+
+  const byZone = effectiveness.resultById();
+  const zones = statsAccumulator.result().map((zone) => ({
+    ...zone,
+    effectiveness: byZone.get(zone.id) || { nearMissCount: 0, suggestedRadiusM: null },
+  }));
+  return { zones, processed: outcome.processed, cancelled: outcome.cancelled };
 }
 
 export function transmissionPrivacyLevel(entry = {}) {
@@ -1301,10 +1398,75 @@ const endpointInsideZone = (point, zones = []) => (
   point ? itemInsideZone(point, zones) : false
 );
 
-export function buildDrivingPrivacyReadout(trips = [], zones = [], now = Date.now()) {
-  const safeTrips = Array.isArray(trips) ? trips : [];
+/**
+ * Streaming driving-privacy readout.
+ *
+ * Every per-trip term here is a counter, so the readout is computed one trip
+ * at a time and the zone-derived summaries are folded in at the end. The array
+ * entry point below delegates to this so both paths stay identical.
+ */
+export function createDrivingPrivacyReadoutAccumulator(zones = [], now = Date.now()) {
   const safeZones = Array.isArray(zones) ? zones : [];
   const recentCutoff = now - 30 * DAY_MS;
+  const totals = {
+    tripCount: 0,
+    protectedPointCount: 0,
+    protectedEventCount: 0,
+    rawPointInsideZoneCount: 0,
+    tripsWithProtectedActivity: 0,
+    recentTripCount: 0,
+    recentProtectedTripCount: 0,
+    privateEndpointTripCount: 0,
+    latestTripAt: null,
+  };
+
+  return {
+    addTrip(trip = {}) {
+      const routePoints = Array.isArray(trip?.route_points) ? trip.route_points : [];
+      const events = Array.isArray(trip?.driving_events) ? trip.driving_events : [];
+      const tripAt = timestampMs(trip?.end_time ?? trip?.start_time);
+      const isRecent = tripAt >= recentCutoff;
+      let tripHasProtection = false;
+
+      totals.tripCount += 1;
+      if (tripAt) totals.latestTripAt = Math.max(Number(totals.latestTripAt) || 0, tripAt);
+      if (isRecent) totals.recentTripCount += 1;
+
+      routePoints.forEach((point) => {
+        if (itemReferencesZone(point)) {
+          totals.protectedPointCount += 1;
+          tripHasProtection = true;
+          return;
+        }
+        if (isPointInPrivacyZone(point, safeZones)) {
+          totals.rawPointInsideZoneCount += 1;
+          tripHasProtection = true;
+        }
+      });
+
+      events.forEach((event) => {
+        if (!itemInsideZone(event, safeZones)) return;
+        totals.protectedEventCount += 1;
+        tripHasProtection = true;
+      });
+
+      const tripHasPrivateEndpoint = endpointInsideZone(routePoints[0], safeZones) ||
+        endpointInsideZone(routePoints.at?.(-1), safeZones);
+      if (tripHasPrivateEndpoint) totals.privateEndpointTripCount += 1;
+      if (tripHasProtection) {
+        totals.tripsWithProtectedActivity += 1;
+        if (isRecent) totals.recentProtectedTripCount += 1;
+      }
+    },
+    /** @param {Array<any>} statZones zones carrying accumulated stat counters */
+    result(statZones = safeZones) {
+      return finalizeDrivingPrivacyReadout(totals, statZones, now);
+    },
+  };
+}
+
+function finalizeDrivingPrivacyReadout(totals, zones = [], now = Date.now()) {
+  const safeZones = Array.isArray(zones) ? zones : [];
   const zoneSummaries = safeZones.map((zone) => ({
     id: zone.id,
     label: zone.label,
@@ -1319,55 +1481,20 @@ export function buildDrivingPrivacyReadout(trips = [], zones = [], now = Date.no
     zone.lastActive && now - Number(zone.lastActive) > STALE_ZONE_MS
   ));
 
-  let protectedPointCount = 0;
-  let protectedEventCount = 0;
-  let rawPointInsideZoneCount = 0;
-  let tripsWithProtectedActivity = 0;
-  let recentTripCount = 0;
-  let recentProtectedTripCount = 0;
-  let privateEndpointTripCount = 0;
-  let latestTripAt = null;
-
-  safeTrips.forEach((trip) => {
-    const routePoints = Array.isArray(trip?.route_points) ? trip.route_points : [];
-    const events = Array.isArray(trip?.driving_events) ? trip.driving_events : [];
-    const tripAt = timestampMs(trip?.end_time ?? trip?.start_time);
-    const isRecent = tripAt >= recentCutoff;
-    let tripHasProtection = false;
-    let tripHasPrivateEndpoint = false;
-
-    if (tripAt) latestTripAt = Math.max(Number(latestTripAt) || 0, tripAt);
-    if (isRecent) recentTripCount += 1;
-
-    routePoints.forEach((point) => {
-      if (itemReferencesZone(point)) {
-        protectedPointCount += 1;
-        tripHasProtection = true;
-        return;
-      }
-      if (isPointInPrivacyZone(point, safeZones)) {
-        rawPointInsideZoneCount += 1;
-        tripHasProtection = true;
-      }
-    });
-
-    events.forEach((event) => {
-      if (!itemInsideZone(event, safeZones)) return;
-      protectedEventCount += 1;
-      tripHasProtection = true;
-    });
-
-    tripHasPrivateEndpoint = endpointInsideZone(routePoints[0], safeZones) ||
-      endpointInsideZone(routePoints.at?.(-1), safeZones);
-    if (tripHasPrivateEndpoint) privateEndpointTripCount += 1;
-    if (tripHasProtection) {
-      tripsWithProtectedActivity += 1;
-      if (isRecent) recentProtectedTripCount += 1;
-    }
-  });
+  const {
+    tripCount,
+    protectedPointCount,
+    protectedEventCount,
+    rawPointInsideZoneCount,
+    tripsWithProtectedActivity,
+    recentTripCount,
+    recentProtectedTripCount,
+    privateEndpointTripCount,
+    latestTripAt,
+  } = totals;
 
   const recommendedChecks = [];
-  if (!safeZones.length && safeTrips.length) {
+  if (!safeZones.length && tripCount) {
     recommendedChecks.push('Add home, work, or other sensitive-place zones so trip endpoints can be masked.');
   }
   if (safeZones.length && recentTripCount && !recentProtectedTripCount) {
@@ -1384,7 +1511,7 @@ export function buildDrivingPrivacyReadout(trips = [], zones = [], now = Date.no
   }
 
   return {
-    tripCount: safeTrips.length,
+    tripCount,
     recentTripCount,
     tripsWithProtectedActivity,
     recentProtectedTripCount,
@@ -1399,6 +1526,12 @@ export function buildDrivingPrivacyReadout(trips = [], zones = [], now = Date.no
     zoneSummaries,
     recommendedChecks,
   };
+}
+
+export function buildDrivingPrivacyReadout(trips = [], zones = [], now = Date.now()) {
+  const accumulator = createDrivingPrivacyReadoutAccumulator(zones, now);
+  (Array.isArray(trips) ? trips : []).forEach((trip) => accumulator.addTrip(trip));
+  return accumulator.result(zones);
 }
 
 export function summarizeAudit(chain = [], lastCheckpointExportedAt = null) {
@@ -1431,7 +1564,6 @@ async function buildPrivacyIntelligence() {
   // Start independent secure-storage and trip reads immediately. The old load
   // path waited for every protection check and history write before beginning
   // these operations, which made the whole page feel blocked.
-  const tripsPromise = tripService.listAllForExport({ sort: '-start_time' }).catch(() => []);
   const transmissionsPromise = getTransmissionSummary();
   const auditPromise = loadVerifiedPrivacyAuditChain();
   const checkpointPromise = getLastCheckpointExportedAt();
@@ -1443,14 +1575,12 @@ async function buildPrivacyIntelligence() {
   const scoreHistory = await recordPrivacyScoreHistory(score);
   const [
     postureRegression,
-    trips,
     transmissions,
     auditSnapshot,
     lastCheckpointExportedAt,
     hydratedZones,
   ] = await Promise.all([
     posturePromise,
-    tripsPromise,
     transmissionsPromise,
     auditPromise,
     checkpointPromise,
@@ -1460,15 +1590,19 @@ async function buildPrivacyIntelligence() {
   const chain = auditSnapshot?.chain || [];
   const chainResult = auditSnapshot?.result || { valid: false, reason: 'Audit verification unavailable.' };
   const zoneSettings = hydratedZones.length ? { ...settings, privacy_zones: hydratedZones } : settings;
-  const zonesWithEffectiveness = await buildZoneIntelligenceSnapshot(zoneSettings, trips);
-  const historicalExposure = buildHistoricalPrivacyExposure(trips, zonesWithEffectiveness);
+  // One streamed pass replaces the former whole-archive array that zone
+  // intelligence, historical exposure, the driving readout and zone
+  // suggestions all shared.
+  const archiveScan = await runPrivacyArchiveScan(zoneSettings);
+  const zonesWithEffectiveness = archiveScan.zones;
+  const historicalExposure = archiveScan.exposure;
   const zoneSuggestions = await getPrivacyZoneSuggestions({
-    trips,
+    endpoints: archiveScan.endpoints,
     zones: zonesWithEffectiveness,
   });
   const recommendations = buildPrivacyRecommendations(protections);
   const zoneSummary = summarizeZones(zonesWithEffectiveness);
-  const drivingReadout = buildDrivingPrivacyReadout(trips, zonesWithEffectiveness);
+  const drivingReadout = archiveScan.readout;
   const timingPatternFindings = detectTimingPatternExposure(transmissions.entries, settings);
   const actionPlan = buildPrivacyActionPlan({
     score,

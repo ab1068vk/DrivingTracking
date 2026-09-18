@@ -1,11 +1,10 @@
 // @ts-check
 import { useEffect, useMemo, useState } from 'react';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useQueries } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { BrainCircuit } from 'lucide-react';
-import {
-  limitedTripSummaryQueryOptions, tripDetailQueryOptions, tripSummaryQueryOptions,
-} from '@/api/trips';
+import { p7DetailQueryOptions } from '@/api/trips';
+import { INSIGHTS_DETAIL_FANOUT, useInsightsData } from '@/hooks/useInsightsData';
 import useLocalSettings from '@/hooks/useLocalSettings';
 import { buildAdvancedInsights } from '@/lib/advancedInsights';
 import {
@@ -62,34 +61,30 @@ export default function Insights() {
   const [activeExperiment, setActiveExperiment] = useState(readExperiment);
   const [activeView, setActiveView] = useState('summary');
 
-  const {
-    data: recentCompleted = [],
-    isLoading,
-    isFetching: recentFetching,
-    isSuccess: recentLoaded,
-  } = useQuery({
-    ...limitedTripSummaryQueryOptions(50),
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
+  const [monthOffset, setMonthOffset] = useState(null);
+
+  // P7 Stage 6.5 (ledger entry #5): one canonical composition. It replaces a
+  // `(50)` page plus an ungated `(200)` page from which every date-windowed
+  // surface here was sliced — a trip-count window presented as a date window.
+  const insightsData = useInsightsData({
+    periodDays,
+    monthOffset,
+    experimentStartedAt: activeExperiment?.startedAt ?? null,
   });
-  const {
-    data: historyCompleted = [],
-    isFetching: historyFetching,
-  } = useQuery({
-    ...tripSummaryQueryOptions(),
-    enabled: recentLoaded,
-    select: (trips) => trips.filter((trip) => trip.status === 'completed'),
-  });
-  const completed = historyCompleted.length ? historyCompleted : recentCompleted;
+  const { isLoading } = insightsData;
+  // The complete analysis date window, read one bounded page per turn.
+  const completed = insightsData.windowTrips;
   const baseAnalysis = useMemo(
     () => buildAdvancedInsights(completed, settings, { periodDays }),
     [completed, settings, periodDays]
   );
+  // Q2, capped at the frozen fan-out. There is no N x Q2 on this page.
   const detailTripIds = useMemo(
-    () => baseAnalysis.currentTrips.map((trip) => trip.id).filter(Boolean).slice(0, 12),
+    () => baseAnalysis.currentTrips.map((trip) => trip.id).filter(Boolean).slice(0, INSIGHTS_DETAIL_FANOUT),
     [baseAnalysis.currentTrips]
   );
   const detailResults = useQueries({
-    queries: detailTripIds.map((id) => tripDetailQueryOptions(id)),
+    queries: detailTripIds.map((id) => p7DetailQueryOptions(id)),
     combine: combineTripDetails,
   });
   const completedWithDetails = useMemo(() => {
@@ -156,7 +151,7 @@ export default function Insights() {
         icon={BrainCircuit}
         status={(
           <InlineRefreshBadge
-            visible={(recentFetching || historyFetching || detailResults.isFetching) && !isLoading}
+            visible={(insightsData.isFetching || detailResults.isFetching) && !isLoading}
             label="Refreshing analysis"
           />
         )}
@@ -189,7 +184,13 @@ export default function Insights() {
             <div className="h-80 animate-pulse rounded-3xl bg-secondary/50" />
           </div>
         </div>
-      ) : completed.length === 0 ? (
+      ) : insightsData.windowUnavailable ? (
+        <PageEmptyState
+          icon={BrainCircuit}
+          title="Insights could not read your drives"
+          description="Your saved trips were not changed. Reopen this page to try again."
+        />
+      ) : !insightsData.hasAnyCompleted ? (
         <PageEmptyState
           icon={BrainCircuit}
           title="Your personal baseline starts with a few trips"
@@ -205,6 +206,24 @@ export default function Insights() {
         </PageEmptyState>
       ) : (
         <>
+          {!insightsData.windowExact && insightsData.windowContinuation && (
+            // The window was read as far as one bounded page reaches. This is a
+            // floor, not the window, and the page never pretends otherwise.
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-3 text-sm">
+              <span className="text-muted-foreground">
+                Showing the most recent {completed.length} drives in this window. Older drives in the
+                same window have not been read yet.
+              </span>
+              <button
+                type="button"
+                onClick={insightsData.extendWindow}
+                disabled={insightsData.extendingWindow}
+                className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold disabled:opacity-60"
+              >
+                {insightsData.extendingWindow ? 'Reading the rest...' : 'Read the rest of this window'}
+              </button>
+            </div>
+          )}
           <InsightsTabs
             activeView={activeView}
             setActiveView={setActiveView}
@@ -222,6 +241,9 @@ export default function Insights() {
             setContextType={setContextType}
             completedTrips={completedWithDetails}
             settings={settings}
+            calendarTrips={insightsData.calendarTrips}
+            monthOffset={insightsData.monthOffset}
+            onMonthOffsetChange={setMonthOffset}
           />
 
 
@@ -232,7 +254,10 @@ export default function Insights() {
 }
 
 function InsightsTabs(props) {
-  const { activeView, setActiveView, completedTrips, settings, units, openTrip } = props;
+  const {
+    activeView, setActiveView, completedTrips, settings, units, openTrip,
+    calendarTrips, monthOffset, onMonthOffsetChange,
+  } = props;
   return <Tabs value={activeView} onValueChange={setActiveView} className='space-y-5'>
     <div className='overflow-x-auto pb-1'>
       <TabsList className='min-w-max rounded-full border border-border bg-card p-1'>
@@ -248,7 +273,15 @@ function InsightsTabs(props) {
       <InsightExploreView {...props} />
     </TabsContent>
     <TabsContent value='history' className='mt-0'>
-      <InsightHistoryPanels trips={completedTrips} settings={settings} units={units} onOpenTrip={openTrip} />
+      <InsightHistoryPanels
+        trips={completedTrips}
+        calendarTrips={calendarTrips}
+        monthOffset={monthOffset}
+        onMonthOffsetChange={onMonthOffsetChange}
+        settings={settings}
+        units={units}
+        onOpenTrip={openTrip}
+      />
     </TabsContent>
   </Tabs>;
 }
