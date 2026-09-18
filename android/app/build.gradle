@@ -1,5 +1,29 @@
 apply plugin: 'com.android.application'
 
+def physicalHVariantsEnabled = providers.gradleProperty("physicalHVariants")
+    .map { it.toBoolean() }
+    .orElse(false)
+    .get()
+def physicalHApprovedAndroidIdsRaw = providers.gradleProperty("physicalHApprovedAndroidIds")
+    .orElse("")
+    .get()
+    .trim()
+def physicalHApprovedAndroidIdValues = physicalHApprovedAndroidIdsRaw.isEmpty()
+    ? []
+    : physicalHApprovedAndroidIdsRaw.split("[,;\\r\\n]+")
+        .collect { it.trim() }
+        .findAll { !it.isEmpty() }
+if (!physicalHApprovedAndroidIdValues.isEmpty()
+        && (physicalHApprovedAndroidIdValues.size() != 1
+            || !(physicalHApprovedAndroidIdValues[0] ==~ /[0-9a-f]{16}/))) {
+    throw new GradleException(
+        "Physical H approved ANDROID_ID input must be empty or exactly one canonical lowercase 16-hex identity"
+    )
+}
+def physicalHApprovedAndroidIds = physicalHApprovedAndroidIdValues.join(",")
+    .replace("\\", "\\\\")
+    .replace('"', '\\"')
+
 android {
     namespace = "com.drivesense.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -16,6 +40,34 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Physical H variants are deliberately opt-in. Normal production/debug
+    // configuration therefore keeps its existing unflavoured task names and
+    // package identity. The reviewed harness build uses:
+    //   -PphysicalHVariants=true
+    if (physicalHVariantsEnabled) {
+        flavorDimensions += "physicalHarness"
+        productFlavors {
+            physicalH {
+                dimension "physicalHarness"
+                applicationIdSuffix ".p35h"
+                versionNameSuffix "-physical-h"
+                signingConfig signingConfigs.debug
+                buildConfigField "boolean", "PHYSICAL_H_BUILD", "true"
+                buildConfigField "boolean", "PHYSICAL_H_LEGACY_BUILD", "false"
+                buildConfigField "String", "PHYSICAL_H_APPROVED_ANDROID_IDS", "\"${physicalHApprovedAndroidIds}\""
+            }
+            physicalHLegacy {
+                dimension "physicalHarness"
+                applicationIdSuffix ".p35h"
+                versionCode = 2
+                versionNameSuffix "-physical-h-legacy"
+                signingConfig signingConfigs.debug
+                buildConfigField "boolean", "PHYSICAL_H_BUILD", "true"
+                buildConfigField "boolean", "PHYSICAL_H_LEGACY_BUILD", "true"
+                buildConfigField "String", "PHYSICAL_H_APPROVED_ANDROID_IDS", "\"${physicalHApprovedAndroidIds}\""
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled = false
@@ -27,12 +79,31 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    buildFeatures {
+        buildConfig = true
+    }
     sourceSets {
         test {
             resources.srcDirs += ["../../src/lib/__fixtures__", "../../src/lib/__tests__/goldenFixtures"]
         }
         androidTest {
             assets.srcDirs += ["../../src/lib/__fixtures__", "../../src/lib/__tests__/goldenFixtures"]
+        }
+        if (physicalHVariantsEnabled) {
+            // The Physical H test APK is a reviewed guarded harness, not a
+            // bundle of every historical instrumentation test. This prevents
+            // an ordinary destructive androidTest class from becoming an
+            // alternate unguarded entry point in com.drivesense.app.p35h.test.
+            androidTest.java.setSrcDirs([])
+        }
+    }
+    testOptions {
+        unitTests.includeAndroidResources = true
+        unitTests.all {
+            File filesystemRoot = rootProject.projectDir.toPath().getRoot().toFile()
+            File robolectricShortTempRoot = new File(filesystemRoot, "tmp/rs-robolectric")
+            robolectricShortTempRoot.mkdirs()
+            systemProperty "java.io.tmpdir", robolectricShortTempRoot.absolutePath
         }
     }
 }
@@ -45,7 +116,17 @@ tasks.register("drivesenseBuildWeb", Exec) {
     group = "drivesense"
     description = "Builds the current Vite web app before Android packaging."
     workingDir webProjectDir
+    // The opt-in Physical H artifact exercises the reviewed native-authority
+    // projection path. Normal production builds keep Vite's default OFF.
+    if (physicalHVariantsEnabled) {
+        environment "VITE_P35_NATIVE_AUTHORITY", "true"
+    }
     commandLine npmCommand, "run", "build"
+    // The Physical H flag changes the bundle that Vite emits, but Gradle does
+    // not treat Exec.environment as a task input. Without this property a dist
+    // produced by a non-Physical-H build satisfies the up-to-date check and is
+    // packaged verbatim, silently shipping a bundle with native authority off.
+    inputs.property("physicalHVariants", physicalHVariantsEnabled)
     inputs.files(
         fileTree("${webProjectDir}/src"),
         "${webProjectDir}/index.html",
@@ -68,6 +149,19 @@ tasks.register("drivesenseSyncWebAssets", Sync) {
 
 preBuild.dependsOn tasks.named("drivesenseSyncWebAssets")
 
+if (physicalHVariantsEnabled) {
+    tasks.register("verifyPhysicalHUpgradeArtifacts", Exec) {
+        group = "verification"
+        description = "Verifies Physical H current/legacy package, signing certificate, and upgrade ordering."
+        dependsOn "assemblePhysicalHDebug", "assemblePhysicalHDebugAndroidTest", "assemblePhysicalHLegacyDebug"
+        workingDir webProjectDir
+        commandLine "node", "scripts/verify-physical-h-upgrade.mjs",
+            "--apk-root", file("build/outputs/apk").absolutePath,
+            "--expected-package", "com.drivesense.app.p35h",
+            "--report", file("build/reports/physical-h/upgrade-artifacts.json").absolutePath
+    }
+}
+
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
@@ -81,10 +175,16 @@ dependencies {
     // Bundled variant: OCR remains available without a network connection.
     implementation "com.google.mlkit:text-recognition:16.0.1"
     implementation "com.google.android.gms:play-services-location:21.3.0"
-    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
+    // Portable P3.5 backups require a memory-hard, independently recoverable
+    // passphrase KDF. Argon2Kt ships the audited Argon2 implementation for
+    // Android (including 16 KiB page-size support in 1.6.0).
+    implementation "com.lambdapioneer.argon2kt:argon2kt:1.6.0"
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs_nio:2.1.5"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     testImplementation "org.json:json:20240303"
+    testImplementation "androidx.test:core:1.6.1"
+    testImplementation "org.robolectric:robolectric:4.14.1"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
