@@ -1,17 +1,21 @@
 # Road Sage Documentation
 
-Last updated: 2026-06-24
+Last updated: 2026-09-17
 
 This folder is the home for all project Markdown documentation.
 
 ## Current Docs
 
 - [Project README](PROJECT_README.md): broad app overview, local setup, Android setup, privacy defaults, architecture notes, and current feature surface.
+- [Advanced tracking mode phase prompts](ADVANCED_TRACKING_MODE_PHASE_PROMPTS.md): phased implementation prompts for advanced tracking mode.
+- [Advanced tracking mode QA](ADVANCED_TRACKING_MODE_QA.md): validation coverage and QA guidance for advanced tracking mode.
+- [Certificate pin renewal](CERTIFICATE_PIN_RENEWAL.md): operational procedure and cadence for Android TLS certificate-pin renewal.
 - [Technical reference](TECHNICAL_REFERENCE.md): generated repository reference covering source inventory, calculations, constants, storage, routes, security analysis, tests, dependencies, and deployment notes.
 - [Detection pipeline](DETECTION_PIPELINE.md): how GPS points become severity-classified driving events, which thresholds Settings genuinely controls, how the JS scorer and the Android live detector are kept in sync, and what the IMU refinement pass may and may not do.
 - [UI and loading performance guide](UI_LOADING_PERFORMANCE.md): app-wide lag incident playbook, Saved road speeds analysis, UI loading rules, measurement plan, AI handoff prompt, and implementation snippets.
 - [Speed and fallback behavior](speed-and-fallbacks.md): current speed capture, speed-limit fallback, OpenStreetMap enrichment, and voice-alert behavior.
 - [Privacy Intelligence](PRIVACY_INTELLIGENCE.md): privacy dashboard behavior, protection checks, audit chain, transmission logging, storage/encryption notes, test coverage, and release-readiness limits.
+- [Phase 0 incident triage results](PHASE_0_INCIDENT_TRIAGE_RESULTS.md): recorded findings and outcomes from the Phase 0 incident triage.
 - [3D Replay](TRIP_3D_REPLAY.md): complete 3D replay implementation guide covering routes, data contracts, Three.js rendering, privacy masking, playback controls, diagnostics, snippets, tests, and troubleshooting.
 - [Manual trip no-movement debug](MANUAL_TRIP_NO_MOVEMENT_DEBUG.md): incident documentation for manual Start Trip sessions being discarded as "no real movement", including code paths, snippets, diagnostics, likely failure points, and acceptance criteria.
 - [Branch: page splits and audit fixes](BRANCH_PAGE_SPLITS_AND_AUDIT_FIXES.md): what the `refactor/page-splits-and-audit-fixes` branch changed, how to tell whether a device-side fault came from it, and how to discard it.

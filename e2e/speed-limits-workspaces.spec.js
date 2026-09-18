@@ -77,10 +77,10 @@ test.describe('SpeedLimits workspaces', () => {
     }
   });
 
-  test('renders all three workspace tabs exactly once', async ({ page }) => {
+  test('renders all four workspace tabs exactly once', async ({ page }) => {
     await page.goto('/speed-limits');
 
     const nav = page.getByRole('navigation', { name: 'Saved road speed workspace' });
-    await expect(nav.getByRole('button')).toHaveCount(3);
+    await expect(nav.getByRole('button')).toHaveCount(4);
   });
 });

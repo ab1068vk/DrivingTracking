@@ -19,7 +19,7 @@ npm test                       # vitest run --pool=forks --maxWorkers=1 (pretest
 npx vitest run path/to/file.test.js            # run a single test file
 npx vitest run -t "test name"                  # run a single test by name
 
-npm run lint                   # eslint . --quiet
+npm run lint                   # eslint . --max-warnings 0
 npm run lint:fix
 npm run typecheck              # tsc -p ./jsconfig.json (checkJs-based, no emit)
 
@@ -77,8 +77,27 @@ Android debug build (from `android/`): `.\gradlew.bat assembleDebug`. Android in
 - Android instrumentation tests live under `android/app/src/androidTest/`.
 - `npm run generate-scoring-version -- --check`-style golden/parity tests exist for JS/Android scoring consistency (night-window classification, trip-stat math) — when changing scoring constants shared with Android, check both sides agree.
 
-**Lint scope.** `eslint.config.js` applies React-specific rules only to `src/components/**`, `src/pages/**`, and `src/Layout.jsx` (explicitly excluding `src/lib/**` and `src/components/ui/**`); `src/lib/**` gets only the base `no-dupe-keys` rule. `unused-imports/no-unused-imports` is an error; prefix intentionally-unused vars with `_`.
+**Lint scope.** `eslint.config.js` applies the non-JSX baseline (`no-dupe-keys`, `no-undef`, and the `unused-imports` import/variable rules) to `src/**/*.{js,mjs,cjs}`. React, JSX, and Hooks rules additionally cover `src/components/**`, `src/pages/**`, `src/hooks/**`, `src/lib/**/*.jsx`, and `src/Layout.jsx`, while `src/components/ui/**` and non-JSX `src/lib/**/*.js` stay outside that React-specific block. Immutable forensic evidence and Physical H driver snippets are ignored explicitly. Prefix intentionally-unused vars with `_`.
 
 **Typecheck scope.** `jsconfig.json` only type-checks `src/App.jsx`, `src/main.jsx`, `src/components/**/*.{js,jsx}`, and `src/pages/**/*.jsx` (excludes `src/components/ui`, tests, fixtures). `checkJs` is off globally, so this is opt-in via the `include` list, not automatic per-file.
 
 **Documentation policy.** All project Markdown lives in `docs/`, indexed by `docs/README.md`. If a generator or workflow ever drops a root-level `.md` file, move it into `docs/` and update the index — don't leave stray root docs.
+
+Session limit protocol
+
+Periodically check usage with /usage or the available status indicator.
+
+At ~15% usage remaining:
+
+Stop starting new large work.
+Finish the current atomic change cleanly.
+Update the current phase implementation-state .md with:
+what was completed;
+tests/results;
+known failures;
+exact next resume point;
+what must not be repeated.
+Save working-tree changes only. Do not stage, commit, push, reset, restore, stash, clean, merge, or rebase unless explicitly authorized.
+End cleanly before the usage limit is reached.
+
+A quota reset is not a blocker and does not authorize re-planning.

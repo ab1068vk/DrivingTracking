@@ -89,7 +89,60 @@ test('keeps the established Saved Road Speeds workspace when premium visuals are
   await expect(page.locator('.premium-saved-roads')).toHaveCount(0);
   const workspace = page.getByRole('navigation', { name: 'Saved road speed workspace' });
   await expect(workspace).toBeVisible();
-  await expect(workspace.getByRole('button')).toHaveCount(3);
+  await expect(workspace.getByRole('button')).toHaveCount(4);
+});
+
+test('exposes durable P6 repair, affected-trip and saved-speed migration controls', async ({ page }) => {
+  await page.goto('/settings');
+  await page.getByRole('button', { name: /Detection Features/i }).first().click();
+
+  const repair = page.locator('[data-p6-operation="E1_DERIVED_ANALYTICS_GEOMETRY_REPAIR"]');
+  const affected = page.locator('[data-p6-operation="E3_AFFECTED_TRIP_RESCORE"]');
+  await expect(repair).toContainText('Repair trip analytics and route previews');
+  await expect(affected).toContainText('Finish affected-trip score updates');
+
+  await repair.getByRole('button', { name: 'Start repair' }).click();
+  await expect(repair).toContainText('Completed', { timeout: 30_000 });
+  await affected.getByRole('button', { name: 'Update affected trips' }).click();
+  await expect(affected).toContainText('Completed', { timeout: 30_000 });
+
+  await page.evaluate(() => {
+    localStorage.setItem('drivesense_p6_explicit_operations_v1', JSON.stringify({
+      operations: {
+        'e4-ui-proof': {
+          operationId: 'e4-ui-proof',
+          type: 'E4_BROWSER_SAVED_SPEED_MIGRATION',
+          state: 'PAUSED_AFTER_RESTART',
+          progress: { itemsWorked: 42, bytesWorked: 4096, turns: 7 },
+          failure: null,
+          cancelRequested: false,
+          updatedAt: Date.now(),
+        },
+      },
+    }));
+  });
+  await page.goto('/speed-limits');
+  const migration = page.locator('[data-p6-operation="E4_BROWSER_SAVED_SPEED_MIGRATION"]');
+  await expect(migration).toContainText('Move saved speeds to protected browser storage');
+  await expect(migration).toContainText('Paused after Road Sage restarted');
+  await expect(migration).toContainText('42 items');
+  await expect(migration.getByRole('button', { name: 'Resume' })).toBeVisible();
+  await expect(migration.getByRole('button', { name: 'Cancel' })).toBeVisible();
+
+  await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem('drivesense_p6_explicit_operations_v1'));
+    state.operations['e4-ui-proof'].state = 'FAILED';
+    state.operations['e4-ui-proof'].failure = {
+      code: 'E4_PREDECESSOR_CHANGED',
+      message: 'Saved speeds changed during migration.',
+    };
+    state.operations['e4-ui-proof'].updatedAt = Date.now() + 1;
+    localStorage.setItem('drivesense_p6_explicit_operations_v1', JSON.stringify(state));
+  });
+  await page.reload();
+  await expect(migration).toContainText('Needs attention');
+  await expect(migration).toContainText('Saved speeds changed during migration.');
+  await expect(migration.getByRole('button', { name: 'Retry' })).toBeVisible();
 });
 
 test('surfaces hidden features through grouped nav and app search', async ({ page }) => {

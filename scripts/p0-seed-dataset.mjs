@@ -193,6 +193,71 @@ export const buildDiagnosticStores = (saturated, epochMs) => {
 };
 
 /**
+ * Restorable post-P1 diagnostics database snapshot. The final-device harness
+ * restores these records into the named IndexedDB stores before a measured arm;
+ * migration is intentionally already complete so it cannot contaminate P0.
+ */
+export const buildDiagnosticsIndexedDbFixture = (saturated, epochMs) => {
+  const legacy = buildDiagnosticStores(saturated, epochMs);
+  let ingestSeq = 0;
+  const event = (kind, payload, payloadTimestampMs, extra = {}) => ({
+    kind,
+    eventUid: `fixture:${kind}:${String(++ingestSeq).padStart(6, '0')}`,
+    payloadTimestampMs,
+    ingestSeq,
+    clearEpoch: 0,
+    ...extra,
+    payload,
+  });
+  const events = [
+    ...legacy.roadsage_performance_history_v1.map((payload) => {
+      const payloadTimestampMs = Date.parse(payload.at);
+      return event('performance', payload, payloadTimestampMs, {
+        expiresAtMs: payloadTimestampMs + RETENTION_MS.roadsage_performance_history_v1,
+      });
+    }),
+    ...legacy.drivesense_system_logs_v1.map((payload) => {
+      const payloadTimestampMs = Date.parse(payload.timestamp);
+      return event('system_log', payload, payloadTimestampMs, {
+        expiresAtMs: payloadTimestampMs + RETENTION_MS.drivesense_system_logs_v1,
+        privacyClass: 'standard',
+        privacyRulesVersion: 1,
+      });
+    }),
+    ...legacy.roadsage_app_experience_events_v1.map((payload) => {
+      const payloadTimestampMs = Date.parse(payload.timestamp);
+      return event('app_experience', payload, payloadTimestampMs, {
+        expiresAtMs: payloadTimestampMs + RETENTION_MS.roadsage_app_experience_events_v1,
+      });
+    }),
+  ];
+  const completed = (kind) => ({
+    key: `migration:${kind}`,
+    value: { state: 'complete', clearEpoch: 0, completedAtMs: epochMs },
+  });
+  return {
+    format: 'roadsage_diagnostics_indexeddb_v1',
+    restore: {
+      database: 'roadsage_diagnostics',
+      version: 1,
+      mode: 'replace_named_stores',
+      required_stores: ['events', 'meta'],
+    },
+    stores: {
+      events,
+      meta: [
+        { key: 'ingest_sequence', value: ingestSeq },
+        completed('performance'),
+        completed('system_log'),
+        completed('app_experience'),
+        { key: 'system_log_privacy_rules_version', value: 1 },
+        { key: 'diagnostics_storage_v1_complete', value: { version: 1, completedAtMs: epochMs } },
+      ],
+    },
+  };
+};
+
+/**
  * Stream a restorable backup envelope to disk, hashing as it goes.
  *
  * Trips are generated, serialized and released one at a time, so peak memory is
@@ -327,8 +392,8 @@ async function main() {
 
   if (args.includes('--stores')) {
     const saturated = argValue('--stores', 'empty') === 'saturated';
-    const name = `diagnostic-stores-${saturated ? 'saturated' : 'empty'}.json`;
-    manifest.fixtures[name] = write(name, buildDiagnosticStores(saturated, epochMs));
+    const name = `diagnostics-indexeddb-${saturated ? 'saturated' : 'empty'}.json`;
+    manifest.fixtures[name] = write(name, buildDiagnosticsIndexedDbFixture(saturated, epochMs));
   } else {
     const tripCount = Number(argValue('--trips', 100));
     if (!Number.isInteger(tripCount) || tripCount < 1) {

@@ -36,3 +36,13 @@ dist-ssr
 marketing/
 scripts/render-promo-video.mjs
 test-results/
+
+# Local agent campaign/audit working history. Kept on disk, outside the repo.
+agent-investigation/
+agent-roadmap-rebase/
+agent-post-p7-audit/
+agent-human-product-review/
+
+# Temporary review probes and generated native test runtime
+tmp/
+android/.tmp/

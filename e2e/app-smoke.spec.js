@@ -71,8 +71,11 @@ test('keeps destructive settings dialogs responsive in dark mode', async ({ page
 
   const cancel = dialog.getByRole('button', { name: 'Cancel' });
   const confirm = dialog.getByRole('button', { name: 'Delete trips' });
-  expect((await cancel.boundingBox()).height).toBeGreaterThanOrEqual(44);
-  expect((await confirm.boundingBox()).height).toBeGreaterThanOrEqual(44);
+  // Chromium can report a CSS 44px target a few ten-thousandths below 44
+  // after device-scale conversion. Keep the 44px contract while tolerating
+  // only that renderer rounding error.
+  expect((await cancel.boundingBox()).height + 0.001).toBeGreaterThanOrEqual(44);
+  expect((await confirm.boundingBox()).height + 0.001).toBeGreaterThanOrEqual(44);
   await cancel.dblclick();
   await expect(dialog).toBeHidden();
 });
