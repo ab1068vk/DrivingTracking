@@ -36,6 +36,12 @@ dist-ssr
 marketing/
 scripts/render-promo-video.mjs
 test-results/
+.VSCodeCounter/
+
+# Generated documentation. Reproduce locally with:
+#   node scripts/generate-technical-reference.mjs
+docs/TECHNICAL_REFERENCE.md
+docs/PROJECT_README.md
 
 # Local agent campaign/audit working history. Kept on disk, outside the repo.
 agent-investigation/

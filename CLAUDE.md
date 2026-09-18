@@ -58,16 +58,16 @@ Android debug build (from `android/`): `.\gradlew.bat assembleDebug`. Android in
 
 **Native bridge (Android).** Custom Capacitor plugins and services live in `android/app/src/main/java/com/drivesense/app/`. JS-side counterparts live in `src/lib/driveSenseNativePlugin.js`, `activityRecognition.js`, `nativePlatform.js` (has `isAndroid()`), and related `native*.js` files. `src/lib/nativePlatform.js` constants are module-level so platform checks aren't recomputed per call.
 
-**Android upgrade-safety guardrails.** `scripts/check-recovery-contract.mjs` (run via `npm run recovery:guard`, part of `prebuild`) asserts the Capacitor `appId`, Gradle `namespace`/`applicationId` stay `com.drivesense.app` and enforces `versionCode` invariants — changing the Android package identity breaks in-place upgrades and is guarded deliberately. See `docs/RECOVERY_PLAN.md` before touching package identity, backup format, or settings migration.
+**Android upgrade-safety guardrails.** `scripts/check-recovery-contract.mjs` (run via `npm run recovery:guard`, part of `prebuild`) asserts the Capacitor `appId`, Gradle `namespace`/`applicationId` stay `com.drivesense.app` and enforces `versionCode` invariants — changing the Android package identity breaks in-place upgrades and is guarded deliberately. See `docs/architecture/DATA_STORAGE_AND_LIFECYCLE.md` before touching package identity, backup format, or settings migration.
 
-**Privacy/security-sensitive code paths** (treat changes here carefully and check `docs/PRIVACY_INTELLIGENCE.md`):
+**Privacy/security-sensitive code paths** (treat changes here carefully and check `docs/security/PRIVACY_AND_DATA_HANDLING.md`):
 
 - `src/lib/privacyZones.js`, `privacyMode.js`, `privateTripMode.js` — mask routes/events near private places; backups never restore private coordinates.
 - `src/lib/mapPopupHtml.js` / Leaflet popup rendering — user/external values must stay HTML-escaped.
 - `src/lib/dataBackup.js` + `dataBackupConstants.js` — versioned backup migration (v1–v9), treats imported data as untrusted, requires explicit confirmation before any note-truncating import.
 - `src/lib/osrmPrivacy.js`, `roadContextQueue.js` — OSRM route snapping requires a trusted user-configured endpoint (public demo endpoint rejected) plus explicit consent; automatic weather/road context fetch is off by default.
 - `src/lib/screenSecurity.js`, `biometricGate.js`, `rasp.js` — Android app-lock, screen-capture blocking, integrity checks.
-- `scripts/check-certificate-pins.mjs` — Android TLS pin renewal cadence (`docs/CERTIFICATE_PIN_RENEWAL.md`).
+- `scripts/check-certificate-pins.mjs` — Android TLS pin renewal cadence (`docs/security/CERTIFICATE_PIN_RENEWAL.md`).
 
 **Test layout:**
 

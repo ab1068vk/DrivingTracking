@@ -11,7 +11,7 @@ import { clamp } from '@/lib/mathUtils';
 
 export const UNAVAILABLE = 'source unavailable';
 
-// docs/TECHNICAL_REFERENCE.md records these rates for lane-change detection.
+// docs/architecture/DETECTION_PIPELINE.md records these rates for lane-change detection.
 export const GPS_ONLY_LANE_CHANGE_FALSE_POSITIVE_NOTE =
   'Lane-change detection fell back to the GPS-only method, which is documented at roughly 30-40% false positives (IMU-fused detection is roughly 10-15%).';
 

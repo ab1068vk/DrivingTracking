@@ -71,7 +71,7 @@ if (problems.length > 0) {
   console.error('Certificate pin renewal check failed:');
   for (const problem of problems) console.error(`- ${problem}`);
   console.error('');
-  console.error('Renew pins using docs/CERTIFICATE_PIN_RENEWAL.md, then update all Android/JS pin mirrors together.');
+  console.error('Renew pins using docs/security/CERTIFICATE_PIN_RENEWAL.md, then update all Android/JS pin mirrors together.');
   process.exit(1);
 }
 

@@ -20,9 +20,9 @@ const checkedFiles = [
   'src/lib/pdfExport.js',
   'src/lib/ubiReport.js',
   'src/pages/Settings.jsx',
-  'docs/PROJECT_README.md',
+  'README.md',
   'docs/README.md',
-  'docs/PRIVACY_INTELLIGENCE.md',
+  'docs/security/PRIVACY_AND_DATA_HANDLING.md',
 ];
 
 const bannedWording = [
