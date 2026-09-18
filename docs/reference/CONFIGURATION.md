@@ -8,7 +8,7 @@ the bundle at build time; there is no runtime configuration file.
 | Variable | Purpose | Values / default | Notes |
 |---|---|---|---|
 | `VITE_API_URL` | Base URL for the optional non-trip backend | unset by default | `src/api/client.js` **throws** when unset rather than defaulting to localhost. Trips never use it. |
-| `VITE_APP_VERSION` | Displayed application version | falls back to `1.0.0` | On Android, Diagnostics prefers the native `versionName`. See [../operations/RELEASE_AND_VERSIONING.md](../operations/RELEASE_AND_VERSIONING.md). |
+| `VITE_APP_VERSION` | Optional web-bundle version label | **not set by any build in this repository** | No `.env` or Gradle step injects it, so its `1.0.0` fallback is what web builds use. Android product surfaces do not consume it: Settings and Diagnostics both read the native `versionName`/`versionCode`. See [../operations/RELEASE_AND_VERSIONING.md](../operations/RELEASE_AND_VERSIONING.md). |
 | `VITE_DB_NAME` | IndexedDB database name | product default | Changing it orphans existing local data. |
 | `VITE_P35_NATIVE_AUTHORITY` | Selects the native archive as trip authority | `false` by default | The shipping configuration uses browser authority. |
 | `VITE_COMPLETE_BUILD_SOURCE_ID` | Complete packaged-build identity | injected by the Android Gradle build | Not set for plain web builds; Diagnostics then reports `web_bundle_only`. |

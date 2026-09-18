@@ -21,8 +21,30 @@ part of `prebuild` and `pretest`. A change here breaks in-place upgrades for ins
 |---|---|---|
 | Android `versionCode` | `3` | `android/app/build.gradle` |
 | Android `versionName` | `1.1.0` | `android/app/build.gradle` |
+| npm `version` | `1.0.0` | `package.json` |
 
 `versionCode` must increase monotonically. Do not bump a version as part of unrelated work.
+
+### Which version is the product version
+
+`android/app/build.gradle` is the **only** source of the Road Sage application version. The
+`version` field in `package.json` is npm package metadata: nothing in `src/`, the Vite build or
+the Gradle build reads it, and it is deliberately not kept in step with the Android version.
+
+The two numbers differing is therefore not a mismatch to reconcile. What matters is that no
+product surface presents package or fallback metadata as the installed application version —
+Settings and Diagnostics both derive their version from the native build, and
+`src/lib/__tests__/appVersionIdentity.test.js` pins that.
+
+### Identifying an installed build
+
+| Purpose | Value | Where |
+|---|---|---|
+| Human-readable installed identity | `Version 1.1.0 (3)` | Settings → About; Android app info |
+| Immutable packaged-build identity | `sha256-packaged-inputs-v1:<64 hex>` | Diagnostics `artifact_id` |
+| Web bundle identity | separate bundle hash | Diagnostics `web_bundle_hash` |
+
+These are distinct identities and are never collapsed into one value.
 
 ## Build identity
 

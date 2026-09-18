@@ -73,6 +73,7 @@ import {
   requestNotificationPermission,
 } from '@/lib/permissions';
 import { isAndroid, openNativeSettings } from '@/lib/nativePlatform';
+import { getCurrentDiagnosticsBuildMetadata } from '@/lib/diagnosticsIdentity';
 import { resolveBackupCapabilities } from '@/lib/backupCapabilities';
 import { P6_EXPLICIT_OPERATION_TYPES } from '@/lib/p6Contracts';
 import { nativeTripArchive } from '@/lib/nativeTripArchive';
@@ -1140,6 +1141,40 @@ export default function Settings() {
     if (!changes.length) return '';
     return `What's changed in version ${LEGAL_NOTICE_ACK_VERSION}: ${changes.join(' ')}`;
   }, [legalNoticeNeedsReview]);
+
+  /**
+   * About-card build identity.
+   *
+   * This must report the installed Android build, never a hardcoded constant: a tester reading
+   * a version here has to be able to match it to the APK on the device. The metadata is
+   * populated from the native build at app bootstrap, so it can legitimately be absent on the
+   * first render and is always absent on web.
+   */
+  const [nativeBuildMetadata, setNativeBuildMetadata] = useState(() => getCurrentDiagnosticsBuildMetadata());
+
+  useEffect(() => {
+    if (!isAndroid() || nativeBuildMetadata) return;
+    let cancelled = false;
+    const poll = setInterval(() => {
+      const metadata = getCurrentDiagnosticsBuildMetadata();
+      if (metadata && !cancelled) {
+        setNativeBuildMetadata(metadata);
+        clearInterval(poll);
+      }
+    }, 500);
+    return () => { cancelled = true; clearInterval(poll); };
+  }, [nativeBuildMetadata]);
+
+  /** Human-readable installed identity: "1.1.0 (3)". Immutable build identity lives in Diagnostics. */
+  const appVersionLabel = useMemo(() => {
+    if (!isAndroid()) return 'Web build - not an installed Android build';
+    if (!nativeBuildMetadata?.versionName) return 'Android build - version unavailable';
+    const code = Number.isSafeInteger(nativeBuildMetadata.versionCode) ? nativeBuildMetadata.versionCode : null;
+    const variant = [nativeBuildMetadata.flavor, nativeBuildMetadata.buildType]
+      .filter((part) => part && part !== 'none')
+      .join(' ');
+    return `Version ${nativeBuildMetadata.versionName}${code == null ? '' : ` (${code})`}${variant ? ` - ${variant}` : ''}`;
+  }, [nativeBuildMetadata]);
 
   useEffect(() => {
     setOsrmEndpointDraft(cfg.osrm_map_matching_url || '');
@@ -7067,7 +7102,7 @@ export default function Settings() {
       {/* About */}
       <div className="bg-secondary/50 rounded-2xl p-4 text-xs text-muted-foreground space-y-1">
         <div className="font-semibold text-foreground text-sm">Road Sage</div>
-        <div>Version 1.0.0 (Capacitor Android)</div>
+        <div>{appVersionLabel}</div>
         <div>Map: OpenStreetMap + Leaflet (free, open-source)</div>
         <div>Data: Stored locally by default - No ads - Background tracking and external road data are opt-in</div>
         <div>{LEGAL_DISCLAIMER_SHORT}</div>
