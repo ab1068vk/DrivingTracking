@@ -442,6 +442,9 @@ vi.mock('@/lib/trackingStore', () => ({
 }));
 
 vi.mock('@/lib/activityRecognition', () => ({
+  classifyNativeDiagnosticsProbeFailure: vi.fn(() => ({ platform: 'web', probeState: 'not_applicable' })),
+  nativeEventAttribution: vi.fn(() => ({ sessionId: '', buildScopeId: '', attributionState: 'observed' })),
+  nativeWatchdogCategory: vi.fn(() => 'diagnostics'),
   AUTO_START_GPS_FALLBACK_SECONDS: 2,
   AUTO_START_IN_VEHICLE_CONFIDENCE: 65,
   AUTO_START_IN_VEHICLE_SECONDS: 2,
@@ -462,6 +465,10 @@ vi.mock('@/lib/activityRecognition', () => ({
   startActivityRecognition: vi.fn(async () => () => {}),
   startNativeAutoTracking: vi.fn(async () => ({})),
   stopNativeAutoTracking: vi.fn(async () => ({})),
+}));
+
+vi.mock('@/lib/diagnosticsCampaignState', () => ({
+  collectDiagnosticsCampaignState: vi.fn(async () => ({ collection: { state: 'available' } })),
 }));
 
 vi.mock('@/lib/nativePlatform', () => ({

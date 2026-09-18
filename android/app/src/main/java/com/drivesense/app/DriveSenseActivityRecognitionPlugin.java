@@ -721,12 +721,40 @@ public class DriveSenseActivityRecognitionPlugin extends Plugin {
         call.resolve(payload);
     }
 
+    private JSObject diagnosticsBuildIdentity() {
+        JSObject build = new JSObject();
+        String flavor = BuildConfig.ROAD_SAGE_BUILD_FLAVOR;
+        String artifactId = DiagnosticsBuildIdentity.currentArtifactId();
+        build.put("versionName", BuildConfig.VERSION_NAME);
+        build.put("versionCode", BuildConfig.VERSION_CODE);
+        build.put("buildType", BuildConfig.BUILD_TYPE);
+        build.put("flavor", flavor);
+        build.put("sourceId", BuildConfig.ROAD_SAGE_BUILD_SOURCE_ID);
+        build.put("artifactId", artifactId);
+        return build;
+    }
+
+    @PluginMethod
+    public void getBuildIdentity(PluginCall call) {
+        JSObject payload = new JSObject();
+        payload.put("processSessionId", DiagnosticsBuildIdentity.PROCESS_SESSION_ID);
+        payload.put("build", diagnosticsBuildIdentity());
+        call.resolve(payload);
+    }
+
     @PluginMethod
     public void getNativeDiagnostics(PluginCall call) {
         JSObject payload = new JSObject();
+        JSObject runtime = new JSObject();
+        runtime.put("platform", "android");
+        runtime.put("nativeBridgeAvailable", true);
+        runtime.put("probeState", "success");
+        runtime.put("processSessionId", DiagnosticsBuildIdentity.PROCESS_SESSION_ID);
+        runtime.put("build", diagnosticsBuildIdentity());
         payload.put("enabled", DriveSenseNativeTripStore.isServiceEnabled(getContext()));
         payload.put("events", DriveSenseNativeTripStore.getDiagnosticEvents(getContext()));
         payload.put("watchdog", AppExperienceWatchdog.getSnapshot(getContext()));
+        payload.put("runtime", runtime);
         call.resolve(payload);
     }
 

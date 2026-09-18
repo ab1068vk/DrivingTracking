@@ -44,6 +44,8 @@ final class AppExperienceWatchdog {
     private static final String KEY_LAST_RESOURCE_SNAPSHOT = "last_resource_snapshot";
     private static final String KEY_LAST_EXIT_TIMESTAMP = "last_exit_timestamp";
     private static final String KEY_RUN_ID = "run_id";
+    private static final String KEY_BUILD_SCOPE_ID = "build_scope_id";
+    private static final String KEY_RUN_STARTED_AT = "run_started_at";
     private static final String KEY_LAST_MEMORY_EVENT_AT = "last_memory_event_at";
     private static final String KEY_LAST_RESOURCE_PRESSURE_AT = "last_resource_pressure_at";
 
@@ -79,9 +81,11 @@ final class AppExperienceWatchdog {
             SharedPreferences preferences = prefs(appContext);
             reportPreviousInterruptedSession(appContext, preferences);
             reportLatestProcessExit(appContext, preferences);
-            runId = UUID.randomUUID().toString();
+            runId = DiagnosticsBuildIdentity.PROCESS_SESSION_ID;
             preferences.edit()
                 .putString(KEY_RUN_ID, runId)
+                .putString(KEY_BUILD_SCOPE_ID, DiagnosticsBuildIdentity.currentArtifactId())
+                .putLong(KEY_RUN_STARTED_AT, System.currentTimeMillis())
                 .putBoolean(KEY_FOREGROUND, false)
                 .putString(KEY_LAST_STATE, "created")
                 .putLong(KEY_LAST_HEARTBEAT_AT, System.currentTimeMillis())
@@ -301,6 +305,9 @@ final class AppExperienceWatchdog {
         );
         put(event, "last_heartbeat_age_ms", heartbeatAt > 0L ? Math.max(0L, System.currentTimeMillis() - heartbeatAt) : -1L);
         put(event, "previous_state", safeToken(preferences.getString(KEY_LAST_STATE, "unknown"), 40));
+        put(event, "historical_attribution", true);
+        put(event, "sessionId", previousRunId);
+        put(event, "buildScopeId", preferences.getString(KEY_BUILD_SCOPE_ID, ""));
         appendStoredCheckpoint(preferences, event);
         JSONObject resources = parseObject(preferences.getString(KEY_LAST_RESOURCE_SNAPSHOT, ""));
         if (resources != null) copyResourceFields(resources, event);
@@ -338,6 +345,14 @@ final class AppExperienceWatchdog {
             put(event, "pss_kb", newest.getPss());
             put(event, "rss_kb", newest.getRss());
             put(event, "exit_timestamp", Instant.ofEpochMilli(newest.getTimestamp()).toString());
+            // Android does not expose the exact build/session of this exit record.
+            put(event, "historical_attribution", true);
+            if (DiagnosticsBuildIdentity.historicalExitMatchesSession(
+                preferences.getLong(KEY_RUN_STARTED_AT, 0L), newest.getTimestamp(),
+                newest.getProcessName(), context.getPackageName())) {
+                put(event, "sessionId", preferences.getString(KEY_RUN_ID, ""));
+                put(event, "buildScopeId", preferences.getString(KEY_BUILD_SCOPE_ID, ""));
+            }
             appendStoredCheckpoint(preferences, event);
             addDiagnostic(context, event);
         } catch (RuntimeException ignored) {

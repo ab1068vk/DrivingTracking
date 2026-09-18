@@ -33,6 +33,7 @@ import PageLoadingSkeleton from '@/components/PageLoadingSkeleton';
 import AppInteractionFeedback from '@/components/AppInteractionFeedback';
 import { AppDialogHost } from '@/lib/appDialog';
 import { LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
+import { buildLegalAcknowledgementRecord, legalNoticeReviewRequired } from '@/lib/legalNoticeAcknowledgement';
 import { useLocalSettingSelector } from '@/hooks/useLocalSettings';
 import {
   createInitialAppUrlConsumer,
@@ -46,6 +47,9 @@ const P35_NATIVE_AUTHORITY_ENABLED = import.meta.env.VITE_P35_NATIVE_AUTHORITY =
 
 const startNativeAutoTrackingFromApp = () => import('@/lib/activityRecognition')
   .then(({ startNativeAutoTracking }) => startNativeAutoTracking());
+
+const initializeDiagnosticsBuildIdentityFromApp = () => import('@/lib/activityRecognition')
+  .then(({ getNativeBuildIdentity }) => getNativeBuildIdentity());
 
 /**
  * P4-C-F04: raw-GPS retention is now a bounded window of the coordinator-owned
@@ -288,6 +292,11 @@ const AuthenticatedApp = () => {
   useEffect(() => startP4LifecycleWorkIntegration(), []);
 
   useEffect(() => {
+    if (isAndroid()) initializeDiagnosticsBuildIdentityFromApp()
+      .catch((error) => logSystemFailure('diagnostics_build_identity_init', error));
+  }, []);
+
+  useEffect(() => {
     let disposed = false;
     const cancelDeferredTasks = [];
     const bootstrapSettings = async () => {
@@ -301,8 +310,9 @@ const AuthenticatedApp = () => {
       setAppLockEnabled(lockEnabled);
       setAppLocked(lockEnabled);
       setOnboardingDone(settings.onboarding_completed);
-      const shouldShowFirstLaunchLegalNotice =
-        Number(settings.legal_notice_ack_version) < LEGAL_NOTICE_ACK_VERSION;
+      // Classified centrally so legacy version-only acknowledgements stay valid while a
+      // content-bound acknowledgement can also be proven against the notice actually shown.
+      const shouldShowFirstLaunchLegalNotice = legalNoticeReviewRequired(settings);
       setLegalNoticeOpen(shouldShowFirstLaunchLegalNotice);
       applyThemeMode(settings.dark_mode);
 
@@ -531,11 +541,9 @@ const AuthenticatedApp = () => {
   }, []);
 
   const acknowledgeLegalNotice = () => {
-    const acknowledgedAt = new Date().toISOString();
-    localSettings.update({
-      legal_notice_ack_version: LEGAL_NOTICE_ACK_VERSION,
-      legal_notice_acknowledged_at: acknowledgedAt,
-    });
+    const record = buildLegalAcknowledgementRecord();
+    const acknowledgedAt = record.legal_notice_acknowledged_at;
+    localSettings.update(record);
     recordSystemEvent('legal_notice_acknowledged', {
       notice_version: LEGAL_NOTICE_ACK_VERSION,
       acknowledged_at: acknowledgedAt,

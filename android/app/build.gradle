@@ -1,5 +1,7 @@
 apply plugin: 'com.android.application'
 
+def roadSageWebProjectDir = file("../..")
+
 def physicalHVariantsEnabled = providers.gradleProperty("physicalHVariants")
     .map { it.toBoolean() }
     .orElse(false)
@@ -23,6 +25,16 @@ if (!physicalHApprovedAndroidIdValues.isEmpty()
 def physicalHApprovedAndroidIds = physicalHApprovedAndroidIdValues.join(",")
     .replace("\\", "\\\\")
     .replace('"', '\\"')
+def completeBuildSourceId = providers.exec {
+    workingDir roadSageWebProjectDir
+    environment "ROAD_SAGE_IDENTITY_QUALIFICATION_GATE", physicalHApprovedAndroidIds
+    commandLine "node", "scripts/complete-build-identity.mjs",
+        "--root", roadSageWebProjectDir.absolutePath,
+        "--variant-family", physicalHVariantsEnabled ? "physical-h-enabled" : "standard"
+}.standardOutput.asText.get().trim()
+if (!(completeBuildSourceId ==~ /sha256-packaged-inputs-v1:[0-9a-f]{64}/)) {
+    throw new GradleException("Road Sage complete build identity generation failed")
+}
 
 android {
     namespace = "com.drivesense.app"
@@ -33,6 +45,8 @@ android {
         targetSdk = rootProject.ext.targetSdkVersion
         versionCode = 3
         versionName = "1.1.0"
+        buildConfigField "String", "ROAD_SAGE_BUILD_SOURCE_ID", "\"${completeBuildSourceId}\""
+        buildConfigField "String", "ROAD_SAGE_BUILD_FLAVOR", '"none"'
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -54,6 +68,7 @@ android {
                 signingConfig signingConfigs.debug
                 buildConfigField "boolean", "PHYSICAL_H_BUILD", "true"
                 buildConfigField "boolean", "PHYSICAL_H_LEGACY_BUILD", "false"
+                buildConfigField "String", "ROAD_SAGE_BUILD_FLAVOR", '"physicalH"'
                 buildConfigField "String", "PHYSICAL_H_APPROVED_ANDROID_IDS", "\"${physicalHApprovedAndroidIds}\""
             }
             physicalHLegacy {
@@ -64,6 +79,7 @@ android {
                 signingConfig signingConfigs.debug
                 buildConfigField "boolean", "PHYSICAL_H_BUILD", "true"
                 buildConfigField "boolean", "PHYSICAL_H_LEGACY_BUILD", "true"
+                buildConfigField "String", "ROAD_SAGE_BUILD_FLAVOR", '"physicalHLegacy"'
                 buildConfigField "String", "PHYSICAL_H_APPROVED_ANDROID_IDS", "\"${physicalHApprovedAndroidIds}\""
             }
         }
@@ -108,7 +124,7 @@ android {
     }
 }
 
-def webProjectDir = file("../..")
+def webProjectDir = roadSageWebProjectDir
 def androidPublicAssetsDir = file("src/main/assets/public")
 def npmCommand = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("windows") ? "npm.cmd" : "npm"
 
@@ -121,12 +137,14 @@ tasks.register("drivesenseBuildWeb", Exec) {
     if (physicalHVariantsEnabled) {
         environment "VITE_P35_NATIVE_AUTHORITY", "true"
     }
+    environment "VITE_COMPLETE_BUILD_SOURCE_ID", completeBuildSourceId
     commandLine npmCommand, "run", "build"
     // The Physical H flag changes the bundle that Vite emits, but Gradle does
     // not treat Exec.environment as a task input. Without this property a dist
     // produced by a non-Physical-H build satisfies the up-to-date check and is
     // packaged verbatim, silently shipping a bundle with native authority off.
     inputs.property("physicalHVariants", physicalHVariantsEnabled)
+    inputs.property("completeBuildSourceId", completeBuildSourceId)
     inputs.files(
         fileTree("${webProjectDir}/src"),
         "${webProjectDir}/index.html",

@@ -601,6 +601,13 @@ class DriveSenseNativeTripStore {
     }
 
     static void addDiagnosticEvent(Context context, JSONObject event) {
+        // Imported process-exit evidence must never be stamped as this launch.
+        if (!event.optBoolean("historical_attribution", false)) {
+            try {
+                event.put("sessionId", DiagnosticsBuildIdentity.PROCESS_SESSION_ID);
+                event.put("buildScopeId", DiagnosticsBuildIdentity.currentArtifactId());
+            } catch (JSONException ignored) {}
+        }
         JSONArray current = getDiagnosticEvents(context);
         JSONArray next = new JSONArray();
         next.put(event);

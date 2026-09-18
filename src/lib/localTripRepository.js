@@ -1748,6 +1748,43 @@ export async function queryTripHistoryPage(request = {}) {
 }
 
 /**
+ * Diagnostics-only population evidence. IndexedDB's count operation returns a
+ * scalar without materialising summaries or opening any route payload.
+ */
+export async function readDiagnosticsTripPopulation() {
+  const before = await readP7QuerySnapshot();
+  if (!canUseIndexedDb()) {
+    return {
+      available: false,
+      reason: 'indexeddb_unavailable',
+      snapshot: { ...before, queryId: 'diagnostics.population', takenAt: Date.now() },
+    };
+  }
+  const db = await openDb();
+  try {
+    const tx = db.transaction(TRIP_STORE, 'readonly');
+    const total = await idbRequest(tx.objectStore(TRIP_STORE).count());
+    const after = await readP7QuerySnapshot();
+    if (String(before.generation) !== String(after.generation) || Number(before.revision) !== Number(after.revision)) {
+      return {
+        available: false,
+        reason: 'snapshot_changed_during_count',
+        snapshot: { ...after, queryId: 'diagnostics.population', takenAt: Date.now() },
+      };
+    }
+    return {
+      available: true,
+      totalTripCount: Math.max(0, Number(total) || 0),
+      completedTripCount: null,
+      completedCountState: 'not_indexed',
+      snapshot: { ...after, queryId: 'diagnostics.population', takenAt: Date.now() },
+    };
+  } finally {
+    db.close();
+  }
+}
+
+/**
  * **Q6** — the adjacent trip in history order, for prev/next navigation on a
  * detail surface.
  *

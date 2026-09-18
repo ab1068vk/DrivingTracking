@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prebuild": "npm run recovery:guard && npm run scoring:version && npm run native:constants",
+    "prebuild": "npm run recovery:guard && npm run scoring:version && npm run legal:version && npm run native:constants",
     "build": "vite build",
-    "pretest": "npm run recovery:guard && npm run scoring:version:check && npm run native:constants:check",
+    "pretest": "npm run recovery:guard && npm run scoring:version:check && npm run legal:version:check && npm run native:constants:check",
     "test": "vitest run --pool=forks --maxWorkers=1",
     "scoring:version": "node scripts/generate-scoring-version.mjs",
     "scoring:version:check": "node scripts/generate-scoring-version.mjs --check",
@@ -27,7 +27,9 @@
     "preview": "vite preview",
     "android:sync": "npm run build && npx cap sync android && node scripts/patch-android-gradle.mjs",
     "android:open": "npx cap open android",
-    "replay:penalty-scale": "node scripts/replay-penalty-scale.mjs"
+    "replay:penalty-scale": "node scripts/replay-penalty-scale.mjs",
+    "legal:version": "node scripts/generate-legal-version.mjs",
+    "legal:version:check": "node scripts/generate-legal-version.mjs --check"
   },
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",

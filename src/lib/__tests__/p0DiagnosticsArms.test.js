@@ -292,16 +292,17 @@ describe('I-1 triage context', () => {
     expect(result.route_point_count).toBe(0);
   });
 
-  it('keeps the pre-instrumentation return shape', async () => {
+  it('keeps the bounded dataset context in the public return shape', async () => {
     const { triage } = await loadModules('A');
 
     const result = triage.setPerformanceTriageContext({ trip_count: 500, route_point_count: 1000 });
 
     expect(result.trip_count).toBe(500);
-    // No field was added to the public return value by instrumentation.
+    // Dataset scope is explicit so a bounded window cannot be read as lifetime data.
     expect(Object.keys(result).sort()).toEqual([
       'completed_trip_count',
       'data_size_bytes',
+      'dataset_scope',
       'experience_mode',
       'route_point_count',
       'total_distance_km',

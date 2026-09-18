@@ -735,7 +735,9 @@ describe('release blocker regressions', () => {
     const noticeDialogSource = readFileSync(new URL('../../components/LegalNoticeDialog.jsx', import.meta.url), 'utf8');
 
     expect(appSource).toContain('shouldShowFirstLaunchLegalNotice');
-    expect(appSource).toContain('Number(settings.legal_notice_ack_version) < LEGAL_NOTICE_ACK_VERSION');
+    // Validity is classified centrally so the gate also catches a content mismatch or a
+    // corrupt record, not just an older version number.
+    expect(appSource).toContain('legalNoticeReviewRequired(settings)');
     expect(appSource).toContain('setLegalNoticeOpen(shouldShowFirstLaunchLegalNotice)');
     expect(noticeDialogSource).toContain('same notice shown during first-launch setup and whenever the required notice version changes');
   });

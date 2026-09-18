@@ -40,7 +40,7 @@ const REDUCER_FIELDS = Object.freeze([
  * treated as ordinary.
  */
 const SURFACE_FIELDS = Object.freeze([
-  'is_favorite', 'nickname', 'privacy_mode', 'route_key', 'tag', 'tag_sources', 'tags',
+  'is_favorite', 'nickname', 'privacy_mode', 'route_key', 'start_source', 'tag', 'tag_sources', 'tags',
 ]);
 
 /**

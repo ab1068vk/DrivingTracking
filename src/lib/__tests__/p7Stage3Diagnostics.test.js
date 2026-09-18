@@ -134,6 +134,19 @@ describe('P7 Stage 3 — one composition, observed independently', () => {
     expect(observer.counts.wholeStoreGetAlls).toBe(0);
   }, 120_000);
 
+  it('reads the population as one scalar count without hydrating history rows', async () => {
+    await seed(100);
+    const { readDiagnosticsTripPopulation } = await import('@/lib/localTripRepository');
+
+    observer.reset();
+    const population = await readDiagnosticsTripPopulation();
+
+    expect(population).toMatchObject({ available: true, totalTripCount: 100 });
+    expect(observer.counts.sourceRowsVisited).toBe(0);
+    expect(observer.counts.openCursorCalls).toBe(0);
+    expect(observer.counts.wholeStoreGetAlls).toBe(0);
+  }, 120_000);
+
   it('reports a genuinely empty profile as EXACT and empty, not as unavailable', async () => {
     const { p7TripQueries } = await import('@/api/trips');
     const page = await p7TripQueries.historyPage({ sort: '-start_time', limit: 20 });

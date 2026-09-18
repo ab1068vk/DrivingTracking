@@ -494,6 +494,38 @@ const p7Unavailable = (code, reason) => ({
 
 const p7NativeAuthoritySelected = () => isAndroid() && P35_NATIVE_AUTHORITY_ENABLED;
 
+/** One scalar owner read for Diagnostics; never a summary/detail scan. */
+export async function readDiagnosticsTripPopulation() {
+  if (!p7NativeAuthoritySelected()) {
+    return (await import('@/lib/localTripRepository')).readDiagnosticsTripPopulation();
+  }
+  try {
+    const health = await nativeTripArchive.diagnosticsHealth();
+    if (health?.liveCount == null || !Number.isSafeInteger(Number(health.liveCount)) || Number(health.liveCount) < 0) {
+      throw new Error('Native population count unavailable');
+    }
+    return {
+      available: true,
+      totalTripCount: Math.max(0, Number(health?.liveCount) || 0),
+      completedTripCount: null,
+      completedCountState: 'not_status_partitioned',
+      snapshot: {
+        authority: 'native',
+        generation: health?.archiveGeneration ?? null,
+        revision: health?.lastCommittedSeq ?? null,
+        queryId: 'diagnostics.population',
+        takenAt: Date.now(),
+      },
+    };
+  } catch {
+    return {
+      available: false,
+      reason: 'native_health_unavailable',
+      snapshot: { authority: 'native', generation: null, revision: null, queryId: 'diagnostics.population', takenAt: Date.now() },
+    };
+  }
+}
+
 /**
  * The facade is loaded on first P7 use rather than at module scope.
  *

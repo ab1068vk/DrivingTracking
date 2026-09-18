@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { p7QueryKeys, p7TripQueries } from '@/api/trips';
+import { p7QueryKeys, p7TripQueries, readDiagnosticsTripPopulation } from '@/api/trips';
 import { buildTripSummary } from '@/lib/tripSummary';
 
 /**
@@ -27,6 +27,15 @@ export const DIAGNOSTICS_PAGE_ROWS = 20;
 /** DEV-only: the window the synthetic-test-trip cleanup scans. */
 export const DIAGNOSTICS_TEST_TRIP_ROWS = 200;
 
+const diagnosticsSummary = (row) => {
+  const summary = buildTripSummary(row);
+  if (!Object.prototype.hasOwnProperty.call(row || {}, 'route_replay_available')
+      && !Array.isArray(row?.route_points)) {
+    delete summary.route_replay_available;
+  }
+  return summary;
+};
+
 /**
  * @param {{localTestTripPrefix?: string, includeLocalTestTrips?: boolean}} [options]
  */
@@ -36,16 +45,19 @@ export function useDiagnosticsPageData(options = {}) {
   const query = useQuery({
     queryKey: p7QueryKeys.page('diagnostics', includeLocalTestTrips ? 'dev' : 'prod'),
     queryFn: async () => {
-      const page = await p7TripQueries.historyPage({
-        sort: '-start_time',
-        limit: DIAGNOSTICS_PAGE_ROWS,
-      });
+      const [page, population] = await Promise.all([
+        p7TripQueries.historyPage({
+          sort: '-start_time',
+          limit: DIAGNOSTICS_PAGE_ROWS,
+        }),
+        readDiagnosticsTripPopulation(),
+      ]);
       if (page.unavailable) {
         // A typed unavailable is a state the page renders, never an empty list
         // presented as "no trips".
-        return { rows: [], localTestTrips: [], unavailable: page.unavailable, completeness: null };
+        return { rows: [], localTestTrips: [], unavailable: page.unavailable, completeness: null, continuation: null, snapshot: page.snapshot, population };
       }
-      const rows = (page.data ?? []).map(buildTripSummary);
+      const rows = (page.data ?? []).map(diagnosticsSummary);
 
       // The synthetic-test-trip sweep is a development affordance. It is not
       // part of the production composition and never runs in a shipped build,
@@ -57,7 +69,7 @@ export function useDiagnosticsPageData(options = {}) {
           limit: DIAGNOSTICS_TEST_TRIP_ROWS,
         });
         localTestTrips = (devPage.data ?? [])
-          .map(buildTripSummary)
+          .map(diagnosticsSummary)
           .filter((trip) => String(trip.id || '').startsWith(localTestTripPrefix));
       }
 
@@ -66,6 +78,9 @@ export function useDiagnosticsPageData(options = {}) {
         localTestTrips,
         unavailable: null,
         completeness: page.completeness,
+        continuation: page.continuation,
+        snapshot: page.snapshot,
+        population,
       };
     },
     staleTime: 2 * 60 * 1000,
@@ -78,13 +93,16 @@ export function useDiagnosticsPageData(options = {}) {
   const settled = query.data;
   const data = (settled && Array.isArray(settled.rows))
     ? settled
-    : { rows: [], localTestTrips: [], unavailable: null, completeness: null };
+    : { rows: [], localTestTrips: [], unavailable: null, completeness: null, continuation: null, snapshot: null, population: null };
 
   return {
     trips: data.rows,
     localTestTrips: data.localTestTrips ?? [],
     unavailable: data.unavailable,
     completeness: data.completeness,
+    continuation: data.continuation,
+    snapshot: data.snapshot,
+    population: data.population,
     // `isSuccess` alone would report success for a typed unavailable result, so
     // readiness means "the composition settled **and** produced rows".
     ready: query.isSuccess && !data.unavailable,

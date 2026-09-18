@@ -21,6 +21,30 @@ final class DriveSenseP6DerivedState {
 
     private DriveSenseP6DerivedState() {}
 
+    /** Four primary-key status reads only. No manifests, routes or work queues are enumerated. */
+    static JSONObject diagnosticsReadiness(DriveSenseStorageCoordinator coordinator) throws Exception {
+        return coordinator.read(db -> {
+            JSONObject result = new JSONObject();
+            String[] domains = {"D1_ANALYTICS", "D2_GEOMETRY", "D3_SPATIAL_SELECTION", "D4_ROAD_LEARNING_SPEED_LOOKUP"};
+            for (String domain : domains) {
+                JSONObject value = new JSONObject();
+                value.put("domain", domain);
+                try (Cursor cursor = db.rawQuery("SELECT state,complete,required_version,applied_version FROM p6_control WHERE domain_id=?", new String[]{domain})) {
+                    if (cursor.moveToFirst()) {
+                        value.put("state", cursor.getString(0));
+                        value.put("complete", cursor.getInt(1) != 0);
+                        value.put("required_version", cursor.getLong(2));
+                        value.put("applied_version", cursor.getLong(3));
+                    } else {
+                        value.put("state", "unavailable");
+                    }
+                }
+                result.put(domain, value);
+            }
+            return result;
+        });
+    }
+
     static void requireDerivedAdmission(Context context, long proposedBytes) {
         long proposed = Math.max(0L, proposedBytes);
         long available = DriveSenseStorageAdmission.availableBytes(context);

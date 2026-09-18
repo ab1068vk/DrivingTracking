@@ -41,6 +41,7 @@ public class DriveSenseArchivePlugin extends Plugin {
     @Override protected void handleOnDestroy(){synchronized(handles){for(Handle h:handles.values())h.close();handles.clear();}synchronized(speedHandles){for(SpeedHandle h:speedHandles.values())h.close();speedHandles.clear();}super.handleOnDestroy();}
 
     @PluginMethod public void getHealth(PluginCall call){execute(call,false,()->DriveSenseArchiveHealth.inventory(required().coordinator()));}
+    @PluginMethod public void getDiagnosticsReadiness(PluginCall call){execute(call,false,()->DriveSenseP6DerivedState.diagnosticsReadiness(required().coordinator()));}
     @PluginMethod public void reconcileLiveCount(PluginCall call){execute(call,false,()->{JSONObject o=new JSONObject();o.put("verified",DriveSenseArchiveIntegrity.reconcileCount(required().coordinator()));return o;});}
     @PluginMethod public void createIntegrityCheckpoint(PluginCall call){execute(call,false,()->{DriveSenseArchiveIntegrity.CheckpointResult r=DriveSenseArchiveIntegrity.createCheckpoint(required().coordinator());JSONObject o=new JSONObject();o.put("verified",r.verified);o.put("throughSeq",r.throughSeq);o.put("liveCount",r.liveCount);o.put("liveSetRoot",Base64.encodeToString(r.root,Base64.NO_WRAP));return o;});}
     @PluginMethod public void getDurabilityJournalSummary(PluginCall call){execute(call,false,()->DriveSenseDurabilityJournal.summary(getContext()));}

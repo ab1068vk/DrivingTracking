@@ -1,4 +1,5 @@
 import { createDiagnosticsHistoryStore } from '@/lib/diagnosticsHistoryStore';
+import { getCurrentDiagnosticsAttribution } from '@/lib/diagnosticsIdentity';
 
 const TRIAGE_PREFIX = '[perf-triage]';
 
@@ -10,7 +11,8 @@ const TRIAGE_CONTEXT_KEY = 'roadsage_performance_context_v1';
 export const PERFORMANCE_CHECKPOINT_EVENT = 'roadsage:performance-checkpoint';
 let measureSequence = 0;
 let performanceContext = {};
-const sessionId = `session_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+const diagnosticsAttribution = getCurrentDiagnosticsAttribution();
+const sessionId = diagnosticsAttribution.sessionId;
 let performanceHistoryStore = null;
 
 const clock = () => (
@@ -65,6 +67,7 @@ const emitPerformanceCheckpoint = (operation, phase, pathname = '') => {
 };
 
 const safeContext = (value = {}) => ({
+  dataset_scope: value.dataset_scope === 'bounded_window' ? 'bounded_window' : undefined,
   trip_count: Math.max(0, Math.floor(finite(value.trip_count) ?? finite(value.tripCount) ?? 0)),
   completed_trip_count: Math.max(0, Math.floor(finite(value.completed_trip_count) ?? finite(value.completedTripCount) ?? 0)),
   total_distance_km: Math.max(0, Math.round((finite(value.total_distance_km) ?? finite(value.totalDistanceKm) ?? 0) * 10) / 10),
@@ -77,6 +80,9 @@ const safeContext = (value = {}) => ({
 const sanitizeEntry = (entry = {}, fallbacks = {}) => ({
   id: String(entry.id || fallbacks.id || `${sessionId}_${++measureSequence}`).slice(0, 100),
   sessionId: String(entry.sessionId || fallbacks.sessionId || sessionId).slice(0, 100),
+  buildScopeId: String(
+    entry.buildScopeId || fallbacks.buildScopeId || 'unattributed'
+  ).slice(0, 180),
   name: String(entry.name || 'unknown').replace(/[^a-zA-Z0-9._:-]/g, '_').slice(0, 140),
   durationMs: Math.max(0, Math.round((finite(entry.durationMs) || 0) * 10) / 10),
   at: Number.isFinite(new Date(entry.at).getTime())
@@ -103,6 +109,7 @@ const getPerformanceHistoryStore = () => {
       .map((entry, index) => sanitizeEntry(entry, {
         id: `legacy_performance_${index}`,
         sessionId: 'legacy_performance',
+        buildScopeId: 'unattributed',
         nowMs,
       }))
       .filter((entry) => new Date(entry.at).getTime() >= nowMs - TRIAGE_RETENTION_MS)
@@ -147,6 +154,7 @@ if (canUseStorage()) {
  * these once its trip query has resolved — see `setPerformanceTriageContext`.
  */
 export const DATASET_CONTEXT_FIELDS = Object.freeze([
+  'dataset_scope',
   'trip_count',
   'completed_trip_count',
   'total_distance_km',
@@ -210,6 +218,7 @@ export function beginMeasure(name, detail = {}) {
     const entry = {
       id: `${sessionId}_${++measureSequence}`,
       sessionId,
+      buildScopeId: getCurrentDiagnosticsAttribution().buildScopeId,
       name,
       durationMs,
       at: new Date().toISOString(),

@@ -1,8 +1,9 @@
-import { isAndroid } from '@/lib/nativePlatform';
+import { getNativePlatform, isAndroid } from '@/lib/nativePlatform';
 import { requestActivityRecognitionPermission } from '@/lib/permissions';
 import { haversineDistance } from '@/lib/tripEngine';
 import ActivityRecognition from '@/lib/driveSenseNativePlugin';
 import { logSystemFailure, recordSystemEvent, recordSystemLog } from '@/lib/systemLog';
+import { setCurrentDiagnosticsBuildIdentity } from '@/lib/diagnosticsIdentity';
 
 const UNKNOWN_GPS_STABLE_M = 8;
 const PARKED_GPS_DRIFT_M = 20;
@@ -17,14 +18,21 @@ export const WALKING_SPEED_CUTOFF_KMH = 10;
 const SETTINGS_KEY = 'drivesense_settings';
 const NATIVE_WATCHDOG_SYNC_KEY = 'roadsage_native_watchdog_synced_v1';
 
-const nativeWatchdogCategory = (event = {}) => {
+export const nativeWatchdogCategory = (event = {}) => {
   const type = String(event.type || '');
   if (type === 'android_process_exit') {
     return /^(anr|crash|native_crash|low_memory|excessive_resource_usage|initialization_failure)$/i
       .test(String(event.reason_label || '')) ? 'failure' : 'diagnostics';
   }
-  return /(stall|anr|crash|memory|pressure)/i.test(type) ? 'failure' : 'diagnostics';
+  return ['android_ui_stall', 'android_low_memory', 'trip_save_failed', 'checkpoint_save_failed']
+    .includes(type) ? 'failure' : 'diagnostics';
 };
+
+export const nativeEventAttribution = (event = {}) => ({
+  sessionId: String(event.sessionId || ''),
+  buildScopeId: String(event.buildScopeId || ''),
+  attributionState: 'observed',
+});
 
 const syncNativeWatchdogEvents = (events = []) => {
   if (typeof localStorage === 'undefined') return;
@@ -42,6 +50,7 @@ const syncNativeWatchdogEvents = (events = []) => {
     if (seenSet.has(id)) return;
     seenSet.add(id);
     recordSystemLog({
+      ...nativeEventAttribution(event),
       timestamp: event.timestamp,
       operation: event.type,
       category: nativeWatchdogCategory(event),
@@ -383,19 +392,62 @@ export async function getNativeAutoTrackingStatus() {
 }
 
 export async function getNativeDiagnostics() {
-  if (!isAndroid()) return { enabled: false, events: [], watchdog: null };
+  if (!isAndroid()) {
+    return {
+      enabled: false,
+      events: [],
+      watchdog: null,
+      runtime: {
+        platform: getNativePlatform(),
+        nativeBridgeAvailable: false,
+        probeState: 'not_applicable',
+        build: null,
+      },
+    };
+  }
   try {
     const result = await ActivityRecognition.getNativeDiagnostics();
+    setCurrentDiagnosticsBuildIdentity(result?.runtime?.build, result?.runtime?.processSessionId);
     syncNativeWatchdogEvents(result?.events);
     return {
       enabled: result?.enabled === true,
       events: Array.isArray(result?.events) ? result.events : [],
       watchdog: result?.watchdog && typeof result.watchdog === 'object' ? result.watchdog : null,
+      runtime: result?.runtime && typeof result.runtime === 'object'
+        ? result.runtime
+        : {
+          platform: 'android',
+          nativeBridgeAvailable: true,
+          probeState: 'success',
+          build: null,
+        },
     };
   } catch (error) {
     logSystemFailure('android_native_diagnostics_load', error);
     throw error;
   }
+}
+
+export function classifyNativeDiagnosticsProbeFailure(error) {
+  const code = String(error?.code || '');
+  const message = String(error?.message || error || '');
+  const pluginUnavailable = ['UNIMPLEMENTED', 'PLUGIN_UNAVAILABLE', 'PLUGIN_NOT_FOUND'].includes(code.toUpperCase())
+    || /plugin.*(not.?implemented|not.?available|unavailable|missing|not.?found)/i.test(message);
+  return {
+    platform: 'android',
+    nativeBridgeAvailable: pluginUnavailable ? false : null,
+    probeState: 'failed',
+    reasonCode: pluginUnavailable ? 'native_plugin_unavailable' : 'native_diagnostics_probe_failed',
+    build: null,
+  };
+}
+
+export async function getNativeBuildIdentity() {
+  if (!isAndroid()) return null;
+  const result = await ActivityRecognition.getBuildIdentity();
+  const build = result?.build && typeof result.build === 'object' ? result.build : null;
+  setCurrentDiagnosticsBuildIdentity(build, result?.processSessionId);
+  return build;
 }
 
 export async function clearNativeDiagnostics() {

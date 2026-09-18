@@ -117,6 +117,11 @@ export default function AppExperienceDiagnosticsPanel({
   settings = {},
   buildInfo = {},
   nativeWatchdog = null,
+  nativeDiagnostics = null,
+  tripWindow = {},
+  tripPopulation = {},
+  campaignState = {},
+  campaignStateReady = true,
   tripDataReady = true,
   /**
    * A typed P7 unavailable outcome for the page's trip query, or `null`.
@@ -147,7 +152,7 @@ export default function AppExperienceDiagnosticsPanel({
     });
     return () => { historyGuard.current.invalidate(); };
   }, [performanceEntries.length, trackingEvents.length]);
-  const reportReady = tripDataReady && !tripDataUnavailable && diagnosticsHistoryReady && experienceHistoryReady;
+  const reportReady = tripDataReady && !tripDataUnavailable && diagnosticsHistoryReady && experienceHistoryReady && campaignStateReady;
   const report = useMemo(() => buildAppExperienceReport({
     trips,
     performanceEntries,
@@ -155,7 +160,11 @@ export default function AppExperienceDiagnosticsPanel({
     settings,
     buildInfo,
     nativeWatchdog,
-  }), [trips, performanceEntries, historicalEvents, trackingEvents, settings, buildInfo, nativeWatchdog]);
+    nativeDiagnostics,
+    tripWindow,
+    tripPopulation,
+    campaignState,
+  }), [trips, performanceEntries, historicalEvents, trackingEvents, settings, buildInfo, nativeWatchdog, nativeDiagnostics, tripWindow, tripPopulation, campaignState]);
   const topOperations = report.performance.operations.slice(0, 10);
   const worstP95 = Math.max(0, ...report.performance.operations.map((item) => Number(item.p95Ms) || 0));
   const activity = report.activity.counts;
@@ -193,6 +202,10 @@ export default function AppExperienceDiagnosticsPanel({
         settings,
         buildInfo,
         nativeWatchdog,
+        nativeDiagnostics,
+        tripWindow,
+        tripPopulation,
+        campaignState,
         includeP0Raw: true,
       })
       : report;
@@ -203,7 +216,7 @@ export default function AppExperienceDiagnosticsPanel({
         setNotice(`${filename} saved to Downloads.`);
         recordSystemEvent('app_experience_diagnostics_exported', {
           byte_count: text.length,
-          trip_count: report.data.trip_count,
+          window_row_count: report.data.window.row_count,
           sample_count: report.performance.sample_count,
           native: true,
           uri_present: Boolean(result?.uri),
@@ -213,7 +226,7 @@ export default function AppExperienceDiagnosticsPanel({
         setNotice(`${filename} is downloading.`);
         recordSystemEvent('app_experience_diagnostics_exported', {
           byte_count: text.length,
-          trip_count: report.data.trip_count,
+          window_row_count: report.data.window.row_count,
           sample_count: report.performance.sample_count,
           native: false,
         }, { category: 'diagnostics', title: 'App experience diagnostics exported' });
@@ -267,7 +280,7 @@ export default function AppExperienceDiagnosticsPanel({
             </span>
           </div>
           <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
-            Historical loading, app failures, setting changes, trip deletion, imports/exports, network responses, coaching, and advanced tracking—correlated with anonymous trip-data size.
+            Current-launch health with current-build and retained historical context, correlated with a bounded anonymous trip window.
           </p>
           <p className="mt-2 text-sm font-semibold">{report.health.headline}</p>
         </div>
@@ -296,24 +309,24 @@ export default function AppExperienceDiagnosticsPanel({
       {notice && <div role="status" className="mt-3 rounded-lg bg-secondary/50 px-3 py-2 text-xs font-medium">{notice}</div>}
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard icon={Gauge} label="Worst retained p95" value={formatDuration(worstP95)} detail={`${report.performance.sample_count} timing samples over up to 90 days`} tone={report.health.status} />
-        <MetricCard icon={Database} label="Trip data context" value={`${report.data.completed_trip_count} trips`} detail={`${formatDistance(report.data.total_distance_km, units)} · ${formatBytes(report.data.approximate_summary_bytes)} summaries`} />
+        <MetricCard icon={Gauge} label="Current-launch p95" value={formatDuration(worstP95)} detail={`${report.performance.sample_count} timing samples in this launch`} tone={report.health.status} />
+        <MetricCard icon={Database} label="Recent trip window" value={`${report.data.completed_trip_count} of ${report.data.window.row_count} rows`} detail={report.data.population.available ? `${report.data.population.total_trip_count} total records · ${report.data.window.has_more ? 'more rows retained' : 'window complete'}` : `${formatDistance(report.data.total_distance_km, units)} in bounded window`} />
         <MetricCard
           icon={FileWarning}
           label="Freezes / failures"
           value={(activity.freezes_and_anrs || 0) + activity.crashes_and_failures}
-          detail={`${activity.freezes_and_anrs || 0} freeze/ANR · ${activity.resource_pressure || 0} resource-pressure signals`}
+          detail={`${activity.freezes_and_anrs || 0} current freeze/ANR · ${report.evidence_scopes.older_history.activity.counts.crashes_and_failures} older/unattributed failures`}
           tone={activity.freezes_and_anrs || activity.crashes_and_failures ? 'watch' : 'good'}
         />
-        <MetricCard icon={History} label="Experience activity" value={report.activity.event_count} detail={`${activity.settings_changes} settings · ${activity.trip_deletions} deletions · ${activity.imports_and_exports} transfers`} />
+        <MetricCard icon={History} label="Current-launch activity" value={report.activity.event_count} detail={`${report.evidence_scopes.retained_history.activity.event_count} retained across all scopes`} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.35fr_1fr]">
         <div>
           <div className="mb-2 flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm font-semibold">Historical speed at a glance</h3>
-              <p className="text-[11px] text-muted-foreground">Green is fast, amber needs watching, and red is a sustained or severe slowdown.</p>
+              <h3 className="text-sm font-semibold">Current-launch speed at a glance</h3>
+              <p className="text-[11px] text-muted-foreground">Current-build and older retained metrics remain separated in the exported artifact.</p>
             </div>
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
           </div>
@@ -328,7 +341,7 @@ export default function AppExperienceDiagnosticsPanel({
                   </div>
                   {(item.latestContext?.trip_count > 0 || item.latestContext?.route_point_count > 0) && (
                     <div className="mt-1 text-[10px] font-medium text-muted-foreground">
-                      Latest context: {item.latestContext.trip_count} trips · {item.latestContext.route_point_count.toLocaleString()} retained route points
+                      Latest context: {item.latestContext.trip_count} bounded window rows · {item.latestContext.route_point_count.toLocaleString()} retained route points in that window
                     </div>
                   )}
                 </div>

@@ -70,6 +70,9 @@ const observeP5Health = async (health) => {
 };
 
 export const nativeTripArchive = {
+  diagnosticsReadiness: () => invoke('getDiagnosticsReadiness'),
+  // Observe the existing health owner without admitting maintenance work.
+  diagnosticsHealth: () => invoke('getHealth'),
   health: async () => {
     const health = await invoke('getHealth');
     await observeP5Health(health);

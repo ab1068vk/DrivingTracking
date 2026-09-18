@@ -22,9 +22,12 @@ import { tripDetailQueryOptions, tripService } from '@/api/trips';
 import { getPermissionStatus } from '@/lib/permissions';
 import {
   clearNativeDiagnostics,
+  classifyNativeDiagnosticsProbeFailure,
   getAndroidBatteryOptimizationStatus,
   getNativeAutoTrackingStatus,
   getNativeDiagnostics,
+  nativeEventAttribution,
+  nativeWatchdogCategory,
   startNativeAutoTracking,
 } from '@/lib/activityRecognition';
 import { isAndroid } from '@/lib/nativePlatform';
@@ -47,6 +50,7 @@ import {
   markLatestTripForPostDriveReview,
 } from '@/lib/postDriveReview';
 import { getBuildIntegrityInfo } from '@/lib/buildIntegrity';
+import { collectDiagnosticsCampaignState } from '@/lib/diagnosticsCampaignState';
 import {
   buildMotionSensorDiagnostics,
   requestMotionSensorPermission,
@@ -194,7 +198,10 @@ export default function Diagnostics() {
   const [permissionStatus, setPermissionStatus] = useState(null);
   const [nativeStatus, setNativeStatus] = useState(null);
   const [batteryStatus, setBatteryStatus] = useState(null);
-  const [nativeDiagnostics, setNativeDiagnostics] = useState({ enabled: false, events: [], watchdog: null });
+  const [nativeDiagnostics, setNativeDiagnostics] = useState(/** @type {Record<string, any>} */ ({
+    enabled: false, events: [], watchdog: null,
+    runtime: { platform: isAndroid() ? 'android' : 'web', probeState: 'loading', nativeBridgeAvailable: null },
+  }));
   const [webDiagnostics, setWebDiagnostics] = useState(() => getTrackingDiagnostics());
   const [activeTrip, setActiveTrip] = useState(() => activeTripStore.get());
   const [refreshing, setRefreshing] = useState(false);
@@ -203,6 +210,9 @@ export default function Diagnostics() {
   const [testDataNotice, setTestDataNotice] = useState('');
   const [performanceEntries, setPerformanceEntries] = useState([]);
   const [performanceHistoryReady, setPerformanceHistoryReady] = useState(false);
+  const [campaignState, setCampaignState] = useState(
+    /** @type {Record<string, any>} */ ({ state: 'loading' })
+  );
   const refreshGuard = useRef(null);
   refreshGuard.current ??= createLatestAsyncRequestGuard();
 
@@ -215,6 +225,10 @@ export default function Diagnostics() {
     trips,
     localTestTrips: storedTestTrips,
     unavailable: tripPageUnavailable,
+    completeness: tripPageCompleteness,
+    continuation: tripPageContinuation,
+    snapshot: tripPageSnapshot,
+    population: tripPopulation,
     ready: tripDataProfileLoaded,
     refetch: refetchPageData,
   } = useDiagnosticsPageData({
@@ -255,10 +269,15 @@ export default function Diagnostics() {
           logSystemFailure('diagnostics_battery_status', error);
           return null;
         }) : Promise.resolve(null),
-        isAndroid() ? getNativeDiagnostics().catch((error) => {
+        getNativeDiagnostics().catch((error) => {
           logSystemFailure('diagnostics_native_log', error);
-          return { enabled: false, events: [], watchdog: null };
-        }) : Promise.resolve({ enabled: false, events: [], watchdog: null }),
+          return {
+            enabled: false,
+            events: [],
+            watchdog: null,
+            runtime: classifyNativeDiagnosticsProbeFailure(error),
+          };
+        }),
       ]);
       setPermissionStatus(permissions);
       setNativeStatus(native);
@@ -300,7 +319,11 @@ export default function Diagnostics() {
   }), [permissionStatus, nativeStatus, batteryStatus, latestTrip]);
 
   const combinedEvents = useMemo(() => {
-    const nativeEvents = normalizeNativeDiagnosticEvents(nativeDiagnostics);
+    const nativeEvents = normalizeNativeDiagnosticEvents(nativeDiagnostics).map((event, index) => ({
+      ...event,
+      ...nativeEventAttribution(nativeDiagnostics.events?.[index]),
+      category: nativeWatchdogCategory(nativeDiagnostics.events?.[index]),
+    }));
     const webEvents = webDiagnostics.events || [];
     return [...nativeEvents, ...webEvents]
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
@@ -324,6 +347,43 @@ export default function Diagnostics() {
   );
   const buildIntegrity = useMemo(() => getBuildIntegrityInfo(), []);
   const tripDataProfile = useMemo(() => buildTripDataProfile(allTripSummaries), [allTripSummaries]);
+  const reportNativeDiagnostics = useMemo(() => ({
+    ...nativeDiagnostics,
+    serviceEnabled: nativeStatus?.enabled,
+    tripAuthority: tripPageSnapshot?.authority || 'unknown',
+  }), [nativeDiagnostics, nativeStatus?.enabled, tripPageSnapshot?.authority]);
+  const nativeCaptureStatusAvailable = nativeStatus != null;
+
+  useEffect(() => {
+    let cancelled = false;
+    setCampaignState({ state: 'loading' });
+    collectDiagnosticsCampaignState({
+      authority: tripPageSnapshot?.authority || 'unknown',
+      sourceSnapshot: tripPageSnapshot,
+      activeCapture: {
+        available: isAndroid() ? nativeCaptureStatusAvailable : true,
+        recordingActive: nativeStatus?.recordingActive === true || Boolean(activeTrip),
+        serviceEnabled: nativeStatus?.enabled,
+        checkpointState: nativeStatus?.activeTripCheckpoint?.state,
+        completedJournalCount: nativeStatus?.completedTripJournal?.entryCount
+          ?? nativeStatus?.completedTripsCount,
+      },
+    }).then((value) => {
+      if (!cancelled) setCampaignState(value);
+    }).catch(() => {
+      if (!cancelled) setCampaignState({ state: 'unavailable', reason: 'campaign_state_collection_failed' });
+    });
+    return () => { cancelled = true; };
+  }, [
+    tripPageSnapshot,
+    nativeCaptureStatusAvailable,
+    nativeStatus?.recordingActive,
+    nativeStatus?.enabled,
+    nativeStatus?.activeTripCheckpoint?.state,
+    nativeStatus?.completedTripJournal?.entryCount,
+    nativeStatus?.completedTripsCount,
+    activeTrip,
+  ]);
 
   useEffect(() => {
     // I-1: dataset fields are sent only once the trip query has resolved. On the
@@ -333,6 +393,7 @@ export default function Diagnostics() {
     // always sent.
     setPerformanceTriageContext({
       ...(tripDataProfileLoaded ? {
+        dataset_scope: 'bounded_window',
         trip_count: tripDataProfile.trip_count,
         completed_trip_count: tripDataProfile.completed_trip_count,
         total_distance_km: tripDataProfile.total_distance_km,
@@ -450,7 +511,17 @@ export default function Diagnostics() {
         trackingEvents={combinedEvents}
         settings={settings}
         buildInfo={buildIntegrity}
-        nativeWatchdog={nativeDiagnostics.watchdog}
+        nativeDiagnostics={reportNativeDiagnostics}
+        tripWindow={{
+          limit: 20,
+          hasMore: Boolean(tripPageContinuation),
+          populationComplete: tripDataProfileLoaded && !tripPageContinuation,
+          completeness: tripPageCompleteness,
+          snapshot: tripPageSnapshot,
+        }}
+        tripPopulation={tripPopulation}
+        campaignState={campaignState}
+        campaignStateReady={campaignState?.state !== 'loading' && nativeDiagnostics.runtime?.probeState !== 'loading'}
       />
 
       <section aria-label="Recovery compatibility snapshot" className="rounded-2xl border border-border bg-card p-4">

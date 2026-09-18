@@ -166,3 +166,49 @@ export const LEGAL_DISCLAIMER_ITEMS = [
     body: 'Except where law says otherwise, no app output is promised to be accurate, complete, available, secure, current, uninterrupted, error-free, or suitable for your situation. You are responsible for how you use the app, what data you store or share, and any decision made from app information.',
   },
 ];
+
+/**
+ * Concise, user-facing summaries of what materially changed in a notice version.
+ *
+ * Only reliably known metadata is recorded. Versions 1-8 predate this mechanism and their
+ * change history was never captured, so they are deliberately absent rather than invented.
+ * A version with no entry simply has no "what's changed" summary to show.
+ *
+ * Entries summarise what changed for the user. This must never become a second copy of the notice.
+ */
+export const LEGAL_NOTICE_CHANGELOG = Object.freeze({
+  9: Object.freeze({
+    summary: 'Current notice version.',
+    changes: Object.freeze([]),
+  }),
+});
+
+/**
+ * The substantive disclosure content, in a stable shape suitable for hashing.
+ *
+ * Included: every piece of text the user is asked to acknowledge.
+ * Excluded: styling, layout, component structure, rendering details, dates and timestamps.
+ *
+ * Changing any text reachable from here changes what the user is asked to acknowledge, so it
+ * requires raising LEGAL_NOTICE_ACK_VERSION. That includes spelling corrections: the
+ * acknowledgement binds the exact text presented. `npm run legal:version:check` enforces this,
+ * and `npm run legal:version` refuses to rebind an unchanged version to different content.
+ */
+export const canonicalLegalNoticeContent = () => ({
+  version: LEGAL_NOTICE_ACK_VERSION,
+  short: LEGAL_DISCLAIMER_SHORT,
+  summary: LEGAL_DISCLAIMER_SUMMARY,
+  intro: LEGAL_NOTICE_INTRO,
+  keyPoints: [...LEGAL_NOTICE_KEY_POINTS],
+  dataPractices: LEGAL_DATA_PRACTICES.map((entry) => ({
+    title: entry.title,
+    access: entry.access,
+    use: entry.use,
+    sharing: entry.sharing,
+  })),
+  items: LEGAL_DISCLAIMER_ITEMS.map((entry) => ({
+    group: entry.group,
+    title: entry.title,
+    body: entry.body,
+  })),
+});

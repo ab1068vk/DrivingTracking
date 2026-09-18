@@ -132,7 +132,7 @@ describe('app experience diagnostics', () => {
     expect(exported).not.toContain('trip-secret');
     expect(exported).not.toContain('private note');
     expect(exported).not.toContain('private.example');
-    expect(report.activity.recent_important_events[0].details).toEqual({ changed_keys: ['tracking_mode'] });
+    expect(report.evidence_scopes.retained_history.activity.recent_important_events[0].details).toEqual({ changed_keys: ['tracking_mode'] });
 
     const imported = parseAppExperienceReport(JSON.stringify({
       ...report,

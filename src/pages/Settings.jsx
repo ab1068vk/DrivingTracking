@@ -161,7 +161,8 @@ import {
   getProvisionalScoringConstants,
 } from '@/lib/scoringConstants';
 import { SCORE_ESTIMATE_NOTICE } from '@/lib/scoreDisplay';
-import { LEGAL_DISCLAIMER_SHORT, LEGAL_NOTICE_ACK_VERSION } from '@/lib/legalDisclaimers';
+import { LEGAL_DISCLAIMER_SHORT, LEGAL_NOTICE_ACK_VERSION, LEGAL_NOTICE_CHANGELOG } from '@/lib/legalDisclaimers';
+import { buildLegalAcknowledgementRecord, classifyLegalAcknowledgement, LEGAL_ACK_STATES, legalNoticeReviewRequired } from '@/lib/legalNoticeAcknowledgement';
 import { logSystemFailure, recordSystemEvent } from '@/lib/systemLog';
 import { verifyChain } from '@/lib/hashChainLog';
 import { setScreenCaptureAllowed } from '@/lib/screenSecurity';
@@ -1097,23 +1098,48 @@ export default function Settings() {
   const legalNoticeStatus = useMemo(() => {
     const acceptedVersion = Number(cfg.legal_notice_ack_version) || 0;
     const acceptedDate = formatLegalNoticeDate(cfg.legal_notice_acknowledged_at);
+    const state = classifyLegalAcknowledgement(cfg);
 
-    if (acceptedVersion >= LEGAL_NOTICE_ACK_VERSION) {
+    // Content-bound and legacy version-only acknowledgements are both accepted; the
+    // distinction is provenance, not validity, so it is not surfaced to ordinary users.
+    if (state === LEGAL_ACK_STATES.CONTENT_BOUND
+      || state === LEGAL_ACK_STATES.VERSIONED_LEGACY
+      || state === LEGAL_ACK_STATES.AHEAD_OF_BUILD) {
       return acceptedDate
         ? `Accepted ${acceptedDate} - Version ${acceptedVersion}`
         : `Accepted - Version ${acceptedVersion}`;
     }
 
-    if (acceptedVersion > 0) {
+    if (state === LEGAL_ACK_STATES.CONTENT_MISMATCH) {
+      return `Version ${acceptedVersion} was accepted, but this notice has since changed and needs review`;
+    }
+
+    if (state === LEGAL_ACK_STATES.OUTDATED) {
       return acceptedDate
         ? `Accepted ${acceptedDate} - Version ${acceptedVersion}; current version ${LEGAL_NOTICE_ACK_VERSION} needs review`
         : `Version ${acceptedVersion} accepted; current version ${LEGAL_NOTICE_ACK_VERSION} needs review`;
     }
 
-    return `Not yet accepted - Version ${LEGAL_NOTICE_ACK_VERSION}`;
-  }, [cfg.legal_notice_ack_version, cfg.legal_notice_acknowledged_at]);
+    if (state === LEGAL_ACK_STATES.MALFORMED) {
+      return `Acknowledgement record unreadable - Version ${LEGAL_NOTICE_ACK_VERSION} needs review`;
+    }
 
-  const legalNoticeNeedsReview = (Number(cfg.legal_notice_ack_version) || 0) < LEGAL_NOTICE_ACK_VERSION;
+    return `Not yet accepted - Version ${LEGAL_NOTICE_ACK_VERSION}`;
+  }, [cfg]);
+
+  const legalNoticeNeedsReview = legalNoticeReviewRequired(cfg);
+
+  /**
+   * Shown only when a genuine changelog entry describes material changes. Versions before this
+   * mechanism have no recorded history, so nothing is fabricated for them.
+   */
+  const legalNoticeChangeSummary = useMemo(() => {
+    if (!legalNoticeNeedsReview) return '';
+    const entry = LEGAL_NOTICE_CHANGELOG?.[LEGAL_NOTICE_ACK_VERSION];
+    const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+    if (!changes.length) return '';
+    return `What's changed in version ${LEGAL_NOTICE_ACK_VERSION}: ${changes.join(' ')}`;
+  }, [legalNoticeNeedsReview]);
 
   useEffect(() => {
     setOsrmEndpointDraft(cfg.osrm_map_matching_url || '');
@@ -1968,11 +1994,9 @@ export default function Settings() {
 
   const acknowledgeLegalNoticeReview = () => {
     if (legalNoticeNeedsReview) {
-      const acknowledgedAt = new Date().toISOString();
-      updateCfg({
-        legal_notice_ack_version: LEGAL_NOTICE_ACK_VERSION,
-        legal_notice_acknowledged_at: acknowledgedAt,
-      });
+      const record = buildLegalAcknowledgementRecord();
+      const acknowledgedAt = record.legal_notice_acknowledged_at;
+      updateCfg(record);
       recordSystemEvent('legal_notice_review_acknowledged', {
         notice_version: LEGAL_NOTICE_ACK_VERSION,
         acknowledged_at: acknowledgedAt,
@@ -5584,7 +5608,7 @@ export default function Settings() {
           <SettingRow
             icon={Shield}
             label="Legal, safety, data & privacy notice"
-            sublabel={`Same required notice shown on first launch and after notice updates. Review legal limits, safety responsibilities, consent, app-close tracking rules, speed-limit trust, data sharing, exports, backups, and privacy controls anytime. ${legalNoticeStatus}.`}
+            sublabel={`Same required notice shown on first launch and after notice updates. Review legal limits, safety responsibilities, consent, app-close tracking rules, speed-limit trust, data sharing, exports, backups, and privacy controls anytime. ${legalNoticeStatus}.${legalNoticeChangeSummary ? ` ${legalNoticeChangeSummary}` : ''}`}
             onClick={showPrivacyPolicy}
           >
             <div className="flex items-center gap-2">

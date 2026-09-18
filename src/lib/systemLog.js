@@ -381,7 +381,14 @@ export function recordSystemLog(event = {}) {
       : sanitizedDetails,
   };
 
-  recordHistoricalAppExperienceEvent(next);
+  recordHistoricalAppExperienceEvent({
+    ...next,
+    ...(event.attributionState === 'observed' ? {
+      attributionState: 'observed',
+      sessionId: event.sessionId,
+      buildScopeId: event.buildScopeId,
+    } : {}),
+  });
 
   try {
     getSystemHistoryStore().enqueue(next, {

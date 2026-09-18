@@ -637,6 +637,9 @@ export const DEFAULT_SETTINGS = {
   calibration_sharing_enabled: false,
   legal_notice_ack_version: 0,
   legal_notice_acknowledged_at: '',
+  // Identifies the exact disclosure content acknowledged. Empty on records written before
+  // content binding existed; those remain valid as legacy version-only acknowledgements.
+  legal_notice_ack_content_hash: '',
 };
 
 /**

@@ -1,9 +1,11 @@
 import { summarizePerformanceTriage } from '@/lib/performanceTriage';
 import { createDiagnosticsHistoryStore } from '@/lib/diagnosticsHistoryStore';
 import { exportP0Trace } from '@/lib/p0Probe';
+import { createDiagnosticsAttribution, evidenceScopeFor, getCurrentDiagnosticsAttribution, getCurrentDiagnosticsBuildMetadata } from '@/lib/diagnosticsIdentity';
+import { sanitizeCampaignExport } from '@/lib/diagnosticsCampaignSchema';
 
 export const APP_EXPERIENCE_REPORT_KIND = 'roadsage_app_experience_diagnostics';
-export const APP_EXPERIENCE_REPORT_VERSION = 1;
+export const APP_EXPERIENCE_REPORT_VERSION = 2;
 export const MAX_APP_EXPERIENCE_IMPORT_BYTES = 5 * 1024 * 1024;
 const IMPORTED_REPORTS_KEY = 'roadsage_imported_experience_reports_v1';
 const EXPERIENCE_EVENTS_KEY = 'roadsage_app_experience_events_v1';
@@ -13,6 +15,7 @@ const EXPERIENCE_EVENT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 let experienceHistoryStore = null;
 
 const finite = (value) => {
+  if (value == null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -52,20 +55,36 @@ const distanceBucket = (distanceKm) => {
   return '50_km_plus';
 };
 
-const safeMode = (trip = {}) => {
-  const value = String(trip.start_source || trip.tracking_mode || '').toLowerCase();
-  if (value.includes('auto') || value.includes('native') || value.includes('background')) return 'automatic';
-  if (value.includes('manual')) return 'manual';
-  return 'unknown';
+export const collectionModeForTrip = (trip = {}) => {
+  const source = String(trip.start_source || '').toLowerCase();
+  const mode = String(trip.tracking_mode || '').toLowerCase();
+  if (source === 'native_manual' || trip.native_manual_background === true) return 'native_manual';
+  if (source === 'native_auto') return 'native_automatic';
+  if (source === 'manual') return 'browser_manual';
+  if (source === 'auto') return 'browser_automatic';
+  if (mode === 'background_auto') return 'native_automatic';
+  if (mode === 'auto_detect') return 'browser_automatic';
+  if (mode === 'manual') return 'browser_manual';
+  return 'unknown_legacy';
+};
+
+export const replayEvidenceStateForTrip = (trip = {}) => {
+  if (trip.privacy_mode === 'summary_only') return 'privacy_excluded';
+  if (trip.route_data_expired_at) return 'expired';
+  if (trip.diagnostics_replay_representation === 'unavailable') return 'unavailable';
+  if (trip.route_replay_available === true) return 'present';
+  if (trip.projection_status === 'degraded') return 'unavailable';
+  if (trip.route_replay_available === false) return 'absent';
+  return 'legacy_unknown';
 };
 
 const anonymousTripShape = (trip = {}) => ({
   distance_km: round(Math.max(0, finite(trip.distance_km) || 0), 1),
   duration_minutes: Math.round(durationSecondsForTrip(trip) / 60),
   route_point_count: routePointCountForTrip(trip),
-  route_replay_available: trip.route_replay_available === true,
+  replay_evidence_state: replayEvidenceStateForTrip(trip),
   summary_only: trip.privacy_mode === 'summary_only',
-  collection_mode: safeMode(trip),
+  collection_mode: collectionModeForTrip(trip),
   advanced_evidence: Boolean(
     trip.sensor_fusion_summary ||
     trip.motion_sample_count ||
@@ -75,7 +94,7 @@ const anonymousTripShape = (trip = {}) => ({
   ),
 });
 
-export function buildTripDataProfile(trips = []) {
+export function buildTripDataProfile(trips = [], { window = {}, population = {} } = {}) {
   const completed = (Array.isArray(trips) ? trips : []).filter((trip) => trip?.status === 'completed');
   const shapes = completed.map(anonymousTripShape).sort((a, b) => (
     a.distance_km - b.distance_km || a.duration_minutes - b.duration_minutes || a.route_point_count - b.route_point_count
@@ -101,6 +120,8 @@ export function buildTripDataProfile(trips = []) {
       return sum;
     }
   }, 0);
+  const replayStates = ['present', 'absent', 'expired', 'privacy_excluded', 'legacy_unknown', 'unavailable'];
+  const collectionModes = ['native_automatic', 'native_manual', 'browser_automatic', 'browser_manual', 'unknown_legacy'];
 
   return {
     trip_count: (Array.isArray(trips) ? trips : []).length,
@@ -113,11 +134,45 @@ export function buildTripDataProfile(trips = []) {
     total_route_point_count: pointCounts.reduce((sum, value) => sum + value, 0),
     p95_route_point_count: Math.round(percentile(pointCounts, 0.95)),
     approximate_summary_bytes: serializedSize,
-    replayable_trip_count: shapes.filter((shape) => shape.route_replay_available).length,
+    scope: 'bounded_window',
+    window: {
+      limit: Math.max(0, Math.floor(finite(window.limit) || (Array.isArray(trips) ? trips.length : 0))),
+      row_count: (Array.isArray(trips) ? trips : []).length,
+      has_more: window.hasMore === true,
+      population_complete: window.populationComplete === true,
+      page_completeness: ['EXACT', 'PARTIAL'].includes(window.completeness) ? window.completeness : null,
+      source: {
+        authority: safeOperation(window.snapshot?.authority || 'unknown'),
+        generation: String(window.snapshot?.generation ?? '').slice(0, 180) || null,
+        revision: finite(window.snapshot?.revision),
+        query_id: safeOperation(window.snapshot?.queryId || ''),
+      },
+    },
+    population: {
+      available: population.available === true,
+      total_trip_count: population.available === true ? Math.max(0, Math.floor(finite(population.totalTripCount) || 0)) : null,
+      completed_trip_count: population.completedTripCount == null ? null : Math.max(0, Math.floor(finite(population.completedTripCount) || 0)),
+      completed_count_state: safeOperation(population.completedCountState || 'unavailable'),
+      reason: population.available === true ? null : safeOperation(population.reason || 'unavailable'),
+      source: {
+        authority: safeOperation(population.snapshot?.authority || 'unknown'),
+        generation: String(population.snapshot?.generation ?? '').slice(0, 180) || null,
+        revision: finite(population.snapshot?.revision),
+      },
+      matches_window_snapshot: population.available === true
+        && population.snapshot?.generation != null && window.snapshot?.generation != null
+        && population.snapshot?.revision != null && window.snapshot?.revision != null
+        && String(population.snapshot?.authority ?? '') === String(window.snapshot?.authority ?? '')
+        && String(population.snapshot?.generation ?? '') === String(window.snapshot?.generation ?? '')
+        && Number(population.snapshot?.revision) === Number(window.snapshot?.revision),
+    },
+    replayable_trip_count: shapes.filter((shape) => shape.replay_evidence_state === 'present').length,
     summary_only_trip_count: shapes.filter((shape) => shape.summary_only).length,
     advanced_evidence_trip_count: shapes.filter((shape) => shape.advanced_evidence).length,
-    automatic_trip_count: shapes.filter((shape) => shape.collection_mode === 'automatic').length,
-    manual_trip_count: shapes.filter((shape) => shape.collection_mode === 'manual').length,
+    automatic_trip_count: shapes.filter((shape) => shape.collection_mode.endsWith('_automatic')).length,
+    manual_trip_count: shapes.filter((shape) => shape.collection_mode.endsWith('_manual')).length,
+    replay_evidence_counts: Object.fromEntries(replayStates.map((state) => [state, shapes.filter((shape) => shape.replay_evidence_state === state).length])),
+    collection_mode_counts: Object.fromEntries(collectionModes.map((mode) => [mode, shapes.filter((shape) => shape.collection_mode === mode).length])),
     distance_buckets: distanceBuckets,
     anonymous_trip_shapes: shapes.slice(0, 2000),
   };
@@ -135,8 +190,20 @@ const eventGroups = {
   advanced_tracking: /(advanced|tracking|native|sensor|motion|obd|auto_start|auto_stop)/i,
 };
 
-const eventMatchesGroup = (key, pattern, searchable) => {
-  if (key === 'freezes_and_anrs' && /android_ui_stall_recovered/i.test(searchable)) return false;
+const isActualFailureEvent = (event = {}) => (
+  event.severity === 'error' || ['failure', 'crash'].includes(String(event.category || '').toLowerCase())
+);
+
+const eventMatchesGroup = (key, pattern, searchable, event) => {
+  if (key === 'crashes_and_failures') return isActualFailureEvent(event);
+  if (key === 'freezes_and_anrs') {
+    if (event.operation === 'android_ui_stall_recovered') return false;
+    return ['android_ui_stall', 'android_previous_session_interrupted'].includes(event.operation)
+      || (isActualFailureEvent(event) && pattern.test(searchable));
+  }
+  if (key === 'resource_pressure') return ['android_memory_pressure', 'android_low_memory', 'android_resource_pressure']
+    .includes(event.operation) || event.category === 'resource_pressure'
+    || (event.severity !== 'info' && pattern.test(searchable));
   return pattern.test(searchable);
 };
 
@@ -153,9 +220,12 @@ const safeOperation = (value) => String(value || 'app_event')
   .replace(/[^a-zA-Z0-9._:-]/g, '_')
   .slice(0, 140);
 
+const safeAttribution = (value) => value ? safeOperation(value) : '';
+
 const safeEventDetail = (details = {}) => {
   const allowedKeys = [
     'status', 'statusCode', 'duration_ms', 'result', 'count', 'trip_count', 'deleted_trip_count',
+    'window_row_count',
     'record_found', 'native', 'format', 'byte_count', 'log_count', 'requested_key_count',
     'persisted_matches_request', 'changed_keys', 'applied_keys', 'failed_keys', 'mode', 'source',
     'duration_ms', 'reason_code', 'reason_label', 'trim_level', 'critical', 'importance',
@@ -196,10 +266,12 @@ export function buildAppActivityProfile(events = []) {
       operation: safeOperation(event.operation || event.type),
       page: safePage(event.page),
       details: safeEventDetail(event.details || event),
+      sessionId: safeAttribution(event.sessionId || event.session_id),
+      buildScopeId: safeAttribution(event.buildScopeId || event.build_scope_id),
     }));
   const uniqueEvents = new Map();
   normalizedEvents.forEach((event) => {
-    const key = `${event.timestamp}:${event.operation}`;
+    const key = `${event.timestamp}:${event.operation}:${event.sessionId}:${event.buildScopeId}`;
     if (!uniqueEvents.has(key)) uniqueEvents.set(key, event);
   });
   const safeEvents = [...uniqueEvents.values()]
@@ -209,7 +281,7 @@ export function buildAppActivityProfile(events = []) {
   safeEvents.forEach((event) => {
     const searchable = `${event.operation} ${event.category}`;
     Object.entries(eventGroups).forEach(([key, pattern]) => {
-      if (eventMatchesGroup(key, pattern, searchable)) counts[key] += 1;
+      if (eventMatchesGroup(key, pattern, searchable, event)) counts[key] += 1;
     });
     operationCounts[event.operation] = (operationCounts[event.operation] || 0) + 1;
   });
@@ -258,6 +330,14 @@ export function buildPerformanceProfile(entries = []) {
   };
 }
 
+const entriesForScope = (entries, scope, current) => (Array.isArray(entries) ? entries : []).filter((entry) => {
+  const evidenceScope = evidenceScopeFor(entry, current);
+  if (scope === 'current_session') return evidenceScope === 'current_session';
+  if (scope === 'current_build') return evidenceScope === 'current_session' || evidenceScope === 'current_build';
+  if (scope === 'older_history') return evidenceScope === 'older_build' || evidenceScope === 'unattributed_history';
+  return true;
+});
+
 const healthFromProfiles = (performance, activity) => {
   const failures = activity?.counts?.crashes_and_failures || 0;
   const freezes = activity?.counts?.freezes_and_anrs || 0;
@@ -284,15 +364,37 @@ const healthFromProfiles = (performance, activity) => {
   return { score, status, headline };
 };
 
-export function buildRuntimeProfile(snapshot = null) {
-  if (!snapshot || typeof snapshot !== 'object') return { available: false };
+export function buildRuntimeProfile(input = null) {
+  const structured = input && typeof input === 'object'
+    && ('watchdog' in input || 'runtime' in input || 'probeState' in input);
+  const snapshot = structured ? input.watchdog : input;
+  const runtime = structured ? (input.runtime || {}) : {};
+  const platform = safeOperation(runtime.platform || input?.platform || 'unknown');
+  const probeState = safeOperation(runtime.probeState || input?.probeState || (snapshot ? 'success' : 'unavailable'));
+  const bridgeState = runtime.nativeBridgeAvailable === true
+    ? 'available'
+    : runtime.nativeBridgeAvailable === false
+      ? (probeState === 'not_applicable' ? 'not_applicable' : 'unavailable')
+      : 'unknown';
+  const base = {
+    available: Boolean(snapshot && typeof snapshot === 'object'),
+    available_means: 'watchdog_snapshot',
+    platform,
+    native_bridge_state: bridgeState,
+    probe_state: probeState,
+    probe_reason: safeAttribution(runtime.reasonCode || input?.probeReason) || null,
+    trip_authority: safeOperation(input?.tripAuthority || 'unknown'),
+    tracking_service_state: input?.serviceEnabled === true ? 'enabled' : input?.serviceEnabled === false ? 'disabled' : 'unknown',
+    watchdog_state: snapshot && typeof snapshot === 'object' ? 'available' : 'not_returned',
+  };
+  if (!snapshot || typeof snapshot !== 'object') return base;
   const numericKeys = [
     'memory_available_bytes', 'memory_total_bytes', 'memory_threshold_bytes',
     'heap_used_bytes', 'heap_max_bytes', 'pss_kb', 'storage_usable_bytes',
     'storage_free_bytes', 'storage_total_bytes', 'thermal_status',
     'battery_temperature_c', 'last_main_heartbeat_age_ms', 'last_heartbeat_at',
   ];
-  const profile = { available: true };
+  const profile = { ...base, available: true };
   numericKeys.forEach((key) => {
     const value = finite(snapshot[key]);
     if (value != null) profile[key] = Math.max(0, value);
@@ -313,13 +415,30 @@ export function buildAppExperienceReport({
   settings = {},
   buildInfo = {},
   nativeWatchdog = null,
+  nativeDiagnostics = null,
+  tripWindow = {},
+  tripPopulation = {},
+  campaignState = {},
   includeP0Raw = false,
 } = {}) {
-  const data = buildTripDataProfile(trips);
-  const performance = buildPerformanceProfile(performanceEntries);
-  const activity = buildAppActivityProfile(systemEvents);
-  // The raw P0 section is opt-in. Without it the report is byte-identical to
-  // the pre-P0 export.
+  const processAttribution = getCurrentDiagnosticsAttribution();
+  const nativeBuild = nativeDiagnostics?.runtime?.build || getCurrentDiagnosticsBuildMetadata() || {};
+  const current = createDiagnosticsAttribution({
+    sessionId: processAttribution.sessionId,
+    nativeSessionId: nativeDiagnostics?.runtime?.processSessionId || processAttribution.nativeSessionId,
+    buildScopeId: nativeBuild.artifactId || processAttribution.buildScopeId,
+  });
+  const data = buildTripDataProfile(trips, { window: tripWindow, population: tripPopulation });
+  const currentSessionPerformance = buildPerformanceProfile(entriesForScope(performanceEntries, 'current_session', current));
+  const currentBuildPerformance = buildPerformanceProfile(entriesForScope(performanceEntries, 'current_build', current));
+  const retainedPerformance = buildPerformanceProfile(performanceEntries);
+  const olderPerformance = buildPerformanceProfile(entriesForScope(performanceEntries, 'older_history', current));
+  const currentSessionActivity = buildAppActivityProfile(entriesForScope(systemEvents, 'current_session', current));
+  const currentBuildActivity = buildAppActivityProfile(entriesForScope(systemEvents, 'current_build', current));
+  const retainedActivity = buildAppActivityProfile(systemEvents);
+  const olderActivity = buildAppActivityProfile(entriesForScope(systemEvents, 'older_history', current));
+  const runtimeInput = nativeDiagnostics || nativeWatchdog;
+  // The raw P0 section remains independently opt-in.
   const p0 = includeP0Raw ? exportP0Trace() : null;
   return {
     ...(p0 ? { p0 } : {}),
@@ -337,7 +456,16 @@ export function buildAppExperienceReport({
       anonymous_trip_shapes_are_rounded: true,
     },
     app: {
-      version: String(import.meta.env?.VITE_APP_VERSION || '1.0.0').slice(0, 40),
+      version: String(nativeBuild.versionName || import.meta.env?.VITE_APP_VERSION || '1.0.0').slice(0, 40),
+      version_name: String(nativeBuild.versionName || import.meta.env?.VITE_APP_VERSION || '1.0.0').slice(0, 40),
+      version_code: finite(nativeBuild.versionCode),
+      platform: safeOperation(nativeDiagnostics?.runtime?.platform || 'web'),
+      build_variant: safeOperation([nativeBuild.flavor, nativeBuild.buildType].filter(Boolean).join(':') || 'web'),
+      artifact_id: String(nativeBuild.artifactId || buildInfo?.sourceId || '').slice(0, 220),
+      artifact_identity_state: nativeBuild.artifactId ? 'complete_packaged_inputs' : buildInfo?.sourceId ? 'source_inputs_only' : 'web_bundle_only',
+      build_source_id: String(nativeBuild.sourceId || buildInfo?.sourceId || '').slice(0, 180),
+      web_bundle_hash: String(buildInfo?.buildHash || '').slice(0, 128),
+      web_bundle_hash_algorithm: safeOperation(buildInfo?.algorithm || ''),
       build_hash: String(buildInfo?.buildHash || '').slice(0, 128),
       experience_mode: settings?.experience_mode === 'tracking' ? 'tracking' : 'coaching',
       tracking_mode: settings?.tracking_paused === true
@@ -346,16 +474,35 @@ export function buildAppExperienceReport({
           ? settings.tracking_mode
           : 'manual',
     },
-    health: healthFromProfiles(performance, activity),
+    attribution: {
+      current_session_id: current.sessionId,
+      current_native_process_session_id: current.nativeSessionId || null,
+      current_build_scope_id: current.buildScopeId,
+      current_build_scope_kind: nativeBuild.artifactId ? 'complete_artifact' : buildInfo?.sourceId ? 'source_inputs_only' : 'web_bundle',
+      retained_history_window_days: 90,
+    },
+    health: healthFromProfiles(currentSessionPerformance, currentSessionActivity),
+    health_scopes: {
+      current_session: healthFromProfiles(currentSessionPerformance, currentSessionActivity),
+      current_build: healthFromProfiles(currentBuildPerformance, currentBuildActivity),
+      retained_history: healthFromProfiles(retainedPerformance, retainedActivity),
+    },
     data,
-    performance,
-    activity,
-    runtime: buildRuntimeProfile(nativeWatchdog),
+    performance: currentSessionPerformance,
+    activity: currentSessionActivity,
+    evidence_scopes: {
+      current_session: { performance: currentSessionPerformance, activity: currentSessionActivity },
+      current_build: { performance: currentBuildPerformance, activity: currentBuildActivity },
+      older_history: { performance: olderPerformance, activity: olderActivity },
+      retained_history: { performance: retainedPerformance, activity: retainedActivity },
+    },
+    runtime: buildRuntimeProfile(runtimeInput),
+    campaign_state: sanitizeCampaignExport(campaignState),
   };
 }
 
 const sanitizeImportedReport = (report) => {
-  const regenerated = {
+  const regenerated = /** @type {Record<string, any>} */ ({
     report_kind: APP_EXPERIENCE_REPORT_KIND,
     schema_version: APP_EXPERIENCE_REPORT_VERSION,
     generated_at: Number.isFinite(new Date(report.generated_at).getTime())
@@ -364,6 +511,14 @@ const sanitizeImportedReport = (report) => {
     privacy: report.privacy && typeof report.privacy === 'object' ? report.privacy : {},
     app: {
       version: String(report.app?.version || '').slice(0, 40),
+      version_name: safeAttribution(report.app?.version_name || report.app?.version),
+      version_code: finite(report.app?.version_code),
+      platform: safeAttribution(report.app?.platform) || 'unknown',
+      build_variant: safeAttribution(report.app?.build_variant),
+      artifact_id: String(report.app?.artifact_id || '').replace(/[^a-zA-Z0-9._:-]/g, '_').slice(0, 220),
+      artifact_identity_state: safeAttribution(report.app?.artifact_identity_state) || 'historical_unknown',
+      build_source_id: String(report.app?.build_source_id || '').replace(/[^a-zA-Z0-9._:-]/g, '_').slice(0, 180),
+      web_bundle_hash: String(report.app?.web_bundle_hash || '').replace(/[^a-fA-F0-9]/g, '').slice(0, 128),
       build_hash: String(report.app?.build_hash || '').replace(/[^a-fA-F0-9]/g, '').slice(0, 128),
       experience_mode: report.app?.experience_mode === 'tracking' ? 'tracking' : 'coaching',
       tracking_mode: ['manual', 'auto_detect', 'background_auto', 'paused'].includes(report.app?.tracking_mode)
@@ -378,8 +533,20 @@ const sanitizeImportedReport = (report) => {
     data: buildTripDataProfile([]),
     performance: buildPerformanceProfile([]),
     activity: buildAppActivityProfile([]),
-    runtime: buildRuntimeProfile(report.runtime),
-  };
+    runtime: buildRuntimeProfile({
+      watchdog: report.runtime?.available === true ? report.runtime : null,
+      runtime: {
+        platform: report.runtime?.platform || 'unknown',
+        nativeBridgeAvailable: report.runtime?.native_bridge_state === 'available' ? true
+          : ['not_applicable', 'unavailable'].includes(report.runtime?.native_bridge_state) ? false : null,
+        probeState: report.runtime?.probe_state || 'historical_unknown',
+        reasonCode: report.runtime?.probe_reason,
+      },
+      tripAuthority: report.runtime?.trip_authority,
+      serviceEnabled: report.runtime?.tracking_service_state === 'enabled' ? true
+        : report.runtime?.tracking_service_state === 'disabled' ? false : null,
+    }),
+  });
   const numericDataKeys = Object.keys(regenerated.data).filter((key) => typeof regenerated.data[key] === 'number');
   numericDataKeys.forEach((key) => {
     regenerated.data[key] = Math.max(0, finite(report.data?.[key]) || 0);
@@ -411,6 +578,55 @@ const sanitizeImportedReport = (report) => {
   )));
   regenerated.activity.top_operations = [];
   regenerated.activity.recent_important_events = [];
+  if (Number(report.schema_version) === APP_EXPERIENCE_REPORT_VERSION) {
+    const safeWindow = buildTripDataProfile([], {
+      window: {
+        limit: report.data?.window?.limit,
+        hasMore: report.data?.window?.has_more === true,
+        populationComplete: report.data?.window?.population_complete === true,
+        completeness: report.data?.window?.page_completeness,
+        snapshot: {
+          authority: report.data?.window?.source?.authority,
+          generation: report.data?.window?.source?.generation,
+          revision: report.data?.window?.source?.revision,
+          queryId: report.data?.window?.source?.query_id,
+        },
+      },
+      population: {
+        available: report.data?.population?.available === true,
+        totalTripCount: report.data?.population?.total_trip_count,
+        completedTripCount: report.data?.population?.completed_trip_count,
+        completedCountState: report.data?.population?.completed_count_state,
+        reason: report.data?.population?.reason,
+        snapshot: report.data?.population?.source,
+      },
+    });
+    regenerated.data.window = { ...safeWindow.window, row_count: regenerated.data.trip_count };
+    regenerated.data.population = safeWindow.population;
+    regenerated.attribution = {
+      current_session_id: safeAttribution(report.attribution?.current_session_id),
+      current_native_process_session_id: safeAttribution(report.attribution?.current_native_process_session_id) || null,
+      current_build_scope_id: String(report.attribution?.current_build_scope_id || '').replace(/[^a-zA-Z0-9._:-]/g, '_').slice(0, 180),
+      current_build_scope_kind: safeAttribution(report.attribution?.current_build_scope_kind),
+      retained_history_window_days: 90,
+    };
+    regenerated.campaign_state = sanitizeCampaignExport(report.campaign_state);
+    regenerated.evidence_scopes = Object.fromEntries(
+      ['current_session', 'current_build', 'older_history', 'retained_history'].map((scope) => {
+        const safe = sanitizeImportedReport({
+          performance: report.evidence_scopes?.[scope]?.performance,
+          activity: report.evidence_scopes?.[scope]?.activity,
+        });
+        return [scope, { performance: safe.performance, activity: safe.activity }];
+      })
+    );
+    regenerated.health_scopes = Object.fromEntries(
+      ['current_session', 'current_build', 'retained_history'].map((scope) => [scope,
+        healthFromProfiles(regenerated.evidence_scopes[scope].performance, regenerated.evidence_scopes[scope].activity)])
+    );
+  } else {
+    regenerated.data.scope = 'historical_unscoped_report';
+  }
   return regenerated;
 };
 
@@ -424,7 +640,7 @@ export function parseAppExperienceReport(text) {
     throw new Error('This diagnostics file is not valid JSON.');
   }
   if (parsed?.report_kind !== APP_EXPERIENCE_REPORT_KIND) throw new Error('This is not a Road Sage app-experience diagnostics file.');
-  if (Number(parsed?.schema_version) !== APP_EXPERIENCE_REPORT_VERSION) throw new Error('This diagnostics version is not supported yet.');
+  if (![1, APP_EXPERIENCE_REPORT_VERSION].includes(Number(parsed?.schema_version))) throw new Error('This diagnostics version is not supported yet.');
   return sanitizeImportedReport(parsed);
 }
 
@@ -444,6 +660,8 @@ const mapExperienceEvent = (event) => ({
   operation: safeOperation(event.operation),
   page: safePage(event.page),
   details: safeEventDetail(event.details),
+  sessionId: safeAttribution(event.sessionId || event.session_id),
+  buildScopeId: safeAttribution(event.buildScopeId || event.build_scope_id),
 });
 
 const getExperienceHistoryStore = () => {
@@ -488,6 +706,8 @@ export async function getHistoricalAppExperienceEvents(nowMs = Date.now()) {
 }
 
 export function recordHistoricalAppExperienceEvent(event = {}) {
+  const attribution = getCurrentDiagnosticsAttribution();
+  const observedAttribution = event.attributionState === 'observed';
   const safe = {
     timestamp: Number.isFinite(new Date(event.timestamp).getTime())
       ? new Date(event.timestamp).toISOString()
@@ -498,6 +718,8 @@ export function recordHistoricalAppExperienceEvent(event = {}) {
     operation: safeOperation(event.operation || event.type),
     page: safePage(event.page),
     details: safeEventDetail(event.details || event),
+    sessionId: safeAttribution(event.sessionId || event.session_id || (observedAttribution ? '' : attribution.sessionId)),
+    buildScopeId: safeAttribution(event.buildScopeId || event.build_scope_id || (observedAttribution ? '' : attribution.buildScopeId)),
   };
   if (safe.category === 'user_action' || /^user_(input|focusin|focusout|keydown|copy|cut|paste|click)$/.test(safe.operation)) return null;
   try {

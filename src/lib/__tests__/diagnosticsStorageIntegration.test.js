@@ -441,6 +441,7 @@ describe('performance and app-experience storage integration', () => {
     expect(rows[0].timestamp).toBe(new Date(NOW - DAY).toISOString());
     expect(Object.keys(rows[0])).toEqual([
       'timestamp', 'severity', 'category', 'source', 'operation', 'page', 'details',
+      'sessionId', 'buildScopeId',
     ]);
     const expiry = fake.getIndexEntries(DB_NAME, EVENTS_STORE, 'by_kind_expiry')
       .filter(({ key }) => key[0] === 'app_experience');
