@@ -27,6 +27,25 @@ export const DIAGNOSTICS_PAGE_ROWS = 20;
 /** DEV-only: the window the synthetic-test-trip cleanup scans. */
 export const DIAGNOSTICS_TEST_TRIP_ROWS = 200;
 
+/**
+ * The population a caller gets before the composition has produced one.
+ *
+ * Both authorities' `readDiagnosticsTripPopulation` answer with the same shape —
+ * `{available: false, reason}` when they cannot count, never `null` — so the
+ * not-yet-loaded state has to answer in that shape too. Returning `null` here
+ * published a shape no producer writes, and every consumer reading
+ * `population.available` threw on it.
+ *
+ * It reports unavailable with a reason, and carries **no** `totalTripCount`: a
+ * count that has not been read must not be invented, and "pending" must not be
+ * presented as "zero trips".
+ */
+export const DIAGNOSTICS_POPULATION_NOT_LOADED = Object.freeze({
+  available: false,
+  reason: 'population_not_loaded',
+  snapshot: null,
+});
+
 const diagnosticsSummary = (row) => {
   const summary = buildTripSummary(row);
   if (!Object.prototype.hasOwnProperty.call(row || {}, 'route_replay_available')
@@ -93,7 +112,7 @@ export function useDiagnosticsPageData(options = {}) {
   const settled = query.data;
   const data = (settled && Array.isArray(settled.rows))
     ? settled
-    : { rows: [], localTestTrips: [], unavailable: null, completeness: null, continuation: null, snapshot: null, population: null };
+    : { rows: [], localTestTrips: [], unavailable: null, completeness: null, continuation: null, snapshot: null, population: DIAGNOSTICS_POPULATION_NOT_LOADED };
 
   return {
     trips: data.rows,
@@ -102,7 +121,9 @@ export function useDiagnosticsPageData(options = {}) {
     completeness: data.completeness,
     continuation: data.continuation,
     snapshot: data.snapshot,
-    population: data.population,
+    // Upholds the contract above against a cached payload that has rows but a
+    // population from an older shape.
+    population: data.population ?? DIAGNOSTICS_POPULATION_NOT_LOADED,
     // `isSuccess` alone would report success for a typed unavailable result, so
     // readiness means "the composition settled **and** produced rows".
     ready: query.isSuccess && !data.unavailable,

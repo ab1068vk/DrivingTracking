@@ -94,7 +94,13 @@ const anonymousTripShape = (trip = {}) => ({
   ),
 });
 
-export function buildTripDataProfile(trips = [], { window = {}, population = {} } = {}) {
+export function buildTripDataProfile(trips = [], { window: windowInput, population: populationInput } = {}) {
+  // A default parameter only covers `undefined`, so an explicit `null` reached
+  // `population.available` and threw. Absent and null both mean "no window /
+  // population was supplied"; neither may crash the report, and neither
+  // fabricates a count — `available` stays false and the counts stay null.
+  const window = windowInput ?? {};
+  const population = populationInput ?? {};
   const completed = (Array.isArray(trips) ? trips : []).filter((trip) => trip?.status === 'completed');
   const shapes = completed.map(anonymousTripShape).sort((a, b) => (
     a.distance_km - b.distance_km || a.duration_minutes - b.duration_minutes || a.route_point_count - b.route_point_count
