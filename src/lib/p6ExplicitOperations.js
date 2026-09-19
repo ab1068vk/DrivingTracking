@@ -1,6 +1,18 @@
 import { getJson, setJson } from '@/lib/mobileStorage';
 import { isAndroid } from '@/lib/nativePlatform';
 import { nativeTripArchive } from '@/lib/nativeTripArchive';
+
+/**
+ * Which P6 implementation owns this process's trips.
+ *
+ * Mirrors the lifecycle turns: the explicit E1-E4 operations must follow the
+ * **authority**, not the platform. On Android under browser authority the
+ * trips are in IndexedDB, so dispatching on `isAndroid()` alone ran the native
+ * repair against an archive holding no trips — which is why the user-facing
+ * "Finish lifetime totals" action could run to completion and still leave the
+ * lifetime aggregate unavailable.
+ */
+const nativeDerivedStateSelected = () => isAndroid() && import.meta.env.VITE_P35_NATIVE_AUTHORITY === 'true';
 import {
   P6_EXPLICIT_OPERATION_STATES,
   P6_EXPLICIT_OPERATION_TYPES,
@@ -241,7 +253,7 @@ const explicitTripBuildTurn = async (record, { includeRoad = false } = {}) => {
   const phase = record.cursor?.phase || 'DISCOVER';
   if (phase === 'RESET_ANALYTICS') {
     let outcome;
-    if (isAndroid()) {
+    if (nativeDerivedStateSelected()) {
       outcome = await nativeTripArchive.resetP6AnalyticsDerived(record.cursor?.resetPhase || 'CONTRIBUTIONS');
     } else {
       const { resetP6BrowserAnalyticsDerivedTurn } = await import('@/lib/p6TripDerivedState');
@@ -260,7 +272,7 @@ const explicitTripBuildTurn = async (record, { includeRoad = false } = {}) => {
     let rows;
     let nextCursor;
     let queued;
-    if (isAndroid()) {
+    if (nativeDerivedStateSelected()) {
       const page = await nativeTripArchive.queryHistoryPage({
         sort: '-start_time', status: 'completed', maxItems: 32, maxBytes: 256 * 1024,
         ...(record.cursor?.historyCursor ? { cursor: record.cursor.historyCursor } : {}),
@@ -290,7 +302,7 @@ const explicitTripBuildTurn = async (record, { includeRoad = false } = {}) => {
     };
   }
   if (phase === 'DRAIN_TRIPS') {
-    if (isAndroid()) {
+    if (nativeDerivedStateSelected()) {
       const outcome = await nativeTripArchive.stepP6TripDerived();
       if (outcome.state !== 'IDLE') return {
         itemsWorked: outcome.itemsWorked, bytesWorked: outcome.bytesWorked,
@@ -320,7 +332,7 @@ const explicitTripBuildTurn = async (record, { includeRoad = false } = {}) => {
       cursor: includeRoad ? { phase: 'DRAIN_ROAD' } : null,
       done: finalized.complete === true && !includeRoad };
   }
-  if (isAndroid()) {
+  if (nativeDerivedStateSelected()) {
     const { stepP6NativeRoadMemoryUpdate } = await import('@/lib/p6RoadMemoryState');
     const outcome = await stepP6NativeRoadMemoryUpdate();
     if (outcome.state !== 'IDLE') return {
@@ -390,7 +402,7 @@ export async function runKnownP6ExplicitOperationTurn(id, options = {}) {
           },
         };
       }
-      const outcome = isAndroid()
+      const outcome = nativeDerivedStateSelected()
         ? await selection.stepP6NativeAffectedTripSelection()
         : await selection.stepP6AffectedTripSelection();
       return { itemsWorked: outcome.itemsWorked, bytesWorked: outcome.bytesWorked,

@@ -12,6 +12,16 @@ import {
   P6_TRIP_SOURCE_STORE,
 } from '@/lib/localTripRepository';
 import { P6_DOMAIN_KEYS, P6_JOB_KEYS, P6_READINESS_STATES, normalizeP6Readiness } from '@/lib/p6Contracts';
+
+/**
+ * Which P6 implementation owns this process's trips.
+ *
+ * P6 follows the **authority**, not the platform: on Android under browser
+ * authority the trips live in IndexedDB, so routing on `isAndroid()` alone
+ * reaches a native archive that holds none of them.
+ */
+const nativeDerivedStateSelected = () => isAndroid() && import.meta.env.VITE_P35_NATIVE_AUTHORITY === 'true';
+
 import { P7_PUBLIC_PAGE_LIMIT } from '@/lib/queryContracts/envelope';
 import { decodeP6PointBlock, encodeP6PointBlock } from '@/lib/p6PointBlockCodec';
 import {
@@ -561,7 +571,7 @@ export async function setP6TripDomainReadiness(value) {
 
 export async function invalidateP6AnalyticsForSettings(reason = 'SETTINGS_OR_VEHICLE_CHANGED') {
   const { settingsVersion } = await readAnalyticsSettingsSnapshot();
-  if (isAndroid()) {
+  if (nativeDerivedStateSelected()) {
     const result = await nativeTripArchive.invalidateP6AnalyticsForSettings(settingsVersion, reason);
     const { admitP6ReviewedWork } = await import('@/lib/appLifecycleWork');
     admitP6ReviewedWork(P6_JOB_KEYS.TRIP_DERIVED_UPDATES, { wake: { type: 'settings', key: settingsVersion } });
@@ -896,7 +906,7 @@ export async function createP6AffectedTripSelectionRequest({
 } = {}) {
   return withDurableKeyPublication(async () => {
     const requests = [];
-    if (isAndroid()) {
+    if (nativeDerivedStateSelected()) {
       const groupId = String(continuation?.groupId || requestId());
       let pageOrdinal = 0;
       for (let descriptorIndex = 0; descriptorIndex < descriptors.length; descriptorIndex += 1) {
@@ -1080,7 +1090,7 @@ async function revokeP6GeometryReadiness(readiness, storageOutcome) {
 }
 
 export async function queryP6GeometryPreviewPage({ cursor = '', maxTrips = 40 } = {}) {
-  if (isAndroid()) {
+  if (nativeDerivedStateSelected()) {
     const page = await nativeTripArchive.queryP6GeometryPreviewPage(cursor, maxTrips);
     // A named reason is a demotion of a head that had claimed coverage, so the
     // retired monolithic index is not the steady state the caller falls back
@@ -1472,7 +1482,7 @@ const readRecentAnalyticsRows = async ({ lower = null, upper = null, limit = nul
 
 /** Revision-exact D1 facade. Returns null until the all-history D1 head is verified. */
 export async function readP6AchievementStats({ now = Date.now() } = {}) {
-  if (isAndroid()) {
+  if (nativeDerivedStateSelected()) {
     const result = await nativeTripArchive.queryP6AchievementStats(now);
     if (result?.available !== true || result?.state !== P6_READINESS_STATES.VERIFIED) return null;
     const { available: _available, state: _state, ...stats } = result;
@@ -2344,7 +2354,7 @@ export async function queryP6GeometryByIds(ids = [], options = {}) {
     Math.min(P6_GEOMETRY_PREVIEW_MAX_POINTS, Number(options.maxPoints) || P6_GEOMETRY_PREVIEW_MAX_POINTS)
   );
 
-  if (isAndroid()) {
+  if (nativeDerivedStateSelected()) {
     // The native D2 reader selects manifests by their own key
     // (`subject_id > ? ORDER BY subject_id`), so hydrating a fixed,
     // chronologically-selected id page would mean paging the whole manifest

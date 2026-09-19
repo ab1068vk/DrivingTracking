@@ -51,9 +51,14 @@ const corridor = (kilometres) => Array.from(
 
 describe('P6-V22 bridge observer: more history is more turns, not wider turns', () => {
   beforeEach(() => {
+    // P6 routes on the authority, not the platform. This suite observes the
+    // *native bridge*, so it must declare native authority as well as Android;
+    // stubbing `isAndroid` alone selects the browser implementation, which
+    // never crosses the bridge these assertions measure.
+    vi.stubEnv('VITE_P35_NATIVE_AUTHORITY', 'true');
     bridge.calls = []; bridge.pages = []; bridge.accepted = new Map(); bridge.failCreateAt = null;
   });
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
 
   it('splits a growing corridor into more bounded bridge requests of the same shape', async () => {
     const measure = async (kilometres) => {

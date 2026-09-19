@@ -8,6 +8,16 @@ import {
 } from '@/lib/speedKnowledgeRepository';
 import { withDurableKeyPublication } from '@/lib/browserKeyReferences';
 import { openP6TripDerivedDatabase, P6_TRIP_DERIVED_STORES } from '@/lib/localTripRepository';
+
+/**
+ * Which P6 implementation owns this process's trips.
+ *
+ * P6 follows the **authority**, not the platform: on Android under browser
+ * authority the trips live in IndexedDB, so routing on `isAndroid()` alone
+ * reaches a native archive that holds none of them.
+ */
+const nativeDerivedStateSelected = () => isAndroid() && import.meta.env.VITE_P35_NATIVE_AUTHORITY === 'true';
+
 import { decryptSensitiveValue, encryptSensitiveValue } from '@/lib/securePayloadCrypto';
 import { requireBrowserP6DerivedStorage } from '@/lib/p6DerivedStorage';
 import { P6_DOMAIN_KEYS, P6_READINESS_STATES } from '@/lib/p6Contracts';
@@ -1091,7 +1101,7 @@ export async function stepP6NativeRoadMemoryUpdate() {
 }
 
 export async function stepP6ComponentRepair() {
-  const native = isAndroid();
+  const native = nativeDerivedStateSelected();
   const outcome = native
     ? await nativeTripArchive.stepP6ComponentRepair()
     : await stepP6BrowserComponentRepair();

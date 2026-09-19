@@ -1000,6 +1000,18 @@ export function createP4LifecycleWorkRuntime({
 }
 
 const nativeAuthorityEnabled = import.meta.env.VITE_P35_NATIVE_AUTHORITY === 'true';
+
+/**
+ * Which P6 derived-state implementation owns this process's trips.
+ *
+ * P6 must follow the **authority**, not the platform. On Android with browser
+ * authority the trips live in IndexedDB, so routing these turns on
+ * `isAndroid()` alone drove the native archive stepper against an archive that
+ * holds no trips: the IndexedDB work queue never drained, D1-D4 stayed DIRTY,
+ * and every owner gated on D1 readiness (the Q4 lifetime aggregate included)
+ * stayed permanently unavailable.
+ */
+const nativeDerivedStateSelected = () => isAndroid() && nativeAuthorityEnabled;
 const privacyDebtListeners = new Set();
 const productionRetentionTurn = createP5RawGpsRetentionAdapter({
   archive: nativeTripArchive,
@@ -1042,7 +1054,7 @@ const productionRuntime = createP4LifecycleWorkRuntime({
   runP5IntegrityTurn: () => nativeTripArchive.stepP5Integrity(),
   runP5ResidueGcTurn: () => nativeTripArchive.stepP5ResidueGc(),
   runP6TripDerivedTurn: async () => {
-    if (isAndroid()) return nativeTripArchive.stepP6TripDerived();
+    if (nativeDerivedStateSelected()) return nativeTripArchive.stepP6TripDerived();
     const { stepP6BrowserTripDerivedUpdate } = await import('@/lib/p6TripDerivedState');
     return stepP6BrowserTripDerivedUpdate();
   },
@@ -1053,14 +1065,14 @@ const productionRuntime = createP4LifecycleWorkRuntime({
         reason: 'ROAD_MEMORY_LEARNING_DISABLED' };
     }
     const road = await import('@/lib/p6RoadMemoryState');
-    const outcome = isAndroid()
+    const outcome = nativeDerivedStateSelected()
       ? await road.stepP6NativeRoadMemoryUpdate()
       : await road.stepP6RoadMemoryUpdate();
     return outcome?.state === 'IDLE' ? road.stepP6ComponentRepair() : outcome;
   },
   runP6AffectedSelectionTurn: async () => {
     const selection = await import('@/lib/p6TripDerivedState');
-    if (isAndroid()) return selection.stepP6NativeAffectedTripSelection();
+    if (nativeDerivedStateSelected()) return selection.stepP6NativeAffectedTripSelection();
     return selection.stepP6AffectedTripSelection();
   },
   onJournalItems: async (result) => {
