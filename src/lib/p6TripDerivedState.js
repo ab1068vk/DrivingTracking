@@ -413,6 +413,42 @@ const hashP6Source = async (value) => {
 
 const P6_ANALYTICS_SETTINGS_REPAIR_KEY = 'analytics-settings-repair';
 
+/**
+ * Settings the analytics version must ignore.
+ *
+ * `settings` mixes durable user preferences with observed runtime status. The
+ * status fields change with no user action — `rasp_checked_at` is rewritten on
+ * *every launch* — so hashing the whole object made the analytics
+ * settings-version unstable, and `invalidateP6AnalyticsForSettings` demoted
+ * `D1_ANALYTICS:all` to REBUILD_REQUIRED on every launch. Because that state
+ * clears only when an explicit repair completes against a *matching* version,
+ * the match could never hold: derived analytics were permanently unavailable
+ * and every repair was undone by the next launch.
+ *
+ * Consent and acknowledgement timestamps are deliberately **not** listed here.
+ * They record real user decisions and changing one should invalidate analytics.
+ */
+const ANALYTICS_VOLATILE_SETTINGS_KEYS = new Set([
+  // Device integrity telemetry, rewritten every launch.
+  'rasp_checked_at', 'rasp_secure', 'rasp_threats', 'rasp_native',
+  // OSRM reachability probe results.
+  'osrm_health_status', 'osrm_last_health_checked_at',
+  'osrm_last_health_error', 'osrm_last_reachable_at',
+  // Native privacy-zone sync progress. The zones themselves still count.
+  'privacy_zones_native_sync_status', 'privacy_zones_native_sync_failed_at',
+  'privacy_zones_native_sync_zone_count',
+]);
+
+/**
+ * The analytics-relevant projection of settings, with a stable key order so the
+ * version depends on values rather than on property insertion order.
+ */
+const analyticsSettingsProjection = (settings) => Object.fromEntries(
+  Object.entries(settings || {})
+    .filter(([key]) => !ANALYTICS_VOLATILE_SETTINGS_KEYS.has(key))
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+);
+
 const readAnalyticsSettingsSnapshot = async () => {
   const [{ localSettings }, { localVehicleRepository }] = await Promise.all([
     import('@/lib/trackingStore'),
@@ -423,8 +459,21 @@ const readAnalyticsSettingsSnapshot = async () => {
   // authority has to be the complete collection: a 500-row prefix silently made
   // a beyond-prefix vehicle unavailable and zeroed its carbon contribution.
   const vehicles = await localVehicleRepository.getAllForReference();
-  return { settings, vehicles, settingsVersion: await hashP6Source({ settings, vehicles }) };
+  // Order the fleet too: `getAllForReference` makes no ordering promise, and a
+  // reordered array would churn the version exactly as a volatile field does.
+  const orderedVehicles = [...(Array.isArray(vehicles) ? vehicles : [])]
+    .sort((left, right) => String(left?.id ?? '').localeCompare(String(right?.id ?? '')));
+  return {
+    settings,
+    vehicles,
+    settingsVersion: await hashP6Source({
+      settings: analyticsSettingsProjection(settings),
+      vehicles: orderedVehicles,
+    }),
+  };
 };
+
+export const __testables = { analyticsSettingsProjection, ANALYTICS_VOLATILE_SETTINGS_KEYS };
 
 export async function queueP6ExplicitTripSubjects(rows = [], domains = Object.values(P6_DOMAIN_KEYS)) {
   const requestedDomains = [...new Set((domains || []).filter((domain) => Object.values(P6_DOMAIN_KEYS).includes(domain)))];
