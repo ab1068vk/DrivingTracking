@@ -123,12 +123,22 @@ describe('PremiumTotalsCard', () => {
     const html = renderToStaticMarkup(<PremiumTotalsCard trips={[]} units="imperial" />);
 
     expect(html).toContain('data-empty="true"');
-    // An empty most-recent window means an empty history, so this state is
-    // exact and is not hedged: "at least 0.0 mi" would say less than the truth.
-    expect(html).not.toContain('at least');
-    expect(html).toContain('Distance: 0.0 mi. completed trips');
-    expect(html).toContain('Time driving: 0m. recorded time');
-    expect(html).toContain('Active days: 0. no driving days');
+    // Rendered with no scope, the card folds its own bounded rows and has no
+    // completeness signal, so every additive figure is a floor.
+    //
+    // This assertion previously read `not.toContain('at least')`, on the
+    // reasoning that an empty window proves an empty history. It does not: a
+    // pending read, a refused read and a genuinely empty history all arrive as
+    // zero, and that conflation put "Everything recorded on this device — 0
+    // trips" on a device holding 500. A floor is never false; a completeness
+    // claim inferred from a count is.
+    expect(html).toContain('at least 0.0 mi');
+    expect(html).not.toContain('All-time totals');
+    expect(html).not.toContain('Everything recorded on this device');
+    // The figures themselves stay readable, which is what this test guards.
+    expect(html).toContain('Distance: at least 0.0 mi. completed trips');
+    expect(html).toContain('Time driving: at least 0m. recorded time');
+    expect(html).toContain('Active days: at least 0. no driving days');
     expect(html).not.toContain('NaN');
     expect(html).not.toContain('Infinity');
   });

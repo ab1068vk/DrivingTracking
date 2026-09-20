@@ -105,7 +105,7 @@ const METRIC_STYLES = [
  * @param {{ trips?: Array<Record<string, any>>, units?: string,
  *   activity?: Record<string, any>|null, period?: 'all_time'|'seven_days',
  *   onPeriodChange?: (period: 'all_time'|'seven_days') => void,
- *   activityExact?: boolean, activityUnavailable?: unknown }} props
+ *   scope?: string|null }} props
  */
 export default function PremiumTotalsCard({
   trips = [],
@@ -113,8 +113,7 @@ export default function PremiumTotalsCard({
   activity = null,
   period: controlledPeriod = null,
   onPeriodChange = null,
-  activityExact = true,
-  activityUnavailable = null,
+  scope: suppliedScope = null,
 }) {
   const [uncontrolledPeriod, setUncontrolledPeriod] = useState(
     /** @type {'all_time'|'seven_days'} */ (PERIODS.ALL_TIME),
@@ -133,17 +132,19 @@ export default function PremiumTotalsCard({
     tripCount: Number(activity.tripCount) || 0,
   } : folded;
   const isAllTime = period === PERIODS.ALL_TIME;
-  // An empty result is exact whatever the ledger says. Both sources here are
-  // most-recent-first, and the most recent N of a non-empty history is never
-  // empty — so nothing found means nothing recorded. "At least 0 km" would be
-  // true and would say less than the truth, which is the opposite of the point.
-  const emptyPopulation = Number(totals.tripCount) === 0;
-  // Without a shared activity object the card is folding its own bounded rows,
-  // and it cannot honestly claim lifetime truth however converged the ledger is.
-  const scope = scopeStateOf({
-    exact: emptyPopulation || (isAllTime ? (activity ? activityExact !== false : false) : true),
-    unavailable: isAllTime ? activityUnavailable : null,
-  });
+  // DPD-017. The scope is decided by the page, from the raw completeness
+  // signals, and is NOT re-derived here.
+  //
+  // A previous correction inferred it from `totals.tripCount === 0`, reasoning
+  // that an empty most-recent window implies an empty history. That is false
+  // while a query is pending: every field of the shared activity object folds
+  // through `Number(undefined) || 0`, so a 500-trip device rendered
+  // "Everything recorded on this device" over 0 trips on every cold launch.
+  // A count can never establish completeness; only an authoritative signal can.
+  //
+  // Rendered standalone, the card is folding its own bounded rows with no
+  // completeness signal at all, so it answers PARTIAL and hedges.
+  const scope = suppliedScope || scopeStateOf({ answered: true, exact: false });
   const values = {
     distance: atLeastTotal(formatDistance(totals.distanceKm, units), scope),
     duration: atLeastTotal(formatDuration(Math.round(totals.durationSeconds)), scope),

@@ -22,7 +22,6 @@ import {
   allTimeMetricScope,
   atLeastTotal,
   meanScopeSublabel,
-  scopeStateOf,
 } from '@/lib/scopeDisclosure';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
@@ -37,9 +36,8 @@ const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']
  * Props-threaded out of the page body; owns no state and runs no hooks.
  */
 export default function DashboardSummaryPanels({
-  activityExact = true,
   activityPeriod,
-  activityUnavailable = null,
+  activityScope = null,
   analyticsCompletedTrips,
   avgScore,
   avgScoreEvidence,
@@ -64,13 +62,10 @@ export default function DashboardSummaryPanels({
   units,
   weeklyGoals,
 }) {
-  // DPD-017. While the D1 lifetime ledger is unconverged the all-time face is
-  // the bounded most-recent window. It is a correct window; it is not all time,
-  // and the card may not say it is.
-  const activityScope = scopeStateOf({
-    exact: isAllTimeActivity ? activityExact !== false : true,
-    unavailable: isAllTimeActivity ? activityUnavailable : null,
-  });
+  // DPD-017. The scope is decided once, in `Dashboard.jsx`, from the raw
+  // completeness signals — never re-derived here, and never inferred from a
+  // count, because a pending source and an empty history both arrive as zero.
+  // Both variants below read this same value.
   return (
     <>
       {/* Stats Grid */}
@@ -81,8 +76,7 @@ export default function DashboardSummaryPanels({
           activity={dashboardActivity}
           period={activityPeriod}
           onPeriodChange={setActivityPeriod}
-          activityExact={activityExact}
-          activityUnavailable={activityUnavailable}
+          scope={activityScope}
         />
       ) : (
       <section className="rounded-3xl border border-border bg-card p-4 shadow-sm" aria-labelledby="dashboard-activity-heading">

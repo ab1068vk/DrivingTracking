@@ -47,6 +47,7 @@ import {
   trimParkedTail,
   validateCandidateTrip
 } from '@/lib/tripEngine';
+import { scopeStateOf, weakestScope } from '@/lib/scopeDisclosure';
 import { computeLiveTripScore } from '@/lib/liveTripScore';
 import { resolveParkedLocation } from '@/lib/parkedLocationResolver';
 import { getParkingLearningProfile } from '@/lib/parkingLearning';
@@ -3052,6 +3053,45 @@ export default function Dashboard() {
     dashboardData.lifetimeDistanceKm,
   ]);
   const isAllTimeActivity = activityPeriod === 'all_time';
+  /**
+   * DPD-017. The one place the Dashboard decides what it is allowed to CALL the
+   * numbers above, computed from the RAW signals rather than from
+   * `dashboardActivity`, whose fields collapse absence to `0` through
+   * `Number(undefined) || 0`. Both variants consume this single value, so they
+   * cannot drift apart again.
+   *
+   * The all-time face folds two populations with independent completeness: the
+   * D1 global aggregate (trips, distance, and the mean derived from them) and
+   * the bounded activity reducer (driving time, active days, longest trip). A
+   * card showing both may only claim what the weaker of the two supports.
+   */
+  const activityScope = useMemo(() => {
+    // `p7TripQueries.aggregate` refuses unless `D1_ANALYTICS:all` is VERIFIED,
+    // so a finite answer from it IS the completeness signal.
+    const lifetimeAnswered = Number.isFinite(dashboardData.lifetimeTrips)
+      && Number.isFinite(dashboardData.lifetimeDistanceKm);
+    const lifetimeScope = scopeStateOf({
+      answered: lifetimeAnswered,
+      exact: lifetimeAnswered,
+      unavailable: dashboardData.lifetimeUnavailable,
+    });
+    const windowScope = scopeStateOf({
+      // `activityStats` is null both while pending and when refused; the
+      // refusal is carried separately, so null here means "not answered".
+      answered: dashboardData.activityStats != null,
+      exact: dashboardData.activityExact === true,
+      unavailable: dashboardData.activityUnavailable,
+    });
+    return isAllTimeActivity ? weakestScope(lifetimeScope, windowScope) : windowScope;
+  }, [
+    isAllTimeActivity,
+    dashboardData.lifetimeTrips,
+    dashboardData.lifetimeDistanceKm,
+    dashboardData.lifetimeUnavailable,
+    dashboardData.activityStats,
+    dashboardData.activityExact,
+    dashboardData.activityUnavailable,
+  ]);
   const latestTrip = completedTrips[0];
   const activeSpeedLimitReview = speedLimitReviewSummary || speedLimitConflictReview;
   const activeSpeedLimitReviewFingerprint = activeSpeedLimitReview?.fingerprint || '';
@@ -4016,9 +4056,8 @@ export default function Dashboard() {
         </SectionErrorBoundary>
       )}
       <DashboardSummaryPanels
-        activityExact={dashboardData.activityExact !== false && dashboardData.lifetimeUnavailable !== true}
         activityPeriod={activityPeriod}
-        activityUnavailable={dashboardData.activityUnavailable}
+        activityScope={activityScope}
         analyticsCompletedTrips={analyticsCompletedTrips}
         avgScore={avgScore}
         avgScoreEvidence={avgScoreEvidence}

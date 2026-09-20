@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import PremiumTotalsCard from '@/components/PremiumTotalsCard';
 import { buildPremiumFleetIntelligenceViewModel } from '@/components/PremiumFleetIntelligenceCard';
+import { SCOPE_STATE } from '@/lib/scopeDisclosure';
 
 /**
  * DPD-017 / DPD-018 at the surfaces the audit caught, in both states.
@@ -50,7 +51,7 @@ const activity = (overrides = {}) => ({
 describe('Dashboard totals disclose the population they actually folded', () => {
   it('will not call a bounded window "all time"', () => {
     const html = renderToStaticMarkup(
-      <PremiumTotalsCard trips={trips} units="metric" activity={activity()} activityExact={false} />,
+      <PremiumTotalsCard trips={trips} units="metric" activity={activity()} scope={SCOPE_STATE.PARTIAL} />,
     );
 
     expect(html).toContain('Totals so far');
@@ -71,7 +72,7 @@ describe('Dashboard totals disclose the population they actually folded', () => 
 
   it('states plain lifetime totals once the ledger has converged', () => {
     const html = renderToStaticMarkup(
-      <PremiumTotalsCard trips={trips} units="metric" activity={activity()} activityExact />,
+      <PremiumTotalsCard trips={trips} units="metric" activity={activity()} scope={SCOPE_STATE.VERIFIED} />,
     );
 
     expect(html).toContain('All-time totals');
@@ -87,12 +88,11 @@ describe('Dashboard totals disclose the population they actually folded', () => 
   it('will not claim lifetime truth while it is folding its own bounded rows', () => {
     // Regression for the review finding: the exactness signal describes the
     // 200-row activity reducer, while this card used to fold the Dashboard's
-    // 60-row window. A driver with 120 completed trips therefore got
-    // `activityExact === true` and saw "All-time totals" over 60 trips. With no
-    // shared activity object the card is folding its own rows and may not make
-    // that claim however converged the ledger is.
+    // 60-row window. A driver with 120 completed trips therefore saw
+    // "All-time totals" over 60 trips. With no scope supplied the card is
+    // folding its own rows and answers PARTIAL, whatever the ledger says.
     const html = renderToStaticMarkup(
-      <PremiumTotalsCard trips={trips} units="metric" activityExact />,
+      <PremiumTotalsCard trips={trips} units="metric" />,
     );
 
     expect(html).toContain('Totals so far');
@@ -107,7 +107,7 @@ describe('Dashboard totals disclose the population they actually folded', () => 
     // appearance setting.
     const shared = activity();
     const html = renderToStaticMarkup(
-      <PremiumTotalsCard trips={trips} units="metric" activity={shared} activityExact />,
+      <PremiumTotalsCard trips={trips} units="metric" activity={shared} scope={SCOPE_STATE.VERIFIED} />,
     );
     expect(html).toContain('10063.7 km');
     // ...and emphatically not the 51.3 km its own `trips` prop folds to.
@@ -120,8 +120,7 @@ describe('Dashboard totals disclose the population they actually folded', () => 
         trips={trips}
         units="metric"
         activity={activity()}
-        activityExact
-        activityUnavailable={{ code: 'STORAGE' }}
+        scope={SCOPE_STATE.UNAVAILABLE}
       />,
     );
     expect(html).toContain('Totals unavailable');
@@ -149,5 +148,89 @@ describe('Fleet intelligence discloses whether per-vehicle totals are complete',
   it('states a verified per-vehicle total as fact', () => {
     const model = buildPremiumFleetIntelligenceViewModel(intelligence(true), { units: 'metric' });
     expect(model.busiestDetail).toBe('382.7 km across 41 trips');
+  });
+});
+
+describe('DPD-017 four-state law, on both Dashboard variants', () => {
+  /**
+   * The exact object `Dashboard.jsx` hands both variants while its queries are
+   * pending. `dashboardActivity` is a `useMemo` that always returns an object,
+   * and every absent field folds through `Number(undefined) || 0`, so a device
+   * holding 500 trips presents this shape on every cold launch.
+   */
+  const pendingActivity = {
+    periodDays: null,
+    tripCount: 0,
+    distanceKm: 0,
+    drivingSeconds: 0,
+    activeDays: 0,
+    longestTripKm: 0,
+    averageTripKm: 0,
+    tripsPerActiveDay: 0,
+  };
+
+  const render = (scope, data = pendingActivity) => renderToStaticMarkup(
+    <PremiumTotalsCard trips={[]} units="metric" activity={data} scope={scope} />,
+  );
+
+  it('UNKNOWN: does not call an unanswered source a complete history', () => {
+    const html = render(SCOPE_STATE.UNKNOWN);
+
+    // The defect this exception exists to correct: 0 trips presented as the
+    // complete record of a driver holding 500.
+    expect(html).not.toContain('All-time totals');
+    expect(html).not.toContain('Everything recorded on this device');
+    expect(html).toContain('Preparing totals');
+    expect(html).toContain('Your lifetime totals are still being prepared');
+    // Nor does it claim to be counting a population it has not seen.
+    expect(html).not.toContain('Still counting');
+  });
+
+  it('UNKNOWN: shows no bare zero that could read as a measurement', () => {
+    const html = render(SCOPE_STATE.UNKNOWN);
+    // Every additive figure is a floor, which is never false.
+    expect(html).toContain('at least 0');
+    expect(html).toContain('not counted yet');
+  });
+
+  it('PARTIAL: hedges explicitly', () => {
+    const html = render(SCOPE_STATE.PARTIAL, {
+      ...pendingActivity, tripCount: 200, distanceKm: 2892.6,
+    });
+    expect(html).toContain('Totals so far');
+    expect(html).toContain('Still counting everything recorded on this device');
+    expect(html).toContain('at least 2892.6 km');
+    expect(html).not.toContain('All-time totals');
+    expect(html).not.toContain('Everything recorded on this device');
+  });
+
+  it('VERIFIED non-empty: states the complete lifetime truth plainly', () => {
+    const html = render(SCOPE_STATE.VERIFIED, {
+      ...pendingActivity, tripCount: 500, distanceKm: 10063.7, averageTripKm: 20.13,
+    });
+    expect(html).toContain('All-time totals');
+    expect(html).toContain('Everything recorded on this device');
+    expect(html).toContain('10063.7 km');
+    expect(html).not.toContain('at least');
+    expect(html).not.toContain('Preparing totals');
+  });
+
+  it('VERIFIED empty: states zero as the whole truth, reached from the signal not the count', () => {
+    const html = render(SCOPE_STATE.VERIFIED, pendingActivity);
+    expect(html).toContain('All-time totals');
+    expect(html).toContain('Everything recorded on this device');
+    expect(html).not.toContain('at least');
+    // The distinguishing point: the SAME zero-valued object renders as a
+    // complete truth here and as "preparing" under UNKNOWN. Only the
+    // authoritative signal differs.
+    expect(render(SCOPE_STATE.UNKNOWN, pendingActivity)).not.toContain('All-time totals');
+  });
+
+  it('the count alone can never move the card between those two states', () => {
+    // Same scope, different counts: wording is decided by the signal.
+    const zero = render(SCOPE_STATE.UNKNOWN, pendingActivity);
+    const many = render(SCOPE_STATE.UNKNOWN, { ...pendingActivity, tripCount: 500 });
+    expect(zero).toContain('Preparing totals');
+    expect(many).toContain('Preparing totals');
   });
 });
