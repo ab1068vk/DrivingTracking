@@ -453,6 +453,51 @@ export const P4_LIFECYCLE_TURN_BUDGET_CEILINGS = Object.freeze({
   [P4_LIFECYCLE_JOB_KEYS.KEY_ROTATION]: 50,
 });
 
+// DPD-015B diagnostic. Debug-only: enabled solely by VITE_RS_COORDINATOR_PROBE, which no
+// release build sets. The turn wrapper is read-only — it records an outcome and
+// rethrows the original error untouched, so scheduling behaviour is unchanged.
+// Nothing here reads trip payloads, coordinates or secrets; it records domain
+// state names and the accounting numbers the coordinator budget is checked against.
+const COORDINATOR_PROBE_ENABLED = import.meta.env.VITE_RS_COORDINATOR_PROBE === 'true';
+const coordinatorProbeTurns = [];
+const recordCoordinatorProbeTurn = (entry) => {
+  coordinatorProbeTurns.push(entry);
+  if (coordinatorProbeTurns.length > 40) coordinatorProbeTurns.shift();
+};
+const probeDomainTurn = COORDINATOR_PROBE_ENABLED
+  ? (jobKey, runDomainTurn) => async (context) => {
+    const outcome = await runDomainTurn(context);
+    recordCoordinatorProbeTurn({
+      jobKey,
+      state: outcome?.state ?? null,
+      phase: outcome?.phase ?? null,
+      itemsWorked: Number(outcome?.itemsWorked) || 0,
+      bytesWorked: Number(outcome?.bytesWorked) || 0,
+      hasMore: outcome?.hasMore === true,
+    });
+    return outcome;
+  }
+  : (_jobKey, runDomainTurn) => runDomainTurn;
+const probeCoordinatorTurn = COORDINATOR_PROBE_ENABLED
+  ? (jobKey, runTurn) => async (context) => {
+    try {
+      return await runTurn(context);
+    } catch (error) {
+      globalThis.__rsCoordinatorProbeLastError = {
+        jobKey,
+        turnNumber: context?.turnNumber ?? null,
+        instanceId: context?.instanceId ?? null,
+        name: error?.name ?? null,
+        message: String(error?.message ?? error).slice(0, 400),
+        stack: String(error?.stack ?? '').split(String.fromCharCode(10)).slice(0, 14),
+        recentTurns: coordinatorProbeTurns.slice(-10),
+        at: Date.now(),
+      };
+      throw error;
+    }
+  }
+  : (_jobKey, runTurn) => runTurn;
+
 export function createP4LifecycleWorkRuntime({
   coordinator = createAppWorkCoordinator(),
   nativeAuthorityAvailable,
@@ -751,7 +796,7 @@ export function createP4LifecycleWorkRuntime({
       triggerOrigins: [APP_WORK_TRIGGER_ORIGINS.BOOTSTRAP, APP_WORK_TRIGGER_ORIGINS.RESUME, APP_WORK_TRIGGER_ORIGINS.OTHER_REVIEWED],
       workExtent: APP_WORK_EXTENTS.BOUNDED_TURN,
       workClass: APP_WORK_CLASSES.SUSPENDIBLE_BACKGROUND,
-      runTurn: p6Turn(runDomainTurn),
+      runTurn: probeCoordinatorTurn(jobKey, p6Turn(probeDomainTurn(jobKey, runDomainTurn))),
       budget: { ...P6_TURN_BUDGET },
       newEpochPolicy: APP_WORK_NEW_EPOCH_POLICIES.TERMINATE_AND_READMIT,
       criticalSection: section,
@@ -1228,6 +1273,8 @@ export function notifyPrivacyAuditConversionComplete() {
  */
 if (import.meta.env.VITE_RS_COORDINATOR_PROBE === 'true') {
   /** @param {string} jobKey */
+  globalThis.__rsCoordinatorProbeTurns = () => coordinatorProbeTurns.slice(-40);
+  /** @param {string} jobKey */
   globalThis.__rsCoordinatorProbe = (jobKey) => {
     const snapshot = productionRuntime.coordinator.getJobSnapshot(jobKey);
     if (!snapshot) return null;
@@ -1250,6 +1297,8 @@ if (import.meta.env.VITE_RS_COORDINATOR_PROBE === 'true') {
         outcome: snapshot.lastTerminal.outcome,
         turnCount: snapshot.lastTerminal.turnCount,
         wake: wake(snapshot.lastTerminal.wake),
+        failed: snapshot.lastTerminal.failed === true,
+        failureCeilingReached: snapshot.lastTerminal.failureCeilingReached === true,
       } : null,
       consecutiveFailures: snapshot.consecutiveFailures ?? null,
       failing: snapshot.failing === true,
