@@ -264,6 +264,20 @@ const deleteIndexPage = (index, value, limit = 128) => new Promise((resolve, rej
 });
 
 /**
+ * Order two IndexedDB primary keys. Prefers the engine's own comparator so the
+ * ordering matches the cursor's, and falls back to a plain compare for the
+ * string/number keys these stores use when `cmp` is unavailable.
+ */
+const compareIndexedDbKeys = (left, right) => {
+  const engine = globalThis.indexedDB;
+  if (engine && typeof engine.cmp === 'function') {
+    try { return engine.cmp(left, right); } catch { /* fall through */ }
+  }
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+};
+
+/**
  * Delete one bounded page of rows that belong to a superseded revision of the
  * same trip. Scanning is charged against the limit too, so a trip whose rows are
  * all current still costs a bounded turn instead of a full-history walk.
@@ -284,8 +298,24 @@ const deleteSupersededPage = (
     });
     if (!positioned) {
       positioned = true;
-      cursor.continuePrimaryKey(tripId, afterPrimaryKey);
-      return;
+      // Resuming a paged delete. The previous page deleted rows, so this
+      // reopened cursor can already sit at — or beyond — the resume key.
+      // `continuePrimaryKey` only moves forward: asking it to stand still or go
+      // backwards throws `DataError`, which rejected the retirement turn and
+      // took the whole trip-derived job down with it, leaving D1 to advance
+      // only one subject per external lifecycle admission (DPD-015).
+      const ahead = compareIndexedDbKeys(cursor.primaryKey, afterPrimaryKey);
+      if (ahead < 0) {
+        cursor.continuePrimaryKey(tripId, afterPrimaryKey);
+        return;
+      }
+      if (ahead === 0) {
+        // Exactly the last row the previous page scanned; step over it.
+        cursor.continue();
+        return;
+      }
+      // Already past the resume point, so this row still needs scanning: fall
+      // through and treat the cursor as positioned.
     }
     scanned += 1;
     lastPrimaryKey = cursor.primaryKey;
@@ -490,7 +520,15 @@ const readAnalyticsSettingsSnapshot = async () => {
   };
 };
 
-export const __testables = { analyticsSettingsProjection, ANALYTICS_VOLATILE_SETTINGS_KEYS };
+export const __testables = {
+  analyticsSettingsProjection,
+  ANALYTICS_VOLATILE_SETTINGS_KEYS,
+  // Exposed so the paged-retirement resume can be exercised directly. Driving
+  // it through a whole trip build made the fixture, not the paging, the subject
+  // of the test — and the paging is what failed on device (DPD-015).
+  deleteSupersededPage,
+  compareIndexedDbKeys,
+};
 
 export async function queueP6ExplicitTripSubjects(rows = [], domains = Object.values(P6_DOMAIN_KEYS)) {
   const requestedDomains = [...new Set((domains || []).filter((domain) => Object.values(P6_DOMAIN_KEYS).includes(domain)))];

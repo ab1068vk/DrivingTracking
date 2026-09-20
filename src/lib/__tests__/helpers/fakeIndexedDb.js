@@ -152,6 +152,23 @@ class FakeIndex {
           };
         },
         continuePrimaryKey: (key, primaryKey) => {
+          // Real IndexedDB throws DataError when the requested position is not
+          // strictly ahead of the cursor. The double used to accept it, so a
+          // paged delete that asked the cursor to stand still passed here and
+          // threw only on device (DPD-015). Enforce the spec constraint.
+          const current = rows[position];
+          if (current) {
+            const byKey = compareKeys(current.key, key);
+            const notAhead = byKey > 0
+              || (byKey === 0 && compareKeys(current.primaryKey, primaryKey) >= 0);
+            if (notAhead) {
+              throw new DOMException(
+                "Failed to execute 'continuePrimaryKey' on 'IDBCursor': "
+                + "The parameter is less than or equal to this cursor's position.",
+                'DataError',
+              );
+            }
+          }
           position += 1;
           while (position < rows.length && (
             compareKeys(rows[position].key, key) < 0
