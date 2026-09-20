@@ -1205,3 +1205,54 @@ export function notifyPrivacyAuditConversionComplete() {
     { origin: APP_WORK_TRIGGER_ORIGINS.BOOTSTRAP, epoch: lifecycle.epoch, wake });
   return { native, browser };
 }
+
+/**
+ * DIAGNOSTIC ONLY — DPD-015B coordinator observability.
+ *
+ * Three non-invasive probes narrowed DPD-015B to "a D1 burst terminates with
+ * backlog remaining", but the deciding state lives inside the coordinator and
+ * is not reachable from the page. This exposes a **read-only** projection of
+ * the existing `getJobSnapshot` metadata so a campaign probe can see the
+ * terminating transition on a real device.
+ *
+ * It is strictly opt-in at build time. `import.meta.env.DEV` is deliberately
+ * NOT consulted: `android:sync` runs `vite build`, so DEV is false in the debug
+ * APK too, and a DEV-gated probe would be useless on device while a
+ * DEV-or-flag gate would be easy to trip accidentally. The flag must be passed
+ * explicitly, the repository ships no `.env`, and Vite statically replaces the
+ * expression — so any build that does not set it drops this block entirely.
+ *
+ * It never mutates coordinator state, never admits or pumps work, never
+ * creates work, and exposes no trip payload, location, or secret: only job
+ * scheduling metadata that already exists.
+ */
+if (import.meta.env.VITE_RS_COORDINATOR_PROBE === 'true') {
+  /** @param {string} jobKey */
+  globalThis.__rsCoordinatorProbe = (jobKey) => {
+    const snapshot = productionRuntime.coordinator.getJobSnapshot(jobKey);
+    if (!snapshot) return null;
+    const wake = (value) => (value ? { type: value.type ?? null, key: value.key ?? null } : null);
+    return {
+      jobKey: snapshot.jobKey,
+      workClass: snapshot.workClass,
+      active: snapshot.active ? {
+        instanceId: snapshot.active.instanceId,
+        epoch: snapshot.active.epoch,
+        state: snapshot.active.state,
+        turnCount: snapshot.active.turnCount,
+        followUpRequested: snapshot.active.followUpRequested === true,
+      } : null,
+      wake: wake(snapshot.wake),
+      pendingEpoch: snapshot.pendingEpoch ?? null,
+      lastTerminal: snapshot.lastTerminal ? {
+        instanceId: snapshot.lastTerminal.instanceId,
+        epoch: snapshot.lastTerminal.epoch,
+        outcome: snapshot.lastTerminal.outcome,
+        turnCount: snapshot.lastTerminal.turnCount,
+        wake: wake(snapshot.lastTerminal.wake),
+      } : null,
+      consecutiveFailures: snapshot.consecutiveFailures ?? null,
+      failing: snapshot.failing === true,
+    };
+  };
+}

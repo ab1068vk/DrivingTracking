@@ -9,6 +9,7 @@ interface ImportMetaEnv {
   readonly VITE_PERF_TRIAGE_LOGS?: string;
   readonly VITE_P35_NATIVE_AUTHORITY?: string;
   readonly VITE_SHOW_DEBUG_ROUTES?: string;
+  readonly VITE_RS_COORDINATOR_PROBE?: string;
   readonly VITE_TRIAGE_DISABLE_MAPS?: string;
   readonly VITE_TRIAGE_DASHBOARD_LIMITED_SUMMARIES?: string;
 }
