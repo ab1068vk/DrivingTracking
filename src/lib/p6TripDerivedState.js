@@ -298,6 +298,19 @@ const deleteSupersededPage = (
 });
 
 const P6_RETIRE_PHASES = Object.freeze(['GEOMETRY', 'POSTINGS', 'OBSERVATIONS', 'ROAD_WINDOWS']);
+
+/**
+ * Terminal work state for a subject whose canonical route can only be read by
+ * an explicit operation — today a legacy inline `route_points` array.
+ *
+ * It is deliberately neither drainable nor finished. `readFirstWork` does not
+ * return it, so one such subject cannot stall the queue behind it; and both
+ * finalizers count it, so the domains that deferred cannot have their `:all`
+ * head promoted to VERIFIED while the hole is still there. D1 is unaffected —
+ * its contribution is published before the deferral — which is why the
+ * Dashboard's lifetime totals still converge on the lifecycle path.
+ */
+const P6_EXPLICIT_SOURCE_REQUIRED = 'EXPLICIT_SOURCE_REQUIRED';
 const p6WorkOwnsDomain = (work, domain) => !Array.isArray(work?.dirtyDomains)
   || work.dirtyDomains.includes(domain);
 
@@ -373,7 +386,11 @@ const retireSupersededTurn = async (work) => {
         retirePhase: nextPhase,
         ...(result.hasMore ? { retireAfterPrimaryKey: result.lastPrimaryKey } : {}),
       }, updatedAt: Date.now() }
-      : { ...work, state: 'COMPLETE', cursor: null, updatedAt: Date.now() });
+      // Retirement is bounded GC, not a verdict: a subject that parked itself
+      // for an explicit pass still retires its superseded rows, then lands in
+      // the state it asked for rather than in COMPLETE.
+      : { ...work, state: String(work.retireTerminalState || 'COMPLETE'),
+        cursor: null, updatedAt: Date.now() });
     await transactionDone(tx);
     return {
       state: 'RETIRE_SUPERSEDED', phase, itemsWorked: result.scanned + 1, bytesWorked: 0, hasMore: true,
@@ -554,7 +571,7 @@ export async function finalizeP6BrowserExplicitTripBuild(options = false) {
     const tx = db.transaction([P6_TRIP_DERIVED_STORES.WORK, P6_TRIP_DERIVED_STORES.MANIFESTS], 'readwrite');
     const index = tx.objectStore(P6_TRIP_DERIVED_STORES.WORK).index('by_state');
     const activeStates = ['DIRTY', 'BUILDING', 'PREVIEW_BUILD', 'TOMBSTONE_CLEANUP',
-      'RETIRE_SUPERSEDED', 'SOURCE_UNREADABLE'];
+      'RETIRE_SUPERSEDED', 'SOURCE_UNREADABLE', P6_EXPLICIT_SOURCE_REQUIRED];
     if (includeRoad) activeStates.push('COMPLETE');
     return await new Promise((resolve, reject) => {
       const counts = new Array(activeStates.length).fill(0);
@@ -753,6 +770,7 @@ const finalizeP6BrowserIncrementalDomains = async () => {
         work.count('TOMBSTONE_CLEANUP'),
         work.count('RETIRE_SUPERSEDED'),
         work.count('SOURCE_UNREADABLE'),
+        work.count(P6_EXPLICIT_SOURCE_REQUIRED),
         tx.objectStore(P6_TRIP_DERIVED_STORES.CONTROL).get(P6_ANALYTICS_SETTINGS_REPAIR_KEY),
         ...domains.map((domain) => manifests.get(`${domain}:all`)),
       ];
@@ -760,14 +778,19 @@ const finalizeP6BrowserIncrementalDomains = async () => {
       const apply = () => {
         remaining -= 1;
         if (remaining !== 0) return;
-        const [dirty, building, preview, cleanup, retiring, unreadable, repair, ...heads] = requests
-          .map((item) => item.result);
+        const [dirty, building, preview, cleanup, retiring, unreadable, deferred, repair,
+          ...heads] = requests.map((item) => item.result);
         // An unreadable subject is outstanding work, not a finished domain: a
         // head must never read VERIFIED while a subject it covers is unread.
         if (dirty + building + preview + cleanup + retiring + unreadable > 0) { resolve(null); return; }
         let count = 0;
         domains.forEach((domain, index) => {
           const head = heads[index];
+          // A subject parked for an explicit pass is settled for D1 and unbuilt
+          // for the point-derived domains. Promoting D2/D3 here would claim
+          // coverage the derived store does not have and, worse, would withdraw
+          // the legal v1 compatibility route those trips are still served by.
+          if (deferred > 0 && domain !== P6_DOMAIN_KEYS.ANALYTICS) return;
           const incremental = [P6_READINESS_STATES.DIRTY, P6_READINESS_STATES.PARTIAL].includes(head?.state);
           const settingsRepair = domain === P6_DOMAIN_KEYS.ANALYTICS
             && head?.state === P6_READINESS_STATES.REBUILD_REQUIRED
@@ -2094,8 +2117,59 @@ export async function stepP6BrowserTripDerivedUpdate({ explicit = false } = {}) 
     if (work.state === 'PREVIEW_BUILD') return stepPreviewBuild(work, trip);
     const page = await routePage(trip, work.cursor, explicit);
     if (page.compatibilityRequired) {
-      await setP6TripDomainReadiness({ domain: P6_DOMAIN_KEYS.GEOMETRY, subject: work.tripId, state: P6_READINESS_STATES.REBUILD_REQUIRED, complete: false, reason: 'EXPLICIT_LEGACY_SOURCE_REQUIRED' });
-      return { state: 'EXPLICIT_LEGACY_SOURCE_REQUIRED', itemsWorked: 1, bytesWorked: 0, hasMore: false };
+      // A legacy inline `route_points` source is read only by an explicit pass,
+      // so the point-derived domains defer to one. D1 is already published
+      // above, which is what the Dashboard's lifetime totals read.
+      //
+      // This branch used to return `hasMore: false`, which the coordinator maps
+      // straight to DONE — it means "the queue is finished", not "this subject
+      // is finished". One legacy-shaped trip at the head of `by_desired_seq`
+      // therefore stopped the drain for every trip behind it, on every launch,
+      // and a backup-restored history is legacy-shaped throughout, so it never
+      // converged at all.
+      //
+      // The subject is parked instead of finished: the domains that defer read
+      // REBUILD_REQUIRED at both the subject and the head, the row leaves the
+      // drainable states so the queue moves past it exactly once, and it stays
+      // countable as explicit debt so no incremental finalizer can promote a
+      // head whose coverage now has a hole. Only the explicit repair re-queues
+      // it — its DISCOVER phase walks canonical source and re-mints the row.
+      const deferred = [P6_DOMAIN_KEYS.GEOMETRY, P6_DOMAIN_KEYS.SPATIAL_SELECTION,
+        P6_DOMAIN_KEYS.ROAD_LEARNING].filter((candidate) => p6WorkOwnsDomain(work, candidate));
+      for (const domain of deferred) {
+        for (const subject of [work.tripId, 'all']) {
+          await setP6TripDomainReadiness({
+            domain, subject, sourceBinding: 'browser',
+            requiredVersion: work.desiredRevision,
+            state: P6_READINESS_STATES.REBUILD_REQUIRED, complete: false,
+            reason: 'EXPLICIT_LEGACY_SOURCE_REQUIRED',
+          });
+        }
+      }
+      const db = await openP6TripDerivedDatabase();
+      try {
+        const tx = db.transaction(P6_TRIP_DERIVED_STORES.WORK, 'readwrite');
+        const store = tx.objectStore(P6_TRIP_DERIVED_STORES.WORK);
+        // A parked row is never re-examined, so a blind put would permanently
+        // drop a revision that a canonical write landed during this turn. The
+        // compare and the park stay inside the request callback for the same
+        // reason the finalizers do: a strict user agent may auto-commit an
+        // idle readwrite transaction at a promise continuation.
+        const request = store.get(work.tripId);
+        request.onsuccess = () => {
+          const current = request.result;
+          if (!current || current.disposition === 'TOMBSTONE') return;
+          if (String(current.desiredRevision ?? '') !== String(work.desiredRevision ?? '')) return;
+          store.put({
+            ...current, state: 'RETIRE_SUPERSEDED',
+            cursor: { retirePhase: P6_RETIRE_PHASES[0] },
+            retireTerminalState: P6_EXPLICIT_SOURCE_REQUIRED,
+            appliedRevision: work.desiredRevision, updatedAt: Date.now(),
+          });
+        };
+        await transactionDone(tx);
+      } finally { db.close(); }
+      return { state: 'EXPLICIT_LEGACY_SOURCE_REQUIRED', itemsWorked: 1, bytesWorked: 0, hasMore: true };
     }
     if (!page.points.length && page.done) {
       for (const domain of [P6_DOMAIN_KEYS.GEOMETRY, P6_DOMAIN_KEYS.SPATIAL_SELECTION, P6_DOMAIN_KEYS.ROAD_LEARNING]

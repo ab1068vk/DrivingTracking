@@ -940,15 +940,19 @@ async function stepP6RoadMemoryUpdateInternal() {
       const tx = db.transaction([P6_TRIP_DERIVED_STORES.WORK, P6_TRIP_DERIVED_STORES.MANIFESTS], 'readwrite');
       const workIndex = tx.objectStore(P6_TRIP_DERIVED_STORES.WORK).index('by_state');
       const manifests = tx.objectStore(P6_TRIP_DERIVED_STORES.MANIFESTS);
-      const [dirty, building, preview, cleanup, complete, head] = await Promise.all([
+      const [dirty, building, preview, cleanup, complete, deferred, head] = await Promise.all([
         requestResult(workIndex.count('DIRTY')),
         requestResult(workIndex.count('BUILDING')),
         requestResult(workIndex.count('PREVIEW_BUILD')),
         requestResult(workIndex.count('TOMBSTONE_CLEANUP')),
         requestResult(workIndex.count('COMPLETE')),
+        // A subject parked for an explicit pass has no road observations to
+        // reduce, so D4 owes it a rebuild just as D2 and D3 do. Without this
+        // the head could still be promoted by a later, unrelated trip.
+        requestResult(workIndex.count('EXPLICIT_SOURCE_REQUIRED')),
         requestResult(manifests.get(`${P6_DOMAIN_KEYS.ROAD_LEARNING}:all`)),
       ]);
-      const pending = dirty + building + preview + cleanup + complete;
+      const pending = dirty + building + preview + cleanup + complete + deferred;
       const eligible = [P6_READINESS_STATES.DIRTY, P6_READINESS_STATES.PARTIAL].includes(head?.state);
       if (!pending && eligible) manifests.put({
         ...head,
