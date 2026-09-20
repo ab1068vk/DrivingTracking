@@ -76,6 +76,24 @@ export const P6_TURN_BUDGET = Object.freeze({
   timeMs: 25,
 });
 
+/**
+ * DPD-015B. The byte allowance a bounded turn keeps in reserve before it reads
+ * one whole canonical trip row whose size it cannot know in advance.
+ *
+ * A turn that reads payloads of unknown size cannot decide "does this fit?"
+ * after the read — by then the bytes are spent, and either it reports them and
+ * breaks its declared budget or it hides them. It therefore stops *before* the
+ * read whenever less than this much of the turn's byte budget is left, and
+ * resumes on the next turn with a full one. One whole trip at or below this
+ * size can never overrun `P6_TURN_BUDGET.bytes` on its own.
+ *
+ * 1 MiB is four times the largest canonical row observed on the 500-trip
+ * qualification device (p50 ≈ 242 KB; `route_points` is import-capped at
+ * `MAX_IMPORTED_TRIP_ROUTE_POINTS`), and a quarter of the turn budget, so a
+ * turn can still take three unknown-size reads before it defers.
+ */
+export const P6_SOURCE_READ_RESERVE_BYTES = 1024 * 1024;
+
 export const P6_MAX_AUTOMATIC_REPAIR_ROUNDS = 2;
 export const P6_MAX_SPEED_PARTITION_BYTES = 8 * 1024 * 1024;
 export const P6_AUTOMATIC_SPEED_PARTITION_TARGET_BYTES = 7 * 1024 * 1024;

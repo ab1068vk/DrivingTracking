@@ -1574,13 +1574,15 @@ describe('core page component renders', () => {
     settings.premium_visual_experience = true;
     const premiumHtml = renderToStaticMarkup(<Vehicles />);
     expect(premiumHtml).toContain('class="premium-vehicle-overview"');
-    expect(premiumHtml).toContain('aria-label="Garage: 1. 1 completed trip"');
+    // DPD-018: the per-vehicle and fleet trip figures are the bounded recent
+    // window until the D1 vehicle buckets answer, and they say so.
+    expect(premiumHtml).toContain('aria-label="Garage: 1. at least 1 completed trip"');
     expect(premiumHtml).toContain('premium-vehicle-garage.webp');
     expect(premiumHtml).toContain('premium-vehicle-assignment.webp');
     expect(premiumHtml).toContain('premium-vehicle-cost.webp');
     expect(premiumHtml).toContain('premium-vehicle-service.webp');
     expect(premiumHtml).toContain('class="premium-fleet-card"');
-    expect(premiumHtml).toContain('Busiest vehicle: Commuter. 42.0 km across 1 trip');
+    expect(premiumHtml).toContain('Busiest vehicle: Commuter. at least 42.0 km across 1 trip');
     expect(premiumHtml).toContain('Approximate fleet score 88 out of 100');
     expect(premiumHtml).toContain('premium-fleet-busiest.webp');
     expect(premiumHtml).not.toContain('class="grid gap-3 md:grid-cols-4"');
@@ -1605,7 +1607,7 @@ describe('core page component renders', () => {
 
     settings.premium_visual_experience = true;
     const premiumHtml = renderToStaticMarkup(<Vehicles />);
-    expect(premiumHtml).toContain('aria-label="Garage: at least 50. 1 completed trip"');
+    expect(premiumHtml).toContain('aria-label="Garage: at least 50. at least 1 completed trip"');
     expect(premiumHtml).not.toContain('aria-label="Garage: 50.');
   });
 
@@ -1622,7 +1624,7 @@ describe('core page component renders', () => {
     const html = renderToStaticMarkup(<Vehicles />);
     expect(visibleText(html)).not.toContain('at least 3');
     settings.premium_visual_experience = true;
-    expect(renderToStaticMarkup(<Vehicles />)).toContain('aria-label="Garage: 3. 1 completed trip"');
+    expect(renderToStaticMarkup(<Vehicles />)).toContain('aria-label="Garage: 3. at least 1 completed trip"');
   });
 
   it('offers a bounded repair search instead of implying every affected trip is already listed', async () => {
@@ -1698,7 +1700,7 @@ describe('core page component renders', () => {
     expect(html).toContain('Assign vehicles to trips to unlock CO2 savings estimates.');
     expect(html).toContain('Export package');
     expect(html).toContain('CSV trip table');
-    expect(html).toContain('This Week PDF');
+    expect(html).toContain('Last 7 days PDF');
     expect(html).toContain('Driver score card PDF');
     expect(html).toContain('do not modify trips, settings, backups, storage names, or permissions');
   });
@@ -1711,10 +1713,10 @@ describe('core page component renders', () => {
     ], 'month');
 
     expect(summary).toMatchObject({
-      periodLabel: 'This Month',
+      periodLabel: 'Last 30 days',
       tripCount: 2,
       description: '2 completed trips included',
-      formats: ['CSV trip table', 'This Month PDF', 'Driver score card PDF'],
+      formats: ['CSV trip table', 'Last 30 days PDF', 'Driver score card PDF'],
     });
     expect(summary.dateRangeLabel).toContain('to');
   });

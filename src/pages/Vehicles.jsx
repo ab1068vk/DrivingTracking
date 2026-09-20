@@ -27,6 +27,7 @@ import { useVehicleAnalytics } from '@/hooks/useVehicleAnalytics';
 import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
 import { formatDistance, getTripComponentScore } from '@/lib/tripEngine';
 import { convertPerDistanceRate, distanceUnitLabel, formatDistanceScope } from '@/lib/unitFormatting';
+import { atLeastTotal, scopeStateOf, vehicleScopeNote } from '@/lib/scopeDisclosure';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { PageEmptyState, PageHeader } from '@/components/PageChrome';
 import { requestAppConfirm } from '@/lib/appDialog';
@@ -686,6 +687,24 @@ export default function Vehicles() {
     () => buildFleetIntelligence(vehicles, trips, settings, vehicleLifetime, retiredVehicles, durableDefaultVehicle),
     [vehicles, trips, settings, vehicleLifetime, retiredVehicles, durableDefaultVehicle]
   );
+  // DPD-018. `lifetimeExact` is already the page's own answer to "did the D1
+  // vehicle buckets reply, or are these figures the bounded recent window?".
+  // It was computed and then never used, so partial per-vehicle totals rendered
+  // as bare fact — 382.7 km across 41 trips for a vehicle with 3,876.5 km
+  // across 200. The figures are unchanged; what they claim is not.
+  const fleetScope = scopeStateOf({
+    exact: fleetIntelligence.lifetimeExact === true,
+    unavailable: vehicleTripsUnavailable,
+  });
+  const fleetScopeNote = vehicleScopeNote(fleetScope);
+  const fleetTotalDistanceLabel = atLeastTotal(
+    formatDistanceScope(fleetIntelligence.totalKm, units),
+    fleetScope,
+  );
+  const fleetCompletedTripLabel = atLeastTotal(
+    String(fleetIntelligence.completedTripCount),
+    fleetScope,
+  );
   const unassignedTrips = useMemo(() => getUnassignedCompletedTrips(trips), [trips]);
   // HPR-010/6A. Classification asks the authority about exactly the references
   // these loaded rows mention, so no global retired-id set is needed and a
@@ -942,7 +961,8 @@ export default function Vehicles() {
           summary={fleetIntelligence}
           vehicleCountLabel={fleetCountLabel({ count: fleetIntelligence.vehicleCount, hasMore: vehiclePage?.hasMore === true })}
           formattedMonthlyCost={formatCurrencyAmount(fleetIntelligence.monthlyCost, currencySymbol)}
-          formattedTotalDistance={formatDistanceScope(fleetIntelligence.totalKm, units)}
+          formattedTotalDistance={fleetTotalDistanceLabel}
+          completedTripCountLabel={fleetCompletedTripLabel}
           loading={isLoading || recentTripsLoading}
         />
       ) : (
@@ -958,7 +978,7 @@ export default function Vehicles() {
             {fleetCountLabel({ count: fleetIntelligence.vehicleCount, hasMore: vehiclePage?.hasMore === true })}
           </div>
           <div className="text-xs text-muted-foreground">
-            {fleetIntelligence.completedTripCount} completed trip{fleetIntelligence.completedTripCount === 1 ? '' : 's'}
+            {fleetCompletedTripLabel} completed trip{fleetIntelligence.completedTripCount === 1 ? '' : 's'}
           </div>
         </div>
         <div className={`rounded-2xl border p-4 ${
@@ -981,7 +1001,7 @@ export default function Vehicles() {
             This month
           </div>
           <div className="mt-2 text-2xl font-bold">{formatCurrencyAmount(fleetIntelligence.monthlyCost, currencySymbol)}</div>
-          <div className="text-xs text-muted-foreground">{formatDistanceScope(fleetIntelligence.totalKm, units)} total history</div>
+          <div className="text-xs text-muted-foreground">{fleetTotalDistanceLabel} total history</div>
         </div>
         <div className={`rounded-2xl border p-4 ${
           fleetIntelligence.serviceDueCount
@@ -998,6 +1018,12 @@ export default function Vehicles() {
           <div className="text-xs text-muted-foreground">maintenance item{fleetIntelligence.serviceDueCount === 1 ? '' : 's'} due soon</div>
         </div>
       </motion.div>
+      )}
+
+      {/* DPD-018. One note for both variants, against the figures rather than
+          buried in the deleted-vehicle widget the audit found it in. */}
+      {fleetScopeNote && (
+        <p className="text-xs text-muted-foreground" data-testid="fleet-scope-note">{fleetScopeNote}</p>
       )}
 
       {(fleetIntelligence.busiestVehicle || fleetIntelligence.bestScoreVehicle || fleetIntelligence.assignmentReviewCount > 0) && (
@@ -1022,7 +1048,7 @@ export default function Vehicles() {
               <div className="mt-1 text-sm font-semibold">{fleetIntelligence.busiestVehicle?.vehicle?.name || 'No trip data yet'}</div>
               <div className="text-xs text-muted-foreground">
                 {fleetIntelligence.busiestVehicle
-                  ? `${formatDistanceScope(fleetIntelligence.busiestVehicle.distanceKm, units)} across ${fleetIntelligence.busiestVehicle.trips} trip${fleetIntelligence.busiestVehicle.trips === 1 ? '' : 's'}`
+                  ? atLeastTotal(`${formatDistanceScope(fleetIntelligence.busiestVehicle.distanceKm, units)} across ${fleetIntelligence.busiestVehicle.trips} trip${fleetIntelligence.busiestVehicle.trips === 1 ? '' : 's'}`, fleetScope)
                   : 'Complete trips to build a vehicle profile'}
               </div>
             </div>

@@ -120,6 +120,36 @@ class FakeIndex {
       .filter(({ key }) => keyInRange(key, range)).length);
   }
 
+  /**
+   * Real `IDBObjectStore.openKeyCursor` yields a cursor with **no `value`**.
+   * The double must model that, because "did this walk deserialize the record?"
+   * is exactly the question DPD-015B turned on: the settings rediscovery read a
+   * page of whole trip rows to learn a page of ids, and a fake that quietly
+   * handed back `value` anyway would let that regress unnoticed.
+   */
+  openKeyCursor(range = null, direction = 'next') {
+    const request = this.openCursor(range, direction);
+    const strip = (cursor) => (cursor ? new Proxy(cursor, {
+      get: (target, prop, receiver) => {
+        if (prop === 'value') return undefined;
+        if (prop === 'continue') {
+          return () => {
+            target.continue();
+            return undefined;
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+      has: (target, prop) => (prop === 'value' ? false : Reflect.has(target, prop)),
+    }) : cursor);
+    return new Proxy(request, {
+      get: (target, prop, receiver) => (
+        prop === 'result' ? strip(target.result) : Reflect.get(target, prop, receiver)
+      ),
+      set: (target, prop, value, receiver) => Reflect.set(target, prop, value, receiver),
+    });
+  }
+
   openCursor(range = null, direction = 'next') {
     let rows = null;
     let position = 0;

@@ -69,10 +69,25 @@ import InlineRefreshBadge from '@/components/InlineRefreshBadge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import DeferredRecharts from '@/components/DeferredRecharts';
 
+/**
+ * DPD-019 — one period definition, and a label that matches it.
+ *
+ * Every reducer this page drives is bound to `reportWindow`, which is
+ * `now - days` to `now`: a ROLLING window. The labels said "This Week" and
+ * "This Month", which name calendar windows, and the audit caught the
+ * consequence on device — "No completed trips in this period" printed directly
+ * above "15 trips covered 205.2 km", because the emptiness sentence came from
+ * one scope and the totals from another. Nothing about the arithmetic changes
+ * here; the names now describe the window that was always being used.
+ *
+ * The personal baseline deliberately keeps its own calendar scope (O52) and now
+ * says "calendar week" where it used to say "this week", so the two scopes on
+ * this page are told apart rather than blurred.
+ */
 const PERIODS = [
-  { id: 'week', label: 'This Week', days: 7 },
-  { id: 'month', label: 'This Month', days: 30 },
-  { id: 'all', label: 'All Time', days: Infinity },
+  { id: 'week', label: 'Last 7 days', days: 7 },
+  { id: 'month', label: 'Last 30 days', days: 30 },
+  { id: 'all', label: 'All time', days: Infinity },
 ];
 
 const RISK_EVENT_DEFINITIONS = [
@@ -82,25 +97,62 @@ const RISK_EVENT_DEFINITIONS = [
   { key: 'speeding', label: 'Speeding', summaryKey: 'total_speeding_events', color: '#f97316', bg: 'bg-orange-500' },
 ];
 
-export function buildReportExportSummary(trips = [], period = 'week') {
+/**
+ * DPD-019. This used to conclude "No completed trips in this period" from an
+ * EMPTY ROW ARRAY — and since P7 the page deliberately passes `[]`, because
+ * nothing on it renders from a row fold any more. The sentence was therefore
+ * printed unconditionally, on a 500-trip All Time tab included. An absence of
+ * rows to inspect is not an absence of trips, so the period's own totals decide
+ * the claim now, and the rows are used only for the exact first/last date when
+ * there are any.
+ *
+ * @param {Array<Record<string, any>>} trips rows actually inspected, if any
+ * @param {string} period
+ * @param {{totalTrips?: number|null, state?: string, periodStart?: string|null,
+ *   periodEnd?: string|null}} [context] what the period's own reducers reported
+ */
+export function buildReportExportSummary(trips = [], period = 'week', context = {}) {
   const safeTrips = Array.isArray(trips) ? trips : [];
   const validTimes = safeTrips
     .map((trip) => new Date(trip?.start_time).getTime())
     .filter(Number.isFinite)
     .sort((a, b) => a - b);
   const periodLabel = PERIODS.find((item) => item.id === period)?.label || 'Selected Period';
-  const dateRangeLabel = validTimes.length
-    ? `${formatDate(new Date(validTimes[0]).toISOString())} to ${formatDate(new Date(validTimes[validTimes.length - 1]).toISOString())}`
-    : 'No completed trips in this period';
+  const boundsFrom = (from, to) => {
+    const start = new Date(from).getTime();
+    const end = new Date(to).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    return `${formatDate(new Date(start).toISOString())} to ${formatDate(new Date(end).toISOString())}`;
+  };
+  // A count the caller supplied wins over the row count, because the rows are a
+  // sample the page may not have fetched at all.
+  const reportedTrips = Number.isFinite(Number(context?.totalTrips))
+    ? Math.max(0, Number(context.totalTrips))
+    : safeTrips.length;
+  const state = String(context?.state || '');
+  const isUnavailable = state === REPORT_STATE.UNAVAILABLE;
+  const isPartial = state === REPORT_STATE.PARTIAL;
+  const observedRange = validTimes.length
+    ? boundsFrom(validTimes[0], validTimes[validTimes.length - 1])
+    : boundsFrom(context?.periodStart, context?.periodEnd);
+
+  let dateRangeLabel;
+  if (isUnavailable) dateRangeLabel = 'Date range could not be read';
+  else if (observedRange) dateRangeLabel = isPartial ? `${observedRange} so far` : observedRange;
+  else if (reportedTrips > 0) dateRangeLabel = `${reportedTrips} trip${reportedTrips === 1 ? '' : 's'} in this period`;
+  else if (isPartial) dateRangeLabel = 'No trips counted so far';
+  else dateRangeLabel = 'No completed trips in this period';
 
   return {
     periodLabel,
-    tripCount: safeTrips.length,
+    tripCount: reportedTrips,
     dateRangeLabel,
     formats: ['CSV trip table', `${periodLabel} PDF`, 'Driver score card PDF'],
-    description: safeTrips.length
-      ? `${safeTrips.length} completed trip${safeTrips.length === 1 ? '' : 's'} included`
-      : 'Exports unlock after a completed trip matches the selected period.',
+    description: isUnavailable
+      ? 'This period could not be read, so it cannot be exported. Your saved trips were not changed.'
+      : reportedTrips
+        ? `${reportedTrips} completed trip${reportedTrips === 1 ? '' : 's'} included${isPartial ? ' so far' : ''}`
+        : 'Exports unlock after a completed trip matches the selected period.',
   };
 }
 
@@ -214,7 +266,12 @@ export default function Reports() {
   // `trips` is no longer a fetched array. The three surfaces that genuinely
   // need rows — the CSV/PDF exports and the personal baseline — each read the
   // bounded window they declare, and nothing renders from a row fold.
-  const exportSummary = buildReportExportSummary([], period);
+  const exportSummary = buildReportExportSummary([], period, {
+    totalTrips: summary.total_trips,
+    state: reportState,
+    periodStart: reportData.periodStart,
+    periodEnd: reportData.periodEnd,
+  });
   const periodPdfLabel = `${exportSummary.periodLabel} PDF`;
 
   const economics = economicsFromTerms(terms.economics);
@@ -261,8 +318,8 @@ export default function Reports() {
     : baseline.baseline_includes_older_scores
       ? `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)}. ${baseline.baseline_label}. Re-score older trips in Settings for a comparable interval.`
       : baseline.delta == null
-        ? `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)} (${baseline.baseline_confidence_interval_label} percentile range). No trip was recorded this week.`
-        : `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)} (${baseline.baseline_confidence_interval_label} percentile range). This week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} points from it.`;
+        ? `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)} (${baseline.baseline_confidence_interval_label} percentile range). No trip was recorded this calendar week.`
+        : `Approximate baseline: ${formatEstimatedScore(baseline.baseline_avg)} (${baseline.baseline_confidence_interval_label} percentile range). This calendar week is ${baseline.delta >= 0 ? '+' : ''}${baseline.delta} points from it.`;
   const carbonImpact = carbonFromTerms(terms.economics, settings.tree_co2_kg_per_year);
   // O59 renders empty on the shipping path because `route_points` is not in the
   // projection, and the grouping is unbounded in distinct routes. P7 preserves

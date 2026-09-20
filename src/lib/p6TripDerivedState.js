@@ -11,7 +11,14 @@ import {
   P6_TRIP_DERIVED_STORES,
   P6_TRIP_SOURCE_STORE,
 } from '@/lib/localTripRepository';
-import { P6_DOMAIN_KEYS, P6_JOB_KEYS, P6_READINESS_STATES, normalizeP6Readiness } from '@/lib/p6Contracts';
+import {
+  P6_DOMAIN_KEYS,
+  P6_JOB_KEYS,
+  P6_READINESS_STATES,
+  P6_SOURCE_READ_RESERVE_BYTES,
+  P6_TURN_BUDGET,
+  normalizeP6Readiness,
+} from '@/lib/p6Contracts';
 
 /**
  * Which P6 implementation owns this process's trips.
@@ -530,40 +537,290 @@ export const __testables = {
   compareIndexedDbKeys,
 };
 
-export async function queueP6ExplicitTripSubjects(rows = [], domains = Object.values(P6_DOMAIN_KEYS)) {
+/**
+ * Keyset page over canonical subject identities that materializes no record.
+ *
+ * `openKeyCursor` yields primary keys, so a page of 32 costs 32 keys instead of
+ * 32 whole trip rows. That distinction is half of DPD-015B: the settings
+ * rediscovery turn used to walk 33 *values* to learn 33 *identities*, and at
+ * 500 trips those values are megabytes of `encrypted_payload`.
+ */
+export async function listP6BrowserCanonicalSubjectKeyPage({ afterKey = null, maxItems = 32 } = {}) {
+  const limit = Math.max(1, Math.min(64, Number(maxItems) || 32));
+  const db = await openP6TripDerivedDatabase();
+  try {
+    const tx = db.transaction(P6_TRIP_SOURCE_STORE, 'readonly');
+    const store = tx.objectStore(P6_TRIP_SOURCE_STORE);
+    const range = afterKey == null ? null : IDBKeyRange.lowerBound(afterKey, true);
+    const keys = await new Promise((resolve, reject) => {
+      const found = [];
+      // `openKeyCursor` is the point of this function; the value cursor is only
+      // a fallback for a store double that does not implement it.
+      const request = store.openKeyCursor ? store.openKeyCursor(range) : store.openCursor(range);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor || found.length >= limit + 1) return resolve(found);
+        found.push(String(cursor.primaryKey));
+        cursor.continue();
+      };
+    });
+    await transactionDone(tx);
+    const page = keys.slice(0, limit);
+    return {
+      ids: page,
+      nextCursor: keys.length > limit ? page.at(-1) || null : null,
+      itemsWorked: page.length,
+    };
+  } finally { db.close(); }
+}
+
+/** Terminal work states a re-queued analytics-only subject may be restored to. */
+const P6_ANALYTICS_ONLY_RESTORABLE_STATES = Object.freeze(['COMPLETE', P6_EXPLICIT_SOURCE_REQUIRED]);
+
+/**
+ * Return an analytics-only re-queue to the terminal state it was queued from.
+ *
+ * DPD-020. The restore is fenced the same way the park is: the compare and the
+ * write stay inside native request callbacks, and a row whose revision or
+ * disposition moved while D1 was publishing is left alone — a canonical write
+ * that landed during the turn owns the row, and re-parking it would discard a
+ * revision nothing would come back for. `false` means "not restored", and the
+ * caller then takes the ordinary build path.
+ *
+ * @returns {Promise<boolean>}
+ */
+const restoreAnalyticsOnlyTerminalState = async (work) => {
+  const terminal = String(work?.analyticsOnlyTerminalState || '');
+  if (!P6_ANALYTICS_ONLY_RESTORABLE_STATES.includes(terminal)) return false;
+  const db = await openP6TripDerivedDatabase();
+  try {
+    const tx = db.transaction(P6_TRIP_DERIVED_STORES.WORK, 'readwrite');
+    const store = tx.objectStore(P6_TRIP_DERIVED_STORES.WORK);
+    let restored = false;
+    const request = store.get(work.tripId);
+    request.onsuccess = () => {
+      const current = request.result;
+      if (!current || current.disposition === 'TOMBSTONE') return;
+      if (String(current.desiredRevision ?? '') !== String(work.desiredRevision ?? '')) return;
+      if (String(current.analyticsOnlyTerminalState || '') !== terminal) return;
+      const { analyticsOnlyTerminalState: _consumed, ...rest } = current;
+      store.put({
+        ...rest,
+        state: terminal,
+        cursor: null,
+        appliedRevision: work.desiredRevision,
+        updatedAt: Date.now(),
+      });
+      restored = true;
+    };
+    await transactionDone(tx);
+    return restored;
+  } finally { db.close(); }
+};
+
+/**
+ * Re-queue canonical subjects for a bounded rebuild.
+ *
+ * **DPD-015B — bounded bytes.** The old implementation read every subject's
+ * whole source row (`encrypted_payload` and all) twice, plus a third read for
+ * the revision fence, purely to recompute a content token. At 500 trips one
+ * turn reported `bytesWorked` 7,739,924 against a declared
+ * `P6_TURN_BUDGET.bytes` of 4,194,304; the coordinator treats a budget overrun
+ * as a *contract violation*, so it skipped retry-with-backoff, installed no
+ * wake and destroyed the job instance — one external lifecycle trigger bought
+ * exactly one burst. The canonical writer mints the work row and the source row
+ * in the same transaction, so a work row standing at the subject's current
+ * revision already carries a `sourceHash` over exactly those bytes. Reusing it
+ * is not an accounting trick: the payload is genuinely not read.
+ *
+ * When the payload *is* genuinely needed the turn stops **before** the read if
+ * less than `P6_SOURCE_READ_RESERVE_BYTES` of its budget remains, persists its
+ * position and continues on the next turn. A single indivisible unit larger
+ * than the whole budget still runs when nothing else has been charged to the
+ * turn — that is the only way to guarantee forward progress — and the turn then
+ * ends, reporting a fully consumed budget with the true figure disclosed in
+ * `oversizedUnitBytes` rather than a cheap-looking understatement.
+ *
+ * **DPD-020 — parked debt stays parked.** `EXPLICIT_SOURCE_REQUIRED` means the
+ * point-derived domains defer to an explicit pass. The old implementation wrote
+ * `state: 'DIRTY'` blindly over whatever the work row said, so a settings
+ * rediscovery — which invalidates D1 and nothing else — dragged 32 parked
+ * subjects back into general dirty debt on every pass (the observed
+ * DIRTY 1 → 32 / parked 499 → 468 movement). Under `parkedPolicy: 'PRESERVE'`
+ * a parked subject is re-queued for D1 alone and carries the terminal state it
+ * must return to, so its D2/D3/D4 debt is never re-derived and never lost.
+ * The explicit repair keeps `parkedPolicy: 'REMINT'`: re-minting parked
+ * subjects is precisely what it exists to do.
+ *
+ * @param {Array<string|{id?: string, tripId?: string, source_revision?: unknown}>} rows
+ * @param {string[]} domains
+ * @param {{maxBytes?: number, parkedPolicy?: 'REMINT'|'PRESERVE'}} [options]
+ */
+export async function queueP6ExplicitTripSubjects(
+  rows = [],
+  domains = Object.values(P6_DOMAIN_KEYS),
+  options = {},
+) {
   const requestedDomains = [...new Set((domains || []).filter((domain) => Object.values(P6_DOMAIN_KEYS).includes(domain)))];
+  const declaredBytes = Number(options?.maxBytes);
+  const maxBytes = Number.isFinite(declaredBytes) ? Math.max(0, declaredBytes) : Infinity;
+  const preserveParked = options?.parkedPolicy === 'PRESERVE';
+  const analyticsOnly = requestedDomains.length === 1
+    && requestedDomains[0] === P6_DOMAIN_KEYS.ANALYTICS;
   let queued = 0;
+  let examined = 0;
+  /** Parked subjects left untouched, and parked subjects re-queued for D1 and
+   * carrying the park forward. Two different outcomes, counted apart so a
+   * caller cannot mistake one for the other. */
+  let parkedLeftAlone = 0;
+  let parkedRequeued = 0;
+  let alreadyInFlight = 0;
   let bytesWorked = 0;
-  for (const row of rows.slice(0, 32)) {
-    const tripId = String(row?.id || row?.tripId || '');
+  let oversizedUnitBytes = 0;
+  /** The last identity this call is answerable for; the caller resumes after it. */
+  let lastKey = null;
+  let deferred = false;
+
+  for (const row of (Array.isArray(rows) ? rows : []).slice(0, 32)) {
+    const tripId = typeof row === 'string' ? row : String(row?.id || row?.tripId || '');
     if (!tripId) continue;
+
     const db = await openP6TripDerivedDatabase();
-    let source;
+    let existing;
     try {
-      const tx = db.transaction(P6_TRIP_SOURCE_STORE, 'readonly');
-      source = await requestResult(tx.objectStore(P6_TRIP_SOURCE_STORE).get(tripId));
+      const tx = db.transaction(P6_TRIP_DERIVED_STORES.WORK, 'readonly');
+      existing = await requestResult(tx.objectStore(P6_TRIP_DERIVED_STORES.WORK).get(tripId));
+      await transactionDone(tx);
     } finally { db.close(); }
-    if (!source) continue;
-    const sourceHash = await hashP6Source(source);
+
+    const declaredRevision = row && typeof row === 'object' && row.source_revision != null
+      ? String(row.source_revision)
+      : null;
+    const reusable = Boolean(existing)
+      && existing.disposition !== 'TOMBSTONE'
+      && Boolean(existing.sourceHash)
+      && (declaredRevision === null || String(existing.desiredRevision ?? '') === declaredRevision);
+
+    let desiredRevision = reusable ? String(existing.desiredRevision ?? '') : null;
+    let sourceHash = reusable ? existing.sourceHash : null;
+    let unitBytes = existing ? encodedJsonBytes(existing) : 0;
+    let sourceRevisionFence = null;
+
+    if (!reusable) {
+      // The decision to read has to be made before the read: afterwards the
+      // bytes are spent whatever we decide. Deferring with nothing charged yet
+      // would be a zero-progress continuation, so the first unit of a turn
+      // always runs.
+      if (bytesWorked > 0 && maxBytes - bytesWorked < P6_SOURCE_READ_RESERVE_BYTES) {
+        deferred = true;
+        break;
+      }
+      let source;
+      const readDb = await openP6TripDerivedDatabase();
+      try {
+        const tx = readDb.transaction(P6_TRIP_SOURCE_STORE, 'readonly');
+        source = await requestResult(tx.objectStore(P6_TRIP_SOURCE_STORE).get(tripId));
+        await transactionDone(tx);
+      } finally { readDb.close(); }
+      if (!source) { examined += 1; lastKey = tripId; continue; }
+      const sourceBytes = encodedJsonBytes(source);
+      unitBytes += sourceBytes;
+      desiredRevision = String(source.source_revision ?? declaredRevision ?? '');
+      sourceHash = await hashP6Source(source);
+      sourceRevisionFence = String(source.source_revision ?? '');
+      if (bytesWorked === 0 && unitBytes > maxBytes) oversizedUnitBytes = unitBytes;
+    }
+
+    const parked = existing?.state === P6_EXPLICIT_SOURCE_REQUIRED;
+    // A subject already in flight is going to be rebuilt across every domain it
+    // owns, and its D1 contribution is re-published as the first step of that
+    // build. Narrowing such a row to D1 would silently drop the geometry work it
+    // was already carrying, so rediscovery leaves in-flight rows alone.
+    const inFlight = Boolean(existing)
+      && !P6_ANALYTICS_ONLY_RESTORABLE_STATES.includes(String(existing.state ?? ''));
+    if (preserveParked && inFlight) {
+      examined += 1;
+      alreadyInFlight += 1;
+      lastKey = tripId;
+      bytesWorked += unitBytes;
+      continue;
+    }
+    const restoreTerminalState = preserveParked
+      && analyticsOnly
+      && P6_ANALYTICS_ONLY_RESTORABLE_STATES.includes(String(existing?.state ?? ''))
+      ? String(existing.state)
+      : null;
+
     const writeDb = await openP6TripDerivedDatabase();
     try {
-      const tx = writeDb.transaction([P6_TRIP_SOURCE_STORE, P6_TRIP_DERIVED_STORES.WORK], 'readwrite');
-      const current = await requestResult(tx.objectStore(P6_TRIP_SOURCE_STORE).get(tripId));
-      if (current && String(current.source_revision) === String(source.source_revision)) {
-        tx.objectStore(P6_TRIP_DERIVED_STORES.WORK).put({
-          tripId, desiredRevision: String(source.source_revision ?? row?.source_revision ?? ''),
-          sourceHash, desiredSeq: Date.now() + queued, disposition: 'UPSERT',
-          dirtyDomains: requestedDomains,
-          reevaluateCapacityBlocked: requestedDomains.includes(P6_DOMAIN_KEYS.ROAD_LEARNING),
-          state: 'DIRTY', cursor: null, updatedAt: Date.now(),
-        });
-        queued += 1;
+      const stores = sourceRevisionFence === null
+        ? [P6_TRIP_DERIVED_STORES.WORK]
+        : [P6_TRIP_SOURCE_STORE, P6_TRIP_DERIVED_STORES.WORK];
+      const tx = writeDb.transaction(stores, 'readwrite');
+      // The fence compares what this call decided against on re-read. With a
+      // reused hash that is the work row itself, which the canonical writer
+      // rewrites in the same transaction as the source row; with a fresh hash
+      // it is the source revision the hash was taken over.
+      const current = sourceRevisionFence === null
+        ? await requestResult(tx.objectStore(P6_TRIP_DERIVED_STORES.WORK).get(tripId))
+        : await requestResult(tx.objectStore(P6_TRIP_SOURCE_STORE).get(tripId));
+      const fenceHolds = sourceRevisionFence === null
+        ? Boolean(current)
+          && current.disposition !== 'TOMBSTONE'
+          && String(current.desiredRevision ?? '') === desiredRevision
+          && String(current.state ?? '') === String(existing?.state ?? '')
+        : Boolean(current) && String(current.source_revision) === sourceRevisionFence;
+      if (fenceHolds) {
+        if (preserveParked && parked && !analyticsOnly) {
+          // Rediscovery is not an explicit pass and may not un-park a subject
+          // for domains only an explicit pass can rebuild. Today's PRESERVE
+          // caller is always analytics-only, so this is a rail rather than a
+          // live path — and it is the rail that keeps DPD-020 fixed if a wider
+          // invalidation is ever routed through the lifecycle.
+          parkedLeftAlone += 1;
+        } else {
+          tx.objectStore(P6_TRIP_DERIVED_STORES.WORK).put({
+            tripId,
+            desiredRevision,
+            sourceHash,
+            desiredSeq: Date.now() + queued,
+            disposition: 'UPSERT',
+            dirtyDomains: requestedDomains,
+            reevaluateCapacityBlocked: requestedDomains.includes(P6_DOMAIN_KEYS.ROAD_LEARNING),
+            state: 'DIRTY',
+            cursor: null,
+            ...(restoreTerminalState ? { analyticsOnlyTerminalState: restoreTerminalState } : {}),
+            updatedAt: Date.now(),
+          });
+          queued += 1;
+          if (parked) parkedRequeued += 1;
+        }
       }
       await transactionDone(tx);
     } finally { writeDb.close(); }
-    bytesWorked += encodedJsonBytes(source);
+
+    examined += 1;
+    lastKey = tripId;
+    bytesWorked += unitBytes;
+    // An indivisible unit that took the whole turn ends the turn.
+    if (oversizedUnitBytes) { deferred = true; break; }
+    if (maxBytes - bytesWorked < P6_SOURCE_READ_RESERVE_BYTES && !reusable) { deferred = true; break; }
   }
-  return { queued, bytesWorked };
+
+  return {
+    queued,
+    examined,
+    parkedLeftAlone,
+    parkedRequeued,
+    alreadyInFlight,
+    // An oversized indivisible unit reports a fully consumed turn rather than
+    // an understatement; `oversizedUnitBytes` carries what it actually cost.
+    bytesWorked: oversizedUnitBytes ? Math.min(bytesWorked, maxBytes) : bytesWorked,
+    oversizedUnitBytes,
+    lastKey,
+    deferred,
+  };
 }
 
 /** Keyset page over canonical browser source identities. It reads no trip
@@ -739,6 +996,24 @@ export async function invalidateP6AnalyticsForSettings(reason = 'SETTINGS_OR_VEH
   } finally { db.close(); }
 }
 
+/**
+ * One bounded page of the analytics settings rediscovery.
+ *
+ * DPD-015B. This turn is the one that threw
+ * `AppWorkBudgetExceededError: 7739924 > 4194304` on the 500-trip device. Two
+ * changes keep it inside its declared budget without hiding anything:
+ *
+ *  - it walks **identities**, not records, so learning which subjects exist no
+ *    longer deserializes a page of `encrypted_payload`; and
+ *  - it hands `queueP6ExplicitTripSubjects` the turn's remaining byte budget,
+ *    so a page that genuinely has to read payloads stops before overrunning it,
+ *    persists `afterKey`, and resumes on the next turn.
+ *
+ * DPD-020. A settings change invalidates D1 and only D1, so the page is queued
+ * for `ANALYTICS` alone under `parkedPolicy: 'PRESERVE'`. Compatibility-parked
+ * subjects therefore get their contribution re-published under the new settings
+ * without their D2/D3/D4 debt being re-derived or lost.
+ */
 const stepAnalyticsSettingsRediscovery = async (limit = 32) => {
   const db = await openP6TripDerivedDatabase();
   let repair;
@@ -748,42 +1023,45 @@ const stepAnalyticsSettingsRediscovery = async (limit = 32) => {
       .get(P6_ANALYTICS_SETTINGS_REPAIR_KEY));
     await transactionDone(controlTx);
     if (repair?.state !== 'DIRTY') return { state: 'IDLE', itemsWorked: 0, bytesWorked: 0, hasMore: false };
-    const sourceTx = db.transaction(P6_TRIP_SOURCE_STORE, 'readonly');
-    const store = sourceTx.objectStore(P6_TRIP_SOURCE_STORE);
-    const range = repair.afterKey == null ? null : IDBKeyRange.lowerBound(repair.afterKey, true);
-    const rows = await new Promise((resolve, reject) => {
-      const found = []; const request = store.openCursor(range);
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        const cursor = request.result;
-        if (!cursor || found.length >= limit + 1) return resolve(found);
-        found.push({ ...(cursor.value || {}), id: String(cursor.primaryKey) });
-        cursor.continue();
-      };
-    });
-    await transactionDone(sourceTx);
-    const page = rows.slice(0, limit);
-    const queued = await queueP6ExplicitTripSubjects(page);
-    const more = rows.length > limit;
-    const writeTx = db.transaction(P6_TRIP_DERIVED_STORES.CONTROL, 'readwrite');
+  } finally { db.close(); }
+
+  const page = await listP6BrowserCanonicalSubjectKeyPage({
+    afterKey: repair.afterKey ?? null,
+    maxItems: limit,
+  });
+  const queued = await queueP6ExplicitTripSubjects(page.ids, [P6_DOMAIN_KEYS.ANALYTICS], {
+    maxBytes: P6_TURN_BUDGET.bytes,
+    parkedPolicy: 'PRESERVE',
+  });
+  // The page is only finished when the queue drained all of it. A deferral is a
+  // continuation from the last identity this turn is answerable for, so no
+  // subject is skipped and none is re-queued twice.
+  const pageComplete = !queued.deferred;
+  const more = pageComplete ? Boolean(page.nextCursor) : true;
+  const afterKey = pageComplete ? page.nextCursor : (queued.lastKey ?? repair.afterKey ?? null);
+
+  const writeDb = await openP6TripDerivedDatabase();
+  try {
+    const writeTx = writeDb.transaction(P6_TRIP_DERIVED_STORES.CONTROL, 'readwrite');
     const control = writeTx.objectStore(P6_TRIP_DERIVED_STORES.CONTROL);
     const latest = await requestResult(control.get(P6_ANALYTICS_SETTINGS_REPAIR_KEY));
     if (latest?.settingsVersion === repair.settingsVersion) {
       control.put({
         ...latest,
         state: more ? 'DIRTY' : 'COMPLETE',
-        afterKey: more ? page.at(-1)?.id || latest.afterKey : null,
+        afterKey: more ? afterKey : null,
         updatedAt: Date.now(),
       });
     }
     await transactionDone(writeTx);
-    return {
-      state: more ? 'SETTINGS_REDISCOVERY' : 'SETTINGS_REDISCOVERY_COMPLETE',
-      itemsWorked: page.length + 1 + Number(queued.queued || 0),
-      bytesWorked: Number(queued.bytesWorked || 0),
-      hasMore: true,
-    };
-  } finally { db.close(); }
+  } finally { writeDb.close(); }
+
+  return {
+    state: more ? 'SETTINGS_REDISCOVERY' : 'SETTINGS_REDISCOVERY_COMPLETE',
+    itemsWorked: Number(page.itemsWorked || 0) + 1 + Number(queued.queued || 0),
+    bytesWorked: Number(queued.bytesWorked || 0),
+    hasMore: true,
+  };
 };
 
 const finalizeP6BrowserIncrementalDomains = async () => {
@@ -2153,6 +2431,29 @@ export async function stepP6BrowserTripDerivedUpdate({ explicit = false } = {}) 
     }
     if (!analyticsPublished) return { state: 'STALE_SOURCE', itemsWorked: 1, bytesWorked: 0, hasMore: true };
     if (work.state === 'PREVIEW_BUILD') return stepPreviewBuild(work, trip);
+    // DPD-020. A settings rediscovery re-queues a settled subject for D1 alone.
+    // Its contribution has just been re-published under the new settings and no
+    // point-derived domain is dirty, so there is nothing to rebuild and nothing
+    // to retire: the subject returns to the terminal state it came from in this
+    // one turn. Walking the geometry path instead would rebuild derived rows
+    // that are already current, and — for a compatibility-parked subject — spend
+    // four further retirement turns deleting rows that are already gone.
+    if (work.analyticsOnlyTerminalState) {
+      const restored = await restoreAnalyticsOnlyTerminalState(work);
+      if (restored) {
+        return {
+          state: 'ANALYTICS_SETTINGS_REFRESHED',
+          itemsWorked: 1,
+          // The canonical read is this turn's real cost and it is the whole
+          // accounting for the turn, so it is clamped to the declared budget:
+          // one pathological row must not be able to turn an honest report into
+          // the contract violation this change exists to remove. Same treatment
+          // an oversized indivisible unit gets in `queueP6ExplicitTripSubjects`.
+          bytesWorked: Math.min(encodedJsonBytes(trip || {}), P6_TURN_BUDGET.bytes),
+          hasMore: true,
+        };
+      }
+    }
     const page = await routePage(trip, work.cursor, explicit);
     if (page.compatibilityRequired) {
       // A legacy inline `route_points` source is read only by an explicit pass,

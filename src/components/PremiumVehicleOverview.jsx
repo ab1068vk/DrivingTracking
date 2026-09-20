@@ -49,6 +49,7 @@ const CARD_DEFINITIONS = [
  *    totalKm: number,
  *  },
  *  vehicleCountLabel?: string,
+ *  completedTripCountLabel?: string,
  *  formattedMonthlyCost: string,
  *  formattedTotalDistance: string,
  *  loading?: boolean,
@@ -59,6 +60,9 @@ export default function PremiumVehicleOverview({
   // HPR-003. The garage figure is whatever the page can honestly claim: a
   // total when the fleet is fully represented, a lower bound when it is not.
   vehicleCountLabel = null,
+  // DPD-018. The trip count is a lower bound while the D1 vehicle buckets have
+  // not answered, exactly as the garage count already was.
+  completedTripCountLabel = null,
   formattedMonthlyCost,
   formattedTotalDistance,
   loading = false,
@@ -66,7 +70,7 @@ export default function PremiumVehicleOverview({
   const cards = {
     garage: {
       value: vehicleCountLabel ?? String(summary.vehicleCount),
-      description: `${summary.completedTripCount} completed trip${summary.completedTripCount === 1 ? '' : 's'}`,
+      description: `${completedTripCountLabel ?? String(summary.completedTripCount)} completed trip${summary.completedTripCount === 1 ? '' : 's'}`,
       state: summary.vehicleCount > 0 ? 'active' : 'empty',
     },
     assignment: {

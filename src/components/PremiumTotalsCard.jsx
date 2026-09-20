@@ -15,6 +15,14 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { buildDashboardActivityStats } from '@/lib/dashboardStats';
+import {
+  allTimeCaption,
+  allTimeHeading,
+  allTimeMetricScope,
+  atLeastTotal,
+  meanScopeSublabel,
+  scopeStateOf,
+} from '@/lib/scopeDisclosure';
 import { formatDistance, formatDuration } from '@/lib/tripEngine';
 import premiumTotalsHero from '@/assets/premium-totals-hero-v2.webp';
 import premiumTotalsDistance from '@/assets/premium-totals-distance-v2.webp';
@@ -77,29 +85,51 @@ const METRIC_STYLES = [
 ];
 
 /**
- * @param {{ trips?: Array<Record<string, any>>, units?: string }} props
+ * DPD-017. `activityExact` is the Dashboard's own signal that the D1 lifetime
+ * ledger answered rather than the bounded most-recent window standing in for
+ * it. It was already computed and already shown as a badge far from the
+ * figures; the numbers themselves went on saying "all time". They say what they
+ * are now.
+ *
+ * @param {{ trips?: Array<Record<string, any>>, units?: string,
+ *   activityExact?: boolean, activityUnavailable?: unknown }} props
  */
-export default function PremiumTotalsCard({ trips = [], units = 'metric' }) {
+export default function PremiumTotalsCard({
+  trips = [],
+  units = 'metric',
+  activityExact = true,
+  activityUnavailable = null,
+}) {
   const [period, setPeriod] = useState(/** @type {'all_time'|'seven_days'} */ (PERIODS.ALL_TIME));
   const totals = useMemo(() => buildPremiumTotals(trips, period), [period, trips]);
+  const isAllTime = period === PERIODS.ALL_TIME;
+  // The seven-day window is served by the same bounded rows whether or not the
+  // lifetime ledger has converged, so only the all-time face can overclaim.
+  const scope = scopeStateOf({
+    exact: isAllTime ? activityExact !== false : true,
+    unavailable: isAllTime ? activityUnavailable : null,
+  });
   const values = {
-    distance: formatDistance(totals.distanceKm, units),
-    duration: formatDuration(Math.round(totals.durationSeconds)),
-    trips: String(totals.tripCount),
-    days: period === PERIODS.SEVEN_DAYS ? `${totals.activeDays}/7` : String(totals.activeDays),
+    distance: atLeastTotal(formatDistance(totals.distanceKm, units), scope),
+    duration: atLeastTotal(formatDuration(Math.round(totals.durationSeconds)), scope),
+    trips: atLeastTotal(String(totals.tripCount), scope),
+    days: period === PERIODS.SEVEN_DAYS
+      ? `${totals.activeDays}/7`
+      : atLeastTotal(String(totals.activeDays), scope),
+    // A mean is not a floor: more trips can move it either way.
     average: formatDistance(totals.averageDistanceKm, units),
-    longest: formatDistance(totals.longestDistanceKm, units),
+    longest: atLeastTotal(formatDistance(totals.longestDistanceKm, units), scope),
   };
   const activeDayRate = totals.activeDays ? totals.tripCount / totals.activeDays : 0;
   const sublabels = {
     distance: 'completed trips',
     duration: 'recorded time',
-    trips: period === PERIODS.ALL_TIME ? 'all time' : 'last 7 days',
+    trips: isAllTime ? allTimeMetricScope(scope) : 'last 7 days',
     days: totals.activeDays ? `${activeDayRate.toFixed(1)} trips / active day` : 'no driving days',
-    average: 'typical distance',
-    longest: period === PERIODS.ALL_TIME ? 'all time' : 'last 7 days',
+    average: isAllTime ? meanScopeSublabel('typical distance', scope) : 'typical distance',
+    longest: isAllTime ? allTimeMetricScope(scope) : 'last 7 days',
   };
-  const periodLabel = period === PERIODS.ALL_TIME ? 'All-time totals' : 'Last 7 days';
+  const periodLabel = isAllTime ? allTimeHeading(scope) : 'Last 7 days';
 
   return (
     <section
@@ -115,7 +145,7 @@ export default function PremiumTotalsCard({ trips = [], units = 'metric' }) {
         <span className="premium-totals-emblem" aria-hidden="true"><Gauge /></span>
         <div>
           <h2 id="premium-totals-title">{periodLabel}</h2>
-          <p>{period === PERIODS.ALL_TIME ? 'Everything recorded on this device' : 'Your most recent seven days'}</p>
+          <p>{isAllTime ? allTimeCaption(scope) : 'Your most recent seven days'}</p>
         </div>
       </div>
 

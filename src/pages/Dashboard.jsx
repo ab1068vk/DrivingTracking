@@ -4016,7 +4016,9 @@ export default function Dashboard() {
         </SectionErrorBoundary>
       )}
       <DashboardSummaryPanels
+        activityExact={dashboardData.activityExact !== false && dashboardData.lifetimeUnavailable !== true}
         activityPeriod={activityPeriod}
+        activityUnavailable={dashboardData.activityUnavailable}
         analyticsCompletedTrips={analyticsCompletedTrips}
         avgScore={avgScore}
         avgScoreEvidence={avgScoreEvidence}

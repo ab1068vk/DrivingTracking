@@ -20,10 +20,17 @@ import {
   formatScoreWithProvenance,
 } from '@/lib/scoreDisplay';
 
+/**
+ * DPD-019. The report window is rolling, not calendar: `reportWindow` spans
+ * `now - periodDays` to `now`. "This Week" named a calendar week the reducers
+ * never used, which is how one card came to print a calendar-week emptiness
+ * above a rolling-seven-day total. The export carries the same names as the
+ * screen so a saved PDF cannot contradict the page it came from.
+ */
 function periodLabel(period) {
-  if (period === 'week') return 'This Week';
-  if (period === 'month') return 'This Month';
-  if (period === 'all') return 'All Time';
+  if (period === 'week') return 'Last 7 days';
+  if (period === 'month') return 'Last 30 days';
+  if (period === 'all') return 'All time';
   return String(period || 'Selected Period');
 }
 

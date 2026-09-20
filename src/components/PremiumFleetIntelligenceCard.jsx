@@ -2,6 +2,7 @@
 import { Activity, CalendarClock, Route, TrendingUp } from 'lucide-react';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { formatDistanceScope } from '@/lib/unitFormatting';
+import { atLeastTotal, scopeStateOf } from '@/lib/scopeDisclosure';
 import premiumFleetAction from '@/assets/premium-fleet-action.webp';
 import premiumFleetBusiest from '@/assets/premium-fleet-busiest.webp';
 import premiumFleetScore from '@/assets/premium-fleet-score.webp';
@@ -63,6 +64,7 @@ export function buildPremiumFleetIntelligenceViewModel(
   { highConfidenceAssignmentCount = 0, units = 'metric' } = {},
 ) {
   const busiest = intelligence?.busiestVehicle || null;
+  const scope = scopeStateOf({ exact: intelligence?.lifetimeExact === true });
   const best = intelligence?.bestScoreVehicle || null;
   const score = clampScore(best?.score);
   const assignmentReviewCount = Math.max(0, Number(intelligence?.assignmentReviewCount) || 0);
@@ -95,8 +97,13 @@ export function buildPremiumFleetIntelligenceViewModel(
       ? `${formatEstimatedScore(score)} aggregate evidence`
       : 'Assign vehicles to compare real driving behavior',
     bestName: best?.vehicle?.name || 'Not enough scored trips',
+    // DPD-018. A per-vehicle total taken from the bounded recent rows is a
+    // floor, not the vehicle's history, and must not be stated as bare fact.
     busiestDetail: busiest
-      ? `${formatDistanceScope(busiest.distanceKm, units)} across ${busiest.trips} trip${busiest.trips === 1 ? '' : 's'}`
+      ? atLeastTotal(
+        `${formatDistanceScope(busiest.distanceKm, units)} across ${busiest.trips} trip${busiest.trips === 1 ? '' : 's'}`,
+        scope,
+      )
       : 'Complete trips to build a vehicle profile',
     busiestName: busiest?.vehicle?.name || 'No trip data yet',
     score,

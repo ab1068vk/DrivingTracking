@@ -16,6 +16,14 @@ import { PremiumWeeklyGoalsCard, PremiumWeeklyInsightCards } from '@/components/
 import ScoreRing from '@/components/ScoreRing';
 import TripCard from '@/components/TripCard';
 import { getPremiumTripScoreDelta } from '@/lib/premiumTripPresentation';
+import {
+  allTimeCaption,
+  allTimeHeading,
+  allTimeMetricScope,
+  atLeastTotal,
+  meanScopeSublabel,
+  scopeStateOf,
+} from '@/lib/scopeDisclosure';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
 import { formatDistance, formatDuration } from '@/lib/tripEngine';
@@ -29,7 +37,9 @@ const OVERALL_SCORE_IS_APPROXIMATE = hasProvisionalCalibration(['score_overall']
  * Props-threaded out of the page body; owns no state and runs no hooks.
  */
 export default function DashboardSummaryPanels({
+  activityExact = true,
   activityPeriod,
+  activityUnavailable = null,
   analyticsCompletedTrips,
   avgScore,
   avgScoreEvidence,
@@ -54,20 +64,32 @@ export default function DashboardSummaryPanels({
   units,
   weeklyGoals,
 }) {
+  // DPD-017. While the D1 lifetime ledger is unconverged the all-time face is
+  // the bounded most-recent window. It is a correct window; it is not all time,
+  // and the card may not say it is.
+  const activityScope = scopeStateOf({
+    exact: isAllTimeActivity ? activityExact !== false : true,
+    unavailable: isAllTimeActivity ? activityUnavailable : null,
+  });
   return (
     <>
       {/* Stats Grid */}
       {settings.premium_visual_experience === true ? (
-        <PremiumTotalsCard trips={analyticsCompletedTrips} units={units} />
+        <PremiumTotalsCard
+          trips={analyticsCompletedTrips}
+          units={units}
+          activityExact={activityExact}
+          activityUnavailable={activityUnavailable}
+        />
       ) : (
       <section className="rounded-3xl border border-border bg-card p-4 shadow-sm" aria-labelledby="dashboard-activity-heading">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 id="dashboard-activity-heading" className="font-semibold">
-              {isAllTimeActivity ? 'All-time totals' : 'Your last 7 days'}
+              {isAllTimeActivity ? allTimeHeading(activityScope) : 'Your last 7 days'}
             </h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {isAllTimeActivity ? 'Everything recorded on this device' : 'Recent driving activity'}
+              {isAllTimeActivity ? allTimeCaption(activityScope) : 'Recent driving activity'}
             </p>
           </div>
           <div className="flex rounded-xl bg-secondary p-1" role="group" aria-label="Dashboard totals period">
@@ -89,17 +111,21 @@ export default function DashboardSummaryPanels({
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
           {[
-            { label: 'Distance', value: formatDistance(dashboardActivity.distanceKm, units), detail: 'completed trips', icon: Navigation },
-            { label: 'Time driving', value: formatDuration(Math.round(dashboardActivity.drivingSeconds)), detail: 'recorded time', icon: Clock },
-            { label: 'Trips', value: dashboardActivity.tripCount, detail: isAllTimeActivity ? 'all time' : 'last 7 days', icon: Car },
+            { label: 'Distance', value: atLeastTotal(formatDistance(dashboardActivity.distanceKm, units), activityScope), detail: 'completed trips', icon: Navigation },
+            { label: 'Time driving', value: atLeastTotal(formatDuration(Math.round(dashboardActivity.drivingSeconds)), activityScope), detail: 'recorded time', icon: Clock },
+            { label: 'Trips', value: atLeastTotal(String(dashboardActivity.tripCount), activityScope), detail: isAllTimeActivity ? allTimeMetricScope(activityScope) : 'last 7 days', icon: Car },
             {
               label: 'Active days',
-              value: isAllTimeActivity ? dashboardActivity.activeDays : `${dashboardActivity.activeDays}/7`,
+              value: isAllTimeActivity
+                ? atLeastTotal(String(dashboardActivity.activeDays), activityScope)
+                : `${dashboardActivity.activeDays}/7`,
               detail: dashboardActivity.activeDays ? `${dashboardActivity.tripsPerActiveDay.toFixed(1)} trips / active day` : 'no driving days',
               icon: CalendarDays,
             },
-            { label: 'Average trip', value: formatDistance(dashboardActivity.averageTripKm, units), detail: 'typical distance', icon: Route },
-            { label: 'Longest trip', value: formatDistance(dashboardActivity.longestTripKm, units), detail: isAllTimeActivity ? 'all time' : 'last 7 days', icon: Gauge },
+            // A mean over a partial population is not a floor, so it is never
+            // prefixed "at least"; its denominator is disclosed instead.
+            { label: 'Average trip', value: formatDistance(dashboardActivity.averageTripKm, units), detail: isAllTimeActivity ? meanScopeSublabel('typical distance', activityScope) : 'typical distance', icon: Route },
+            { label: 'Longest trip', value: atLeastTotal(formatDistance(dashboardActivity.longestTripKm, units), activityScope), detail: isAllTimeActivity ? allTimeMetricScope(activityScope) : 'last 7 days', icon: Gauge },
           ].map(({ label, value, detail, icon: Icon }) => (
             <div key={label} className="min-w-0 rounded-2xl bg-secondary/45 p-3">
               <Icon className="mb-2 h-4 w-4 text-primary" />

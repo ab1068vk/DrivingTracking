@@ -5,6 +5,10 @@ import PremiumFleetIntelligenceCard, {
 } from '@/components/PremiumFleetIntelligenceCard';
 
 const intelligence = {
+  // DPD-018: the fixture declares whether the D1 vehicle buckets answered. This
+  // card's visual assertions describe the converged fleet; the bounded state is
+  // covered in dashboardScopeTruth.test.jsx.
+  lifetimeExact: true,
   assignmentReviewCount: 2,
   serviceDueCount: 1,
   busiestVehicle: {

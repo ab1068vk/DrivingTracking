@@ -91,7 +91,10 @@ describe('UBI PDF export', () => {
     }], 'week');
     const renderedText = pdfText.mock.calls.map(([text]) => String(text)).join(' ');
 
-    expect(renderedText).toContain('This Week Driving Report');
+    // DPD-019: the report window is rolling, so the export names the window it
+    // actually covers rather than a calendar week it never used.
+    expect(renderedText).toContain('Last 7 days Driving Report');
+    expect(renderedText).not.toContain('This Week Driving Report');
     expect(renderedText).toContain('Metric Reference');
     expect(renderedText).toContain('Scores are estimates');
     expect(renderedText).toContain('~82');
