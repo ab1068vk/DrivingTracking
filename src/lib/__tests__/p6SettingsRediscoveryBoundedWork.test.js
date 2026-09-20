@@ -177,6 +177,13 @@ describe('P6 settings rediscovery stays inside its declared turn budget', () => 
 
     // More history means MORE bounded turns, not larger ones.
     expect(rediscovery.length).toBeGreaterThan(1);
+    // ...but the walk must ADVANCE a page each time rather than re-running one.
+    // A stuck walk is the device's exact failure, and it would show up here as a
+    // rediscovery turn count that scales with subjects instead of with pages.
+    const pages = Math.ceil(SUBJECT_COUNT / 32) + 1;
+    expect(rediscovery.length).toBeLessThanOrEqual(pages + 1);
+    // One turn per subject, not five. At parent this is ~5x larger.
+    expect(turns.length).toBeLessThan(SUBJECT_COUNT * 2);
     // A continuing turn that did nothing is the hot-loop signature: `hasMore`
     // with no work, forever. Every turn that asks to continue must have moved.
     for (const [index, result] of turns.entries()) {
@@ -195,13 +202,23 @@ describe('P6 settings rediscovery stays inside its declared turn budget', () => 
 
     settingsState.units = 'imperial';
     await invalidateP6AnalyticsForSettings('TEST_SETTINGS_CHANGED');
-    await runLifecycleTurns();
+    const { turns } = await runLifecycleTurns();
 
     // DPD-020: the parked population is exactly what it was. Rediscovery may
     // refresh D1 for these subjects; it may not convert their D2/D3/D4 debt
     // back into general dirty debt, and it may not lose it either.
     expect(countWorkState('EXPLICIT_SOURCE_REQUIRED')).toBe(parkedBefore);
     expect(countWorkState('DIRTY')).toBe(0);
+    // The end state alone does not distinguish this from the old behaviour —
+    // the old path also re-parked, just via five turns per subject (park plus
+    // four retirement phases over rows that were already gone). These two
+    // assertions are what actually fail without the fix: the refresh path is
+    // taken, and the re-park path is not.
+    const states = turns.map((result) => result.state);
+    expect(states.filter((state) => state === 'ANALYTICS_SETTINGS_REFRESHED').length)
+      .toBe(SUBJECT_COUNT);
+    expect(states).not.toContain('EXPLICIT_LEGACY_SOURCE_REQUIRED');
+    expect(states).not.toContain('RETIRE_SUPERSEDED');
     for (const id of [subjectIds[0], subjectIds.at(-1)]) {
       expect(workRow(id).state, id).toBe('EXPLICIT_SOURCE_REQUIRED');
       expect(workRow(id).analyticsOnlyTerminalState, id).toBeUndefined();
@@ -282,11 +299,45 @@ describe('queueP6ExplicitTripSubjects bounded-work contract', () => {
    */
   const dropWorkRows = () => { store(P6_TRIP_DERIVED_STORES.WORK)?.records.clear(); };
 
-  const seed = async (count) => {
+  const seed = async (count, { points = POINTS_PER_TRIP } = {}) => {
     for (let index = 0; index < count; index += 1) {
-      await localTripRepository.create(trip(`rs-q-${String(index).padStart(4, '0')}`, { seed: index + 1 }));
+      await localTripRepository.create(
+        trip(`rs-q-${String(index).padStart(4, '0')}`, { seed: index + 1, points }),
+      );
     }
   };
+
+  it('walks identities through a key cursor that never yields a record', async () => {
+    // Coverage for the half of DPD-015B that is about *not reading*. The double
+    // originally gained `openKeyCursor` on `FakeIndex` only, while both
+    // production callers invoke it on an object store — so every test quietly
+    // took the `openCursor` fallback and materialised full records, and a
+    // regression removing the key-cursor branch would have been invisible.
+    await seed(3);
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const objectStore = db.transaction(P6_TRIP_SOURCE_STORE, 'readonly')
+      .objectStore(P6_TRIP_SOURCE_STORE);
+    expect(typeof objectStore.openKeyCursor).toBe('function');
+    const first = await new Promise((resolve, reject) => {
+      const request = objectStore.openKeyCursor(null);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    expect(first).toBeTruthy();
+    expect(first.primaryKey).toBe('rs-q-0000');
+    // A key cursor has no record. This is the property the walk depends on.
+    expect(first.value).toBeUndefined();
+    expect('value' in first).toBe(false);
+    db.close();
+
+    const page = await listP6BrowserCanonicalSubjectKeyPage({ maxItems: 32 });
+    expect(page.ids).toEqual(['rs-q-0000', 'rs-q-0001', 'rs-q-0002']);
+    expect(page.nextCursor).toBeNull();
+  });
 
   it('reuses the work row content token rather than re-reading the payload', async () => {
     await seed(8);
@@ -325,6 +376,39 @@ describe('queueP6ExplicitTripSubjects bounded-work contract', () => {
     // stuck on the same subjects.
     const next = await listP6BrowserCanonicalSubjectKeyPage({ afterKey: outcome.lastKey, maxItems: 32 });
     expect(next.ids[0]).toBe(page.ids[outcome.examined]);
+  });
+
+  it('cannot accumulate an overrun out of several rows that each fit the reserve', async () => {
+    // The first version of this fix used only a pre-read byte reserve, and an
+    // independent review reproduced the hole: with a 4 MiB budget and a 1 MiB
+    // reserve, two 1.5 MB rows leave 1.19 MB "available", so a third 1.5 MB row
+    // is read and the turn reports 4,503,859 bytes — the same contract
+    // violation this whole change exists to remove. Each row fits the reserve;
+    // the accumulation does not. The bound is one unknown-size read per turn.
+    await seed(3, { points: 7900 });
+    dropWorkRows();
+    const page = await listP6BrowserCanonicalSubjectKeyPage({ maxItems: 32 });
+    const rowBytes = [];
+    for (const id of page.ids) {
+      rowBytes.push(encodedBytes(store(P6_TRIP_SOURCE_STORE).records.get(id)));
+    }
+    // Guards the guard: each row must individually clear the reserve, or this
+    // test is not exercising the accumulation case at all.
+    for (const bytes of rowBytes) {
+      expect(bytes).toBeGreaterThan(P6_SOURCE_READ_RESERVE_BYTES);
+    }
+    expect(rowBytes.reduce((sum, bytes) => sum + bytes, 0)).toBeGreaterThan(P6_TURN_BUDGET.bytes);
+
+    const outcome = await queueP6ExplicitTripSubjects(page.ids, [P6_DOMAIN_KEYS.ANALYTICS], {
+      maxBytes: P6_TURN_BUDGET.bytes,
+      parkedPolicy: 'PRESERVE',
+    });
+
+    expect(outcome.bytesWorked).toBeLessThanOrEqual(P6_TURN_BUDGET.bytes);
+    expect(outcome.payloadReads).toBe(1);
+    expect(outcome.queued).toBe(1);
+    expect(outcome.deferred).toBe(true);
+    expect(outcome.lastKey).toBe(page.ids[0]);
   });
 
   it('runs one indivisible oversized unit rather than looping on it, and discloses the cost', async () => {

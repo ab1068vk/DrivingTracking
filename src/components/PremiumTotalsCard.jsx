@@ -85,28 +85,63 @@ const METRIC_STYLES = [
 ];
 
 /**
- * DPD-017. `activityExact` is the Dashboard's own signal that the D1 lifetime
- * ledger answered rather than the bounded most-recent window standing in for
- * it. It was already computed and already shown as a badge far from the
- * figures; the numbers themselves went on saying "all time". They say what they
- * are now.
+ * DPD-017. The exactness signal and the figures have to describe the SAME
+ * population, and originally they did not.
+ *
+ * This card used to fold its own `trips` prop — the Dashboard's bounded
+ * `DASHBOARD_WINDOW_ROWS = 60` row window — while `activityExact` describes the
+ * `p7.dashboard.activityStats@1` reducer, which runs to 200. So a driver with,
+ * say, 120 completed trips got `activityExact === true` and the card printed
+ * "All-time totals", "Everything recorded on this device" and `60 trips` over a
+ * 60-row fold: the original defect, restated as a certified-complete claim. It
+ * also meant the premium and standard Dashboards showed different totals for
+ * the same data, which is a cross-surface contradiction in its own right.
+ *
+ * The card now renders the same `activity` the standard variant does — lifetime
+ * trips and distance from the D1 owner, the rest from the activity reducer — and
+ * shares the page's period state, so the two variants agree by construction.
+ * `trips` remains a fallback for standalone rendering.
  *
  * @param {{ trips?: Array<Record<string, any>>, units?: string,
+ *   activity?: Record<string, any>|null, period?: 'all_time'|'seven_days',
+ *   onPeriodChange?: (period: 'all_time'|'seven_days') => void,
  *   activityExact?: boolean, activityUnavailable?: unknown }} props
  */
 export default function PremiumTotalsCard({
   trips = [],
   units = 'metric',
+  activity = null,
+  period: controlledPeriod = null,
+  onPeriodChange = null,
   activityExact = true,
   activityUnavailable = null,
 }) {
-  const [period, setPeriod] = useState(/** @type {'all_time'|'seven_days'} */ (PERIODS.ALL_TIME));
-  const totals = useMemo(() => buildPremiumTotals(trips, period), [period, trips]);
+  const [uncontrolledPeriod, setUncontrolledPeriod] = useState(
+    /** @type {'all_time'|'seven_days'} */ (PERIODS.ALL_TIME),
+  );
+  const period = controlledPeriod ?? uncontrolledPeriod;
+  const setPeriod = onPeriodChange ?? setUncontrolledPeriod;
+  const folded = useMemo(() => buildPremiumTotals(trips, period), [period, trips]);
+  // The shared activity object names its fields differently from the local fold;
+  // normalise once so the render below has a single shape.
+  const totals = activity ? {
+    activeDays: Number(activity.activeDays) || 0,
+    averageDistanceKm: Number(activity.averageTripKm) || 0,
+    distanceKm: Number(activity.distanceKm) || 0,
+    durationSeconds: Number(activity.drivingSeconds) || 0,
+    longestDistanceKm: Number(activity.longestTripKm) || 0,
+    tripCount: Number(activity.tripCount) || 0,
+  } : folded;
   const isAllTime = period === PERIODS.ALL_TIME;
-  // The seven-day window is served by the same bounded rows whether or not the
-  // lifetime ledger has converged, so only the all-time face can overclaim.
+  // An empty result is exact whatever the ledger says. Both sources here are
+  // most-recent-first, and the most recent N of a non-empty history is never
+  // empty — so nothing found means nothing recorded. "At least 0 km" would be
+  // true and would say less than the truth, which is the opposite of the point.
+  const emptyPopulation = Number(totals.tripCount) === 0;
+  // Without a shared activity object the card is folding its own bounded rows,
+  // and it cannot honestly claim lifetime truth however converged the ledger is.
   const scope = scopeStateOf({
-    exact: isAllTime ? activityExact !== false : true,
+    exact: emptyPopulation || (isAllTime ? (activity ? activityExact !== false : false) : true),
     unavailable: isAllTime ? activityUnavailable : null,
   });
   const values = {

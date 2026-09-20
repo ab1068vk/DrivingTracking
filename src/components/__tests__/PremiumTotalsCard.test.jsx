@@ -111,7 +111,11 @@ describe('PremiumTotalsCard', () => {
     expect(html).toContain('aria-label="Totals period"');
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain('aria-pressed="false"');
-    expect(html).toContain('aria-label="Distance: 12.5 km. completed trips"');
+    // DPD-017: rendered without a shared `activity`, the card is folding its own
+    // bounded rows and says so rather than calling them lifetime totals.
+    expect(html).toContain('aria-label="Distance: at least 12.5 km. completed trips"');
+    expect(html).toContain('Totals so far');
+    expect(html).not.toContain('All-time totals');
     expect(html.match(/class="premium-metric"/g)).toHaveLength(6);
   });
 
@@ -119,6 +123,9 @@ describe('PremiumTotalsCard', () => {
     const html = renderToStaticMarkup(<PremiumTotalsCard trips={[]} units="imperial" />);
 
     expect(html).toContain('data-empty="true"');
+    // An empty most-recent window means an empty history, so this state is
+    // exact and is not hedged: "at least 0.0 mi" would say less than the truth.
+    expect(html).not.toContain('at least');
     expect(html).toContain('Distance: 0.0 mi. completed trips');
     expect(html).toContain('Time driving: 0m. recorded time');
     expect(html).toContain('Active days: 0. no driving days');

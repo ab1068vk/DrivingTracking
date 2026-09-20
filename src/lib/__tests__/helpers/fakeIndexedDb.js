@@ -69,6 +69,43 @@ const keyInRange = (key, range) => {
   return true;
 };
 
+/**
+ * Real `openKeyCursor` yields a cursor with **no `value`** and does not
+ * deserialize the record. The double must model that, because "did this walk
+ * deserialize the record?" is exactly the question DPD-015B turned on: the
+ * settings rediscovery read a page of whole trip rows to learn a page of ids,
+ * and a fake that quietly handed back `value` anyway would let that regress
+ * unnoticed.
+ *
+ * Both `IDBObjectStore` and `IDBIndex` expose it. The production callers —
+ * `listP6BrowserCanonicalSubjectKeyPage` and `localTripRepository.erasureKeyPage`
+ * — both call it on an **object store**, so a version of this that existed only
+ * on the index would leave those paths silently taking their `openCursor`
+ * fallback and materializing every record, which is exactly what it was added to
+ * prevent.
+ */
+const asKeyCursorRequest = (request) => {
+  const strip = (cursor) => (cursor ? new Proxy(cursor, {
+    get: (target, prop, receiver) => {
+      if (prop === 'value') return undefined;
+      if (prop === 'continue') {
+        return () => {
+          target.continue();
+          return undefined;
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+    has: (target, prop) => (prop === 'value' ? false : Reflect.has(target, prop)),
+  }) : cursor);
+  return new Proxy(request, {
+    get: (target, prop, receiver) => (
+      prop === 'result' ? strip(target.result) : Reflect.get(target, prop, receiver)
+    ),
+    set: (target, prop, value, receiver) => Reflect.set(target, prop, value, receiver),
+  });
+};
+
 class FakeIndex {
   constructor(transaction, state, definition) {
     this.transaction = transaction;
@@ -120,34 +157,8 @@ class FakeIndex {
       .filter(({ key }) => keyInRange(key, range)).length);
   }
 
-  /**
-   * Real `IDBObjectStore.openKeyCursor` yields a cursor with **no `value`**.
-   * The double must model that, because "did this walk deserialize the record?"
-   * is exactly the question DPD-015B turned on: the settings rediscovery read a
-   * page of whole trip rows to learn a page of ids, and a fake that quietly
-   * handed back `value` anyway would let that regress unnoticed.
-   */
   openKeyCursor(range = null, direction = 'next') {
-    const request = this.openCursor(range, direction);
-    const strip = (cursor) => (cursor ? new Proxy(cursor, {
-      get: (target, prop, receiver) => {
-        if (prop === 'value') return undefined;
-        if (prop === 'continue') {
-          return () => {
-            target.continue();
-            return undefined;
-          };
-        }
-        return Reflect.get(target, prop, receiver);
-      },
-      has: (target, prop) => (prop === 'value' ? false : Reflect.has(target, prop)),
-    }) : cursor);
-    return new Proxy(request, {
-      get: (target, prop, receiver) => (
-        prop === 'result' ? strip(target.result) : Reflect.get(target, prop, receiver)
-      ),
-      set: (target, prop, value, receiver) => Reflect.set(target, prop, value, receiver),
-    });
+    return asKeyCursorRequest(this.openCursor(range, direction));
   }
 
   openCursor(range = null, direction = 'next') {
@@ -274,6 +285,10 @@ class FakeObjectStore {
       .filter((record) => keyInRange(evaluateIndexKey(record, this.keyPath), range))
       .sort((a, b) => compareKeys(evaluateIndexKey(a, this.keyPath), evaluateIndexKey(b, this.keyPath)))
       .slice(0, count).map(cloneValue));
+  }
+
+  openKeyCursor(range = null, direction = 'next') {
+    return asKeyCursorRequest(this.openCursor(range, direction));
   }
 
   openCursor(range = null, direction = 'next') {

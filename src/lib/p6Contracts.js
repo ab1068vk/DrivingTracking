@@ -83,14 +83,22 @@ export const P6_TURN_BUDGET = Object.freeze({
  * A turn that reads payloads of unknown size cannot decide "does this fit?"
  * after the read — by then the bytes are spent, and either it reports them and
  * breaks its declared budget or it hides them. It therefore stops *before* the
- * read whenever less than this much of the turn's byte budget is left, and
- * resumes on the next turn with a full one. One whole trip at or below this
- * size can never overrun `P6_TURN_BUDGET.bytes` on its own.
+ * read whenever less than this much of the turn's byte budget is left.
+ *
+ * This reserve is a cheap early exit, **not** the bound. It cannot be the
+ * bound: it constrains each read in isolation, so an accumulation still
+ * overruns — with a 4 MiB budget, two 1.5 MB rows leave 1.19 MB "available" and
+ * a third 1.5 MB row takes the turn to 4.5 MB. The actual bound is that a turn
+ * takes at most **one** read of unknown size, which makes its payload cost
+ * exactly one row; a single row larger than the whole budget is then handled by
+ * the oversized-unit rule, which reports a fully consumed turn and discloses the
+ * true cost separately.
  *
  * 1 MiB is four times the largest canonical row observed on the 500-trip
  * qualification device (p50 ≈ 242 KB; `route_points` is import-capped at
- * `MAX_IMPORTED_TRIP_ROUTE_POINTS`), and a quarter of the turn budget, so a
- * turn can still take three unknown-size reads before it defers.
+ * `MAX_IMPORTED_TRIP_ROUTE_POINTS`, but that cap applies only to imports, so
+ * larger canonical rows are producible — which is why the reserve is not
+ * trusted as the bound).
  */
 export const P6_SOURCE_READ_RESERVE_BYTES = 1024 * 1024;
 

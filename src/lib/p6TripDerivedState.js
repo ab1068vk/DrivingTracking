@@ -677,12 +677,18 @@ export async function queueP6ExplicitTripSubjects(
   let parkedRequeued = 0;
   let alreadyInFlight = 0;
   let bytesWorked = 0;
+  let payloadReads = 0;
   let oversizedUnitBytes = 0;
   /** The last identity this call is answerable for; the caller resumes after it. */
   let lastKey = null;
   let deferred = false;
 
-  for (const row of (Array.isArray(rows) ? rows : []).slice(0, 32)) {
+  // The page cap belongs to the caller, and silently dropping a tail here would
+  // strand subjects: `stepAnalyticsSettingsRediscovery` advances `afterKey` to
+  // the page's own `nextCursor` when the queue reports it drained the page, so a
+  // dropped tail would never be revisited for that settings version.
+  const pageLimit = Math.max(1, Math.min(64, Number(options?.maxItems) || 32));
+  for (const row of (Array.isArray(rows) ? rows : []).slice(0, pageLimit)) {
     const tripId = typeof row === 'string' ? row : String(row?.id || row?.tripId || '');
     if (!tripId) continue;
 
@@ -708,11 +714,20 @@ export async function queueP6ExplicitTripSubjects(
     let sourceRevisionFence = null;
 
     if (!reusable) {
-      // The decision to read has to be made before the read: afterwards the
-      // bytes are spent whatever we decide. Deferring with nothing charged yet
-      // would be a zero-progress continuation, so the first unit of a turn
-      // always runs.
-      if (bytesWorked > 0 && maxBytes - bytesWorked < P6_SOURCE_READ_RESERVE_BYTES) {
+      // A turn may take at most ONE read of unknown size.
+      //
+      // A byte reserve is not enough on its own, and the first version of this
+      // fix got that wrong: with a 4 MiB budget and a 1 MiB reserve, two 1.5 MB
+      // rows leave 1.19 MB "available", so a third 1.5 MB row is read and the
+      // turn reports 4.5 MB — the same contract violation this change exists to
+      // remove. The reserve cannot bound an accumulation of rows whose sizes are
+      // only knowable after reading them. One read per turn can, because the
+      // turn's payload cost is then exactly one row, and a single row too big
+      // for the whole budget is handled by the oversized-unit rule below.
+      //
+      // Deferring with nothing charged yet would be a zero-progress
+      // continuation, so the first unit of a turn always runs.
+      if (payloadReads >= 1 || (bytesWorked > 0 && maxBytes - bytesWorked < P6_SOURCE_READ_RESERVE_BYTES)) {
         deferred = true;
         break;
       }
@@ -724,12 +739,12 @@ export async function queueP6ExplicitTripSubjects(
         await transactionDone(tx);
       } finally { readDb.close(); }
       if (!source) { examined += 1; lastKey = tripId; continue; }
+      payloadReads += 1;
       const sourceBytes = encodedJsonBytes(source);
       unitBytes += sourceBytes;
       desiredRevision = String(source.source_revision ?? declaredRevision ?? '');
       sourceHash = await hashP6Source(source);
       sourceRevisionFence = String(source.source_revision ?? '');
-      if (bytesWorked === 0 && unitBytes > maxBytes) oversizedUnitBytes = unitBytes;
     }
 
     const parked = existing?.state === P6_EXPLICIT_SOURCE_REQUIRED;
@@ -803,9 +818,16 @@ export async function queueP6ExplicitTripSubjects(
     examined += 1;
     lastKey = tripId;
     bytesWorked += unitBytes;
-    // An indivisible unit that took the whole turn ends the turn.
-    if (oversizedUnitBytes) { deferred = true; break; }
-    if (maxBytes - bytesWorked < P6_SOURCE_READ_RESERVE_BYTES && !reusable) { deferred = true; break; }
+    // The subject is queued and `lastKey` is set before this check, so an
+    // overrun still ends the turn having made forward progress. The report is
+    // capped at the budget rather than understated to look cheap, and the true
+    // figure travels in `oversizedUnitBytes`.
+    if (bytesWorked > maxBytes) {
+      oversizedUnitBytes = bytesWorked;
+      deferred = true;
+      break;
+    }
+    if (!reusable) { deferred = true; break; }
   }
 
   return {
@@ -817,6 +839,7 @@ export async function queueP6ExplicitTripSubjects(
     // An oversized indivisible unit reports a fully consumed turn rather than
     // an understatement; `oversizedUnitBytes` carries what it actually cost.
     bytesWorked: oversizedUnitBytes ? Math.min(bytesWorked, maxBytes) : bytesWorked,
+    payloadReads,
     oversizedUnitBytes,
     lastKey,
     deferred,
@@ -1031,6 +1054,7 @@ const stepAnalyticsSettingsRediscovery = async (limit = 32) => {
   });
   const queued = await queueP6ExplicitTripSubjects(page.ids, [P6_DOMAIN_KEYS.ANALYTICS], {
     maxBytes: P6_TURN_BUDGET.bytes,
+    maxItems: limit,
     parkedPolicy: 'PRESERVE',
   });
   // The page is only finished when the queue drained all of it. A deferral is a
@@ -2441,15 +2465,19 @@ export async function stepP6BrowserTripDerivedUpdate({ explicit = false } = {}) 
     if (work.analyticsOnlyTerminalState) {
       const restored = await restoreAnalyticsOnlyTerminalState(work);
       if (restored) {
+        // The canonical read is this turn's real cost and it is the whole
+        // accounting for the turn, so it is clamped to the declared budget: one
+        // pathological row must not be able to turn an honest report into the
+        // contract violation this change exists to remove. The clamp is
+        // disclosed rather than silent, the same way an oversized indivisible
+        // unit is in `queueP6ExplicitTripSubjects` — a capped number with no
+        // companion figure is an understatement, not a bounded report.
+        const readBytes = encodedJsonBytes(trip || {});
         return {
           state: 'ANALYTICS_SETTINGS_REFRESHED',
           itemsWorked: 1,
-          // The canonical read is this turn's real cost and it is the whole
-          // accounting for the turn, so it is clamped to the declared budget:
-          // one pathological row must not be able to turn an honest report into
-          // the contract violation this change exists to remove. Same treatment
-          // an oversized indivisible unit gets in `queueP6ExplicitTripSubjects`.
-          bytesWorked: Math.min(encodedJsonBytes(trip || {}), P6_TURN_BUDGET.bytes),
+          bytesWorked: Math.min(readBytes, P6_TURN_BUDGET.bytes),
+          ...(readBytes > P6_TURN_BUDGET.bytes ? { oversizedUnitBytes: readBytes } : {}),
           hasMore: true,
         };
       }

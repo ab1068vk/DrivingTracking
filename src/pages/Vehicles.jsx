@@ -667,6 +667,7 @@ export default function Vehicles() {
     recentTrips,
     recentUnavailable,
     lifetime: vehicleLifetime,
+    lifetimeUnavailable: vehicleLifetimeUnavailable,
     isLoading: recentTripsLoading,
   } = useVehicleAnalytics(vehicles);
   const trips = recentTrips;
@@ -692,9 +693,14 @@ export default function Vehicles() {
   // It was computed and then never used, so partial per-vehicle totals rendered
   // as bare fact — 382.7 km across 41 trips for a vehicle with 3,876.5 km
   // across 200. The figures are unchanged; what they claim is not.
+  // The refusal that matters here is the D1 fleet aggregate's, not the bounded
+  // recent page's: these figures come from `lifetime.fleet`, and the recent page
+  // already has its own banner. Wiring the page refusal in here printed
+  // "Per-vehicle totals could not be read" directly under exact fleet totals
+  // whenever the recent page failed while D1 was VERIFIED.
   const fleetScope = scopeStateOf({
     exact: fleetIntelligence.lifetimeExact === true,
-    unavailable: vehicleTripsUnavailable,
+    unavailable: vehicleLifetimeUnavailable,
   });
   const fleetScopeNote = vehicleScopeNote(fleetScope);
   const fleetTotalDistanceLabel = atLeastTotal(

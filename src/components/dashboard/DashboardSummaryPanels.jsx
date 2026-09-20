@@ -78,6 +78,9 @@ export default function DashboardSummaryPanels({
         <PremiumTotalsCard
           trips={analyticsCompletedTrips}
           units={units}
+          activity={dashboardActivity}
+          period={activityPeriod}
+          onPeriodChange={setActivityPeriod}
           activityExact={activityExact}
           activityUnavailable={activityUnavailable}
         />
