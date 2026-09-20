@@ -53,10 +53,9 @@ export function backfillLocalRoadMemoryFromTripHistory({
     }, {
       P6_EXPLICIT_OPERATION_STATES,
       P6_EXPLICIT_OPERATION_TYPES,
-    }, { isAndroid }, speedStore] = await Promise.all([
+    }, speedStore] = await Promise.all([
       import('@/lib/p6ExplicitOperations'),
       import('@/lib/p6Contracts'),
-      import('@/lib/nativePlatform'),
       import('@/lib/speedKnowledgeRepository'),
     ]);
     const terminal = new Set([
@@ -85,7 +84,11 @@ export function backfillLocalRoadMemoryFromTripHistory({
       }
       return operation;
     };
-    if (!isAndroid() && !await speedStore.isP6BrowserSpeedV2Authority()) {
+    // Run the browser cutover whenever the browser owns saved speeds. This was
+    // `!isAndroid()`, which skipped E4 on the platform the product ships on, so
+    // retained-history learning then ran against a v1 authority and every
+    // subject came back CONVERSION_REQUIRED having learned nothing.
+    if (!speedStore.isNativeSpeedAuthoritySelected() && !await speedStore.isP6BrowserSpeedV2Authority()) {
       const migration = await runToPause(P6_EXPLICIT_OPERATION_TYPES.BROWSER_SPEED_MIGRATION);
       if (migration.state !== P6_EXPLICIT_OPERATION_STATES.COMPLETED) return {
         changed: false, state: migration.state, operation: migration,

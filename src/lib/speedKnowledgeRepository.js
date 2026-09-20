@@ -69,6 +69,28 @@ export const P6_SPEED_EVIDENCE_SECRET_KEY = 'p6_evidence_hmac_key';
 export const P6_SPEED_SCOPED_READ_REQUIRED = 'BROWSER_V2_SCOPED_READ_REQUIRED';
 const P35_NATIVE_AUTHORITY_ENABLED = import.meta.env.VITE_P35_NATIVE_AUTHORITY === 'true';
 
+/**
+ * Does the **native** side own saved road speeds in this build?
+ *
+ * Saved speeds follow the authority, not the platform — the same law P6 derived
+ * state already follows (`nativeDerivedStateSelected`). Android alone proves
+ * nothing: with P3.5 native authority unreleased, an Android install keeps its
+ * trips *and* its saved speeds in IndexedDB, so the browser v1/v2 model is the
+ * correct owner there and the browser cutover (E4) is the correct migration.
+ *
+ * Gating those on `isNativePlatform()`/`isAndroid()` instead made the browser v2
+ * authority unreachable on Android by construction: E4 could never run, so the
+ * v2 authority row could never exist, so D4 road learning stayed pinned at
+ * `CONVERSION_REQUIRED` forever and no road speed was ever learned on the very
+ * platform the product ships on. That this was a substitution rather than a
+ * decision is visible inside E4 itself, whose predecessor selector has a
+ * dedicated Capacitor-Preferences branch for reading Android's legacy value.
+ */
+const nativeSpeedAuthoritySelected = () => isNativePlatform() && P35_NATIVE_AUTHORITY_ENABLED;
+
+/** Exposed so callers route saved-speed work by authority rather than platform. */
+export const isNativeSpeedAuthoritySelected = () => nativeSpeedAuthoritySelected();
+
 const indexedDbEncryptionContext = (key) => (
   `indexeddb:${SPEED_KNOWLEDGE_DB_NAME}/${SPEED_KNOWLEDGE_STORE}:${key}`
 );
@@ -274,7 +296,9 @@ const p6ReadAuthorityEvidence = async () => {
 };
 
 export const readP6BrowserSpeedAuthority = async () => {
-  if (isNativePlatform()) return { ...V1_AUTHORITY };
+  // Native authority owning saved speeds is what makes the browser model a
+  // predecessor here — not the presence of an Android runtime.
+  if (nativeSpeedAuthoritySelected()) return { ...V1_AUTHORITY };
   const cutover = await getJson(P6_SPEED_V2_CUTOVER_MARKER_KEY, null).catch(() => null);
   if (!canUseIndexedDb()) {
     if (Number(cutover?.version) === 2) {
@@ -322,7 +346,7 @@ export const readP6BrowserSpeedAuthority = async () => {
 };
 
 export const isP6BrowserSpeedV2Authority = async () => (
-  !isNativePlatform() && (await readP6BrowserSpeedAuthority()).version === 2
+  !nativeSpeedAuthoritySelected() && (await readP6BrowserSpeedAuthority()).version === 2
 );
 
 const p6MutationLeaseId = () => globalThis.crypto?.randomUUID?.()
@@ -841,7 +865,9 @@ const deleteStageRowsTurn = async (storeName, stageId, limit = 128) => {
 };
 
 export async function beginP6BrowserSpeedMigration() {
-  if (isNativePlatform()) throw new Error('E4_BROWSER_ONLY');
+  // E4 converts the *browser* saved-speed model, so it is refused exactly when
+  // the native side owns saved speeds — not merely when Android is the runtime.
+  if (nativeSpeedAuthoritySelected()) throw new Error('E4_BROWSER_ONLY');
   return runSpeedKnowledgeStoreExclusive(SPEED_KNOWLEDGE_STORAGE_KEY, async () => {
     if ((await readP6BrowserSpeedAuthority()).version === 2) return { state: 'ALREADY_V2' };
     const selected = await explicitPredecessorSource();

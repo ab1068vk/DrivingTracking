@@ -57,6 +57,7 @@ import {
 } from '@/lib/speedLimitIntelligence';
 import {
   getNativeSpeedKnowledgeMirrorStatus,
+  isP6BrowserSpeedV2Authority,
   retryNativeSpeedKnowledgeMirror,
   speedKnowledgeStore,
 } from '@/lib/speedKnowledgeRepository';
@@ -364,6 +365,11 @@ export default function SpeedLimits() {
     observationCount: 0,
     operation: null,
   }));
+  // The badge used to assert "Road Memory v2 · calibrated locally"
+  // unconditionally, so it claimed local calibration on installs whose saved
+  // speeds were still the v1 model and could learn nothing (DPD-011). It now
+  // states the authority that is actually in force.
+  const [speedV2Authority, setSpeedV2Authority] = useState(/** @type {boolean|null} */ (null));
   const [cameraReviewCount, setCameraReviewCount] = useState(0);
   const [selectedSection, setSelectedSection] = useState(null);
   const [addMode, setAddMode] = useState(false);
@@ -1046,6 +1052,11 @@ export default function SpeedLimits() {
     setHistoryState(nextHistory);
     setHealth(inspectSpeedKnowledgeHealth(rawKnowledge));
     setNativeMirrorHealth(getNativeSpeedKnowledgeMirrorStatus());
+    // Unreadable authority must not be reported as v2; leave the badge on its
+    // pre-resolution state rather than assert calibration that may not hold.
+    isP6BrowserSpeedV2Authority()
+      .then((active) => setSpeedV2Authority(active === true))
+      .catch(() => {});
     setSelectedRows((current) => new Set([...current].filter((key) => (
       safeRows.some((row) => correctionKey(row) === key && row.historicalVersion !== true)
     ))));
@@ -3318,9 +3329,15 @@ export default function SpeedLimits() {
                 {scheduledOrExpiredRuleCount} scheduled or expired
               </span>
             )}
-            <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-semibold text-sky-800 dark:bg-sky-950/40 dark:text-sky-200">
-              Road Memory v2 · calibrated locally
-            </span>
+            {speedV2Authority !== false ? (
+              <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-semibold text-sky-800 dark:bg-sky-950/40 dark:text-sky-200">
+                Road Memory v2 · calibrated locally
+              </span>
+            ) : (
+              <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                Road Memory v1 · local learning not active yet
+              </span>
+            )}
             <InlineRefreshBadge visible={refreshing} label="Refreshing saved speeds" />
             <InlineRefreshBadge
               visible={memoryHistorySync.status === 'syncing'}

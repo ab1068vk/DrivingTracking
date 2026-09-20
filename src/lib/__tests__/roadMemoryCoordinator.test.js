@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   settings: { current: /** @type {Record<string, any>} */ ({}) },
   browserV2: true,
+  nativeSpeedAuthority: false,
   start: vi.fn(),
   run: vi.fn(),
   cancel: vi.fn(),
@@ -16,6 +17,9 @@ vi.mock('@/lib/systemLog', () => ({ logSystemFailure: vi.fn() }));
 vi.mock('@/lib/nativePlatform', () => ({ isAndroid: () => false }));
 vi.mock('@/lib/speedKnowledgeRepository', () => ({
   isP6BrowserSpeedV2Authority: () => Promise.resolve(mocks.browserV2),
+  // Saved speeds follow the authority, not the platform: the coordinator asks
+  // whether native owns them, not whether it is running on Android (DPD-011).
+  isNativeSpeedAuthoritySelected: () => mocks.nativeSpeedAuthority,
 }));
 vi.mock('@/lib/p6Contracts', () => ({
   P6_EXPLICIT_OPERATION_STATES: {
@@ -54,6 +58,7 @@ describe('P6 Road Memory coordinator adoption', () => {
     }));
     mocks.cancel.mockReset();
     mocks.resume.mockReset();
+    mocks.nativeSpeedAuthority = false;
   });
 
   it('leaves live-trip learning to the canonical P6 desired row and J2', async () => {
@@ -83,6 +88,31 @@ describe('P6 Road Memory coordinator adoption', () => {
     await backfillLocalRoadMemoryFromTripHistory();
     expect(mocks.start.mock.calls.map(([type]) => type)).toEqual([
       'E4_BROWSER_SAVED_SPEED_MIGRATION',
+      'E2_RETAINED_HISTORY_LEARNING',
+    ]);
+  });
+
+  /**
+   * DPD-011. This step used to be skipped whenever `isAndroid()` was true, so
+   * on the shipping platform E2 ran against a v1 authority and every subject
+   * came back CONVERSION_REQUIRED having learned nothing. The decision belongs
+   * to the authority, which is what these two cases separate.
+   */
+  it('still runs E4 first when the browser owns saved speeds, Android included', async () => {
+    mocks.browserV2 = false;
+    mocks.nativeSpeedAuthority = false;
+    await backfillLocalRoadMemoryFromTripHistory();
+    expect(mocks.start.mock.calls.map(([type]) => type)).toEqual([
+      'E4_BROWSER_SAVED_SPEED_MIGRATION',
+      'E2_RETAINED_HISTORY_LEARNING',
+    ]);
+  });
+
+  it('skips the browser cutover when native authority owns saved speeds', async () => {
+    mocks.browserV2 = false;
+    mocks.nativeSpeedAuthority = true;
+    await backfillLocalRoadMemoryFromTripHistory();
+    expect(mocks.start.mock.calls.map(([type]) => type)).toEqual([
       'E2_RETAINED_HISTORY_LEARNING',
     ]);
   });
