@@ -113,7 +113,17 @@ export async function reclaimP6BrowserDerivedStorageTurn({ scanLimit = 128 } = {
         const now = Date.now();
         if (manifest?.complete) manifests.put({ ...manifest, state: P6_READINESS_STATES.REBUILD_REQUIRED,
           complete: false, storageOutcome: 'DERIVED_RECLAIMED', updatedAt: now });
-        if (work) workStore.put({ ...work, state: 'DIRTY', cursor: null, roadCursor: null, updatedAt: now });
+        if (work) {
+          // Strip the analytics-only restore marker. It rides a `{...work}`
+          // spread, so carrying it through this re-dirty would let the next
+          // rediscovery turn republish D1 and then restore the row straight to
+          // its terminal state — silently abandoning the rebuild this reclaim
+          // just asked for, with the `D2:all` head left VERIFIED over geometry
+          // that is gone. The marker belongs to the turn that wrote it; any
+          // other writer touching the row invalidates it.
+          const { analyticsOnlyTerminalState: _consumedByReclaim, ...carried } = work;
+          workStore.put({ ...carried, state: 'DIRTY', cursor: null, roadCursor: null, updatedAt: now });
+        }
         remove();
       };
       const manifestRequest = manifests.get(key);

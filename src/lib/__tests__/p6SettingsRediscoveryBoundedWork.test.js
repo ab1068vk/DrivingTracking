@@ -251,7 +251,7 @@ describe('P6 settings rediscovery stays inside its declared turn budget', () => 
     expect(after[0]).not.toBe(before[0]);
   });
 
-  it('will not consume an analytics-only restore that another writer widened', async () => {
+  it('refuses an analytics-only restore on a row it no longer owns', async () => {
     // `analyticsOnlyTerminalState` rides a `{...work}` spread, so a writer that
     // re-dirties the row carries it forward — derived-storage reclamation does
     // exactly that when it reclaims a geometry chunk. Restoring then would put
@@ -263,17 +263,27 @@ describe('P6 settings rediscovery stays inside its declared turn budget', () => 
 
     const [subject] = subjectIds;
     const parked = workRow(subject);
+    // This pins the `owned` rail only: a row whose `dirtyDomains` no longer say
+    // D1-alone is one another writer has claimed, and the restore must not
+    // consume its marker.
+    //
+    // It deliberately does NOT claim to cover the reclamation path. An earlier
+    // version of this test did, and was wrong twice over: the reclaimer leaves
+    // `dirtyDomains` untouched, so this rail never fires for it; and this
+    // fixture is legacy-shaped throughout, so no subject owns a geometry chunk
+    // and `reclaimP6BrowserDerivedStorageTurn` can never select one. The real
+    // defence for that path is stripping the marker where it escapes, in the
+    // reclaimer's own spread — not an inference drawn here.
     store(P6_TRIP_DERIVED_STORES.WORK).records.set(subject, {
       ...parked,
       state: 'DIRTY',
       cursor: null,
+      roadCursor: null,
       analyticsOnlyTerminalState: 'EXPLICIT_SOURCE_REQUIRED',
-      // The widening: a foreign writer asked for every domain back.
       dirtyDomains: Object.values(P6_DOMAIN_KEYS),
     });
 
     const { turns } = await runLifecycleTurns(60);
-
     // The shortcut must not fire for this subject.
     expect(turns.map((result) => result.state)).not.toContain('ANALYTICS_SETTINGS_REFRESHED');
     // It takes the ordinary build path instead, which re-parks it properly.

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildPremiumFleetIntelligenceViewModel } from '@/components/PremiumFleetIntelligenceCard';
-import {
-  SCOPE_STATE, atLeastTotal, scopeStateOf, vehicleScopeNote,
-} from '@/lib/scopeDisclosure';
+import { SCOPE_STATE, atLeastTotal, vehicleScopeNote } from '@/lib/scopeDisclosure';
+// The page's OWN decision, not a transcription of it: a local copy would keep
+// passing after `Vehicles.jsx` changed, which is how the first version of this
+// file managed to be green against the defective tree.
+import { fleetScopeFor } from '@/pages/Vehicles';
 
 /**
  * DPD-018 — the Vehicles scope, which is a SUBSTITUTION and not a blend.
@@ -24,12 +26,7 @@ import {
  * being shown.
  */
 
-/** Verbatim reproduction of the `fleetScope` decision in `Vehicles.jsx`. */
-const fleetScopeFor = ({ lifetimeExact, recentUnavailable = null }) => (
-  lifetimeExact === true
-    ? SCOPE_STATE.VERIFIED
-    : scopeStateOf({ answered: !recentUnavailable, exact: false, unavailable: recentUnavailable })
-);
+
 
 describe('the Vehicles scope follows whichever population supplied the figures', () => {
   it('D1 refused but the recent window answered -> PARTIAL, not UNAVAILABLE', () => {

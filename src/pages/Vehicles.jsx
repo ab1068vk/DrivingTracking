@@ -349,6 +349,23 @@ const sameMonth = (date, now = new Date()) => {
  *   When absent every figure falls back to the row array, which is what a
  *   direct caller without an owner gets; the page always supplies it.
  */
+/**
+ * The scope the fleet figures are allowed to claim.
+ *
+ * Exported so its tests drive the page's own rule instead of a transcription of
+ * it — a local copy in the test file would keep passing after this changed.
+ *
+ * @param {{lifetimeExact?: boolean, recentUnavailable?: unknown}} input
+ */
+export function fleetScopeFor({ lifetimeExact = false, recentUnavailable = null } = {}) {
+  if (lifetimeExact === true) return SCOPE_STATE.VERIFIED;
+  return scopeStateOf({
+    answered: !recentUnavailable,
+    exact: false,
+    unavailable: recentUnavailable,
+  });
+}
+
 export function buildFleetIntelligence(vehicles = [], trips = [], settings = {}, lifetime = null, retiredVehicles = [], defaultVehicle = null) {
   const completedTrips = trips.filter((trip) => trip.status === 'completed');
   const lifetimeFor = (vehicle) => lifetime?.byVehicleId?.get(String(vehicle?.id)) || null;
@@ -706,13 +723,10 @@ export default function Vehicles() {
   // and "Per-vehicle totals could not be read" printed directly above figures
   // that had been read. A refusal from one population may not describe another
   // population's answer.
-  const fleetScope = fleetIntelligence.lifetimeExact === true
-    ? SCOPE_STATE.VERIFIED
-    : scopeStateOf({
-      answered: !vehicleTripsUnavailable,
-      exact: false,
-      unavailable: vehicleTripsUnavailable,
-    });
+  const fleetScope = fleetScopeFor({
+    lifetimeExact: fleetIntelligence.lifetimeExact,
+    recentUnavailable: vehicleTripsUnavailable,
+  });
   const fleetScopeNote = vehicleScopeNote(fleetScope);
   const fleetTotalDistanceLabel = atLeastTotal(
     formatDistanceScope(fleetIntelligence.totalKm, units),
