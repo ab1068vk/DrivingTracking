@@ -131,17 +131,34 @@ describe('DPD-024 domain head promotion publishes a source change', () => {
       .not.toContain('p6_domain_head_verified');
   });
 
-  it('stays silent while subjects are still outstanding', async () => {
+  it('publishes only once the head is VERIFIED, never before', async () => {
     await seedAnalyticsWork('dpd024-trip');
 
-    // One turn only: the subject is published but the head cannot promote yet
-    // because the finalize turn runs after the work queue drains.
-    await stepP6BrowserTripDerivedUpdate({});
+    // Step one turn at a time and record, at each step, whether the head was
+    // VERIFIED and whether a publish had happened. A conditional assertion could
+    // pass vacuously, so this asserts the invariant over the whole sequence
+    // instead: no publish may appear on any turn where the head is not yet
+    // VERIFIED.
+    let sawUnverifiedTurn = false;
+    for (let turn = 0; turn < 200; turn += 1) {
+      const result = await stepP6BrowserTripDerivedUpdate({});
+      const head = await readP6TripDomainReadiness(P6_DOMAIN_KEYS.ANALYTICS, 'all');
+      const published = publishSpy.mock.calls
+        .map(([reason]) => reason)
+        .includes('p6_domain_head_verified');
 
-    const analytics = await readP6TripDomainReadiness(P6_DOMAIN_KEYS.ANALYTICS, 'all');
-    if (analytics.state !== P6_READINESS_STATES.VERIFIED) {
-      expect(publishSpy.mock.calls.map(([reason]) => reason))
-        .not.toContain('p6_domain_head_verified');
+      if (head.state !== P6_READINESS_STATES.VERIFIED) {
+        sawUnverifiedTurn = true;
+        expect(published, `published on turn ${turn} while the head was ${head.state}`)
+          .toBe(false);
+      }
+      if (result.state === 'IDLE' && result.hasMore === false) break;
     }
+
+    // The sequence must actually have passed through an unverified state, or the
+    // assertion above never ran and this test proves nothing.
+    expect(sawUnverifiedTurn, 'the head was VERIFIED from the first turn').toBe(true);
+    expect(publishSpy.mock.calls.map(([reason]) => reason))
+      .toContain('p6_domain_head_verified');
   });
 });

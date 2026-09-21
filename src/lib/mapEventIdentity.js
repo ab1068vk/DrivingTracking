@@ -22,12 +22,32 @@
  * Leaflet, which needs a `window`.
  */
 
-/** Enough of an event to tell one from another without holding a reference. */
-export const mapEventIdentity = (event) => (
-  event && typeof event === 'object'
-    ? `${event.type || ''}:${event.timestamp || event.time || ''}:${event.lat ?? ''}:${event.lng ?? ''}:${event.severity ?? ''}`
-    : String(event)
-);
+/**
+ * The identity of an event, for redraw purposes, is its whole content.
+ *
+ * A hand-picked field list was tried first and was wrong: the layer-draw effect
+ * renders `speed_kmh`, `speed_limit_kmh`, `inferred_zone_kmh`,
+ * `speed_limit_source`, `source`, `duration_seconds`, `durationS`, `value`,
+ * `zone_confidence`, `signals_triggered` and `confidence_level` as well as the
+ * obvious ones -- and `confidence_level` decides the marker colour, not just the
+ * popup text. Any field left out of the signature is a field whose change is
+ * silently never drawn, and a missed redraw is far worse than an extra one.
+ *
+ * So the signature covers everything, and stays correct when the popup learns to
+ * render another field. Key order is stable for objects built by one code path;
+ * if it ever varies the signature changes and the map redraws, which is the safe
+ * direction to fail in.
+ */
+export const mapEventIdentity = (event) => {
+  if (!event || typeof event !== 'object') return String(event);
+  try {
+    return JSON.stringify(event);
+  } catch {
+    // A cyclic or otherwise unserialisable event: fall back to a value that
+    // never matches, so the map redraws rather than showing stale content.
+    return `unserialisable:${Math.random()}`;
+  }
+};
 
 /** Order matters: the map draws the list in the order it is given. */
 export function contentSignature(list, identityOf) {

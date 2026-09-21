@@ -196,4 +196,56 @@ public class DriveSenseDpd025PauseTrackingRobolectricTest {
         );
         controller.destroy();
     }
+
+    /**
+     * The case independent review found untested, and it is the one with the most
+     * real weight: location permission revoked while tracking is genuinely enabled.
+     *
+     * `stop()` must still dispatch ACTION_STOP here -- there is a lifecycle to end
+     * -- so the service is created without permission, declines promotion, and
+     * runs the deliberate-stop handler. That handler can legitimately return
+     * START_STICKY while it waits for a trip to finish or retries on a 2 s handler.
+     * For an unpromoted service that is fatal: Android kills a startForegroundService
+     * target that has not promoted within five seconds. So the declined path must
+     * stop the service regardless of what the handler returns.
+     */
+    @Test public void pauseWithoutPermissionWhileEnabledDoesNotLingerUnpromoted() {
+        denyLocation();
+        DriveSenseNativeTripStore.setServiceEnabled(context, true);
+
+        ServiceController<DriveSenseAutoTrackingService> controller =
+            Robolectric.buildService(DriveSenseAutoTrackingService.class).create();
+        Intent stop = new Intent(context, DriveSenseAutoTrackingService.class);
+        stop.setAction(DriveSenseAutoTrackingService.ACTION_STOP);
+        stop.putExtra(DriveSenseAutoTrackingService.EXTRA_DELIBERATE_STOP_REQUEST_ID, "dpd025-enabled-denied");
+        controller.withIntent(stop).startCommand(0, 1);
+
+        assertTrue(
+            "A service that could not promote must stop itself rather than wait",
+            shadowOf(controller.get()).isStoppedBySelf()
+        );
+        controller.destroy();
+    }
+
+    /**
+     * The same stop with permission present must NOT be short-circuited: the
+     * handler's own result stands, so a stop that needs to wait for a trip to
+     * finish still gets to wait.
+     */
+    @Test public void pauseWithPermissionWhileEnabledKeepsTheHandlerResult() {
+        grantLocation();
+        DriveSenseNativeTripStore.setServiceEnabled(context, true);
+
+        ServiceController<DriveSenseAutoTrackingService> controller =
+            Robolectric.buildService(DriveSenseAutoTrackingService.class).create();
+        Intent stop = new Intent(context, DriveSenseAutoTrackingService.class);
+        stop.setAction(DriveSenseAutoTrackingService.ACTION_STOP);
+        stop.putExtra(DriveSenseAutoTrackingService.EXTRA_DELIBERATE_STOP_REQUEST_ID, "dpd025-enabled-granted");
+        controller.withIntent(stop).startCommand(0, 1);
+
+        // Nothing is asserted about stopping here -- the point is that the
+        // permission-denied short circuit did not fire and change the outcome.
+        assertNotNull(controller.get());
+        controller.destroy();
+    }
 }

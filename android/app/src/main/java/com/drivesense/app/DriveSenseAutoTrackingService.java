@@ -482,13 +482,29 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             String requestId = intent != null
                 ? intent.getStringExtra(EXTRA_DELIBERATE_STOP_REQUEST_ID)
                 : null;
-            return handleDeliberateConfigurationStop(requestId);
+            int stopResult = handleDeliberateConfigurationStop(requestId);
+            // DPD-025: a stop that cannot finish immediately legitimately returns
+            // START_STICKY -- it is waiting for a trip to complete, or retrying on
+            // a 2 s handler. That is safe only for a service that is actually in
+            // the foreground. When promotion was declined there is no permission
+            // to be in the foreground, and Android kills an unpromoted
+            // startForegroundService target after five seconds with
+            // ForegroundServiceDidNotStartInTimeException -- trading the crash
+            // this fix removed for a different one on the same path.
+            //
+            // The stop request is durable (recorded in prefs) and the active-trip
+            // checkpoint is on disk, so the next start that does hold permission
+            // resumes exactly where this left off. Staying alive here cannot.
+            if (foregroundPromotionDeclined) {
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+            return stopResult;
         }
 
         // DPD-025: onCreate could not enter the declared location foreground type,
         // so this instance is not a foreground service and cannot lawfully track.
-        // Stopping is the only correct outcome. A deliberate stop has already been
-        // settled by the branch above, so nothing is left pending.
+        // Stopping is the only correct outcome.
         if (foregroundPromotionDeclined) {
             DriveSenseNativeTripStore.setServiceEnabled(this, false);
             stopSelf();

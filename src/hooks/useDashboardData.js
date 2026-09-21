@@ -121,9 +121,29 @@ export function useDashboardData(options = {}) {
   // refetch, so pressing it could not move the lifetime totals, the today page
   // or the activity reducer -- the three things a user pressing Refresh after a
   // long background catch-up is actually waiting for.
+  // React Query rebuilds its result object on every render (`getOptimisticResult`
+  // returns a fresh literal), so depending on the query objects would make this
+  // callback -- and therefore the `refetch` this hook returns -- a new function on
+  // every render. Before this change `refetch` was `windowPage.refetch`, a stable
+  // bound method, and `Dashboard.jsx` puts it in a `useCallback` whose result feeds
+  // a `useEffect` dependency: an unstable identity there re-registers a window
+  // listener on every render, including each tick of the 5 s elapsed timer.
+  //
+  // `refetch` itself is a stable bound method on the query observer, so naming the
+  // four of them keeps the identity steady and keeps exhaustive-deps satisfied
+  // without a suppression.
+  const windowRefetch = windowPage.refetch;
+  const todayRefetch = todayPage.refetch;
+  const lifetimeRefetch = lifetime.refetch;
+  const activityRefetch = activity.refetch;
   const refetchAll = useCallback(
-    () => composeDashboardRefetch([windowPage, todayPage, lifetime, activity]),
-    [windowPage, todayPage, lifetime, activity]
+    () => composeDashboardRefetch([
+      { refetch: windowRefetch },
+      { refetch: todayRefetch },
+      { refetch: lifetimeRefetch },
+      { refetch: activityRefetch },
+    ]),
+    [windowRefetch, todayRefetch, lifetimeRefetch, activityRefetch]
   );
 
   const windowSettled = settledRows(windowPage);

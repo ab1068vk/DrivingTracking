@@ -147,3 +147,62 @@ describe('DPD-026 the map layer effect depends on the stabilised list', () => {
     expect(source).toMatch(/maskEventsForPrivacy\(stableEvents \|\| \[\], privacySettings\)/);
   });
 });
+
+/**
+ * The first version of this fix signed only type/timestamp/lat/lng/severity.
+ * Independent review found that the layer-draw effect renders eleven more fields,
+ * and that `confidence_level` decides the marker colour. Each of these would have
+ * changed on screen with no redraw at all.
+ */
+describe('DPD-026 every field the map renders participates in identity', () => {
+  const sign = (list) => contentSignature(list, mapEventIdentity);
+  const base = { type: 'speeding', timestamp: 1000, lat: 43.6, lng: -79.4, severity: 'high' };
+
+  const RENDERED_FIELDS = {
+    speed_kmh: [61, 84],
+    speed_limit_kmh: [50, 60],
+    inferred_zone_kmh: [40, 70],
+    speed_limit_source: ['posted', 'inferred'],
+    source: ['osm', 'learned'],
+    duration_seconds: [12, 30],
+    durationS: [12, 30],
+    value: [3, 9],
+    zone_confidence: [0.4, 0.9],
+    confidence_level: ['medium', 'high'],
+    signals_triggered: [['a'], ['a', 'b']],
+  };
+
+  Object.entries(RENDERED_FIELDS).forEach(([field, [before, after]]) => {
+    it(`adopts the new list when ${field} changes`, () => {
+      const held = [{ ...base, [field]: before }];
+      const changed = [{ ...base, [field]: after }];
+
+      expect(sign(held)).not.toBe(sign(changed));
+      expect(nextStableList(held, sign(held), changed, mapEventIdentity).adopted).toBe(true);
+    });
+  });
+
+  it('adopts the new list when a field appears that was previously absent', () => {
+    const held = [{ ...base }];
+    const enriched = [{ ...base, confidence_level: 'high' }];
+
+    expect(nextStableList(held, sign(held), enriched, mapEventIdentity).adopted).toBe(true);
+  });
+
+  it('still holds identity when nothing at all changed', () => {
+    const held = [{ ...base, speed_kmh: 61, confidence_level: 'high' }];
+    const rebuilt = held.map((event) => ({ ...event }));
+
+    expect(nextStableList(held, sign(held), rebuilt, mapEventIdentity).adopted).toBe(false);
+  });
+
+  it('does not throw on an unserialisable event, and redraws instead', () => {
+    const cyclic = { ...base };
+    cyclic.self = cyclic;
+
+    expect(() => sign([cyclic])).not.toThrow();
+    // Two signatures of the same cyclic event differ, so the map redraws rather
+    // than risking stale content -- the safe direction.
+    expect(sign([cyclic])).not.toBe(sign([cyclic]));
+  });
+});
