@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import {
+  SCOPE_STATE, allTimeCaption, isCompleteScope, scopeBadge,
+} from '@/lib/scopeDisclosure';
 
 vi.mock('@/lib/nativePlatform', async (importOriginal) => ({
   ...(await importOriginal()), isAndroid: () => false, isNativePlatform: () => false,
@@ -612,10 +615,22 @@ describe('P7 Stage 6.4 — Dashboard is one composition', () => {
 
   it('renders a not-ready lifetime owner as its own state, never as zero drives', () => {
     const source = pageSource('Dashboard.jsx');
+    // The page still reads the raw refusal signal to decide the scope...
     expect(source).toContain('lifetimeUnavailable');
-    expect(source).toContain('still being prepared');
+    // ...but the SENTENCE now belongs to `scopeDisclosure`, so the header badge
+    // and the totals card cannot say different things about one population —
+    // which they previously did. Grepping the page for the copy would now pass
+    // only if it were duplicated back into the page, which is the defect.
+    expect(source).toContain('scopeBadge');
+    expect(scopeBadge(SCOPE_STATE.UNKNOWN)).toContain('still being prepared');
     // A Q10 residual that has not reached EOF is a floor, and says so.
-    expect(source).toContain('at least this much so far');
+    expect(scopeBadge(SCOPE_STATE.PARTIAL)).toContain('at least this much so far');
+    // The claim this test is really about: a not-ready owner is its own state,
+    // never a complete zero.
+    for (const notReady of [SCOPE_STATE.UNKNOWN, SCOPE_STATE.PARTIAL]) {
+      expect(isCompleteScope(notReady)).toBe(false);
+      expect(allTimeCaption(notReady)).not.toBe('Everything recorded on this device');
+    }
   });
 
   it('O05: covers the complete local day, half-open, not a UTC bucket', () => {

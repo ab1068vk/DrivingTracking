@@ -21,6 +21,7 @@ import { AlertTriangle, ArrowLeft, Download, Gauge, Info, Map as MapIcon, Plus, 
 import { geohashEncode, LocalSpeedKnowledge, SPEED_KNOWLEDGE_CHANGED_EVENT } from '@/lib/localSpeedKnowledge';
 import { refreshTripsCrossingLocalSpeedCorrection, refreshTripsForLocalSpeedKnowledgeChanges, tripCrossesCorrection } from '@/lib/localSpeedScoreRefresh';
 import { correctionSectionIdentity } from '@/lib/roadSectionIdentity';
+import { SCOPE_STATE, atLeastTotal } from '@/lib/scopeDisclosure';
 import { beginMeasure, TRIAGE_DISABLE_MAPS } from '@/lib/performanceTriage';
 import {
   SPEED_MAP_LAYER_FAST_DEFAULTS,
@@ -305,6 +306,8 @@ export default function SpeedLimits() {
     : tripId ? 'review' : 'map';
   const knowledge = useMemo(() => new LocalSpeedKnowledge(speedKnowledgeStore), []);
   const [rows, setRows] = useState([]);
+  /** DPD-016: saved rules exist beyond the sampled partitions. */
+  const [savedRowsBounded, setSavedRowsBounded] = useState(false);
   const [drafts, setDrafts] = useState({});
   const dirtyDraftKeysRef = useRef(new Set());
   const persistedDraftBaselinesRef = useRef({});
@@ -516,6 +519,9 @@ export default function SpeedLimits() {
     [mapTrips]
   );
   const activeManualRows = currentMapRows;
+  // DPD-016: whether the snapshot sampled only some partitions of the saved
+  // model, so every count derived from `rows` is a floor rather than a total.
+  const savedRowsScope = savedRowsBounded ? SCOPE_STATE.PARTIAL : SCOPE_STATE.VERIFIED;
   const historicalRuleCount = rows.filter((row) => row.historicalVersion === true).length;
   const scheduledOrExpiredRuleCount = Math.max(0, rows.length - activeManualRows.length - historicalRuleCount);
   const postedRuleCount = useMemo(
@@ -1018,6 +1024,7 @@ export default function SpeedLimits() {
       protection: { confirmedCorridorCount: 0, suppressedSuggestionCount: 0 },
       });
     });
+    setSavedRowsBounded(snapshot.bounded === true);
     const nextRows = snapshot.rows;
     const nextCandidates = snapshot.candidates;
     const nextHistory = snapshot.history;
@@ -3316,8 +3323,12 @@ export default function SpeedLimits() {
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="font-grotesk text-2xl font-bold tracking-tight">Saved road speeds</h1>
+            {/* DPD-016. Under browser-v2 authority the snapshot is the first 8
+                partitions, not the whole model, so this count is a floor over
+                what was read. Printing it bare is why "Saved road speeds" fell
+                16 -> 4 -> 3 across the v2 cutover with nothing deleted. */}
             <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-semibold text-muted-foreground">
-              {activeManualRows.length + operationalMemoryCount} active
+              {atLeastTotal(String(activeManualRows.length + operationalMemoryCount), savedRowsScope)} active
             </span>
             {historicalRuleCount > 0 && (
               <span className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-semibold text-violet-800 dark:bg-violet-950/40 dark:text-violet-200">
@@ -3566,6 +3577,7 @@ export default function SpeedLimits() {
       </section>
 
       <RoadSpeedCommandCenter
+        bounded={savedRowsBounded}
         cameraCount={cameraReviewCount}
         estimatedCount={estimatedRuleCount}
         learningCount={learningMemoryCandidates.length}

@@ -115,17 +115,37 @@ describe('Dashboard totals disclose the population they actually folded', () => 
   });
 
   it('reports a refusal as a refusal, not as an unfinished tally', () => {
+    // Rendered with an EMPTY activity object: `UNAVAILABLE` now means nothing
+    // was read at all, so the card carries no figures for the sentence to
+    // contradict. The previous version of this test passed a fully populated
+    // 500-trip object and asserted nothing about the numbers, which is how the
+    // "could not be read above real numbers" defect slipped through.
     const html = renderToStaticMarkup(
       <PremiumTotalsCard
-        trips={trips}
+        trips={[]}
         units="metric"
-        activity={activity()}
+        activity={{ tripCount: 0, distanceKm: 0, drivingSeconds: 0, activeDays: 0, averageTripKm: 0, longestTripKm: 0 }}
         scope={SCOPE_STATE.UNAVAILABLE}
       />,
     );
     expect(html).toContain('Totals unavailable');
     expect(html).toContain('could not be read');
     expect(html).not.toContain('Still counting');
+  });
+
+  it('keeps real figures and their floors when one source refused and another answered', () => {
+    const html = renderToStaticMarkup(
+      <PremiumTotalsCard
+        trips={trips}
+        units="metric"
+        activity={activity({ tripCount: 200, distanceKm: 2892.6, averageTripKm: 14.463 })}
+        scope={SCOPE_STATE.PARTIAL}
+      />,
+    );
+    expect(html).not.toContain('could not be read');
+    expect(html).toContain('at least 2892.6 km');
+    expect(html).toContain('at least 200');
+    expect(html).toContain('over trips counted so far');
   });
 });
 

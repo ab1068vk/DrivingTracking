@@ -1063,6 +1063,22 @@ const p6ReadV2Bucket = async (bucketId, authority = null) => {
   return merged;
 };
 
+/**
+ * Tag a speed-knowledge sample with whether more of it exists unread.
+ * Non-enumerable so the value is unchanged for every existing consumer.
+ */
+export const markSpeedSampleBounded = (value, bounded) => {
+  if (!value || typeof value !== 'object') return value;
+  Object.defineProperty(value, 'sampleBounded', {
+    value: bounded === true, enumerable: false, configurable: true,
+  });
+  return value;
+};
+
+export const isSpeedSampleBounded = (value) => (
+  Boolean(value) && typeof value === 'object' && value.sampleBounded === true
+);
+
 export const readP6BrowserSpeedBuckets = async (geohashes = []) => {
   const authority = await readP6BrowserSpeedAuthority();
   if (authority.version !== 2) return null;
@@ -1939,15 +1955,35 @@ export const speedKnowledgeStore = {
     return { bucketCount, native: true, cancelled: false };
   },
 
+  /**
+   * DPD-016. A SAMPLE, and callers must be able to tell when it is one.
+   *
+   * Under v1 authority this returned the whole stored document, so a caller
+   * could count its corrections and be right. Under browser-v2 it returns the
+   * first `maxBuckets` partitions only — and the Speed Limits header went on
+   * counting what it got and printing it as the total. That is why "Saved road
+   * speeds" fell 16 -> 4 -> 3 across the v2 cutover with no user action and no
+   * record being deleted: the corrections outside the sampled buckets were
+   * still there, simply never read.
+   *
+   * `sampleBounded` is attached non-enumerably so the returned object still
+   * normalizes, serializes and compares exactly as before.
+   */
   async getSample(maxBuckets = 8) {
     if (!await nativeSpeedAuthorityReady()) {
       if (await isP6BrowserSpeedV2Authority()) {
-        const page = await p6ListV2BucketIds({ limit: Math.max(1, Math.min(32, Number(maxBuckets) || 8)) });
-        return readP6BrowserSpeedBuckets(page.items);
+        const limit = Math.max(1, Math.min(32, Number(maxBuckets) || 8));
+        const page = await p6ListV2BucketIds({ limit });
+        const sample = await readP6BrowserSpeedBuckets(page.items);
+        return markSpeedSampleBounded(sample, Boolean(page.nextCursor));
       }
-      return this.get(SPEED_KNOWLEDGE_STORAGE_KEY);
+      // v1 holds one document, so this is the complete population.
+      return markSpeedSampleBounded(await this.get(SPEED_KNOWLEDGE_STORAGE_KEY), false);
     }
-    return normalizeSpeedKnowledgeMetadata(await readNativeSpeedKnowledgeSample(maxBuckets));
+    return markSpeedSampleBounded(
+      normalizeSpeedKnowledgeMetadata(await readNativeSpeedKnowledgeSample(maxBuckets)),
+      true,
+    );
   },
   async queryEditorItems({ kind, cursor = '', maxItems = 50, maxBytes = 128 * 1024, filter = '', activeOnly = false } = {}) {
     if (!await nativeSpeedAuthorityReady()) {

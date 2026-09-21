@@ -106,11 +106,29 @@ describe('the standard Dashboard grid obeys the same scope law', () => {
   });
 
   it('UNAVAILABLE: reports a refusal rather than an unfinished tally', () => {
+    // Deliberately rendered with the all-zero object: `UNAVAILABLE` now means
+    // nothing was read, so there are no figures to contradict the sentence.
     const html = renderStandard(SCOPE_STATE.UNAVAILABLE);
 
     expect(html).toContain('Totals unavailable');
     expect(html).toContain('could not be read');
     expect(html).not.toContain('Still counting');
     expect(html).not.toContain('Preparing totals');
+  });
+
+  it('a refusal beside a valid substitute keeps the real figures and their floors', () => {
+    // The regression for the defect that stopped the previous round. D1 refused
+    // while the activity reducer answered, so the card is PARTIAL and every
+    // figure the reducer supplied stays on screen, floored.
+    const html = renderStandard(SCOPE_STATE.PARTIAL, {
+      ...pendingActivity, tripCount: 200, distanceKm: 2892.6, averageTripKm: 14.463,
+    });
+
+    expect(html).not.toContain('Totals unavailable');
+    expect(html).not.toContain('could not be read');
+    expect(html).toContain('at least 2892.6 km');
+    expect(html).toContain('at least 200');
+    // The mean keeps disclosing its denominator rather than standing bare.
+    expect(html).toContain('over trips counted so far');
   });
 });

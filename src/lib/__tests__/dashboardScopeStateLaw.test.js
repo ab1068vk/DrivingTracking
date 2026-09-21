@@ -9,7 +9,7 @@ import {
   meanScopeSublabel,
   scopeStateOf,
   vehicleScopeNote,
-  weakestScope,
+  combinedScope,
 } from '@/lib/scopeDisclosure';
 
 /**
@@ -131,19 +131,30 @@ describe('zero is never evidence of completeness', () => {
   });
 });
 
-describe('several populations under one heading take the most cautious scope', () => {
-  it('ranks refusal below unknown below partial below verified', () => {
-    expect(weakestScope(VERIFIED, VERIFIED)).toBe(SCOPE_STATE.VERIFIED);
-    expect(weakestScope(VERIFIED, PARTIAL)).toBe(SCOPE_STATE.PARTIAL);
-    expect(weakestScope(VERIFIED, UNKNOWN)).toBe(SCOPE_STATE.UNKNOWN);
-    expect(weakestScope(PARTIAL, UNKNOWN)).toBe(SCOPE_STATE.UNKNOWN);
-    expect(weakestScope(VERIFIED, UNAVAILABLE)).toBe(SCOPE_STATE.UNAVAILABLE);
-    expect(weakestScope(UNKNOWN, UNAVAILABLE)).toBe(SCOPE_STATE.UNAVAILABLE);
+describe('several populations under one heading', () => {
+  it('claims complete only when every source is complete', () => {
+    expect(combinedScope(VERIFIED, VERIFIED)).toBe(SCOPE_STATE.VERIFIED);
+    expect(combinedScope(VERIFIED, PARTIAL)).toBe(SCOPE_STATE.PARTIAL);
+    expect(combinedScope(VERIFIED, UNKNOWN)).toBe(SCOPE_STATE.PARTIAL);
+  });
+
+  it('lets an answer outrank another population refusal', () => {
+    // NOT "most cautious". A refusal from a source that supplied nothing must
+    // not describe figures another source did supply — that produced a
+    // "could not be read" sentence above real, readable numbers.
+    expect(combinedScope(UNAVAILABLE, PARTIAL)).toBe(SCOPE_STATE.PARTIAL);
+    expect(combinedScope(UNAVAILABLE, VERIFIED)).toBe(SCOPE_STATE.PARTIAL);
+  });
+
+  it('refuses only when every source refused, and waits while one may still answer', () => {
+    expect(combinedScope(UNAVAILABLE, UNAVAILABLE)).toBe(SCOPE_STATE.UNAVAILABLE);
+    expect(combinedScope(UNAVAILABLE, UNKNOWN)).toBe(SCOPE_STATE.UNKNOWN);
+    expect(combinedScope(UNKNOWN, UNKNOWN)).toBe(SCOPE_STATE.UNKNOWN);
   });
 
   it('refuses to claim anything with nothing to go on', () => {
-    expect(weakestScope()).toBe(SCOPE_STATE.UNKNOWN);
-    expect(weakestScope([])).toBe(SCOPE_STATE.UNKNOWN);
+    expect(combinedScope()).toBe(SCOPE_STATE.UNKNOWN);
+    expect(combinedScope([])).toBe(SCOPE_STATE.UNKNOWN);
   });
 
   it('is why an exact lifetime count beside a bounded window cannot read as complete', () => {
@@ -151,8 +162,8 @@ describe('several populations under one heading take the most cautious scope', (
     // capped and does not follow its continuation.
     const lifetime = scopeStateOf({ answered: true, exact: true });
     const window = scopeStateOf({ answered: true, exact: false });
-    expect(weakestScope(lifetime, window)).toBe(SCOPE_STATE.PARTIAL);
-    expect(allTimeCaption(weakestScope(lifetime, window)))
+    expect(combinedScope(lifetime, window)).toBe(SCOPE_STATE.PARTIAL);
+    expect(allTimeCaption(combinedScope(lifetime, window)))
       .not.toBe('Everything recorded on this device');
   });
 });

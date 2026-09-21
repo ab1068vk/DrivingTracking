@@ -92,22 +92,56 @@ export const isPartialScope = (state) => state === SCOPE_STATE.PARTIAL;
 export const isUnknownScope = (state) => state === SCOPE_STATE.UNKNOWN;
 
 /**
- * Combine the scopes of several populations shown under one heading, taking the
- * most cautious. A card that folds an exact lifetime count together with a
- * bounded window may not describe the pair as complete.
+ * Combine the scopes of several populations shown together under one heading.
+ *
+ * This is deliberately NOT "take the most cautious state". A first version was,
+ * and it was wrong in a way worth keeping written down: a card whose figures
+ * came from the activity reducer, which answered, was labelled by the D1
+ * aggregate's REFUSAL, which had supplied nothing. The result read
+ *
+ *     Totals unavailable
+ *     Your totals could not be read.
+ *     2892.6 km   Distance
+ *     200         Trips
+ *     14.5 km     Average trip
+ *
+ * on a device holding 500 trips: a sentence saying the numbers could not be read
+ * printed directly above numbers that had been read, with their floors stripped
+ * because `atLeastTotal` treats a refusal as having no floor to state. One
+ * population's refusal must never describe another population's answer.
+ *
+ * The rule instead follows what the viewer can actually see:
+ *
+ *  - nothing was read at all (every source refused)  -> `UNAVAILABLE`
+ *  - everything was read and is complete             -> `VERIFIED`
+ *  - SOMETHING was read                              -> `PARTIAL`, because the
+ *    displayed figures are real and a floor over them is true, whatever another
+ *    source did
+ *  - nothing read yet, but not everything refused    -> `UNKNOWN`, because a
+ *    pending source may still answer
  */
-export function weakestScope(...states) {
-  const rank = {
-    [SCOPE_STATE.UNAVAILABLE]: 0,
-    [SCOPE_STATE.UNKNOWN]: 1,
-    [SCOPE_STATE.PARTIAL]: 2,
-    [SCOPE_STATE.VERIFIED]: 3,
-  };
+export function combinedScope(...states) {
   const flat = states.flat().filter(Boolean);
   if (!flat.length) return SCOPE_STATE.UNKNOWN;
-  return flat.reduce((worst, state) => (
-    (rank[state] ?? 1) < (rank[worst] ?? 1) ? state : worst
-  ));
+  if (flat.every((state) => state === SCOPE_STATE.UNAVAILABLE)) return SCOPE_STATE.UNAVAILABLE;
+  if (flat.every(isCompleteScope)) return SCOPE_STATE.VERIFIED;
+  // A source that answered — completely or not — put real values on the screen.
+  const answered = flat.some((state) => isCompleteScope(state) || isPartialScope(state));
+  return answered ? SCOPE_STATE.PARTIAL : SCOPE_STATE.UNKNOWN;
+}
+
+/**
+ * The one-line disclosure badge for a scope, or `null` when there is nothing to
+ * disclose. The page header and the totals card read the SAME state through
+ * this, so the two cannot say different things about one population — which
+ * they previously did, the header announcing "at least this much so far" while
+ * the card beneath it said the totals could not be read.
+ */
+export function scopeBadge(state) {
+  if (state === SCOPE_STATE.UNAVAILABLE) return 'Lifetime totals could not be read';
+  if (isUnknownScope(state)) return 'Lifetime totals are still being prepared';
+  if (isPartialScope(state)) return 'Activity totals are at least this much so far';
+  return null;
 }
 
 /**
@@ -118,6 +152,10 @@ export function weakestScope(...states) {
  */
 export function atLeastTotal(text, state) {
   const value = String(text ?? '');
+  // `UNAVAILABLE` now means nothing was read at all (see `combinedScope`), so
+  // there is genuinely no floor to state and the heading already says so. That
+  // is only true because a refusal can no longer describe a population that
+  // answered; when it could, this branch silently stripped real floors.
   if (isCompleteScope(state) || state === SCOPE_STATE.UNAVAILABLE) return value;
   return `at least ${value}`;
 }
@@ -165,5 +203,5 @@ export function vehicleScopeNote(state) {
     return 'Per-vehicle totals could not be read. Your saved trips were not changed.';
   }
   if (isCompleteScope(state)) return null;
-  return 'Counted from the drives read so far - history beyond the recent list has not been added yet.';
+  return 'Counted from the drives read so far — history beyond the recent list has not been added yet.';
 }

@@ -2380,9 +2380,14 @@ export class LocalSpeedKnowledge {
         await this._store.isNativeAuthorityReady()) {
       return this.getSpeedLimitsSnapshotPage();
     }
-    const data = typeof this._store?.getSample === 'function'
-      ? normalizeData(await this._store.getSample(8))
-      : await this._load();
+    // DPD-016. `getSample` is a SAMPLE under browser-v2 authority: the first 8
+    // partitions, not the whole model. `normalizeData` returns a fresh object,
+    // so the bounded flag is read off the raw sample before it is lost.
+    const rawSample = typeof this._store?.getSample === 'function'
+      ? await this._store.getSample(8)
+      : null;
+    const data = rawSample ? normalizeData(rawSample) : await this._load();
+    const sampleBounded = rawSample ? rawSample.sampleBounded === true : false;
     const model = decorateRoadMemoryCandidates(data.roadMemory?.candidates || []);
     const suppressedSuggestionCount = model.candidates.filter((candidate) => (
       unresolvedCandidateCoveredByConfirmedCorrection(candidate, data.corrections)
@@ -2420,6 +2425,8 @@ export class LocalSpeedKnowledge {
         redoLabel: data.history.redo.at(-1)?.action || '',
       },
       exclusions: (data.excludedSections || []).map((section) => ({ ...section })),
+      /** `true` when saved rules exist beyond the sampled partitions (DPD-016). */
+      bounded: sampleBounded,
       protection: {
         confirmedCorridorCount: (data.corrections || []).filter((correction) => (
           correctionSource(correction) === 'user_confirmed_posted_sign' &&
@@ -2473,7 +2480,14 @@ export class LocalSpeedKnowledge {
         exclusions: exclusions?.nextCursor || null,
         conflicts: conflicts?.nextCursor || null,
       },
-      bounded: true,
+      /**
+       * DPD-016. Was an unconditional `true`, which nothing read. It now means
+       * what the Speed Limits header needs it to mean: saved rules exist beyond
+       * what was just handed back. `loadRows` re-reads it on every append, so it
+       * clears itself once the cursors are exhausted and the count stops being
+       * a floor.
+       */
+      bounded: Boolean(corrections?.nextCursor || candidates?.nextCursor),
     };
   }
 

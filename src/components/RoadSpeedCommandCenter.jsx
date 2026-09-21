@@ -13,9 +13,20 @@ import {
   Volume2,
 } from 'lucide-react';
 
+import { SCOPE_STATE, atLeastTotal } from '@/lib/scopeDisclosure';
+
 const count = (value) => Math.max(0, Math.floor(Number(value) || 0));
 
+/**
+ * DPD-016. Under browser-v2 authority the Speed Limits snapshot reads the first
+ * 8 partitions, not the whole model, so these counts are floors over what was
+ * read. Stating them bare is why "Saved road speeds" fell 16 -> 4 -> 3 across
+ * the v2 cutover with no user action and nothing deleted.
+ */
+const savedScope = (bounded) => (bounded ? SCOPE_STATE.PARTIAL : SCOPE_STATE.VERIFIED);
+
 export function buildRoadSpeedCommandState({
+  bounded = false,
   cameraCount = 0,
   estimatedCount = 0,
   learningCount = 0,
@@ -74,16 +85,17 @@ export function buildRoadSpeedCommandState({
   return {
     tone: 'emerald',
     eyebrow: 'Local road memory active',
-    title: `${saved} saved road speed${saved === 1 ? '' : 's'} working for you`,
+    title: `${atLeastTotal(String(saved), savedScope(bounded))} saved road speed${saved === 1 ? '' : 's'} working for you`,
     detail: mapStatus === 'loading'
       ? 'Saved rules are active now. New trip evidence is being checked in the background.'
-      : `${posted} posted and ${estimates} estimated rule${posted + estimates === 1 ? '' : 's'} feed trip scoring and alerts.`,
+      : `${atLeastTotal(String(posted), savedScope(bounded))} posted and ${atLeastTotal(String(estimates), savedScope(bounded))} estimated rule${posted + estimates === 1 ? '' : 's'} feed trip scoring and alerts.`,
     action: 'saved',
     actionLabel: 'Manage saved roads',
   };
 }
 
 export default function RoadSpeedCommandCenter({
+  bounded = false,
   cameraCount = 0,
   estimatedCount = 0,
   learningCount = 0,
@@ -97,6 +109,7 @@ export default function RoadSpeedCommandCenter({
   savedCount = 0,
 }) {
   const state = buildRoadSpeedCommandState({
+    bounded,
     cameraCount,
     estimatedCount,
     learningCount,

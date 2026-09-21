@@ -47,7 +47,7 @@ import {
   trimParkedTail,
   validateCandidateTrip
 } from '@/lib/tripEngine';
-import { scopeStateOf, weakestScope } from '@/lib/scopeDisclosure';
+import { combinedScope, scopeBadge, scopeStateOf } from '@/lib/scopeDisclosure';
 import { computeLiveTripScore } from '@/lib/liveTripScore';
 import { resolveParkedLocation } from '@/lib/parkedLocationResolver';
 import { getParkingLearningProfile } from '@/lib/parkingLearning';
@@ -3062,8 +3062,10 @@ export default function Dashboard() {
    *
    * The all-time face folds two populations with independent completeness: the
    * D1 global aggregate (trips, distance, and the mean derived from them) and
-   * the bounded activity reducer (driving time, active days, longest trip). A
-   * card showing both may only claim what the weaker of the two supports.
+   * the bounded activity reducer (driving time, active days, longest trip).
+   * `combinedScope` decides what the pair may claim — crucially NOT by taking
+   * the more cautious of the two, which let a D1 refusal label figures the
+   * reducer had actually supplied.
    */
   const activityScope = useMemo(() => {
     // `p7TripQueries.aggregate` refuses unless `D1_ANALYTICS:all` is VERIFIED,
@@ -3082,7 +3084,7 @@ export default function Dashboard() {
       exact: dashboardData.activityExact === true,
       unavailable: dashboardData.activityUnavailable,
     });
-    return isAllTimeActivity ? weakestScope(lifetimeScope, windowScope) : windowScope;
+    return isAllTimeActivity ? combinedScope(lifetimeScope, windowScope) : windowScope;
   }, [
     isAllTimeActivity,
     dashboardData.lifetimeTrips,
@@ -3373,15 +3375,15 @@ export default function Dashboard() {
             message="Recent trips could not be read. Your saved trips were not changed."
             onRetry={refetch}
           />
-          {/* A not-ready analytics ledger is a state, never a zero total. */}
-          {dashboardData.lifetimeUnavailable && (
+          {/* A not-ready analytics ledger is a state, never a zero total.
+              This badge and the totals card read the SAME `activityScope`
+              through `scopeBadge`: they were previously derived separately from
+              the raw signals, and disagreed — the header saying "at least this
+              much so far" while the card below it said the totals could not be
+              read. One population, one sentence. */}
+          {scopeBadge(activityScope) && (
             <span className="rounded-lg border border-border px-2 py-1 text-xs text-muted-foreground">
-              Lifetime totals are still being prepared
-            </span>
-          )}
-          {!dashboardData.activityUnavailable && !dashboardData.activityExact && (
-            <span className="rounded-lg border border-border px-2 py-1 text-xs text-muted-foreground">
-              Activity totals are at least this much so far
+              {scopeBadge(activityScope)}
             </span>
           )}
         </div>
