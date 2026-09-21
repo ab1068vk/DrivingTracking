@@ -17,6 +17,7 @@ import { buildSpeedSegments } from '@/lib/tripInsights';
 import { formatDistance, formatDuration, formatSpeed, haversineDistance, lateralGForTriplet } from '@/lib/tripEngine';
 import { buildMapDiagnosticsAggregate } from '@/lib/mapDiagnostics';
 import { HEIGHTENED_PRIVACY_MODE_KEY } from '@/lib/privacyMode';
+import { contentSignature, mapEventIdentity, nextStableList } from '@/lib/mapEventIdentity';
 import {
   getPrivacyZoneDisplayCircle,
   getPrivacyZones,
@@ -584,6 +585,19 @@ const safeMapPanTo = (map, center, zoom = 15) => safeLeafletCall(() => {
   return map.panTo(center, { animate: false });
 });
 
+/**
+ * DPD-026 -- the `useRef` plumbing around `nextStableList`. The decision itself,
+ * and the reason it exists, live in `@/lib/mapEventIdentity`.
+ */
+function useContentStableList(list, identityOf) {
+  const heldRef = useRef(list);
+  const signatureRef = useRef(contentSignature(list, identityOf));
+  const next = nextStableList(heldRef.current, signatureRef.current, list, identityOf);
+  heldRef.current = next.list;
+  signatureRef.current = next.signature;
+  return next.list;
+}
+
 export default function TripMap(props) {
   const resetKey = Array.isArray(props.routes)
     ? props.routes.map((route) => `${route.id || route.label || 'route'}:${route.selected ? '1' : '0'}:${route.route_points?.length || 0}`).join('|')
@@ -652,6 +666,9 @@ function TripMapContent({
   const [selectedSegment, setSelectedSegment] = useState(null);
   const settings = useTripMapSettings();
   const units = settings.units || 'metric';
+  // DPD-026: see useContentStableList -- an unstable `events` identity redrew the
+  // whole route layer on every render of the page that owns this map.
+  const stableEvents = useContentStableList(events, mapEventIdentity);
   const heightenedPrivacy = settings?.[HEIGHTENED_PRIVACY_MODE_KEY] === true;
   const privacyZonesRevision = usePrivacyZonesRevision();
   onEventSelectRef.current = onEventSelect;
@@ -904,7 +921,7 @@ function TripMapContent({
     // Use Leaflet's default SVG renderer here. A short-lived canvas renderer can
     // keep a queued redraw after its layer group is cleared, which floods logs
     // with `_ctx.save` / `_ctx.clearRect` errors on the overview map.
-    const mapEvents = maskEventsForPrivacy(events || [], privacySettings);
+    const mapEvents = maskEventsForPrivacy(stableEvents || [], privacySettings);
     const isPrivatePoint = (point) => Boolean(isPointInPrivacyZone(point, visiblePrivacyZones));
     const segmentTouchesPrivacy = (segment) => {
       const fromPoint = validLatLngPoint(segment?.from);
@@ -1318,7 +1335,7 @@ function TripMapContent({
     // `currentLocation` is deliberately absent: during a live trip it changes on every GPS fix,
     // and redrawing the whole map that often caused visible flicker and steady battery drain.
     // It is read through currentLocationRef, and the two effects below track its movement.
-  }, [mapFailed, ready, routePoints, routes, events, showCurrentLocation, parkedLocation, parkedLocationDraggable, showPrivacyZones, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings, units, privacyZonesRevision]);
+  }, [mapFailed, ready, routePoints, routes, stableEvents, showCurrentLocation, parkedLocation, parkedLocationDraggable, showPrivacyZones, showCorneringHeatmap, showDangerZones, dangerZones, showRouteRisk, routeRiskSegments, showSpeedLimits, speedLimitKnowledgeResults, smoothRoute, settings, units, privacyZonesRevision]);
 
   useEffect(() => {
     const marker = currentLocationMarkerRef.current;

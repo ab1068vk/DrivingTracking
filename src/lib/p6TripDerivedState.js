@@ -1,4 +1,5 @@
 import { browserActiveTripSpool } from '@/lib/browserActiveTripSpool';
+import { publishP7SourceChange } from '@/lib/p7SourceChange';
 import {
   getBrowserKeyProofGeneration,
   isBrowserKeyProofGenerationCurrent,
@@ -1186,6 +1187,14 @@ const finalizeP6BrowserIncrementalDomains = async () => {
     });
     await transactionDone(tx);
     if (verified === null) return { state: 'IDLE', itemsWorked: 0, bytesWorked: 0, hasMore: false };
+    // DPD-024: a `:all` head only reaches VERIFIED here from DIRTY, PARTIAL or a
+    // settings rebuild, so a non-zero count is a real transition rather than an
+    // idempotent rewrite. That transition is the moment the lifetime aggregate
+    // becomes authoritative, and it is the only moment the Dashboard's cached
+    // aggregate is wrong. Publish on the existing source-change channel so the
+    // query cache invalidates itself; every other publisher is a trip write, so
+    // background convergence had no way to say it had finished.
+    if (verified > 0) publishP7SourceChange('p6_domain_head_verified');
     return { state: verified ? P6_READINESS_STATES.VERIFIED : 'IDLE', itemsWorked: verified,
       bytesWorked: 0, hasMore: false };
   } finally { db.close(); }

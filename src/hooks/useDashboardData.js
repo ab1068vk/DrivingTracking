@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { p7QueryKeys, p7TripQueries } from '@/api/trips';
 import { buildTripSummary } from '@/lib/tripSummary';
@@ -67,6 +67,18 @@ const settledRows = (query) => {
  * @param {{periodDays?: number|null}} [options] `null` for the lifetime
  *   selection, a day count for the windowed one.
  */
+/**
+ * DPD-024, second half: the page's Refresh forwarded only the 60-row window's
+ * `refetch`, so pressing it could not move the lifetime totals, the today page or
+ * the activity reducer -- the three things a user pressing Refresh after a long
+ * background catch-up is actually waiting for. Refresh must refresh what the page
+ * shows. Resolves with the window result so existing callers are unchanged.
+ */
+export function composeDashboardRefetch(queries) {
+  return Promise.all(queries.map((query) => query.refetch()))
+    .then(([windowResult]) => windowResult);
+}
+
 export function useDashboardData(options = {}) {
   const { periodDays = null } = options;
 
@@ -104,6 +116,15 @@ export function useDashboardData(options = {}) {
     }),
     staleTime: 60 * 1000,
   });
+
+  // DPD-024: the page's own Refresh used to forward only the 60-row window's
+  // refetch, so pressing it could not move the lifetime totals, the today page
+  // or the activity reducer -- the three things a user pressing Refresh after a
+  // long background catch-up is actually waiting for.
+  const refetchAll = useCallback(
+    () => composeDashboardRefetch([windowPage, todayPage, lifetime, activity]),
+    [windowPage, todayPage, lifetime, activity]
+  );
 
   const windowSettled = settledRows(windowPage);
   const completedTrips = windowSettled.rows;
@@ -150,7 +171,7 @@ export function useDashboardData(options = {}) {
     isSuccess: windowPage.isSuccess,
     isError: windowPage.isError,
     error: windowPage.error,
-    refetch: windowPage.refetch,
+    refetch: refetchAll,
   };
 }
 

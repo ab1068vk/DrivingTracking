@@ -81,6 +81,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     // watchdog can tell "service running" from "process was killed" without polling or
     // trusting a heartbeat timestamp that Doze could delay.
     private static volatile boolean serviceRunning = false;
+    // DPD-025: set when this service could not lawfully enter its declared
+    // location foreground type. It is then not tracking anything and must stop.
+    private volatile boolean foregroundPromotionDeclined = false;
     // Physical H discovery only. The isolated, centrally guarded harness is
     // the sole caller; ordinary production code never reads this reference.
     private static volatile WeakReference<DriveSenseAutoTrackingService> physicalHarnessInstance =
@@ -482,6 +485,16 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             return handleDeliberateConfigurationStop(requestId);
         }
 
+        // DPD-025: onCreate could not enter the declared location foreground type,
+        // so this instance is not a foreground service and cannot lawfully track.
+        // Stopping is the only correct outcome. A deliberate stop has already been
+        // settled by the branch above, so nothing is left pending.
+        if (foregroundPromotionDeclined) {
+            DriveSenseNativeTripStore.setServiceEnabled(this, false);
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
         // Physical H injects deterministic points through the real producer
         // methods. External GPS/activity subscriptions would contaminate that
         // fixture, so the isolated harness suppresses only those subscriptions.
@@ -599,6 +612,20 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     static boolean isRunning() {
         return serviceRunning;
+    }
+
+    /**
+     * True when there is no tracking lifecycle left to end, so a stop request is
+     * already satisfied and needs no service instance to carry it out. Keeps
+     * "Pause All Tracking" idempotent: repeating it changes nothing and starts
+     * nothing.
+     */
+    private static boolean isAlreadyStopped(Context app) {
+        if (isRunning()) return false;
+        if (DriveSenseNativeTripStore.isServiceEnabled(app)) return false;
+        return !DriveSenseActiveTripCheckpointStore
+            .getStatus(app, System.currentTimeMillis())
+            .optBoolean("present", false);
     }
 
     static void setPhysicalHarnessProducerModeForTests(boolean enabled) {
@@ -759,6 +786,21 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     static String stop(Context context) {
         Context app = context.getApplicationContext();
+        // DPD-025: a stop must never be the reason the service starts. When
+        // nothing is running, nothing is enabled and no active trip checkpoint is
+        // waiting to be finished, the stop is already satisfied -- publish the
+        // terminal state and return. Dispatching ACTION_STOP here would call
+        // startForegroundService, which creates the service, and onCreate promotes
+        // it to a location-typed foreground service. With location permission
+        // denied that promotion is illegal and fatal, so "pause tracking" used to
+        // kill the app precisely when there was no tracking to pause.
+        if (isAlreadyStopped(app)) {
+            String settledId = "native-stop-" + UUID.randomUUID();
+            recordDeliberateStopStatus(
+                app, settledId, DELIBERATE_STOP_SUCCEEDED, false, "already_stopped"
+            );
+            return settledId;
+        }
         String requestId;
         synchronized (TRACKING_INTENT_LOCK) {
             JSONObject current = deliberateStopStatus(app);
@@ -1990,6 +2032,22 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             startForeground(NOTIF_ID_TRACKING_START, notification);
             return;
         }
+        // DPD-025: this service is declared android:foregroundServiceType="location",
+        // so every startForeground overload resolves to a location-typed FGS --
+        // the two-argument one included. From Android 14 the platform refuses that
+        // without a runtime location permission, and the refusal is a
+        // SecurityException on the main thread, which kills the process.
+        //
+        // The previous ladder retried the identical call and then fell through to
+        // the two-argument overload outside any catch. Nothing changes between an
+        // identical call and its retry, and the last rung asks for the same type,
+        // so all three rungs were the same illegal request and the last one escaped.
+        // Decline the promotion instead and let the caller shut the service down.
+        if (!hasLocationPermission()) {
+            foregroundPromotionDeclined = true;
+            Log.w(TAG, "Declining the location foreground service: location permission is not granted");
+            return;
+        }
         try {
             ServiceCompat.startForeground(
                 this,
@@ -1997,17 +2055,13 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 notification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
             );
+            foregroundPromotionDeclined = false;
         } catch (Exception error) {
-            try {
-                ServiceCompat.startForeground(
-                    this,
-                    NOTIF_ID_TRACKING_START,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                );
-            } catch (Exception ignored) {
-                startForeground(NOTIF_ID_TRACKING_START, notification);
-            }
+            // Permission was present a moment ago, so this is a transient platform
+            // refusal (an eligibility window, a racing revoke). Do not retry the
+            // same call and do not escalate: record it and let the service stop.
+            foregroundPromotionDeclined = true;
+            Log.w(TAG, "Could not enter the location foreground service", error);
         }
     }
 
