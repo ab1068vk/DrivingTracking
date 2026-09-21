@@ -57,14 +57,17 @@ const FLEET_GAUGE_SEGMENTS = Array.from({ length: FLEET_GAUGE_SEGMENT_COUNT }, (
  * Builds every premium label and gauge value from the same live fleet summary
  * consumed by the standard Vehicles UI.
  * @param {Record<string, any>} intelligence
- * @param {{ highConfidenceAssignmentCount?: number, units?: string }} options
+ * @param {{ highConfidenceAssignmentCount?: number, units?: string, scope?: string|null }} options
  */
 export function buildPremiumFleetIntelligenceViewModel(
   intelligence = {},
-  { highConfidenceAssignmentCount = 0, units = 'metric' } = {},
+  { highConfidenceAssignmentCount = 0, units = 'metric', scope: suppliedScope = null } = {},
 ) {
   const busiest = intelligence?.busiestVehicle || null;
-  const scope = scopeStateOf({ exact: intelligence?.lifetimeExact === true });
+  // Supplied by the page so both Vehicles variants describe one population the
+  // same way. Computing it here from `lifetimeExact` alone made the premium card
+  // say "at least 382.5 km" for data the standard page rendered bare.
+  const scope = suppliedScope || scopeStateOf({ exact: intelligence?.lifetimeExact === true });
   const best = intelligence?.bestScoreVehicle || null;
   const score = clampScore(best?.score);
   const assignmentReviewCount = Math.max(0, Number(intelligence?.assignmentReviewCount) || 0);
@@ -117,17 +120,20 @@ export function buildPremiumFleetIntelligenceViewModel(
  * @param {{
  *   intelligence: Record<string, any>,
  *   highConfidenceAssignmentCount?: number,
- *   units?: string
+ *   units?: string,
+ *   scope?: string|null
  * }} props
  */
 export default function PremiumFleetIntelligenceCard({
   intelligence,
   highConfidenceAssignmentCount = 0,
   units = 'metric',
+  scope = null,
 }) {
   const model = buildPremiumFleetIntelligenceViewModel(intelligence, {
     highConfidenceAssignmentCount,
     units,
+    scope,
   });
   const activeGaugeSegments = model.score == null
     ? 0

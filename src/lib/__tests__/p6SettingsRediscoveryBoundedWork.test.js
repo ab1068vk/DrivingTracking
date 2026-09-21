@@ -251,6 +251,35 @@ describe('P6 settings rediscovery stays inside its declared turn budget', () => 
     expect(after[0]).not.toBe(before[0]);
   });
 
+  it('will not consume an analytics-only restore that another writer widened', async () => {
+    // `analyticsOnlyTerminalState` rides a `{...work}` spread, so a writer that
+    // re-dirties the row carries it forward — derived-storage reclamation does
+    // exactly that when it reclaims a geometry chunk. Restoring then would put
+    // the row straight back to its terminal state and silently abandon the
+    // rebuild that writer asked for. A row still narrowed to D1 alone is one
+    // this turn owns; anything wider belongs to whoever widened it.
+    await seedLegacyHistory();
+    await runLifecycleTurns();
+
+    const [subject] = subjectIds;
+    const parked = workRow(subject);
+    store(P6_TRIP_DERIVED_STORES.WORK).records.set(subject, {
+      ...parked,
+      state: 'DIRTY',
+      cursor: null,
+      analyticsOnlyTerminalState: 'EXPLICIT_SOURCE_REQUIRED',
+      // The widening: a foreign writer asked for every domain back.
+      dirtyDomains: Object.values(P6_DOMAIN_KEYS),
+    });
+
+    const { turns } = await runLifecycleTurns(60);
+
+    // The shortcut must not fire for this subject.
+    expect(turns.map((result) => result.state)).not.toContain('ANALYTICS_SETTINGS_REFRESHED');
+    // It takes the ordinary build path instead, which re-parks it properly.
+    expect(workRow(subject).state).toBe('EXPLICIT_SOURCE_REQUIRED');
+  });
+
   it('converges: D1 returns to VERIFIED and a further pass finds nothing to do', async () => {
     await seedLegacyHistory();
     await runLifecycleTurns();
@@ -527,6 +556,38 @@ describe('queueP6ExplicitTripSubjects bounded-work contract', () => {
     expect(requeued.state).toBe('DIRTY');
     expect(requeued.dirtyDomains).toEqual([P6_DOMAIN_KEYS.ANALYTICS]);
     expect(requeued.analyticsOnlyTerminalState).toBe('COMPLETE');
+  });
+
+  it('never charges a payload read for a row it was only going to skip', async () => {
+    // The in-flight test needs only the work row, but it used to run AFTER the
+    // payload read — so a whole `encrypted_payload` was read and thrown away,
+    // and the early exit skipped the overrun cap, reporting the waste uncapped.
+    // An independent review reproduced 7,598,963 bytes against a 4,194,304
+    // budget that way: the same contract violation this function exists to
+    // remove, on the one branch that bypassed its own guard.
+    await seed(2, { points: 7900 });
+    const page = await listP6BrowserCanonicalSubjectKeyPage({ maxItems: 32 });
+    for (const id of page.ids) {
+      const row = store(P6_TRIP_DERIVED_STORES.WORK).records.get(id);
+      // Non-reusable (no `sourceHash`) AND in flight — the combination that
+      // forced a read the branch then discarded.
+      store(P6_TRIP_DERIVED_STORES.WORK).records.set(id, {
+        ...row, state: 'BUILDING', sourceHash: '',
+      });
+    }
+
+    const outcome = await queueP6ExplicitTripSubjects(page.ids, [P6_DOMAIN_KEYS.ANALYTICS], {
+      maxBytes: P6_TURN_BUDGET.bytes,
+      parkedPolicy: 'PRESERVE',
+    });
+
+    expect(outcome.alreadyInFlight).toBe(2);
+    expect(outcome.queued).toBe(0);
+    // No payload was read at all, so the turn cannot overrun on this branch.
+    expect(outcome.payloadReads).toBe(0);
+    expect(outcome.bytesWorked).toBeLessThanOrEqual(P6_TURN_BUDGET.bytes);
+    expect(outcome.bytesWorked).toBeLessThan(P6_SOURCE_READ_RESERVE_BYTES);
+    expect(outcome.oversizedUnitBytes).toBe(0);
   });
 
   it('still re-mints parked subjects for the explicit repair', async () => {

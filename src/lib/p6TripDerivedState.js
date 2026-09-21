@@ -604,6 +604,16 @@ const restoreAnalyticsOnlyTerminalState = async (work) => {
       if (!current || current.disposition === 'TOMBSTONE') return;
       if (String(current.desiredRevision ?? '') !== String(work.desiredRevision ?? '')) return;
       if (String(current.analyticsOnlyTerminalState || '') !== terminal) return;
+      // The marker rides a `{...work}` spread, so another writer can re-dirty
+      // this row and carry it forward — derived-storage reclamation does exactly
+      // that when it reclaims a geometry chunk. Restoring then would put the row
+      // straight back to its terminal state and silently abandon the rebuild that
+      // writer asked for. A row still narrowed to D1 alone is one this turn owns;
+      // anything wider belongs to whoever widened it.
+      const owned = Array.isArray(current.dirtyDomains)
+        && current.dirtyDomains.length === 1
+        && current.dirtyDomains[0] === P6_DOMAIN_KEYS.ANALYTICS;
+      if (!owned) return;
       const { analyticsOnlyTerminalState: _consumed, ...rest } = current;
       store.put({
         ...rest,
@@ -708,6 +718,26 @@ export async function queueP6ExplicitTripSubjects(
       && Boolean(existing.sourceHash)
       && (declaredRevision === null || String(existing.desiredRevision ?? '') === declaredRevision);
 
+    // A subject already in flight is going to be rebuilt across every domain it
+    // owns, and its D1 contribution is re-published as the first step of that
+    // build. Narrowing such a row to D1 would silently drop the geometry work it
+    // was already carrying, so rediscovery leaves in-flight rows alone.
+    //
+    // This is decided BEFORE any payload read, because the test needs only the
+    // work row. Deciding it afterwards read a whole `encrypted_payload` and threw
+    // it away, and the early exit skipped the overrun cap below — so the wasted
+    // read was also reported uncapped, which is the contract violation this
+    // function exists to remove.
+    const inFlight = Boolean(existing)
+      && !P6_ANALYTICS_ONLY_RESTORABLE_STATES.includes(String(existing.state ?? ''));
+    if (preserveParked && inFlight) {
+      examined += 1;
+      alreadyInFlight += 1;
+      lastKey = tripId;
+      bytesWorked += existing ? encodedJsonBytes(existing) : 0;
+      continue;
+    }
+
     let desiredRevision = reusable ? String(existing.desiredRevision ?? '') : null;
     let sourceHash = reusable ? existing.sourceHash : null;
     let unitBytes = existing ? encodedJsonBytes(existing) : 0;
@@ -748,19 +778,6 @@ export async function queueP6ExplicitTripSubjects(
     }
 
     const parked = existing?.state === P6_EXPLICIT_SOURCE_REQUIRED;
-    // A subject already in flight is going to be rebuilt across every domain it
-    // owns, and its D1 contribution is re-published as the first step of that
-    // build. Narrowing such a row to D1 would silently drop the geometry work it
-    // was already carrying, so rediscovery leaves in-flight rows alone.
-    const inFlight = Boolean(existing)
-      && !P6_ANALYTICS_ONLY_RESTORABLE_STATES.includes(String(existing.state ?? ''));
-    if (preserveParked && inFlight) {
-      examined += 1;
-      alreadyInFlight += 1;
-      lastKey = tripId;
-      bytesWorked += unitBytes;
-      continue;
-    }
     const restoreTerminalState = preserveParked
       && analyticsOnly
       && P6_ANALYTICS_ONLY_RESTORABLE_STATES.includes(String(existing?.state ?? ''))
@@ -1084,6 +1101,9 @@ const stepAnalyticsSettingsRediscovery = async (limit = 32) => {
     state: more ? 'SETTINGS_REDISCOVERY' : 'SETTINGS_REDISCOVERY_COMPLETE',
     itemsWorked: Number(page.itemsWorked || 0) + 1 + Number(queued.queued || 0),
     bytesWorked: Number(queued.bytesWorked || 0),
+    // A capped report without its companion figure is an understatement, so the
+    // disclosure travels with it rather than dying inside the queue.
+    ...(queued.oversizedUnitBytes ? { oversizedUnitBytes: queued.oversizedUnitBytes } : {}),
     hasMore: true,
   };
 };

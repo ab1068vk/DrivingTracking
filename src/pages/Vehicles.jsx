@@ -27,7 +27,7 @@ import { useVehicleAnalytics } from '@/hooks/useVehicleAnalytics';
 import { formatCurrencyAmount, normalizeCurrencySymbol } from '@/lib/currency';
 import { formatDistance, getTripComponentScore } from '@/lib/tripEngine';
 import { convertPerDistanceRate, distanceUnitLabel, formatDistanceScope } from '@/lib/unitFormatting';
-import { atLeastTotal, scopeStateOf, vehicleScopeNote } from '@/lib/scopeDisclosure';
+import { SCOPE_STATE, atLeastTotal, scopeStateOf, vehicleScopeNote } from '@/lib/scopeDisclosure';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { PageEmptyState, PageHeader } from '@/components/PageChrome';
 import { requestAppConfirm } from '@/lib/appDialog';
@@ -667,7 +667,6 @@ export default function Vehicles() {
     recentTrips,
     recentUnavailable,
     lifetime: vehicleLifetime,
-    lifetimeUnavailable: vehicleLifetimeUnavailable,
     isLoading: recentTripsLoading,
   } = useVehicleAnalytics(vehicles);
   const trips = recentTrips;
@@ -693,15 +692,27 @@ export default function Vehicles() {
   // It was computed and then never used, so partial per-vehicle totals rendered
   // as bare fact — 382.7 km across 41 trips for a vehicle with 3,876.5 km
   // across 200. The figures are unchanged; what they claim is not.
-  // The refusal that matters here is the D1 fleet aggregate's, not the bounded
-  // recent page's: these figures come from `lifetime.fleet`, and the recent page
-  // already has its own banner. Wiring the page refusal in here printed
-  // "Per-vehicle totals could not be read" directly under exact fleet totals
-  // whenever the recent page failed while D1 was VERIFIED.
-  const fleetScope = scopeStateOf({
-    exact: fleetIntelligence.lifetimeExact === true,
-    unavailable: vehicleLifetimeUnavailable,
-  });
+  // The scope follows whichever population actually SUPPLIED these figures.
+  //
+  // Vehicles substitutes rather than blends: `buildFleetIntelligence` uses the
+  // D1 fleet aggregate when it answers and otherwise falls back to the bounded
+  // recent window, so only one of the two is ever on screen. That is why this
+  // is not `combinedScope` — combining would hedge exact D1 totals because the
+  // window beside them is bounded, when the window is not being shown.
+  //
+  // Feeding the D1 refusal straight in was worse the other way: with D1 not
+  // ready the page fell back to the window, produced real partial numbers, and
+  // then labelled them `UNAVAILABLE` — so `atLeastTotal` stripped their floors
+  // and "Per-vehicle totals could not be read" printed directly above figures
+  // that had been read. A refusal from one population may not describe another
+  // population's answer.
+  const fleetScope = fleetIntelligence.lifetimeExact === true
+    ? SCOPE_STATE.VERIFIED
+    : scopeStateOf({
+      answered: !vehicleTripsUnavailable,
+      exact: false,
+      unavailable: vehicleTripsUnavailable,
+    });
   const fleetScopeNote = vehicleScopeNote(fleetScope);
   const fleetTotalDistanceLabel = atLeastTotal(
     formatDistanceScope(fleetIntelligence.totalKm, units),
@@ -1036,6 +1047,7 @@ export default function Vehicles() {
         settings.premium_visual_experience === true ? (
           <PremiumFleetIntelligenceCard
             intelligence={fleetIntelligence}
+            scope={fleetScope}
             highConfidenceAssignmentCount={highConfidenceAssignments.length}
             units={units}
           />

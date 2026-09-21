@@ -1016,6 +1016,9 @@ export default function SpeedLimits() {
         setEditorCursors(empty);
       }
       return ({
+      // A read that failed knows nothing about the model, so it must not render
+      // "0 active" as a complete fact.
+      bounded: true,
       rows: [],
       candidates: [],
       history: { canUndo: false, canRedo: false, undoLabel: '', redoLabel: '' },
