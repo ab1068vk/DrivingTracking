@@ -100,3 +100,49 @@ test('settings controls persist real settings instead of only moving UI state', 
   await page.getByRole('button', { name: 'Save retention' }).click();
   await expectSetting(page, 'data_retention_days', 90);
 });
+
+// Regression guard for a misdiagnosis, not for a product bug.
+//
+// A device campaign reported the Privacy & Data backup/export/import/delete block
+// as "not rendering" at 1,083 trips. It was rendering the whole time: the probe
+// searched for `<button>` elements, and every one of these controls is a
+// SettingRow, which renders `div[role="button"]`. Nothing asserted these specific
+// rows exist, so there was no cheap way to falsify the claim.
+//
+// The real cause of that campaign's failed imports was `data_retention_days`
+// pruning trips older than the retention window on import -- correct behaviour,
+// covered by dataBackupRetentionContract.test.js. What was missing was this:
+// proof that the controls are present, and that "Forever" is reachable.
+test('Privacy & Data exposes every data-management control', async ({ page }) => {
+  await page.goto('/settings');
+  await openSettingsArea(page, 'Privacy & Data');
+
+  for (const label of [
+    'Export All Trips',
+    'Export Everything',
+    'Export Full Backup',
+    'Import Backup',
+    'Erase All Local Data',
+    'Data Retention',
+    'Delete All Trips',
+  ]) {
+    await expect(page.locator(`[data-setting-label="${label}"]`)).toBeVisible();
+  }
+
+  // The importer's file input only exists under browser backup authority, which
+  // is what the shipping build uses. If it disappears, imports fail silently.
+  await expect(page.locator('input[type="file"]')).toHaveAttribute(
+    'accept',
+    /road-sage\.backup/,
+  );
+});
+
+test('retention can be loosened to Forever without a destructive confirmation', async ({ page }) => {
+  await page.goto('/settings');
+  await openSettingsArea(page, 'Privacy & Data');
+
+  // Loosening deletes nothing, so unlike 90 days / 1 year this must NOT prompt.
+  await page.locator('[data-setting-label="Data Retention"] select').selectOption('0');
+  await expectSetting(page, 'data_retention_days', 0);
+  await expect(page.getByRole('button', { name: 'Save retention' })).toHaveCount(0);
+});
