@@ -56,27 +56,26 @@ describe('analytics settings version ignores runtime status', () => {
     }
   });
 
-  it('keeps durable preferences, so a real settings change still invalidates', () => {
+  // DPD-033 (2026-09-24): the projection is now a positive list of the keys the D1
+  // contribution reads (`CARBON_ANALYTICS_SETTINGS_KEYS`). Presentation and consent
+  // settings no longer invalidate history; an analytics input still does.
+  it('invalidates on a real analytics input, not on units', () => {
     const base = analyticsSettingsProjection(settingsAtLaunch('t'));
-    const changed = analyticsSettingsProjection({
-      ...settingsAtLaunch('t'),
-      units: 'imperial',
-    });
+    const units = analyticsSettingsProjection({ ...settingsAtLaunch('t'), units: 'imperial' });
+    const fuel = analyticsSettingsProjection({ ...settingsAtLaunch('t'), default_l_per_100km: 9.1 });
 
-    expect(base.units).toBe('metric');
-    expect(changed).not.toEqual(base);
+    expect(units).toEqual(base);
+    expect(fuel).not.toEqual(base);
   });
 
-  it('keeps consent and acknowledgement timestamps — those are user decisions', () => {
+  it('does not invalidate on consent or acknowledgement timestamps (not analytics inputs)', () => {
     const base = analyticsSettingsProjection(settingsAtLaunch('t'));
-    expect(base).toHaveProperty('legal_notice_acknowledged_at');
-    expect(base).toHaveProperty('osrm_data_sharing_consented_at');
-
+    expect(base).not.toHaveProperty('legal_notice_acknowledged_at');
     const reconsented = analyticsSettingsProjection({
       ...settingsAtLaunch('t'),
       osrm_data_sharing_consented_at: '2026-09-19T12:00:00.000Z',
     });
-    expect(reconsented).not.toEqual(base);
+    expect(reconsented).toEqual(base);
   });
 
   it('does not depend on property insertion order', () => {
@@ -89,7 +88,9 @@ describe('analytics settings version ignores runtime status', () => {
   });
 
   it('tolerates a missing or empty settings object', () => {
-    expect(analyticsSettingsProjection(undefined)).toEqual({});
-    expect(analyticsSettingsProjection(null)).toEqual({});
+    const empty = analyticsSettingsProjection({});
+    expect(Object.values(empty).every((value) => value === null)).toBe(true);
+    expect(analyticsSettingsProjection(undefined)).toEqual(empty);
+    expect(analyticsSettingsProjection(null)).toEqual(empty);
   });
 });

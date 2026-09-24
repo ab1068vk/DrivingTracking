@@ -94,6 +94,10 @@ describe('P6 settings rediscovery stays inside its declared turn budget', () => 
     });
     storage.clear();
     settingsState.units = 'metric';
+    // DPD-033: the analytics version now hashes only analytics inputs, so the
+    // "settings changed" trigger below is a real one (fuel economy feeds co2_saved_kg);
+    // units no longer invalidates history.
+    delete settingsState.default_l_per_100km;
   });
 
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -149,7 +153,7 @@ describe('P6 settings rediscovery stays inside its declared turn budget', () => 
     await seedLegacyHistory();
     await runLifecycleTurns();
 
-    settingsState.units = 'imperial';
+    settingsState.default_l_per_100km = 9.1;
     await invalidateP6AnalyticsForSettings('TEST_SETTINGS_CHANGED');
 
     const { turns, exhausted } = await runLifecycleTurns();
@@ -169,7 +173,7 @@ describe('P6 settings rediscovery stays inside its declared turn budget', () => 
     await seedLegacyHistory();
     await runLifecycleTurns();
 
-    settingsState.units = 'imperial';
+    settingsState.default_l_per_100km = 9.1;
     await invalidateP6AnalyticsForSettings('TEST_SETTINGS_CHANGED');
 
     const { turns } = await runLifecycleTurns();
@@ -200,7 +204,7 @@ describe('P6 settings rediscovery stays inside its declared turn budget', () => 
     const parkedBefore = countWorkState('EXPLICIT_SOURCE_REQUIRED');
     expect(parkedBefore).toBe(SUBJECT_COUNT);
 
-    settingsState.units = 'imperial';
+    settingsState.default_l_per_100km = 9.1;
     await invalidateP6AnalyticsForSettings('TEST_SETTINGS_CHANGED');
     const { turns } = await runLifecycleTurns();
 
@@ -238,7 +242,7 @@ describe('P6 settings rediscovery stays inside its declared turn budget', () => 
     expect(new Set(before).size).toBe(1);
     expect(before[0]).toBeTruthy();
 
-    settingsState.units = 'imperial';
+    settingsState.default_l_per_100km = 9.1;
     await invalidateP6AnalyticsForSettings('TEST_SETTINGS_CHANGED');
     await runLifecycleTurns();
 
@@ -294,7 +298,7 @@ describe('P6 settings rediscovery stays inside its declared turn budget', () => 
     await seedLegacyHistory();
     await runLifecycleTurns();
 
-    settingsState.units = 'imperial';
+    settingsState.default_l_per_100km = 9.1;
     await invalidateP6AnalyticsForSettings('TEST_SETTINGS_CHANGED');
     await runLifecycleTurns();
 

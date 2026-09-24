@@ -168,6 +168,17 @@ export function meanScopeSublabel(text, state) {
 }
 
 /**
+ * A sublabel for a rate whose numerator and denominator come from one population
+ * (DPD-034: trips per active day). Over an incomplete population it is still a
+ * true rate for the rows counted, so the figure stays and its scope is disclosed.
+ */
+export function rateScopeSublabel(text, state) {
+  if (isUnknownScope(state)) return 'not counted yet';
+  if (isPartialScope(state)) return `${String(text ?? '')} · over days counted so far`;
+  return String(text ?? '');
+}
+
+/**
  * The lifetime-totals heading. Never claims "all time" over a bounded window,
  * and never over a source that has not answered.
  */

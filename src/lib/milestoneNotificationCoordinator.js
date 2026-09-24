@@ -9,6 +9,7 @@ import {
   runProgressionLedgerMigrationAsync,
 } from '@/lib/driverProgressionMigration';
 import { syncNativeCompletedTrips } from '@/lib/localTripRepository';
+import { beginMeasure, measureAsync } from '@/lib/performanceTriage';
 import {
   mirrorCalibrationStateToNative,
   selectUndeliveredAchievements,
@@ -639,8 +640,14 @@ export function syncNativeCompletedTripsAndMilestones({
   reconcileExisting = false,
   lifecycleBounded = false,
 } = {}) {
+  // Native-sync characterization (§39 P4): `app.nativeTripSync` is 8-10 s on the
+  // A54 with an empty journal. These phase keys split it into the wait behind the
+  // serialized milestone queue, the native intake (bridge page + repository), and
+  // milestone reconciliation. Timing only; no behaviour change.
+  const endQueueWait = beginMeasure('app.nativeTripSync.queueWait');
   return queueMilestoneSync(async () => {
-    const result = await syncNativeCompletedTrips();
+    endQueueWait({ outcome: 'success' });
+    const result = await measureAsync('app.nativeTripSync.intake', () => syncNativeCompletedTrips());
     const importedTrips = Array.isArray(result?.importedTrips) ? result.importedTrips : [];
     // Reconcile even when nothing was imported: a trip recorded and saved
     // locally never appears in `importedTrips`, so gating on it meant crossing
@@ -659,10 +666,10 @@ export function syncNativeCompletedTripsAndMilestones({
       .sort((a, b) => new Date(b.end_time || b.start_time || 0).getTime() - new Date(a.end_time || a.start_time || 0).getTime())[0];
     let milestoneUpdate = null;
     if (shouldReconcile) {
-      milestoneUpdate = await reconcileMilestoneNotifications({
+      milestoneUpdate = await measureAsync('app.nativeTripSync.milestones', () => reconcileMilestoneNotifications({
         tripId: latestImportedTrip?.id || null,
         lifecycleBounded,
-      }).catch((error) => {
+      })).catch((error) => {
         logSystemFailure('native_trip_milestone_notification_sync', error, {
           imported_trip_count: importedTrips.length,
           latest_trip_id: latestImportedTrip?.id || null,

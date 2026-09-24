@@ -549,7 +549,14 @@ export default function Achievements() {
                         {progressionLifetimeExact ? '' : 'at least '}
                         {progression.eligibility.eligibleTrips}/{progression.eligibility.completedTrips} qualifying trips
                       </div>
-                      <div className="mt-1 text-xs text-muted-foreground">{formatDistance(progression.eligibility.distanceKm, units)} evidence · {progression.eligibility.excludedTrips} excluded low-evidence trip{progression.eligibility.excludedTrips === 1 ? '' : 's'}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {formatDistance(progression.eligibility.distanceKm, units)} evidence ·{' '}
+                        {/* DPD-034: an exclusion count is only shown when its operands share a
+                            scope; otherwise the bounded fact is stated with its scope. */}
+                        {progression.eligibility.excludedTrips != null
+                          ? `${progression.eligibility.excludedTrips} excluded low-evidence trip${progression.eligibility.excludedTrips === 1 ? '' : 's'}`
+                          : `${progression.eligibility.windowExcludedTrips} excluded among the latest ${progression.eligibility.windowCompletedTrips} trips read`}
+                      </div>
                     </div>
                     <CircleGauge className="h-7 w-7 text-primary" />
                   </div>
@@ -558,13 +565,13 @@ export default function Achievements() {
             </div>
           </section>
 
-          {progression.eligibility.excludedTrips > 0 && (
+          {(progression.eligibility.excludedTrips ?? progression.eligibility.windowExcludedTrips) > 0 && (
             <section className={`rounded-2xl border p-4 sm:p-5 ${progression.eligibility.eligibleTrips === 0 ? 'border-orange-500/40 bg-orange-500/10' : 'border-border bg-card'}`}>
               <div className="flex items-start gap-3">
                 <CircleGauge className={`mt-0.5 h-5 w-5 flex-none ${progression.eligibility.eligibleTrips === 0 ? 'text-orange-600 dark:text-orange-300' : 'text-primary'}`} />
                 <div className="min-w-0 flex-1">
                   <h2 className="text-sm font-semibold">{progression.eligibility.eligibleTrips === 0 ? 'Why your existing trips are not qualifying' : 'Trips excluded from progression'}</h2>
-                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">A trip is counted when it is completed, at least {formatDistance(progression.eligibility.minimumTripKm, units)}, at least {Math.ceil(progression.eligibility.minimumTripSeconds / 60)} minutes, and has a usable overall score.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">A trip is counted when it is completed, at least {formatDistance(progression.eligibility.minimumTripKm, units)}, at least {Math.ceil(progression.eligibility.minimumTripSeconds / 60)} minutes, and has a usable overall score.{progression.eligibility.windowCompletedTrips < progression.eligibility.completedTrips ? ` Counts below are among the latest ${progression.eligibility.windowCompletedTrips} trips read.` : ''}</p>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                     {progression.eligibility.exclusionReasons.filter((reason) => reason.count > 0).map((reason) => <div key={reason.id} className="rounded-xl bg-background/70 p-3"><div className="text-sm font-semibold">{reason.count} · {reason.label}</div><p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{reason.detail}</p></div>)}
                   </div>

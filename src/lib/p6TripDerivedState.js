@@ -1,4 +1,5 @@
 import { browserActiveTripSpool } from '@/lib/browserActiveTripSpool';
+import { CARBON_ANALYTICS_SETTINGS_KEYS, CARBON_ANALYTICS_VEHICLE_FIELDS } from '@/lib/tripInsights';
 import { publishP7SourceChange } from '@/lib/p7SourceChange';
 import {
   getBrowserKeyProofGeneration,
@@ -490,8 +491,11 @@ const P6_ANALYTICS_SETTINGS_REPAIR_KEY = 'analytics-settings-repair';
  * the match could never hold: derived analytics were permanently unavailable
  * and every repair was undone by the next launch.
  *
- * Consent and acknowledgement timestamps are deliberately **not** listed here.
- * They record real user decisions and changing one should invalidate analytics.
+ * DPD-033 replaced the exclusion approach with a positive projection (below), which
+ * cannot contain any of these keys; the set remains as the DPD-028 record and is
+ * asserted by its tests. Consent timestamps no longer invalidate either: the D1
+ * contribution does not read them, and what it does read is pinned by
+ * `p6AnalyticsInvalidationContract.test.js`.
  */
 const ANALYTICS_VOLATILE_SETTINGS_KEYS = new Set([
   // Device integrity telemetry, rewritten every launch.
@@ -505,14 +509,32 @@ const ANALYTICS_VOLATILE_SETTINGS_KEYS = new Set([
 ]);
 
 /**
- * The analytics-relevant projection of settings, with a stable key order so the
- * version depends on values rather than on property insertion order.
+ * The analytics-relevant projection of settings: a **positive** list of the keys
+ * the D1 contribution actually reads (`CARBON_ANALYTICS_SETTINGS_KEYS`), in a fixed
+ * order, missing values as `null`.
+ *
+ * DPD-033. The version used to hash every key except `ANALYTICS_VOLATILE_SETTINGS_KEYS`,
+ * so dark mode, a map pan (`last_map_center`), experience mode or units demoted
+ * `D1_ANALYTICS:all` and re-swept all history — 73 ms after a dark-mode switch on
+ * the 3,000-trip A54. None of those is read by the contribution. The volatile set
+ * above is now the record of DPD-028: none of its keys is an analytics input, so
+ * the positive projection cannot contain them.
  */
 const analyticsSettingsProjection = (settings) => Object.fromEntries(
-  Object.entries(settings || {})
-    .filter(([key]) => !ANALYTICS_VOLATILE_SETTINGS_KEYS.has(key))
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+  CARBON_ANALYTICS_SETTINGS_KEYS.map((key) => [key, settings?.[key] ?? null])
 );
+
+/**
+ * DPD-032. The vehicle fields the contribution reads (`CARBON_ANALYTICS_VEHICLE_FIELDS`),
+ * ordered by id (`getAllForReference` makes no ordering promise). Hashing whole
+ * vehicle objects made an odometer auto-sync, or restoring an unchanged fleet,
+ * re-sweep all history.
+ */
+const analyticsVehicleProjection = (vehicles) => [...(Array.isArray(vehicles) ? vehicles : [])]
+  .sort((left, right) => String(left?.id ?? '').localeCompare(String(right?.id ?? '')))
+  .map((vehicle) => Object.fromEntries(
+    CARBON_ANALYTICS_VEHICLE_FIELDS.map((field) => [field, vehicle?.[field] ?? null])
+  ));
 
 const readAnalyticsSettingsSnapshot = async () => {
   const [{ localSettings }, { localVehicleRepository }] = await Promise.all([
@@ -524,22 +546,19 @@ const readAnalyticsSettingsSnapshot = async () => {
   // authority has to be the complete collection: a 500-row prefix silently made
   // a beyond-prefix vehicle unavailable and zeroed its carbon contribution.
   const vehicles = await localVehicleRepository.getAllForReference();
-  // Order the fleet too: `getAllForReference` makes no ordering promise, and a
-  // reordered array would churn the version exactly as a volatile field does.
-  const orderedVehicles = [...(Array.isArray(vehicles) ? vehicles : [])]
-    .sort((left, right) => String(left?.id ?? '').localeCompare(String(right?.id ?? '')));
   return {
     settings,
     vehicles,
     settingsVersion: await hashP6Source({
       settings: analyticsSettingsProjection(settings),
-      vehicles: orderedVehicles,
+      vehicles: analyticsVehicleProjection(vehicles),
     }),
   };
 };
 
 export const __testables = {
   analyticsSettingsProjection,
+  analyticsVehicleProjection,
   ANALYTICS_VOLATILE_SETTINGS_KEYS,
   // Exposed so the paged-retirement resume can be exercised directly. Driving
   // it through a whole trip build made the fixture, not the paging, the subject

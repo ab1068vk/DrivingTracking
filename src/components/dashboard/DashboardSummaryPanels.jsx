@@ -22,6 +22,7 @@ import {
   allTimeMetricScope,
   atLeastTotal,
   meanScopeSublabel,
+  rateScopeSublabel,
 } from '@/lib/scopeDisclosure';
 import { formatEstimatedScore } from '@/lib/scoreDisplay';
 import { hasProvisionalCalibration } from '@/lib/scoringConstants';
@@ -116,7 +117,12 @@ export default function DashboardSummaryPanels({
               value: isAllTimeActivity
                 ? atLeastTotal(String(dashboardActivity.activeDays), activityScope)
                 : `${dashboardActivity.activeDays}/7`,
-              detail: dashboardActivity.activeDays ? `${dashboardActivity.tripsPerActiveDay.toFixed(1)} trips / active day` : 'no driving days',
+              // DPD-034: one-population rate; its scope is disclosed when the window is partial.
+              detail: dashboardActivity.activeDays
+                ? (isAllTimeActivity
+                  ? rateScopeSublabel(`${dashboardActivity.tripsPerActiveDay.toFixed(1)} trips / active day`, activityScope)
+                  : `${dashboardActivity.tripsPerActiveDay.toFixed(1)} trips / active day`)
+                : 'no driving days',
               icon: CalendarDays,
             },
             // A mean over a partial population is not a floor, so it is never

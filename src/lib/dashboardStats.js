@@ -55,3 +55,39 @@ export function buildDashboardActivityStats(trips = [], { now = new Date(), peri
   };
 }
 
+
+/**
+ * The Dashboard's activity figures from its two owners: the exact D1 lifetime
+ * aggregate (all-time trips and distance) and the bounded activity reducer
+ * (`p7.dashboard.activityStats@1`: driving time, active local days, longest trip,
+ * and its own trip count over the same scanned rows).
+ *
+ * DPD-034. `tripsPerActiveDay` divided the D1 lifetime trip count by the reducer's
+ * active days — 3,000 / 67 = 44.8 on the A54, against a true 3.0. A rate must take
+ * both operands from one population, so it uses the reducer's own trip count.
+ */
+export function deriveDashboardActivity({
+  stats = null,
+  isAllTime = false,
+  lifetimeTrips = null,
+  lifetimeDistanceKm = null,
+} = {}) {
+  const tripCount = isAllTime && Number.isFinite(lifetimeTrips)
+    ? lifetimeTrips
+    : Number(stats?.trip_count) || 0;
+  const distanceKm = isAllTime && Number.isFinite(lifetimeDistanceKm)
+    ? lifetimeDistanceKm
+    : (Number(stats?.distance_m) || 0) / 1000;
+  const activeDays = Number(stats?.active_local_days) || 0;
+  const windowTripCount = Number(stats?.trip_count) || 0;
+  return {
+    periodDays: isAllTime ? null : 7,
+    tripCount,
+    distanceKm,
+    drivingSeconds: Number(stats?.driving_seconds) || 0,
+    activeDays,
+    averageTripKm: tripCount ? distanceKm / tripCount : 0,
+    longestTripKm: (Number(stats?.longest_trip_distance_m) || 0) / 1000,
+    tripsPerActiveDay: activeDays ? windowTripCount / activeDays : 0,
+  };
+}

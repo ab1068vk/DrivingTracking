@@ -47,7 +47,20 @@ const tripsForVehicle = (vehicle, trips = []) => trips.filter((trip) => (
   )
 ));
 
-export default function VehicleCompare({ vehicles, trips, units = 'metric' }) {
+/**
+ * DPD-034. `trips` is a bounded recent page (Vehicles passes `recentTrips`), so a sum
+ * over it is not a vehicle's total: on the A54 the chart read 382.7 km under "Total
+ * Distance" for a car with 23,709.4 km of history on the same page. Distance now comes
+ * from the exact per-vehicle lifetime aggregate (`lifetime.byVehicleId`, served only
+ * when D1 is VERIFIED). If any vehicle lacks one, the whole chart uses the recent page
+ * and says so, so one chart never mixes populations. Scores stay recent-window and are
+ * labelled as such.
+ */
+export default function VehicleCompare({ vehicles, trips, units = 'metric', lifetime = null }) {
+  const recentCount = Array.isArray(trips) ? trips.length : 0;
+  const lifetimeById = lifetime?.byVehicleId instanceof Map ? lifetime.byVehicleId : null;
+  const lifetimeDistance = Boolean(lifetimeById) && vehicles.length > 0
+    && vehicles.every((vehicle) => lifetimeById.has(String(vehicle.id)));
   const stats = useMemo(() => {
     return vehicles.map((v, i) => {
       const vTrips = tripsForVehicle(v, trips);
@@ -55,12 +68,18 @@ export default function VehicleCompare({ vehicles, trips, units = 'metric' }) {
       const weightedScore = count ? distanceWeightedScore(vTrips) : null;
       const avgScore = weightedScore == null ? null : Math.round(weightedScore);
       const scoredCount = vTrips.filter((trip) => getTripComponentScore(trip, 'overall').value != null).length;
-      const totalKm = Number((convertDistanceKm(vTrips.reduce((s, t) => s + (t.distance_km || 0), 0), units) ?? 0).toFixed(1));
+      const lifetimeTotals = lifetimeDistance ? lifetimeById.get(String(v.id)) : null;
+      const distanceKm = lifetimeTotals
+        ? Number(lifetimeTotals.distanceKm) || 0
+        : vTrips.reduce((s, t) => s + (t.distance_km || 0), 0);
+      const totalKm = Number((convertDistanceKm(distanceKm, units) ?? 0).toFixed(1));
+      const lifetimeTrips = lifetimeTotals ? Number(lifetimeTotals.trips) || 0 : 0;
       const harshBrakes = vTrips.reduce((s, t) => s + (t.harsh_brakes_count || 0), 0);
       const color = v.color || CHART_COLORS[i % CHART_COLORS.length];
-      return { id: v.id, name: v.name, avgScore, totalKm, harshBrakes, count, scoredCount, color };
-    }).filter(s => s.count > 0);
-  }, [vehicles, trips, units]);
+      return { id: v.id, name: v.name, avgScore, totalKm, harshBrakes, count, scoredCount, color, lifetimeTrips };
+    }).filter(s => s.count > 0 || s.lifetimeTrips > 0);
+  }, [vehicles, trips, units, lifetimeById, lifetimeDistance]);
+  const recentScope = `latest ${recentCount} trips`;
 
   if (stats.length < 2) {
     return (
@@ -74,6 +93,7 @@ export default function VehicleCompare({ vehicles, trips, units = 'metric' }) {
   }
 
   const scoredStats = stats.filter((s) => s.avgScore != null);
+  const recentStats = stats.filter((s) => s.count > 0);
   const maxKm = Math.max(...stats.map(s => s.totalKm), 1);
 
   return (
@@ -85,6 +105,7 @@ export default function VehicleCompare({ vehicles, trips, units = 'metric' }) {
         <div className="flex items-center gap-2 mb-4">
           <Gauge className="w-4 h-4 text-primary" />
           <span className="font-semibold text-sm">Average Driving Score</span>
+          <span className="text-xs text-muted-foreground">· {recentScope}</span>
         </div>
         <DeferredRecharts height={180}>
           {({ ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell }) => (
@@ -109,7 +130,10 @@ export default function VehicleCompare({ vehicles, trips, units = 'metric' }) {
       <div className="bg-card border border-border rounded-2xl p-4">
         <div className="flex items-center gap-2 mb-4">
           <Navigation className="w-4 h-4 text-primary" />
-          <span className="font-semibold text-sm">Total Distance ({distanceUnitLabel(units)})</span>
+          <span className="font-semibold text-sm">
+            {lifetimeDistance ? 'Total Distance' : 'Recent distance'} ({distanceUnitLabel(units)})
+          </span>
+          {!lifetimeDistance && <span className="text-xs text-muted-foreground">· {recentScope}</span>}
         </div>
         <div className="space-y-3">
           {stats.map(s => (
@@ -123,9 +147,10 @@ export default function VehicleCompare({ vehicles, trips, units = 'metric' }) {
         <div className="flex items-center gap-2 mb-4">
           <Activity className="w-4 h-4 text-primary" />
           <span className="font-semibold text-sm">Score Ranking</span>
+          <span className="text-xs text-muted-foreground">· {recentScope}</span>
         </div>
         <div className="space-y-3">
-          {[...stats].sort((a, b) => (b.avgScore ?? Number.NEGATIVE_INFINITY) - (a.avgScore ?? Number.NEGATIVE_INFINITY)).map((s, i) => {
+          {[...recentStats].sort((a, b) => (b.avgScore ?? Number.NEGATIVE_INFINITY) - (a.avgScore ?? Number.NEGATIVE_INFINITY)).map((s, i) => {
             const { color } = s.avgScore == null ? { color: 'text-muted-foreground' } : getScoreColor(s.avgScore);
             return (
               <div key={s.id} className="flex items-center gap-3">

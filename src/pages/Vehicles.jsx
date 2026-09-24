@@ -1271,7 +1271,7 @@ export default function Vehicles() {
       )}
 
       {vehicles.length >= 2 && (
-        <VehicleCompare vehicles={vehicles} trips={trips} units={units} />
+        <VehicleCompare vehicles={vehicles} trips={trips} units={units} lifetime={vehicleLifetime} />
       )}
 
       <div className="space-y-3">

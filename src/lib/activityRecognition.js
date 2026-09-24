@@ -4,6 +4,7 @@ import { haversineDistance } from '@/lib/tripEngine';
 import ActivityRecognition from '@/lib/driveSenseNativePlugin';
 import { logSystemFailure, recordSystemEvent, recordSystemLog } from '@/lib/systemLog';
 import { setCurrentDiagnosticsBuildIdentity } from '@/lib/diagnosticsIdentity';
+import { measureAsync } from '@/lib/performanceTriage';
 
 const UNKNOWN_GPS_STABLE_M = 8;
 const PARKED_GPS_DRIFT_M = 20;
@@ -605,9 +606,10 @@ export async function getNativeCompletedTripPage(options = {}) {
     };
   }
   const maxItems = Math.max(0, Math.floor(Number(options?.maxItems) || 0));
-  const result = await ActivityRecognition.getNativeCompletedTrips(
+  // §39 P4: the bridge call alone, so native-sync cost can be split on device.
+  const result = await measureAsync('app.nativeTripSync.bridgePage', () => ActivityRecognition.getNativeCompletedTrips(
     maxItems > 0 ? { maxItems } : {},
-  );
+  ));
   const queueStatus = result?.queueStatus ?? null;
   const trips = Array.isArray(result?.trips) ? result.trips : [];
   const oversizedTripIds = Array.isArray(result?.oversizedTripIds) ? result.oversizedTripIds : [];

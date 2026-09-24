@@ -18,6 +18,9 @@ export default [
       // *expression bodies*, evaluated inside an async IIFE on the device, so a
       // top-level `return` is correct there and only there. Not project source.
       "agent-investigation/**/physical-h/tools/**",
+      // Final A54 campaign WebView step snippets: the same CDP expression bodies
+      // (top-level `return` inside the driver's async IIFE), git-ignored harness.
+      "agent-investigation/**/final-a54-validation/tools/**",
     ],
   },
   {

@@ -34,6 +34,8 @@ describe('buildPremiumTotals', () => {
       durationSeconds: 12000,
       longestDistanceKm: 50,
       tripCount: 4,
+      // DPD-034: the fold now carries its own one-population rate (trips / active days).
+      tripsPerActiveDay: 4 / 3,
     });
   });
 
@@ -45,6 +47,7 @@ describe('buildPremiumTotals', () => {
       durationSeconds: 6600,
       longestDistanceKm: 30,
       tripCount: 3,
+      tripsPerActiveDay: 1.5,
     });
   });
 
@@ -56,6 +59,7 @@ describe('buildPremiumTotals', () => {
       durationSeconds: 0,
       longestDistanceKm: 0,
       tripCount: 0,
+      tripsPerActiveDay: 0,
     });
   });
 
@@ -86,6 +90,7 @@ describe('buildPremiumTotals', () => {
       durationSeconds: 3600,
       longestDistanceKm: 20,
       tripCount: 1,
+      tripsPerActiveDay: 1,
     });
   });
 });

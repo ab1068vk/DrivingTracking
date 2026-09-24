@@ -456,6 +456,35 @@ export function calculateAverageEngineStressScore(trips = []) {
     : null;
 }
 
+/**
+ * Everything the D1 analytics contribution reads from settings and vehicles.
+ *
+ * DPD-032 / DPD-033. `buildAchievementTripContribution` depends on settings and
+ * vehicles only through `co2_saved_kg` below, so these are the inputs whose change
+ * can alter historical analytics. The analytics settings version is a hash of
+ * exactly these (`p6TripDerivedState.analyticsSettingsProjection`); hashing the
+ * whole settings object and every vehicle field made dark mode, a map pan or an
+ * odometer sync re-sweep all history. A dependency-closure test
+ * (`p6AnalyticsInvalidationContract.test.js`) mutates every other key and field and
+ * requires an identical contribution, so a new dependency must be added here.
+ */
+export const CARBON_ANALYTICS_SETTINGS_KEYS = Object.freeze([
+  'co2_baseline_kg_per_100km',
+  'default_ev_kwh_per_100km',
+  'default_l_per_100km',
+  'fuel_type',
+  'grid_co2_kg_per_kwh',
+]);
+export const CARBON_ANALYTICS_VEHICLE_FIELDS = Object.freeze([
+  'co2_baseline_kg_per_100km',
+  'energy_efficiency_kwh_per_100km',
+  'ev_efficiency_kwh_per_100km',
+  'fuel_efficiency_l_per_100km',
+  'fuel_type',
+  'grid_co2_kg_per_kwh',
+  'id',
+]);
+
 export function estimateTripEconomics(trip, vehicle = {}, settings = {}) {
   const distanceKm = Number(trip?.distance_km) || 0;
   const vehicleProfileAvailable = Boolean(vehicle && Object.keys(vehicle).length);

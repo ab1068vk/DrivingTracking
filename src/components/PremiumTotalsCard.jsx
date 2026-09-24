@@ -21,6 +21,7 @@ import {
   allTimeMetricScope,
   atLeastTotal,
   meanScopeSublabel,
+  rateScopeSublabel,
   scopeStateOf,
 } from '@/lib/scopeDisclosure';
 import { formatDistance, formatDuration } from '@/lib/tripEngine';
@@ -72,6 +73,7 @@ export function buildPremiumTotals(trips = [], period = PERIODS.ALL_TIME, now = 
     durationSeconds: stats.drivingSeconds,
     longestDistanceKm: stats.longestTripKm,
     tripCount: stats.tripCount,
+    tripsPerActiveDay: stats.tripsPerActiveDay,
   };
 }
 
@@ -130,6 +132,9 @@ export default function PremiumTotalsCard({
     durationSeconds: Number(activity.drivingSeconds) || 0,
     longestDistanceKm: Number(activity.longestTripKm) || 0,
     tripCount: Number(activity.tripCount) || 0,
+    // DPD-034: the page derives the rate from one population (the activity
+    // reducer); recomputing it here as lifetime trips / reducer days mixed scopes.
+    tripsPerActiveDay: Number(activity.tripsPerActiveDay) || 0,
   } : folded;
   const isAllTime = period === PERIODS.ALL_TIME;
   // DPD-017. The scope is decided by the page, from the raw completeness
@@ -156,12 +161,14 @@ export default function PremiumTotalsCard({
     average: formatDistance(totals.averageDistanceKm, units),
     longest: atLeastTotal(formatDistance(totals.longestDistanceKm, units), scope),
   };
-  const activeDayRate = totals.activeDays ? totals.tripCount / totals.activeDays : 0;
+  const activeDayRate = Number(totals.tripsPerActiveDay) || 0;
   const sublabels = {
     distance: 'completed trips',
     duration: 'recorded time',
     trips: isAllTime ? allTimeMetricScope(scope) : 'last 7 days',
-    days: totals.activeDays ? `${activeDayRate.toFixed(1)} trips / active day` : 'no driving days',
+    days: totals.activeDays
+      ? (isAllTime ? rateScopeSublabel(`${activeDayRate.toFixed(1)} trips / active day`, scope) : `${activeDayRate.toFixed(1)} trips / active day`)
+      : 'no driving days',
     average: isAllTime ? meanScopeSublabel('typical distance', scope) : 'typical distance',
     longest: isAllTime ? allTimeMetricScope(scope) : 'last 7 days',
   };

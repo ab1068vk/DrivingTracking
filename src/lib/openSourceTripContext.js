@@ -25,6 +25,8 @@ import { getPrivacyZones, maskRoutePointsForPrivacy, resolvePrivacyZonesForLooku
 import { prepareScoreInputsForPrivacy } from '@/lib/scoreInputPrivacy';
 import { isAndroid } from '@/lib/nativePlatform';
 import { effectivePrivacySettings, isHeightenedPrivacyMode } from '@/lib/privacyMode';
+import { packKnowledgeResults } from '@/lib/tripRescoreCompute';
+import { computeTripRescoreOffMainThread } from '@/lib/tripRescoreWorkerClient';
 
 // CHANGES (session):
 // - Wired LocalSpeedKnowledge.learnFromTrip after OSM speed-limit enrichment using only openstreetmap-sourced points.
@@ -590,38 +592,17 @@ export async function buildLocalSpeedKnowledgeScorePatch(trip, settings = localS
   const scoringRoutePoints = scoreInputPrivacy.routePoints;
   const localKnowledgeResults = await prefetchLocalKnowledgeWithReliability(scoringRoutePoints, knowledge);
   const speedKnowledgeMetadata = localKnowledgeResults?.knowledgeMetadata || {};
-  const stats = calculateTripStats(scoringRoutePoints, trip.start_time, trip.end_time, thresholds, {
-    ...trip,
-    raw_route_points: scoringRoutePoints,
-  });
-  const { events: detectedEvents, phoneUse: detectedPhoneUse } = detectDrivingEvents(
-    scoringRoutePoints,
-    thresholds,
-    trip.end_time,
-    privacyZones,
-    { localKnowledgeResults, settings }
-  );
-  const phoneUse = buildPhoneUseFromTripEvidence(
+  // DPD-031: stats, event detection, phone-use evidence and scoring are pure and
+  // were the multi-second main-thread block of every rescore turn. They run in a
+  // worker; only the async I/O and cheap post-processing stay here.
+  const { stats, detectedEvents, phoneUse, scores } = await computeTripRescoreOffMainThread({
     trip,
     scoringRoutePoints,
-    stats.duration_seconds,
-    detectedPhoneUse
-  );
-  let scores = calculateTripScores(
-    detectedEvents,
-    stats,
-    scoringRoutePoints,
     thresholds,
-    stats.duration_seconds,
-    phoneUse,
-    {
-      endTime: trip.end_time,
-      privacyZones,
-      localKnowledgeResults,
-      settings,
-    }
-  );
-  scores = applyWeatherRiskToScores(scores, trip.weather_context || null);
+    privacyZones,
+    settings,
+    knowledge: packKnowledgeResults(localKnowledgeResults),
+  });
   if (trip.id && scores.trip_speed_summary_v1) {
     await setJson(`trip_speed_summary_${trip.id}_v1`, scores.trip_speed_summary_v1).catch((error) => {
       console.warn('Trip speed summary storage skipped.', error);

@@ -887,7 +887,18 @@ export function buildDriverProgression(trips = [], settings = {}, options = {}) 
     eligibility: {
       completedTrips: lifetimeCompleted,
       eligibleTrips: lifetimeEligible,
-      excludedTrips: Math.max(0, lifetimeCompleted - lifetimeEligible),
+      // DPD-034. `completedTrips` is exact (Q4) but `eligibleTrips` is a floor until
+      // the lifetime scan finishes, so their difference counted every unread trip as
+      // "excluded" (2,876 of 3,000 on the A54; the true distance/duration exclusions
+      // were 640). The difference is only a count when both operands share a scope:
+      // the lifetime scan is complete, or there is no lifetime owner and both came
+      // from the same rows. Otherwise it is `null`, and the bounded fact that IS
+      // known — exclusions among the rows actually read — is reported with its scope.
+      excludedTrips: !lifetime || lifetime.exact === true
+        ? Math.max(0, lifetimeCompleted - lifetimeEligible)
+        : null,
+      windowExcludedTrips: exclusionCounts.distance + exclusionCounts.duration + exclusionCounts.score,
+      windowCompletedTrips: allCompleted.length,
       distanceKm: round(lifetimeDistanceKm, 1),
       /** `true` when the lifetime figures came from their owners, not the rows. */
       lifetimeExact: Boolean(lifetime?.exact),

@@ -2867,6 +2867,9 @@ function headingBetweenPair(prev, curr, fallbackPrev = null) {
 export function detectHeadingDeviationEvents(points = [], thresholds = DEFAULT_THRESHOLDS) {
   if (!points || points.length < 2) return [];
 
+  // DPD-031: collected lazily, once per pass, on the first candidate that reaches
+  // the context check; see `collectIntersectionOrRampContextPoints`.
+  let contextPoints = null;
   const candidates = [];
   for (let i = 1; i < points.length; i++) {
     const prev = points[i - 1];
@@ -2899,7 +2902,8 @@ export function detectHeadingDeviationEvents(points = [], thresholds = DEFAULT_T
     const approachHeadingStd = headingVarianceForRange(points, windowStart, Math.max(windowStart, i - 1));
     if (approachHeadingStd > straightHeadingStdMax) continue;
     const suppressionRadius = thresholds.HEADING_DEVIATION_SUPPRESS_CONTEXT_METERS ?? DEFAULT_THRESHOLDS.HEADING_DEVIATION_SUPPRESS_CONTEXT_METERS;
-    if (isNearIntersectionOrRampContext(points, i, suppressionRadius)) continue;
+    if (contextPoints === null) contextPoints = collectIntersectionOrRampContextPoints(points);
+    if (isNearIntersectionOrRampContext(points, i, suppressionRadius, contextPoints)) continue;
 
     let leftChange = 0;
     let rightChange = 0;
@@ -3567,16 +3571,34 @@ function pointHasIntersectionOrRampContext(point = {}) {
   );
 }
 
-function isNearIntersectionOrRampContext(points = [], index = 0, radiusM = 200) {
+/**
+ * The route points that carry intersection or ramp context, in route order.
+ *
+ * DPD-031. `isNearIntersectionOrRampContext` used to rescan the whole route for
+ * these on every heading candidate, which made heading detection O(points x
+ * candidates): ~2.1 s of a 5,000-point rescore on a desktop CPU, several times
+ * that on the A54. The route does not change during one detection pass, so the
+ * list is collected once and the per-candidate check walks only it - the same
+ * points, the same order, the same distance test.
+ */
+export function collectIntersectionOrRampContextPoints(points = []) {
+  const list = Array.isArray(points) ? points : [];
+  const context = [];
+  for (let i = 0; i < list.length; i++) {
+    const point = list[i];
+    if (hasValidCoordinates(point) && pointHasIntersectionOrRampContext(point)) context.push(point);
+  }
+  return context;
+}
+
+export function isNearIntersectionOrRampContext(points = [], index = 0, radiusM = 200, contextPoints = null) {
   const current = points[index];
   if (!hasValidCoordinates(current)) return false;
 
-  for (let i = 0; i < points.length; i++) {
-    const point = points[i];
-    if (!hasValidCoordinates(point)) continue;
-    if (pointHasIntersectionOrRampContext(point)) {
-      if (haversineMeters(current.lat, current.lng, point.lat, point.lng) <= radiusM) return true;
-    }
+  const candidates = Array.isArray(contextPoints) ? contextPoints : collectIntersectionOrRampContextPoints(points);
+  for (let i = 0; i < candidates.length; i++) {
+    const point = candidates[i];
+    if (haversineMeters(current.lat, current.lng, point.lat, point.lng) <= radiusM) return true;
   }
 
   let stopDistanceM = 0;

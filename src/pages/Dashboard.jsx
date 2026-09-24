@@ -48,6 +48,7 @@ import {
   validateCandidateTrip
 } from '@/lib/tripEngine';
 import { combinedScope, scopeBadge, scopeStateOf } from '@/lib/scopeDisclosure';
+import { deriveDashboardActivity } from '@/lib/dashboardStats';
 import { computeLiveTripScore } from '@/lib/liveTripScore';
 import { resolveParkedLocation } from '@/lib/parkedLocationResolver';
 import { getParkingLearningProfile } from '@/lib/parkingLearning';
@@ -3026,27 +3027,14 @@ export default function Dashboard() {
   // `p7.dashboard.activityStats@1`, because D1 keys no duration and a UTC
   // bucket cannot express a local-day count. The two means are derived from
   // those exactly as they were derived from the row fold.
-  const dashboardActivity = useMemo(() => {
-    const stats = dashboardData.activityStats;
-    const isAllTime = activityPeriod === 'all_time';
-    const tripCount = isAllTime && Number.isFinite(dashboardData.lifetimeTrips)
-      ? dashboardData.lifetimeTrips
-      : Number(stats?.trip_count) || 0;
-    const distanceKm = isAllTime && Number.isFinite(dashboardData.lifetimeDistanceKm)
-      ? dashboardData.lifetimeDistanceKm
-      : (Number(stats?.distance_m) || 0) / 1000;
-    const activeDays = Number(stats?.active_local_days) || 0;
-    return {
-      periodDays: isAllTime ? null : 7,
-      tripCount,
-      distanceKm,
-      drivingSeconds: Number(stats?.driving_seconds) || 0,
-      activeDays,
-      averageTripKm: tripCount ? distanceKm / tripCount : 0,
-      longestTripKm: (Number(stats?.longest_trip_distance_m) || 0) / 1000,
-      tripsPerActiveDay: activeDays ? tripCount / activeDays : 0,
-    };
-  }, [
+  // DPD-034: derivation lives in `deriveDashboardActivity` so the one-population
+  // rate is testable without rendering the page.
+  const dashboardActivity = useMemo(() => deriveDashboardActivity({
+    stats: dashboardData.activityStats,
+    isAllTime: activityPeriod === 'all_time',
+    lifetimeTrips: dashboardData.lifetimeTrips,
+    lifetimeDistanceKm: dashboardData.lifetimeDistanceKm,
+  }), [
     activityPeriod,
     dashboardData.activityStats,
     dashboardData.lifetimeTrips,
