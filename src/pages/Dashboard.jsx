@@ -48,7 +48,7 @@ import {
   validateCandidateTrip
 } from '@/lib/tripEngine';
 import { combinedScope, scopeBadge, scopeStateOf } from '@/lib/scopeDisclosure';
-import { deriveDashboardActivity } from '@/lib/dashboardStats';
+import { deriveDashboardActivity, scoreReviewBannerText } from '@/lib/dashboardStats';
 import { computeLiveTripScore } from '@/lib/liveTripScore';
 import { resolveParkedLocation } from '@/lib/parkedLocationResolver';
 import { getParkingLearningProfile } from '@/lib/parkingLearning';
@@ -3418,9 +3418,12 @@ export default function Dashboard() {
             <div>
               <div className="text-sm font-semibold">Trip scores need review</div>
               <div className="mt-0.5 text-xs">
-                {scoreModelMismatchTrips.length > 0
-                  ? `${scoreModelMismatchTrips.length} completed trip${scoreModelMismatchTrips.length === 1 ? '' : 's'} used an older scoring model. Tap to open re-scoring.`
-                  : `${unavailableScoreTrips.length} trip${unavailableScoreTrips.length === 1 ? ' has' : 's have'} unavailable scores. Tap to re-score from Settings.`}
+                {scoreReviewBannerText({
+                  mismatchCount: scoreModelMismatchTrips.length,
+                  unavailableCount: unavailableScoreTrips.length,
+                  windowCount: completedTrips.length,
+                  lifetimeTrips: dashboardData.lifetimeTrips,
+                })}
               </div>
             </div>
           </a>

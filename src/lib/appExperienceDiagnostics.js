@@ -78,6 +78,19 @@ export const replayEvidenceStateForTrip = (trip = {}) => {
   return 'legacy_unknown';
 };
 
+/**
+ * DPD-036. The browser trip projection (`tripProjectionSchema.js`) carries none of
+ * these fields, nor `start_source`/`tracking_mode`, so a projection row cannot say
+ * whether it had advanced evidence or how it was collected. At 3,000 trips the A54
+ * showed "Automatic / manual 0 / 0" for 20 rows that were all automatic. A row that
+ * does not carry the field is counted as not recorded, never as a zero.
+ */
+const ADVANCED_EVIDENCE_FIELDS = Object.freeze([
+  'sensor_fusion_summary', 'motion_sample_count', 'obd_data_available',
+  'lane_change_score_enabled', 'advanced_safety_detection_enabled',
+]);
+const advancedEvidenceRecorded = (trip = {}) => ADVANCED_EVIDENCE_FIELDS.some((field) => trip[field] !== undefined);
+
 const anonymousTripShape = (trip = {}) => ({
   distance_km: round(Math.max(0, finite(trip.distance_km) || 0), 1),
   duration_minutes: Math.round(durationSecondsForTrip(trip) / 60),
@@ -175,6 +188,8 @@ export function buildTripDataProfile(trips = [], { window: windowInput, populati
     replayable_trip_count: shapes.filter((shape) => shape.replay_evidence_state === 'present').length,
     summary_only_trip_count: shapes.filter((shape) => shape.summary_only).length,
     advanced_evidence_trip_count: shapes.filter((shape) => shape.advanced_evidence).length,
+    advanced_evidence_unrecorded_trip_count: completed.filter((trip) => !advancedEvidenceRecorded(trip)).length,
+    collection_mode_unrecorded_trip_count: shapes.filter((shape) => shape.collection_mode === 'unknown_legacy').length,
     automatic_trip_count: shapes.filter((shape) => shape.collection_mode.endsWith('_automatic')).length,
     manual_trip_count: shapes.filter((shape) => shape.collection_mode.endsWith('_manual')).length,
     replay_evidence_counts: Object.fromEntries(replayStates.map((state) => [state, shapes.filter((shape) => shape.replay_evidence_state === state).length])),

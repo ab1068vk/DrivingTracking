@@ -157,6 +157,18 @@ const POPULATION_SCOPE_SENTENCE = {
   ),
 };
 
+/**
+ * The page header. `read` is the rows the pagination authority has delivered, not
+ * the history: at 3,000 trips the A54 header read "60 of 60 completed trips"
+ * while the snapshot below it said "at least 60". Only a COMPLETE population may
+ * state its size as the total.
+ */
+export function tripHistoryHeaderDescription(shown, read, populationState) {
+  return populationState === 'COMPLETE'
+    ? `${shown} of ${read} completed trips`
+    : `${shown} of the ${read} completed trips read so far`;
+}
+
 export function buildTripHistorySummary(trips = [], units = 'metric', options = {}) {
   const safeTrips = Array.isArray(trips) ? trips : [];
   // HPR-001. Completeness is a property of the *population read*, so the state
@@ -758,7 +770,7 @@ export default function TripHistory() {
     <div className={`space-y-5 pb-4 ${premiumVisuals ? 'premium-trip-history-on' : ''}`}>
       <PageHeader
         title="Trip History"
-        description={`${sorted.length} of ${completed.length} completed trips`}
+        description={tripHistoryHeaderDescription(sorted.length, completed.length, historyPopulationState)}
         status={(
           <>
           <InlineRefreshBadge visible={isFetching && !isLoading} label="Refreshing trip history" />

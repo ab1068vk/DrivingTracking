@@ -366,6 +366,23 @@ export function fleetScopeFor({ lifetimeExact = false, recentUnavailable = null 
   });
 }
 
+/**
+ * Per-vehicle card figures. `vehicleTrips` is this vehicle's share of the bounded
+ * recent page (`windowRows` fleet rows), so a count or sum over it describes that
+ * window. At 3,000 trips the A54 card read "41 trips" for a 1,200-trip vehicle and
+ * "0 trips" for one with 30. Count and score come from the D1 lifetime bucket when
+ * it exists; per-trip economics have no ledger, so they keep the window and say so.
+ */
+export function vehicleCardFigures({ vehicleTrips = [], owned = null, windowRows = 0 } = {}) {
+  const windowCount = vehicleTrips.length;
+  return {
+    tripCount: owned ? owned.trips : windowCount,
+    tripCountNote: owned ? null : `among the latest ${windowRows} trips`,
+    score: owned ? owned.score ?? null : calculateAverageVehicleScore(vehicleTrips),
+    windowNote: !owned || owned.trips > windowCount ? `latest ${windowRows} trips` : null,
+  };
+}
+
 export function buildFleetIntelligence(vehicles = [], trips = [], settings = {}, lifetime = null, retiredVehicles = [], defaultVehicle = null) {
   const completedTrips = trips.filter((trip) => trip.status === 'completed');
   const lifetimeFor = (vehicle) => lifetime?.byVehicleId?.get(String(vehicle?.id)) || null;
@@ -938,10 +955,6 @@ export default function Vehicles() {
   }, [vehicles, trips, invalidate]);
 
   const tripListFor = (vehicle) => getTripsForVehicle(vehicle, trips);
-  const tripCountFor = (vehicle) => tripListFor(vehicle).length;
-  const avgScoreFor = (vehicle) => {
-    return calculateAverageVehicleScore(tripListFor(vehicle));
-  };
   const fuelTotalsFor = (vehicle) => tripListFor(vehicle).reduce((totals, trip) => {
     const estimate = estimateTripEconomics(trip, vehicle, settings);
     return {
@@ -1276,11 +1289,14 @@ export default function Vehicles() {
 
       <div className="space-y-3">
         {vehicles.map((v, i) => {
-          const count = tripCountFor(v);
-          const score = avgScoreFor(v);
           const isEditing = editId === v.id;
           const odometerKm = getVehicleOdometerKm(v, trips);
           const vehicleTrips = tripListFor(v);
+          const { tripCount: count, tripCountNote, score, windowNote } = vehicleCardFigures({
+            vehicleTrips,
+            owned: vehicleLifetime?.byVehicleId?.get(String(v.id)) || null,
+            windowRows: trips.length,
+          });
           const maintenancePlan = buildVehicleMaintenancePlan(v, { odometerKm });
           const dueMaintenance = [...maintenancePlan.due_items, ...maintenancePlan.soon_items];
           const fuelTotals = fuelTotalsFor(v);
@@ -1323,7 +1339,7 @@ export default function Vehicles() {
                         {[v.market || 'CA', humanizePowertrain(v.powertrain || v.fuel_type), v.engine].filter(Boolean).join(' / ')}
                       </div>
                       <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                        <span>{count} trip{count !== 1 ? 's' : ''}</span>
+                        <span>{count} trip{count !== 1 ? 's' : ''}{tripCountNote ? ` ${tripCountNote}` : ''}</span>
                         {score !== null && (
                           <span className="font-semibold text-primary">Avg score: {formatEstimatedScore(score)} <span className="font-normal capitalize text-muted-foreground">aggregate evidence</span></span>
                         )}
@@ -1359,6 +1375,7 @@ export default function Vehicles() {
                       </div>
                       <div className="font-semibold text-sm mt-1">{formatCurrencyAmount(fuelTotals.cost, currencySymbol)}</div>
                       <div className="text-xs text-muted-foreground">{fuelTotals.co2.toFixed(1)} kg CO2</div>
+                      {windowNote && <div className="text-[11px] text-muted-foreground">{windowNote}</div>}
                     </div>
                     <div className="bg-secondary/50 rounded-xl p-3">
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1417,6 +1434,11 @@ export default function Vehicles() {
                         <div className="mt-1 text-sm font-semibold">{formatCurrencyAmount(costSummary.maintenance_reserve, currencySymbol)}</div>
                       </div>
                     </div>
+                    {windowNote && (
+                      <p className="mt-2 text-[11px] text-muted-foreground">
+                        Cost per {distanceUnitLabel(units)}, fuel estimate and maintenance reserve: this vehicle&apos;s trips among the {windowNote}.
+                      </p>
+                    )}
                   </div>
 
                   <VehicleMaintenancePanel

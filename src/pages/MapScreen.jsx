@@ -56,6 +56,7 @@ import PremiumMapLayers from '@/components/PremiumMapLayers';
 import PremiumEventAreasCard from '@/components/PremiumEventAreasCard';
 import { PremiumHistoryResultsPager } from '@/components/PremiumTripHistoryPanels';
 import PremiumMapTripCard from '@/components/PremiumMapTripCard';
+import { MAP_OVERVIEW_NOT_BUILT_DETAIL, MAP_OVERVIEW_NOT_BUILT_TITLE, mapOverviewStatus } from '@/lib/mapOverviewStatus';
 
 const MAP_FILTERS = [
   { id: 'all', label: 'All' },
@@ -233,6 +234,11 @@ export default function MapScreen() {
   // no per-trip fan-out left to issue, so there is none to retry either — a
   // geometry failure is the page's typed unavailable, not eight failures.
   const overviewDetailError = Boolean(geometryPage?.unavailable);
+  const overviewStatus = mapOverviewStatus({
+    loading: tripsLoading,
+    unavailable: geometryPage?.unavailable ?? null,
+    count: completed.length,
+  });
   const retryOverviewDetails = () => {
     qc.invalidateQueries({ queryKey: p7QueryKeys.geometry('map-screen') });
   };
@@ -459,9 +465,7 @@ export default function MapScreen() {
             ? selectedTripLoading && !selectedTripDetail
               ? 'Loading focused route view'
               : 'Focused route view'
-            : tripsLoading
-              ? 'Loading trips...'
-              : `Showing ${completed.length} filtered trip${completed.length === 1 ? '' : 's'}`}
+            : overviewStatus.header}
           {!selectedTrip && mapOverviewHiddenCount > 0 && (
             <span className="block text-xs">
               Drawing the most recent {overviewTripsForMap.length} routes first for a faster map. Select any trip below for the full route.
@@ -564,7 +568,7 @@ export default function MapScreen() {
                 Loading route detail...
               </div>
             )}
-            {!selectedTripId && overviewDetailError && (
+            {!selectedTripId && overviewDetailError && !overviewStatus.notBuilt && (
               <div className="absolute inset-x-3 bottom-3 z-10">
                 <InlineLoadError
                   message="Some overview routes could not load."
@@ -934,7 +938,13 @@ export default function MapScreen() {
           </div>
         </div>
 
-        {completed.length === 0 ? (
+        {completed.length === 0 && overviewStatus.notBuilt ? (
+          <div className="flex flex-col items-center rounded-2xl border border-dashed border-border bg-secondary/30 px-5 py-10 text-center">
+            <Car className="w-10 h-10 text-muted-foreground mb-3" />
+            <div className="text-sm font-semibold text-foreground">{MAP_OVERVIEW_NOT_BUILT_TITLE}</div>
+            <div className="mt-1 max-w-md text-xs text-muted-foreground">{MAP_OVERVIEW_NOT_BUILT_DETAIL}</div>
+          </div>
+        ) : completed.length === 0 ? (
           <div className="flex flex-col items-center rounded-2xl border border-dashed border-border bg-secondary/30 px-5 py-10 text-center">
             <Car className="w-10 h-10 text-muted-foreground mb-3" />
             <div className="text-sm font-semibold text-foreground">No trips with playable route GPS</div>

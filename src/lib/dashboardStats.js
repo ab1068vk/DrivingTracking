@@ -91,3 +91,27 @@ export function deriveDashboardActivity({
     tripsPerActiveDay: activeDays ? windowTripCount / activeDays : 0,
   };
 }
+
+/**
+ * The score-review banner counts trips in the Dashboard's bounded recent window
+ * (the latest `windowCount` rows), not the history. At 3,000 trips the A54 read
+ * "60 completed trips used an older scoring model" — a window count stated as if
+ * it were the population. The count names its window unless the lifetime owner
+ * proves the window is the whole history.
+ */
+export function scoreReviewBannerText({
+  mismatchCount = 0,
+  unavailableCount = 0,
+  windowCount = 0,
+  lifetimeTrips = null,
+} = {}) {
+  const wholeHistory = Number.isFinite(lifetimeTrips) && lifetimeTrips <= windowCount;
+  const among = wholeHistory ? '' : ` of the latest ${windowCount}`;
+  if (mismatchCount > 0) {
+    const noun = wholeHistory ? `completed trip${mismatchCount === 1 ? '' : 's'}` : 'completed trips';
+    return `${mismatchCount}${among} ${noun} used an older scoring model. Tap to open re-scoring.`;
+  }
+  const verb = unavailableCount === 1 ? ' has' : ' have';
+  const noun = wholeHistory ? `trip${unavailableCount === 1 ? '' : 's'}` : 'trips';
+  return `${unavailableCount}${among} ${noun}${verb} unavailable scores. Tap to re-score from Settings.`;
+}

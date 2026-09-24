@@ -45,6 +45,9 @@ const formatDuration = (value) => {
   return `${Math.round(ms)} ms`;
 };
 
+/** DPD-036: rows whose summary does not carry the field are disclosed, not zeroed. */
+export const unrecordedNote = (count) => (Number(count) > 0 ? ` · ${count} not recorded` : '');
+
 const formatBytes = (value) => {
   const bytes = Math.max(0, Number(value) || 0);
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -411,8 +414,8 @@ export default function AppExperienceDiagnosticsPanel({
               <span className="text-muted-foreground">Median trip</span><strong className="text-right">{formatDistance(report.data.median_distance_km, units)}</strong>
               <span className="text-muted-foreground">95th percentile trip</span><strong className="text-right">{formatDistance(report.data.p95_distance_km, units)}</strong>
               <span className="text-muted-foreground">95th percentile points</span><strong className="text-right">{report.data.p95_route_point_count.toLocaleString()}</strong>
-              <span className="text-muted-foreground">Advanced evidence</span><strong className="text-right">{report.data.advanced_evidence_trip_count} trips</strong>
-              <span className="text-muted-foreground">Automatic / manual</span><strong className="text-right">{report.data.automatic_trip_count} / {report.data.manual_trip_count}</strong>
+              <span className="text-muted-foreground">Advanced evidence</span><strong className="text-right">{report.data.advanced_evidence_trip_count} trips{unrecordedNote(report.data.advanced_evidence_unrecorded_trip_count)}</strong>
+              <span className="text-muted-foreground">Automatic / manual</span><strong className="text-right">{report.data.automatic_trip_count} / {report.data.manual_trip_count}{unrecordedNote(report.data.collection_mode_unrecorded_trip_count)}</strong>
               <span className="text-muted-foreground">Summary-only</span><strong className="text-right">{report.data.summary_only_trip_count} trips</strong>
             </div>
           </div>
