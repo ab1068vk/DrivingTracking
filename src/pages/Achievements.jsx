@@ -550,6 +550,9 @@ export default function Achievements() {
                         {progression.eligibility.eligibleTrips}/{progression.eligibility.completedTrips} qualifying trips
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">
+                        {/* The distance comes from the same lifetime scan as the qualifying
+                            count, so it is the same floor until that scan finishes. */}
+                        {progressionLifetimeExact ? '' : 'at least '}
                         {formatDistance(progression.eligibility.distanceKm, units)} evidence ·{' '}
                         {/* DPD-034: an exclusion count is only shown when its operands share a
                             scope; otherwise the bounded fact is stated with its scope. */}

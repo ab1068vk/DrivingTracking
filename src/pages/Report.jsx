@@ -136,12 +136,17 @@ export function buildReportExportSummary(trips = [], period = 'week', context = 
   const state = String(context?.state || '');
   const isUnavailable = state === REPORT_STATE.UNAVAILABLE;
   const isPartial = state === REPORT_STATE.PARTIAL;
+  // While the period's reducers are still loading, its trip count is not yet 0:
+  // the card must not state the empty-period sentence (the A54 showed "Exports
+  // unlock after a completed trip matches" on All time for ~20 s over 3,000 trips).
+  const isLoading = state === REPORT_STATE.LOADING;
   const observedRange = validTimes.length
     ? boundsFrom(validTimes[0], validTimes[validTimes.length - 1])
     : boundsFrom(context?.periodStart, context?.periodEnd);
 
   let dateRangeLabel;
   if (isUnavailable) dateRangeLabel = 'Date range could not be read';
+  else if (isLoading) dateRangeLabel = 'Counting this period…';
   else if (observedRange) dateRangeLabel = isPartial ? `${observedRange} so far` : observedRange;
   else if (reportedTrips > 0) dateRangeLabel = `${reportedTrips} trip${reportedTrips === 1 ? '' : 's'} in this period`;
   else if (isPartial) dateRangeLabel = 'No trips counted so far';
@@ -154,7 +159,9 @@ export function buildReportExportSummary(trips = [], period = 'week', context = 
     formats: ['CSV trip table', `${periodLabel} PDF`, 'Driver score card PDF'],
     description: isUnavailable
       ? 'This period could not be read, so it cannot be exported. Your saved trips were not changed.'
-      : reportedTrips
+      : isLoading
+        ? 'Counting the trips in this period…'
+        : reportedTrips
         ? `${reportedTrips} completed trip${reportedTrips === 1 ? '' : 's'} included${isPartial ? ' so far' : ''}`
         : 'Exports unlock after a completed trip matches the selected period.',
   };

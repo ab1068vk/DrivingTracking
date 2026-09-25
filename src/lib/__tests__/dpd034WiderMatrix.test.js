@@ -127,3 +127,15 @@ describe('DPD-037: the Map overview reports an unbuilt D2 as unbuilt, not as zer
     expect(mapOverviewStatus({ loading: true }).header).toBe('Loading trips...');
   });
 });
+
+describe('Achievements evidence distance carries the same floor as the qualifying count', () => {
+  it('prefixes the km with "at least" under the same lifetime-exact rule (structural guard)', async () => {
+    // The qualifying line is inline page JSX; this pins the km to the floor rule the
+    // count already uses. The A54 read "at least 124/3000 qualifying trips" above a
+    // bare "2807.0 km evidence" from the same unfinished scan. Not runtime evidence —
+    // the device recheck is.
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../../pages/Achievements.jsx', import.meta.url), 'utf8');
+    expect(source).toMatch(/\{progressionLifetimeExact \? '' : 'at least '\}\s*\{formatDistance\(progression\.eligibility\.distanceKm/);
+  });
+});
