@@ -118,6 +118,18 @@ describe('the export card cannot call a populated period empty', () => {
     expect(summary.description).toBe('Exports unlock after a completed trip matches the selected period.');
   });
 
+  it('does not render null period bounds as the epoch (DPD-038)', () => {
+    // The page passes the reducers' null bounds for an empty period, not undefined.
+    const summary = buildReportExportSummary([], 'week', {
+      totalTrips: 0,
+      state: REPORT_STATE.EXACT_EMPTY,
+      periodStart: null,
+      periodEnd: null,
+    });
+    expect(summary.dateRangeLabel).toBe('No completed trips in this period');
+    expect(summary.dateRangeLabel).not.toMatch(/Dec 31/); // the A54 reading
+  });
+
   it('separates "nothing counted yet" from "nothing recorded"', () => {
     const partial = buildReportExportSummary([], 'week', { totalTrips: 0, state: REPORT_STATE.PARTIAL });
     expect(partial.dateRangeLabel).toBe('No trips counted so far');

@@ -119,6 +119,10 @@ export function buildReportExportSummary(trips = [], period = 'week', context = 
     .sort((a, b) => a - b);
   const periodLabel = PERIODS.find((item) => item.id === period)?.label || 'Selected Period';
   const boundsFrom = (from, to) => {
+    // DPD-038. An empty period reports null bounds, and `new Date(null)` is the
+    // epoch, which is finite: the A54 read "Wed, Dec 31 to Wed, Dec 31" for a
+    // 7-day window with no trips. Absent is absent, not 1970.
+    if (from == null || to == null || from === '' || to === '') return null;
     const start = new Date(from).getTime();
     const end = new Date(to).getTime();
     if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
