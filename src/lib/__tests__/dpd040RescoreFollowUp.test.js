@@ -6,6 +6,7 @@ import {
   createP4LifecycleWorkRuntime,
 } from '@/lib/appLifecycleWork';
 import { APP_WORK_TURN_RESULTS, createAppWorkCoordinator } from '@/lib/appWorkCoordinator';
+import { P6_JOB_KEYS } from '@/lib/p6Contracts';
 
 // DPD-040. On the A54 at 3,000 trips a posted-sign save enqueued 156 trips; one
 // direct batch of 20 ran and the rest waited, with the app open, until a resume.
@@ -77,5 +78,54 @@ describe('DPD-040: rescoring work enqueued mid-epoch gets a coordinator turn', (
     const refused = runtime.domainFollowUp(P4_LIFECYCLE_JOB_KEYS.ROAD_CONTEXT, P4_DOMAIN_FOLLOW_UP_REASONS.RESCORE_WORK_ENQUEUED);
     expect(refused.status).toBe('domain_followup_unauthorized');
     expect(refused.instanceId).toBeNull();
+  });
+});
+
+// DPD-041. The same law stranded D1: after a 151-trip rescore on the A54 the derived-update
+// job had settled for the epoch, and 150 DIRTY rows waited with the app open until a resume.
+describe('DPD-041: a mid-epoch trip commit reaches the derived-update job', () => {
+  const D1 = P6_JOB_KEYS.TRIP_DERIVED_UPDATES;
+  const p6Fixture = () => {
+    const coordinator = createAppWorkCoordinator({ autoStart: false, yieldControl: vi.fn() });
+    const runP6TripDerivedTurn = vi.fn(async () => ({ state: 'IDLE', itemsWorked: 0, bytesWorked: 0, hasMore: false }));
+    const runtime = createP4LifecycleWorkRuntime({
+      coordinator,
+      nativeAuthorityAvailable: () => false,
+      readHealth: async () => ({}),
+      runProjectionTurn: vi.fn(async () => ({ done: true, applied: 0 })),
+      runJournalTurn: vi.fn(async () => ({ hasMore: false, itemCount: 0 })),
+      runP6TripDerivedTurn,
+      enableP6Registrations: true,
+    });
+    coordinator.setLifecycleState({ effectiveForeground: true, epoch: 21 });
+    return { coordinator, runtime, runP6TripDerivedTurn };
+  };
+
+  it('reproduces the stranding: a settled D1 ignores a same-epoch reviewed admission', async () => {
+    const { coordinator, runtime, runP6TripDerivedTurn } = p6Fixture();
+    runtime.admit(D1, { origin: APP_WORK_TRIGGER_ORIGINS.BOOTSTRAP, epoch: 21 });
+    await drain(coordinator, D1);
+    expect(runP6TripDerivedTurn).toHaveBeenCalledTimes(1);
+    const again = runtime.admit(D1, { origin: APP_WORK_TRIGGER_ORIGINS.OTHER_REVIEWED, epoch: 21 });
+    expect(again.status).toBe('already_admitted');
+    await drain(coordinator, D1);
+    expect(runP6TripDerivedTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs a fresh D1 turn for the committed-source follow-up', async () => {
+    const { coordinator, runtime, runP6TripDerivedTurn } = p6Fixture();
+    runtime.admit(D1, { origin: APP_WORK_TRIGGER_ORIGINS.BOOTSTRAP, epoch: 21 });
+    await drain(coordinator, D1);
+    expect(runtime.admitTripSourceCommitted().status).toBe('admitted_domain_followup');
+    await drain(coordinator, D1);
+    expect(runP6TripDerivedTurn).toHaveBeenCalledTimes(2);
+  });
+
+  it('is declared for the derived-update job only', () => {
+    const { runtime } = p6Fixture();
+    for (const other of [P6_JOB_KEYS.ROAD_MEMORY_UPDATES, P4_LIFECYCLE_JOB_KEYS.RESCORING]) {
+      expect(runtime.domainFollowUp(other, P4_DOMAIN_FOLLOW_UP_REASONS.TRIP_SOURCE_COMMITTED).status)
+        .toBe('domain_followup_unauthorized');
+    }
   });
 });

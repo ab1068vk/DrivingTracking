@@ -63,6 +63,8 @@ export const P4_DOMAIN_FOLLOW_UP_REASONS = Object.freeze({
   PROGRESSION_MIGRATION_COMPLETE: 'progression_migration_complete',
   // DPD-040: rescoring work enqueued, or left pending, outside a coordinator turn.
   RESCORE_WORK_ENQUEUED: 'rescore_work_enqueued',
+  // DPD-041: a durable canonical trip write left derived (D1-D4) work behind mid-epoch.
+  TRIP_SOURCE_COMMITTED: 'trip_source_committed',
 });
 
 /**
@@ -799,6 +801,14 @@ export function createP4LifecycleWorkRuntime({
       workExtent: APP_WORK_EXTENTS.BOUNDED_TURN,
       workClass: APP_WORK_CLASSES.SUSPENDIBLE_BACKGROUND,
       runTurn: probeCoordinatorTurn(jobKey, p6Turn(probeDomainTurn(jobKey, runDomainTurn))),
+      // DPD-041. The derived-update job settles DONE once its work rows are clean,
+      // and a same-epoch admission then creates nothing - so a rescore, edit or
+      // save made while the app stays open left D1 DIRTY until the next resume
+      // (A54: 150 rows after a 151-trip rescore). Only this job opts in, and only
+      // for the committed-source event.
+      ...(jobKey === P6_JOB_KEYS.TRIP_DERIVED_UPDATES
+        ? { domainFollowUpReasons: [P4_DOMAIN_FOLLOW_UP_REASONS.TRIP_SOURCE_COMMITTED] }
+        : {}),
       budget: { ...P6_TURN_BUDGET },
       newEpochPolicy: APP_WORK_NEW_EPOCH_POLICIES.TERMINATE_AND_READMIT,
       criticalSection: section,
@@ -1018,6 +1028,11 @@ export function createP4LifecycleWorkRuntime({
     }
   };
 
+  /** DPD-041: a durable trip write owes derived work no settled D1 instance will see. */
+  const admitTripSourceCommitted = () => (enableP6Registrations
+    ? domainFollowUp(P6_JOB_KEYS.TRIP_DERIVED_UPDATES, P4_DOMAIN_FOLLOW_UP_REASONS.TRIP_SOURCE_COMMITTED)
+    : null);
+
   /** DPD-040: the queue reports work that no coordinator turn will otherwise see. */
   const admitRescoringWorkEnqueued = () => domainFollowUp(
     P4_LIFECYCLE_JOB_KEYS.RESCORING,
@@ -1051,6 +1066,7 @@ export function createP4LifecycleWorkRuntime({
     ensureMigrationAdvancing,
     admitRescoringWorkerReady,
     admitRescoringWorkEnqueued,
+    admitTripSourceCommitted,
     ownerless,
     invalidateAuthoritySensitiveWork,
     p5Enabled: enableP5Registrations,
@@ -1186,7 +1202,20 @@ export function startP4LifecycleWorkIntegration() {
     })
     .catch((error) => logSystemFailure('p4_rescoring_coordinator_ownership', error));
   const unsubscribe = connectP4LifecycleWorkRuntime(productionRuntime);
+  // DPD-041: every durable canonical trip commit publishes one coalesced source
+  // change; that is the producer of the derived-update follow-up. D1's own head
+  // verification also publishes, and is ignored so it cannot re-admit itself.
+  let unsubscribeSource = () => {};
+  void import('@/lib/p7SourceChange')
+    .then(({ subscribeP7SourceChange }) => {
+      unsubscribeSource = subscribeP7SourceChange(({ reason }) => {
+        if (reason === 'p6_domain_head_verified') return;
+        productionRuntime.admitTripSourceCommitted();
+      });
+    })
+    .catch((error) => logSystemFailure('p6_trip_source_followup_subscription', error));
   stopLifecycleSubscription = () => {
+    unsubscribeSource();
     unsubscribe();
     stopLifecycleSubscription = null;
   };
