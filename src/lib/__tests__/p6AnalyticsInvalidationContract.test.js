@@ -202,6 +202,35 @@ describe('Part B — end to end: repair row and D1 head', () => {
     expect(head()?.state).toBe(P6_READINESS_STATES.REBUILD_REQUIRED);
   });
 
+  // DPD-042. A settled derived-update job ignores a same-epoch reviewed admission, so the
+  // invalidation must also reach it as a P7 source change (the DPD-041 follow-up producer).
+  it('publishes a source change for a real input only, after the invalidation commits', async () => {
+    const { subscribeP7SourceChange } = await import('@/lib/p7SourceChange');
+    const seen = [];
+    const stop = subscribeP7SourceChange(({ reason }) => seen.push(reason));
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    await invalidateP6AnalyticsForSettings('TEST_INITIAL');
+    await converge();
+    await flush();
+    seen.length = 0;
+
+    settingsState.dark_mode = 'dark';
+    await invalidateP6AnalyticsForSettings('SETTINGS_CHANGED');
+    settingsState.last_map_center = { lat: 43.65, lng: -79.38, zoom: 13 };
+    await invalidateP6AnalyticsForSettings('SETTINGS_CHANGED');
+    vehiclesState.list = vehicles().map((vehicle) => (vehicle.id === 'v_full' ? { ...vehicle, odometer_km: 48999 } : vehicle));
+    await invalidateP6AnalyticsForSettings('VEHICLES_CHANGED');
+    await flush();
+    expect(seen).not.toContain('p6_analytics_settings_invalidated');
+
+    settingsState.co2_baseline_kg_per_100km = 13;
+    await invalidateP6AnalyticsForSettings('SETTINGS_CHANGED');
+    await flush();
+    expect(seen.filter((reason) => reason === 'p6_analytics_settings_invalidated')).toHaveLength(1);
+    expect(repair()?.state).toBe('DIRTY');
+    stop();
+  });
+
   it('a genuine settings input demotes D1', async () => {
     await invalidateP6AnalyticsForSettings('TEST_INITIAL');
     await converge();

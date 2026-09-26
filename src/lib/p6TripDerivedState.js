@@ -1062,6 +1062,13 @@ export async function invalidateP6AnalyticsForSettings(reason = 'SETTINGS_OR_VEH
     const { admitP6ReviewedWork } = await import('@/lib/appLifecycleWork');
     admitP6ReviewedWork(P6_JOB_KEYS.TRIP_DERIVED_UPDATES, { wake: { type: 'settings', key: settingsVersion } });
     admitP6ReviewedWork(P6_JOB_KEYS.ROAD_MEMORY_UPDATES, { wake: { type: 'settings', key: settingsVersion } });
+    // DPD-042. Once the derived-update job has settled for the epoch, the reviewed
+    // admission above answers `already_admitted` and creates nothing: on the A54 a
+    // fuel-economy change left the D1 re-sweep unstarted (cursor never moved) until
+    // the app was reopened. A new settings version changes every D1-backed answer,
+    // so it is a P7 source change; publishing it (durably, after the commit above)
+    // brings the derived-update follow-up the source-commit subscription requests.
+    if (current?.settingsVersion !== settingsVersion) publishP7SourceChange('p6_analytics_settings_invalidated');
     return { settingsVersion, state: current?.settingsVersion === settingsVersion ? current.state : 'DIRTY' };
   } finally { db.close(); }
 }
