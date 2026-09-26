@@ -61,6 +61,8 @@ export const P5_LIFECYCLE_JOB_KEYS = Object.freeze({
  */
 export const P4_DOMAIN_FOLLOW_UP_REASONS = Object.freeze({
   PROGRESSION_MIGRATION_COMPLETE: 'progression_migration_complete',
+  // DPD-040: rescoring work enqueued, or left pending, outside a coordinator turn.
+  RESCORE_WORK_ENQUEUED: 'rescore_work_enqueued',
 });
 
 /**
@@ -869,6 +871,11 @@ export function createP4LifecycleWorkRuntime({
       workExtent: APP_WORK_EXTENTS.BOUNDED_TURN,
       workClass: APP_WORK_CLASSES.SUSPENDIBLE_BACKGROUND,
       newEpochPolicy: APP_WORK_NEW_EPOCH_POLICIES.PRESERVE_INSTANCE,
+      // DPD-040. Only rescoring opts in, and only for the one domain event its
+      // settled instance cannot see: a user-triggered job enqueued mid-epoch.
+      ...(jobKey === P4_LIFECYCLE_JOB_KEYS.RESCORING
+        ? { domainFollowUpReasons: [P4_DOMAIN_FOLLOW_UP_REASONS.RESCORE_WORK_ENQUEUED] }
+        : {}),
       budget,
       runTurn: async ({ budget: turnBudget, criticalSection, instanceId }) => {
         const outcome = await criticalSection.run(() => runDomainTurn({ instanceId }));
@@ -887,10 +894,10 @@ export function createP4LifecycleWorkRuntime({
     workExtent: APP_WORK_EXTENTS.BOUNDED_TURN,
     workClass: APP_WORK_CLASSES.SUSPENDIBLE_BACKGROUND,
     newEpochPolicy: APP_WORK_NEW_EPOCH_POLICIES.PRESERVE_INSTANCE,
-    // P4-B-F01-3-A. The only registration that opts into domain follow-up, and
-    // only for the one domain event whose completion this job's settled
-    // instance can legitimately have deferred on. Every other job - including
-    // every other suspendible domain turn above - stays default-deny.
+    // P4-B-F01-3-A. Opts into domain follow-up only for the one domain event
+    // whose completion this job's settled instance can legitimately have
+    // deferred on. Apart from rescoring's DPD-040 reason, every other job stays
+    // default-deny.
     domainFollowUpReasons: [P4_DOMAIN_FOLLOW_UP_REASONS.PROGRESSION_MIGRATION_COMPLETE],
     // P4-B-F01. The frozen settlement ceiling, derived from the milestone
     // domain's own bounded constants and independent of retained history N:
@@ -1011,6 +1018,12 @@ export function createP4LifecycleWorkRuntime({
     }
   };
 
+  /** DPD-040: the queue reports work that no coordinator turn will otherwise see. */
+  const admitRescoringWorkEnqueued = () => domainFollowUp(
+    P4_LIFECYCLE_JOB_KEYS.RESCORING,
+    P4_DOMAIN_FOLLOW_UP_REASONS.RESCORE_WORK_ENQUEUED,
+  );
+
   const admitAll = ({ origin, epoch }) => Object.freeze([
     admit(P4_LIFECYCLE_JOB_KEYS.NATIVE_JOURNAL_INGEST, { origin, epoch }),
     admit(P4_LIFECYCLE_JOB_KEYS.NATIVE_PROJECTION, { origin, epoch }),
@@ -1037,6 +1050,7 @@ export function createP4LifecycleWorkRuntime({
     domainFollowUp,
     ensureMigrationAdvancing,
     admitRescoringWorkerReady,
+    admitRescoringWorkEnqueued,
     ownerless,
     invalidateAuthoritySensitiveWork,
     p5Enabled: enableP5Registrations,
@@ -1162,11 +1176,13 @@ export function startP4LifecycleWorkIntegration() {
   // Claim scheduling ownership before any worker registration can run, so the
   // rescoring queue never gets one free private self-scheduled turn at boot.
   void import('@/lib/rescoringQueue')
-    .then(({ setRescoringCoordinatorOwned, setRescoringWorkerReadyListener }) => {
+    .then(({ setRescoringCoordinatorOwned, setRescoringWorkerReadyListener, setRescoringWorkEnqueuedListener }) => {
       setRescoringCoordinatorOwned(true);
       // P4-C-F07: worker registration is the real producer of the readiness
       // wake a deferred rescoring turn is parked on.
       setRescoringWorkerReadyListener(() => productionRuntime.admitRescoringWorkerReady());
+      // DPD-040: mid-epoch enqueues reach the coordinator as a domain follow-up.
+      setRescoringWorkEnqueuedListener(() => productionRuntime.admitRescoringWorkEnqueued());
     })
     .catch((error) => logSystemFailure('p4_rescoring_coordinator_ownership', error));
   const unsubscribe = connectP4LifecycleWorkRuntime(productionRuntime);

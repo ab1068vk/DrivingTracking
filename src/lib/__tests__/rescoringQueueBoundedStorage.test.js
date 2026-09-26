@@ -434,3 +434,60 @@ describe('P4-C-F07: a rescoring turn with no worker waits instead of spinning', 
     vi.unstubAllGlobals();
   });
 });
+
+describe('DPD-040: a mid-epoch enqueue reaches the coordinator', () => {
+  // A54, 3,000 trips: a posted-sign save rescored one direct 20-trip batch and
+  // the other 136 matching trips waited, with the app open, for a resume.
+  it('signals the work-enqueued follow-up for an enqueue outside a coordinator turn', async () => {
+    vi.resetModules();
+    const queue = await import('@/lib/rescoringQueue');
+    queue.setRescoringCoordinatorOwned(true);
+    const followUp = vi.fn();
+    queue.setRescoringWorkEnqueuedListener(followUp);
+    const worker = { rescoreTrip: vi.fn(async () => {}) };
+
+    await queue.enqueueRescoreJob({ reason: 'speed_knowledge_correction_changed', tripIds: tripIds(45) }, worker);
+    expect(followUp).toHaveBeenCalled();
+
+    // One direct batch, as the page's finalize step runs, leaves 25 pending and
+    // asks again, so the rest is not stranded until the next lifecycle trigger.
+    followUp.mockClear();
+    await queue.processRescoringQueue(worker);
+    expect(worker.rescoreTrip).toHaveBeenCalledTimes(20);
+    expect(followUp).toHaveBeenCalledTimes(1);
+  });
+
+  it('never signals from inside a coordinator turn, whose own hasMore continues', async () => {
+    const worker = { rescoreTrip: vi.fn(async () => {}) };
+    await enqueueRescoreJob({ reason: 'manual', tripIds: tripIds(45) }, worker);
+    vi.resetModules();
+    const queue = await import('@/lib/rescoringQueue');
+    queue.setRescoringCoordinatorOwned(true);
+    const followUp = vi.fn();
+    queue.setRescoringWorkEnqueuedListener(followUp);
+
+    const turn = await queue.stepRescoringQueue(worker);
+    expect(turn.processed).toBe(20);
+    expect(turn.hasMore).toBe(true);
+    expect(followUp).not.toHaveBeenCalled();
+  });
+
+  it('does not signal while a direct batch is still running', async () => {
+    vi.resetModules();
+    const queue = await import('@/lib/rescoringQueue');
+    queue.setRescoringCoordinatorOwned(true);
+    const followUp = vi.fn();
+    queue.setRescoringWorkEnqueuedListener(followUp);
+    let signalledDuringBatch = null;
+    const worker = { rescoreTrip: vi.fn(async () => {
+      if (signalledDuringBatch === null) {
+        followUp.mockClear();
+        queue.scheduleRescoringQueue(worker);
+        signalledDuringBatch = followUp.mock.calls.length;
+      }
+    }) };
+    await queue.enqueueRescoreJob({ reason: 'manual', tripIds: tripIds(5) }, worker);
+    await queue.processRescoringQueue(worker);
+    expect(signalledDuringBatch).toBe(0);
+  });
+});

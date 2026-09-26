@@ -655,6 +655,26 @@ export const setRescoringWorkerReadyListener = (listener) => {
   workerReadyListener = typeof listener === 'function' ? listener : null;
 };
 
+/**
+ * DPD-040. Work that arrives, or is left pending, OUTSIDE a coordinator turn.
+ *
+ * A user-triggered rescore (saving a road speed) enqueues its job and runs one
+ * direct batch from the page. Under coordinator ownership nothing else asked
+ * the coordinator for the rest: the lifecycle instance for this epoch had
+ * already settled, and a same-epoch lifecycle re-admission answers
+ * `already_admitted`. On the A54 at 3,000 trips a posted-sign save rescored 20
+ * of 156 matching trips and the other 136 waited, with the app open, until it
+ * was backgrounded and reopened. This listener is the coordinator's declared
+ * domain follow-up for exactly that event. It is only signalled outside a
+ * coordinator turn (inside one, the turn's own `hasMore` continues) and never
+ * while a direct batch is still running, so it cannot drive zero-work turns.
+ */
+let workEnqueuedListener = null;
+let coordinatorTurnDepth = 0;
+export const setRescoringWorkEnqueuedListener = (listener) => {
+  workEnqueuedListener = typeof listener === 'function' ? listener : null;
+};
+
 /** True when some worker able to rescore a trip is currently registered. */
 export const hasRescoringWorker = (worker = null) => Boolean(
   worker?.rescoreTrip || activeWorker?.rescoreTrip || jobWorkers.size > 0
@@ -667,6 +687,9 @@ function scheduleWorker(worker) {
     // Registration - not a timer - is what re-admits the deferred obligation.
     if (!hadWorker && worker?.rescoreTrip && workerReadyListener) {
       try { workerReadyListener(); } catch { /* admission failures are logged by the runtime */ }
+    }
+    if (coordinatorTurnDepth === 0 && !running && workEnqueuedListener) {
+      try { workEnqueuedListener(); } catch { /* admission failures are logged by the runtime */ }
     }
     return;
   }
@@ -920,7 +943,13 @@ export async function stepRescoringQueue(worker = null) {
     legacyDocumentOwner: MONOLITHIC_DOCUMENT_OWNER,
     legacyDocumentWake: compatibilityWake(RESCORING_QUEUE_KEY),
   };
-  const job = await processRescoringQueue(worker);
+  coordinatorTurnDepth += 1;
+  let job;
+  try {
+    job = await processRescoringQueue(worker);
+  } finally {
+    coordinatorTurnDepth -= 1;
+  }
   const meta = await readQueueMeta();
   const pending = Boolean(meta.activeId) || meta.count > 0;
   if (!job && pending && !hasRescoringWorker(worker)) {
