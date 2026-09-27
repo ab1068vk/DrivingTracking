@@ -901,6 +901,175 @@ const hydrateTruncatedProjections = async (db, entries) => {
 };
 
 /**
+ * DPD-043 — what a completed rescore pass proves, and what can unprove it.
+ *
+ * `needsRescore` as the maintenance calls it reads only the record's own fields and
+ * code constants, so a stored trip can only become stale in two ways:
+ *
+ *  1. the code changes — `TRIP_SCHEMA_VERSION` or the predicate itself. That affects
+ *     every stored record, so it needs a new full pass. A completed pass records the
+ *     key it proved; a different key is a new pass.
+ *  2. a record is written stale — a new trip, an import, native intake, a weather
+ *     write, a `needs_rescore` flag. Every content write commits through one of four
+ *     plaintext boundaries, and each records the stale ids as *debt* in the same
+ *     transaction. The debt is drained by id, never by walking the history.
+ *
+ * Before DPD-043 the pass kept no key and nothing read `status`, so a finished pass
+ * left `cursor: null` and every launch decrypted the whole history again.
+ *
+ * Bump this when `needsRescore` changes which stored records it calls stale without
+ * a `TRIP_SCHEMA_VERSION` change.
+ */
+export const RESCORE_MAINTENANCE_PREDICATE_VERSION = 1;
+export const rescoreMaintenanceKey = () => (
+  `schema:${TRIP_SCHEMA_VERSION}|predicate:${RESCORE_MAINTENANCE_PREDICATE_VERSION}`
+);
+/** Past this many ids the debt becomes one overflow flag, which starts a new pass. */
+export const RESCORE_DEBT_MAX_IDS = 256;
+/** Debt ids drained per turn: the same size as a full-pass window. */
+export const RESCORE_DEBT_IDS_PER_TURN = 8;
+
+const emptyRescoreDebt = () => ({ entries: {}, overflow: false });
+
+const normalizeRescoreDebt = (value) => ({
+  entries: value?.entries && typeof value.entries === 'object' ? { ...value.entries } : {},
+  overflow: value?.overflow === true,
+});
+
+let rescoreDebtStampSeq = 0;
+const nextRescoreDebtStamp = () => {
+  rescoreDebtStampSeq += 1;
+  return `${Date.now()}-${rescoreDebtStampSeq}`;
+};
+
+/**
+ * Ids the maintenance itself is rewriting. Its own rescore writes must not record
+ * debt: a trip a rescore cannot make current (too little route data) would
+ * otherwise re-enter the debt on every write and be reprocessed turn after turn.
+ */
+const rescoreDebtExemptIds = new Set();
+
+const withRescoreDebtExempt = async (ids, work) => {
+  const owned = ids.map(String).filter((id) => !rescoreDebtExemptIds.has(id));
+  owned.forEach((id) => rescoreDebtExemptIds.add(id));
+  try {
+    return await work();
+  } finally {
+    owned.forEach((id) => rescoreDebtExemptIds.delete(id));
+  }
+};
+
+/** The ids a write leaves stale, evaluated on the plaintext it is about to encrypt. */
+const staleIdsForRescoreDebt = (trips = []) => {
+  const thresholds = buildDrivingThresholds(localSettings.get());
+  return trips
+    .filter((trip) => trip?.id != null
+      && !rescoreDebtExemptIds.has(String(trip.id))
+      && needsRescore(trip, thresholds))
+    .map((trip) => String(trip.id));
+};
+
+/**
+ * Record debt **inside a transaction the caller already opened**, chained through
+ * the request callback like `advanceQueryRevisionWithin`, so the debt commits with
+ * the write that created it or not at all.
+ */
+const recordRescoreDebtWithin = (tx, ids) => {
+  if (!ids.length) return true;
+  let store;
+  try {
+    store = tx.objectStore(TRIP_META_STORE);
+  } catch {
+    return false;
+  }
+  const request = store.get(META_KEYS.RESCORE_DEBT);
+  request.onsuccess = () => {
+    const debt = normalizeRescoreDebt(request.result?.value);
+    if (!debt.overflow) {
+      ids.forEach((id) => { debt.entries[id] = nextRescoreDebtStamp(); });
+      if (Object.keys(debt.entries).length > RESCORE_DEBT_MAX_IDS) {
+        debt.entries = {};
+        debt.overflow = true;
+      }
+    }
+    store.put({ key: META_KEYS.RESCORE_DEBT, value: { ...debt, updated_at: Date.now() } });
+  };
+  return true;
+};
+
+/**
+ * Remove drained ids — but only an entry whose stamp is still the one the drain
+ * read. A trip rewritten stale meanwhile keeps its newer entry.
+ */
+const settleRescoreDebt = async (db, drained) => {
+  if (!db.objectStoreNames.contains(TRIP_META_STORE)) return;
+  const tx = db.transaction(TRIP_META_STORE, 'readwrite');
+  const store = tx.objectStore(TRIP_META_STORE);
+  const debt = normalizeRescoreDebt((await idbRequest(store.get(META_KEYS.RESCORE_DEBT)))?.value);
+  drained.forEach(([id, stamp]) => {
+    if (debt.entries[id] === stamp) delete debt.entries[id];
+  });
+  store.put({ key: META_KEYS.RESCORE_DEBT, value: { ...debt, updated_at: Date.now() } });
+  await idbTransactionDone(tx);
+};
+
+/**
+ * Start a full pass: the cursor state and a cleared debt commit together. The pass
+ * visits every record, so earlier debt is covered; a write after this commit
+ * records fresh debt and is drained once the pass completes.
+ */
+const startRescorePass = async (db, previous, key) => {
+  const state = {
+    ...previous,
+    cursor: null,
+    status: 'running',
+    passKey: key,
+    started_at: Date.now(),
+    updated_at: Date.now(),
+  };
+  if (!db.objectStoreNames.contains(TRIP_META_STORE)) return state;
+  const tx = db.transaction(TRIP_META_STORE, 'readwrite');
+  const store = tx.objectStore(TRIP_META_STORE);
+  store.put({ key: META_KEYS.MAINTENANCE, value: state });
+  store.put({ key: META_KEYS.RESCORE_DEBT, value: { ...emptyRescoreDebt(), updated_at: Date.now() } });
+  await idbTransactionDone(tx);
+  return state;
+};
+
+/** Decode, rescore the stale ones and write them back — as the maintenance, not a caller. */
+const rescoreStaleRecords = async (records) => {
+  if (!records.length) return 0;
+  const trips = await decodeTripRecords(records);
+  const thresholds = buildDrivingThresholds(localSettings.get());
+  const stale = trips.filter((trip) => needsRescore(trip, thresholds));
+  if (!stale.length) return 0;
+  return withRescoreDebtExempt(stale.map((trip) => trip.id), async () => {
+    const refreshed = await rescoreTripsIfNeeded(stale);
+    // The chunked three-store writer keeps trip, legacy summary and projection
+    // coherent under one revision per record.
+    await putTrips(refreshed);
+    return refreshed.length;
+  });
+};
+
+/** Drain up to one turn of debt by id: point reads, never a history walk. */
+const drainRescoreDebtWindow = async (debt) => {
+  const drained = Object.entries(debt.entries).slice(0, RESCORE_DEBT_IDS_PER_TURN);
+  const db = await openDb();
+  try {
+    const tx = db.transaction(TRIP_STORE, 'readonly');
+    const store = tx.objectStore(TRIP_STORE);
+    const records = await Promise.all(drained.map(([id]) => idbRequest(store.get(id))));
+    const live = records.filter((record) => record && !isSecureDeleteTombstone(record));
+    const rescored = await rescoreStaleRecords(live);
+    await settleRescoreDebt(db, drained);
+    return { rescored, examined: drained.length };
+  } finally {
+    db.close();
+  }
+};
+
+/**
  * One bounded rescore window.
  *
  * Reads a single indexed window of source rows, rescores only those, writes them
@@ -933,17 +1102,7 @@ export async function rescoreProjectionMaintenanceWindow({ cursor = null, limit 
       return { cursor: rows[rows.length - 1].key, rescored: 0, examined: rows.length, done: false };
     }
 
-    const trips = await decodeTripRecords(live);
-    const thresholds = buildDrivingThresholds(localSettings.get());
-    const stale = trips.filter((trip) => needsRescore(trip, thresholds));
-    let rescored = 0;
-    if (stale.length) {
-      const refreshed = await rescoreTripsIfNeeded(stale);
-      // The chunked three-store writer keeps trip, legacy summary and projection
-      // coherent under one revision per record.
-      await putTrips(refreshed);
-      rescored = refreshed.length;
-    }
+    const rescored = await rescoreStaleRecords(live);
     // P4-C-F09: the window read, not only the rows that needed rescoring.
     return { cursor: rows[rows.length - 1].key, rescored, examined: rows.length, done: false };
   } finally {
@@ -971,35 +1130,67 @@ const countStoredTrips = async () => {
  * and the next run resumes from it.
  */
 const runRescoreMaintenanceWindows = async ({ maxWindows = 4 } = {}) => {
-  if (!canUseIndexedDb()) return { rescored: 0, examined: 0, done: true };
+  if (!canUseIndexedDb()) return { rescored: 0, examined: 0, done: true, mode: 'idle' };
+  const key = rescoreMaintenanceKey();
   let rescored = 0;
   let examined = 0;
   let done = false;
-  const db = await openDb();
-  let state;
-  try {
-    state = await readTripMeta(db, META_KEYS.MAINTENANCE, { cursor: null, status: 'idle' });
-  } finally {
-    db.close();
-  }
-  let cursor = state.cursor ?? null;
+  let mode = 'idle';
   for (let window = 0; window < maxWindows; window += 1) {
-    const result = await rescoreProjectionMaintenanceWindow({ cursor });
-    rescored += result.rescored;
-    examined += Math.max(0, Number(result.examined) || 0);
-    cursor = result.cursor;
-    const persistDb = await openDb();
+    const db = await openDb();
+    let state;
+    let debt;
     try {
-      await writeTripMetaRecord(persistDb, META_KEYS.MAINTENANCE, {
-        ...state, cursor, status: result.done ? 'complete' : 'running', updated_at: Date.now(),
-      });
+      state = await readTripMeta(db, META_KEYS.MAINTENANCE, { cursor: null, status: 'idle' });
+      debt = normalizeRescoreDebt(await readTripMeta(db, META_KEYS.RESCORE_DEBT, null));
+      const proven = state.status === 'complete' && state.completedKey === key;
+      if (proven && !debt.overflow) {
+        // DPD-043: a completed pass under this key already covers every record written
+        // before it; only records written stale since then (the debt) need a look.
+        if (!Object.keys(debt.entries).length) { done = true; break; }
+        mode = 'debt';
+        const result = await drainRescoreDebtWindow(debt);
+        rescored += result.rescored;
+        examined += result.examined;
+      } else {
+        // A pass under this key resumes from its committed cursor (Law B). Anything
+        // else — never completed, completed under another key (schema/predicate
+        // change, or a pre-DPD-043 pass that recorded none), or debt that overflowed
+        // — starts a new pass from the oldest record.
+        if (!(state.status === 'running' && state.passKey === key)) {
+          state = await startRescorePass(db, state, key);
+        }
+        mode = 'full_pass';
+        const result = await rescoreProjectionMaintenanceWindow({ cursor: state.cursor ?? null });
+        rescored += result.rescored;
+        examined += Math.max(0, Number(result.examined) || 0);
+        await writeTripMetaRecord(db, META_KEYS.MAINTENANCE, {
+          ...state,
+          cursor: result.cursor,
+          status: result.done ? 'complete' : 'running',
+          ...(result.done ? { completedKey: key, completed_at: Date.now() } : {}),
+          updated_at: Date.now(),
+        });
+      }
     } finally {
-      persistDb.close();
+      db.close();
     }
     await yieldToEventLoop();
-    if (result.done) { done = true; break; }
   }
-  return { rescored, examined, done };
+  if (!done) {
+    // Report whether anything is left, so the coordinator neither stops early nor
+    // spins: a finished pass with no debt is done even when it used its last window.
+    const db = await openDb();
+    try {
+      const state = await readTripMeta(db, META_KEYS.MAINTENANCE, { cursor: null, status: 'idle' });
+      const debt = normalizeRescoreDebt(await readTripMeta(db, META_KEYS.RESCORE_DEBT, null));
+      done = state.status === 'complete' && state.completedKey === key
+        && !debt.overflow && !Object.keys(debt.entries).length;
+    } finally {
+      db.close();
+    }
+  }
+  return { rescored, examined, done, mode };
 };
 
 /**
@@ -1970,8 +2161,13 @@ const writeTripsToDb = async (dbName, trips) => withDurableKeyPublication(async 
   const db = await openDbByName(dbName);
   try {
     for (let start = 0; start < trips.length; start += 4) {
-      const encryptedTrips = await encodeTripRecords(trips.slice(start, start + 4), publication);
-      const tx = db.transaction(TRIP_STORE, 'readwrite');
+      const slice = trips.slice(start, start + 4);
+      // DPD-043: migrated legacy records are the likeliest to be stale.
+      const rescoreDebtIds = staleIdsForRescoreDebt(slice);
+      const encryptedTrips = await encodeTripRecords(slice, publication);
+      const hasMetaStore = db.objectStoreNames.contains(TRIP_META_STORE);
+      const tx = db.transaction(hasMetaStore ? [TRIP_STORE, TRIP_META_STORE] : TRIP_STORE, 'readwrite');
+      if (hasMetaStore) recordRescoreDebtWithin(tx, rescoreDebtIds);
       const store = tx.objectStore(TRIP_STORE);
       encryptedTrips.forEach((trip) => store.put(trip));
       await idbTransactionDone(tx);
@@ -3044,6 +3240,8 @@ const putTrip = async (trip) => withDurableKeyPublication(async (publication) =>
     ({ bytes: sourceBytes } = measureSourceTrip(trip));
     isolatedStaging = chunkCharge(sourceBytes) > MAX_CHUNK_LOGICAL_CHARGE;
     storageTrip = await sanitizeTripForPrivacyStorageAsync(trip);
+    // DPD-043: evaluated on the plaintext this write stores, before the transaction opens.
+    const rescoreDebtIds = staleIdsForRescoreDebt([storageTrip]);
     const encryptedTrip = await encodeTripRecord(storageTrip, publication);
     const encryptedSummary = await encodeTripSummaryRecord(storageTrip, publication);
     const revision = mintSourceRevision();
@@ -3074,6 +3272,7 @@ const putTrip = async (trip) => withDurableKeyPublication(async (publication) =>
       if (hasMetaStore) stores.push(TRIP_META_STORE);
       const tx = db.transaction(stores, 'readwrite');
       if (hasMetaStore) advanceQueryRevisionWithin(tx);
+      if (hasMetaStore) recordRescoreDebtWithin(tx, rescoreDebtIds);
       tx.objectStore(TRIP_STORE).put({ ...encryptedTrip, source_revision: revision });
       if (hasSummaryStore) {
         tx.objectStore(TRIP_SUMMARY_STORE).put({ ...encryptedSummary, source_revision: revision });
@@ -3519,6 +3718,8 @@ const p6TripWorkRecord = ({ trip, revision, sourceHash, disposition = 'UPSERT' }
  */
 const persistTripChunk = async (storageTrips) => withDurableKeyPublication(async (publication) => {
   {
+    // DPD-043: evaluated on the plaintext this chunk stores, before the transaction opens.
+    const rescoreDebtIds = staleIdsForRescoreDebt(storageTrips);
     const encryptedTrips = await encodeTripRecords(storageTrips, publication);
     const encryptedSummaries = await encodeTripSummaryRecords(storageTrips, publication);
     // Every normal logical write mints a fresh revision, which is what makes the
@@ -3543,6 +3744,7 @@ const persistTripChunk = async (storageTrips) => withDurableKeyPublication(async
       if (hasMetaStore) stores.push(TRIP_META_STORE);
       const tx = db.transaction(stores, 'readwrite');
       if (hasMetaStore) advanceQueryRevisionWithin(tx);
+      if (hasMetaStore) recordRescoreDebtWithin(tx, rescoreDebtIds);
       const store = tx.objectStore(TRIP_STORE);
       encryptedTrips.forEach((trip, index) => store.put({ ...trip, source_revision: revisions[index] }));
       if (hasSummaryStore) {
@@ -4963,7 +5165,7 @@ export async function eraseTripRepositoryForDataRights(options = {}) {
           [
             META_KEYS.MIGRATION, META_KEYS.VERIFY, META_KEYS.DELETE_CLEANUP,
             META_KEYS.DELETE_SEQ, META_KEYS.NATIVE_VISIBILITY, META_KEYS.NATIVE_SUPPRESSION,
-            META_KEYS.MAINTENANCE,
+            META_KEYS.MAINTENANCE, META_KEYS.RESCORE_DEBT,
           ].forEach((key) => metaStore.delete(key));
           await idbTransactionDone(metaTx);
           result.projectionMetaCleared = true;
@@ -5508,6 +5710,8 @@ export async function runLegacyBrowserRawGpsRetention({
      * would hold rotation off for the whole of a user-triggered pass that usually refuses.
      */
     const retentionOutcome = await withDurableKeyPublication(async (publication) => {
+    // DPD-043: evaluated on the plaintext this write stores, before the transaction opens.
+    const rescoreDebtIds = staleIdsForRescoreDebt([next]);
     const candidate = { ...(await encodeTripRecord(next, publication)), source_revision: nextRevision };
     const summary = { ...(await encodeTripSummaryRecord(next, publication)), source_revision: nextRevision };
     const candidateHash = await p6SourceHash(candidate);
@@ -5530,6 +5734,7 @@ export async function runLegacyBrowserRawGpsRetention({
     if (hasRetentionMetaStore) retentionStores.push(TRIP_META_STORE);
     const tx = db.transaction(retentionStores, 'readwrite');
     const revisionAdvanced = hasRetentionMetaStore && advanceQueryRevisionWithin(tx);
+    if (hasRetentionMetaStore) recordRescoreDebtWithin(tx, rescoreDebtIds);
     const store = tx.objectStore(TRIP_STORE);
     const currentRecord = await idbRequest(store.get(id));
     if (!currentRecord || JSON.stringify(currentRecord) !== sourceBinding) {

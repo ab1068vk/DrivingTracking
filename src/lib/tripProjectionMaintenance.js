@@ -23,6 +23,12 @@ export const META_KEYS = Object.freeze({
   FALLBACK_SUPPRESSION: 'fallback_suppression',
   MAINTENANCE: 'maintenance_state',
   /**
+   * DPD-043: trips written stale since the rescore pass last completed. Recorded
+   * inside the writing transaction, drained by the `rescore_windows` unit, and
+   * bounded: past its id cap it collapses to one `overflow` flag (= a new pass).
+   */
+  RESCORE_DEBT: 'rescore_maintenance_debt',
+  /**
    * P4-C-F04: which of backfill / verification / cleanup the *next* coordinated
    * projection turn runs. It lives in `trip_meta` with every other projection
    * cursor because the projection domain owns its own phase; the coordinator
