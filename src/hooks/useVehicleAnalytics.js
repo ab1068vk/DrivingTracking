@@ -54,8 +54,10 @@ export function useVehicleAnalytics(vehicles = []) {
       const page = await p7TripQueries.historyPage({
         sort: '-start_time', status: 'completed', limit: VEHICLE_RECENT_ROWS,
       });
-      if (page.unavailable) return { rows: [], unavailable: page.unavailable };
-      return { rows: (page.data ?? []).map(buildTripSummary), unavailable: null };
+      if (page.unavailable) return { rows: [], unavailable: page.unavailable, continuation: null };
+      // DPD-035: the odometer sync continues from here when more than one page of
+      // trips arrived since a vehicle's sync point.
+      return { rows: (page.data ?? []).map(buildTripSummary), unavailable: null, continuation: page.continuation ?? null };
     },
     staleTime: 2 * 60 * 1000,
   });
@@ -106,6 +108,7 @@ export function useVehicleAnalytics(vehicles = []) {
   return {
     recentTrips: rows,
     recentUnavailable: settled?.unavailable ?? null,
+    recentContinuation: settled?.continuation ?? null,
     lifetime,
     lifetimeUnavailable: fleet.data?.unavailable ?? null,
     lifetimeReadiness: fleet.data?.p6Readiness ?? null,

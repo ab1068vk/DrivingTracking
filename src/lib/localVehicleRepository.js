@@ -5,6 +5,7 @@ import {
   normalizePowertrain,
   VEHICLE_MAINTENANCE_SCHEMA_VERSION,
 } from '@/lib/vehicleMaintenance';
+import { ODOMETER_BASIS, ODOMETER_CREDIT_RETENTION } from '@/lib/vehicleOdometer';
 
 export const VEHICLES_KEY = 'drivesense_vehicles';
 /** One bounded export turn, and the ceiling that keeps a corrupt cursor finite. */
@@ -46,6 +47,20 @@ const normalizeServiceHistory = (history = []) => (Array.isArray(history) ? hist
   }));
 
 
+const normalizeOdometerProgress = (vehicle = {}) => {
+  if (vehicle.odometer_basis !== ODOMETER_BASIS) return {};
+  const synced = Date.parse(vehicle.odometer_synced_through ?? '');
+  return {
+    odometer_basis: ODOMETER_BASIS,
+    odometer_credited_km_since_reading: Math.max(0, Number(vehicle.odometer_credited_km_since_reading) || 0),
+    odometer_synced_through: Number.isFinite(synced) ? new Date(synced).toISOString() : null,
+    odometer_credited_trips: (Array.isArray(vehicle.odometer_credited_trips) ? vehicle.odometer_credited_trips : [])
+      .filter((entry) => entry && entry.id != null)
+      .slice(-ODOMETER_CREDIT_RETENTION)
+      .map((entry) => ({ id: String(entry.id), km: Math.max(0, Number(entry.km) || 0) })),
+  };
+};
+
 const normalizeVehicle = (vehicle, { touch = true } = {}) => {
   const powertrain = normalizePowertrain(vehicle.powertrain || vehicle.fuel_type);
   const profile = {
@@ -77,6 +92,9 @@ const normalizeVehicle = (vehicle, { touch = true } = {}) => {
     odometer_km: Number(vehicle.odometer_km) || 0,
     odometer_trip_distance_anchor_km: Number(vehicle.odometer_trip_distance_anchor_km) || 0,
     auto_odometer_last_sync_at: vehicle.auto_odometer_last_sync_at || null,
+    // DPD-035 (`vehicleOdometer.js`). Absent fields stay absent so an un-migrated
+    // vehicle keeps reading the legacy formula until its first sync.
+    ...normalizeOdometerProgress(vehicle),
     fuel_efficiency_l_per_100km: Number(vehicle.fuel_efficiency_l_per_100km) || 8.5,
     ev_efficiency_kwh_per_100km: Number(vehicle.ev_efficiency_kwh_per_100km) || DEFAULT_EV_KWH_PER_100KM,
     fuel_price_per_liter: Number(vehicle.fuel_price_per_liter) || 1.65,

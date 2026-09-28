@@ -2,14 +2,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { tripQueryKeys, tripService } from '@/api/trips';
+import { p7TripQueries, tripQueryKeys, tripService } from '@/api/trips';
 import { vehicleQueryKeys, vehicleService } from '@/api/vehicles';
 import { Car, Plus, Pencil, Trash2, Check, Star, X, Wrench, Fuel, Activity, AlertTriangle, Zap, ClipboardCheck, Route, CalendarClock, TrendingUp, Sparkles } from 'lucide-react';
 import VehicleCompare from '@/components/VehicleCompare';
 import VehicleMaintenancePanel from '@/components/VehicleMaintenancePanel';
 import PremiumVehicleOverview from '@/components/PremiumVehicleOverview';
 import PremiumFleetIntelligenceCard from '@/components/PremiumFleetIntelligenceCard';
-import { estimateTripEconomics, getVehicleOdometerKm, getVehicleTripDistanceKm } from '@/lib/tripInsights';
+import { estimateTripEconomics, getVehicleOdometerKm } from '@/lib/tripInsights';
+import { applyOdometerReading, creditedElsewhereFor } from '@/lib/vehicleOdometer';
+import { syncVehicleOdometers } from '@/lib/vehicleOdometerSync';
+import { VEHICLE_RECENT_ROWS } from '@/hooks/useVehicleAnalytics';
+import { buildTripSummary } from '@/lib/tripSummary';
 import { buildVehicleCostSummary } from '@/lib/mediumInsights';
 import { buildVehicleAssignmentSuggestions } from '@/lib/vehicleSuggestions';
 import {
@@ -401,7 +405,7 @@ export function buildFleetIntelligence(vehicles = [], trips = [], settings = {},
   const unassignedTrips = getUnassignedCompletedTrips(completedTrips);
   const reviewTrips = getTripsNeedingVehicleReview(completedTrips);
   const serviceItems = vehicles.flatMap((vehicle) => {
-    const odometerKm = getVehicleOdometerKm(vehicle, completedTrips);
+    const odometerKm = getVehicleOdometerKm(vehicle, completedTrips, { creditedElsewhere: creditedElsewhereFor(vehicle, vehicles) });
     const plan = buildVehicleMaintenancePlan(vehicle, { odometerKm });
     return [...plan.due_items, ...plan.soon_items].map((item) => ({ vehicle, item }));
   });
@@ -700,8 +704,10 @@ export default function Vehicles() {
   const {
     recentTrips,
     recentUnavailable,
+    recentContinuation,
     lifetime: vehicleLifetime,
     isLoading: recentTripsLoading,
+    isSuccess: recentTripsReady,
   } = useVehicleAnalytics(vehicles);
   const trips = recentTrips;
 
@@ -913,25 +919,35 @@ export default function Vehicles() {
   };
 
 
+  // DPD-035. The odometer credits each vehicle's own completed trips once, from its
+  // sync point (`vehicleOdometer.js`); the bounded page is only where new trips are
+  // found, never a lifetime total. An unavailable or failed page is not an empty
+  // fleet — migrating over it would freeze a lower odometer than the page showed —
+  // so it syncs nothing.
   useEffect(() => {
-    if (!vehicles.length || !trips.length) return;
+    if (!vehicles.length || recentTripsLoading || !recentTripsReady || vehicleTripsUnavailable) return;
     let cancelled = false;
     const syncOdometers = async () => {
-      let changed = false;
-      for (const vehicle of vehicles) {
-        const tripDistance = getVehicleTripDistanceKm(vehicle, trips);
-        const anchorDistance = Number(vehicle.odometer_trip_distance_anchor_km) || 0;
-        if (tripDistance <= anchorDistance + 0.1) continue;
-
-        const odometerKm = getVehicleOdometerKm(vehicle, trips);
-        await vehicleService.update(vehicle.id, {
-          odometer_km: odometerKm,
-          odometer_trip_distance_anchor_km: tripDistance,
-          auto_odometer_last_sync_at: new Date().toISOString(),
+      const result = await syncVehicleOdometers({
+        vehicles,
+        windowRows: trips,
+        continuation: recentContinuation,
+        fetchPage: async (cursor) => {
+          const page = await p7TripQueries.historyPage({
+            sort: '-start_time', status: 'completed', limit: VEHICLE_RECENT_ROWS, cursor,
+          });
+          if (page.unavailable) return { rows: [], continuation: null };
+          return { rows: (page.data ?? []).map(buildTripSummary), continuation: page.continuation ?? null };
+        },
+        writeVehicle: (id, patch) => vehicleService.update(id, patch),
+      });
+      if (result.capped) {
+        logError('vehicle_odometer_sync_capped', new Error('Odometer sync page cap reached'), {
+          vehicle_count: vehicles.length,
+          pages_read: result.pagesRead,
         });
-        changed = true;
       }
-      if (!cancelled && changed) invalidate();
+      if (!cancelled && result.written) invalidate();
     };
 
     syncOdometers().catch((err) => {
@@ -952,7 +968,7 @@ export default function Vehicles() {
     return () => {
       cancelled = true;
     };
-  }, [vehicles, trips, invalidate]);
+  }, [vehicles, trips, recentContinuation, recentTripsLoading, recentTripsReady, vehicleTripsUnavailable, invalidate]);
 
   const tripListFor = (vehicle) => getTripsForVehicle(vehicle, trips);
   const fuelTotalsFor = (vehicle) => tripListFor(vehicle).reduce((totals, trip) => {
@@ -1256,7 +1272,7 @@ export default function Vehicles() {
       <AnimatePresence>
         {showAdd && (
           <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
-            <VehicleForm onSave={(d) => createMut.mutate(d)} onCancel={() => setShowAdd(false)} currencySymbol={currencySymbol} />
+            <VehicleForm onSave={(d) => createMut.mutate(applyOdometerReading(d, null))} onCancel={() => setShowAdd(false)} currencySymbol={currencySymbol} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -1290,7 +1306,7 @@ export default function Vehicles() {
       <div className="space-y-3">
         {vehicles.map((v, i) => {
           const isEditing = editId === v.id;
-          const odometerKm = getVehicleOdometerKm(v, trips);
+          const odometerKm = getVehicleOdometerKm(v, trips, { creditedElsewhere: creditedElsewhereFor(v, vehicles) });
           const vehicleTrips = tripListFor(v);
           const { tripCount: count, tripCountNote, score, windowNote } = vehicleCardFigures({
             vehicleTrips,
@@ -1309,8 +1325,8 @@ export default function Vehicles() {
               {isEditing ? (
                 <div className="p-4">
                   <VehicleForm
-                    initial={v}
-                    onSave={(d) => updateMut.mutate({ id: v.id, d })}
+                    initial={{ ...v, odometer_km: odometerKm }}
+                    onSave={(d) => updateMut.mutate({ id: v.id, d: applyOdometerReading(d, odometerKm) })}
                     onCancel={() => setEditId(null)}
                     currencySymbol={currencySymbol}
                   />

@@ -249,14 +249,17 @@ describe('mediumInsights', () => {
   it('uses completed vehicle distance for maintenance reminders', () => {
     const reminders = buildMaintenanceReminders(
       {
+        // DPD-035: reminders read the one odometer owner, which counts only this
+        // vehicle's own completed trips.
+        id: 'car-1',
         odometer_km: undefined,
         maintenance_items: [
           { id: 'oil', label: 'Oil change', interval_km: 1000, last_service_km: 0, source_type: 'owner_entered_manufacturer', source_title: 'Exact owner manual', confirmed_by_user: true },
         ],
       },
       [
-        trip({ distance_km: 1200 }),
-        trip({ status: 'draft', distance_km: 9000 }),
+        trip({ vehicle_id: 'car-1', distance_km: 1200 }),
+        trip({ vehicle_id: 'car-1', status: 'draft', distance_km: 9000 }),
       ]
     );
 

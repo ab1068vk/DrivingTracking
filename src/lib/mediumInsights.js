@@ -2,6 +2,7 @@ import { buildAlertDangerZones } from '@/lib/dangerZoneEngine';
 import { COACHING_CONTENT } from '@/lib/coachingContent';
 import { routeKeyForTrip } from '@/lib/commuteMatching';
 import { buildVehicleMaintenancePlan } from '@/lib/vehicleMaintenance';
+import { getVehicleOdometerKm } from '@/lib/vehicleOdometer';
 export { COMMUTE_MATCH_RADIUS_M, routeKeyForTrip } from '@/lib/commuteMatching';
 
 const DAY_MS = 86400000;
@@ -603,10 +604,10 @@ export function buildVehicleCostSummary(vehicle = {}, trips = []) {
 }
 
 export function buildMaintenanceReminders(vehicle = {}, trips = []) {
-  const completed = trips.filter((trip) => trip.status === 'completed');
-  const distanceKm = completed.reduce((sum, trip) => sum + (Number(trip.distance_km) || 0), 0);
-  const anchoredDistanceKm = Number(vehicle.odometer_trip_distance_anchor_km) || 0;
-  const odometerKm = Math.round((Number(vehicle.odometer_km) || 0) + Math.max(0, distanceKm - anchoredDistanceKm));
+  // DPD-035: the one odometer owner, never a second window-based formula here.
+  // (The legacy formula this replaced summed every passed trip regardless of
+  // vehicle; callers pass one vehicle's trips.)
+  const odometerKm = getVehicleOdometerKm(vehicle, trips);
   const plan = buildVehicleMaintenancePlan(vehicle, { odometerKm });
   const severity = { due: 0, soon: 1, needs_confirmation: 2, needs_baseline: 3, needs_source: 4, ok: 5 };
   return plan.items

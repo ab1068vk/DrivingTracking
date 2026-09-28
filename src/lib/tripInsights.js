@@ -5,6 +5,7 @@ import { NIGHT_END_HOUR, NIGHT_START_HOUR } from '@/lib/appConstants';
 import { routeKeyForTrip as commuteRouteKeyForTrip } from '@/lib/commuteMatching';
 import { inferTripTags } from '@/lib/tripTagIntelligence';
 import { SCORING_VERSION } from '@/lib/scoringConstants';
+import { getVehicleOdometerKm as getVehicleOdometerKmFromOwner } from '@/lib/vehicleOdometer';
 import {
   CO2_KG_PER_LITER,
   DEFAULT_CO2_BASELINE_KG_PER_100KM,
@@ -208,11 +209,9 @@ export function getVehicleTripDistanceKm(vehicle, trips = []) {
     .reduce((sum, trip) => sum + (trip.distance_km || 0), 0);
 }
 
-export function getVehicleOdometerKm(vehicle, trips = []) {
-  const baseOdometer = Number(vehicle?.odometer_km) || 0;
-  const tripDistance = getVehicleTripDistanceKm(vehicle, trips);
-  const anchoredDistance = Number(vehicle?.odometer_trip_distance_anchor_km) || 0;
-  return Math.round(baseOdometer + Math.max(0, tripDistance - anchoredDistance));
+/** DPD-035: the odometer has one owner, `vehicleOdometer.js`; this keeps the old import path. */
+export function getVehicleOdometerKm(vehicle, trips = [], options = {}) {
+  return getVehicleOdometerKmFromOwner(vehicle, trips, options);
 }
 
 export function getMaintenanceItems(vehicle) {
