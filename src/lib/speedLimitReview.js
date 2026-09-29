@@ -145,15 +145,20 @@ function buildTripSpeedLimitCells(trip = {}, {
   maxCells = 8,
   reviewOnly = true,
 } = {}) {
-  const points = Array.isArray(trip.route_points) ? trip.route_points.filter(validPublicPoint) : [];
-  if (!points.length) return [];
+  const routePoints = Array.isArray(trip.route_points) ? trip.route_points : [];
 
+  // DPD-044: one pass over the route. Each cell keeps the route indexes of its
+  // points, so its road-section identity reads only its own points instead of
+  // re-encoding the whole route once per cell (O(points × cells) before).
   const groups = new Map();
-  for (const point of points) {
+  for (let index = 0; index < routePoints.length; index += 1) {
+    const point = routePoints[index];
+    if (!validPublicPoint(point)) continue;
     const geohash = geohashEncode(point.lat, point.lng);
     if (!groups.has(geohash)) {
       groups.set(geohash, {
         geohash,
+        indexes: [],
         sampleCount: 0,
         sampleLat: Number(point.lat),
         sampleLng: Number(point.lng),
@@ -167,6 +172,7 @@ function buildTripSpeedLimitCells(trip = {}, {
       });
     }
     const group = groups.get(geohash);
+    group.indexes.push(index);
     group.sampleCount += 1;
     const limit = pointLimit(point);
     if (limit != null) group.limits.push(limit);
@@ -198,7 +204,7 @@ function buildTripSpeedLimitCells(trip = {}, {
     );
     if (reviewOnly && !requiresDecision) continue;
 
-    const identity = buildRoadSectionIdentity(trip, group.geohash);
+    const identity = buildRoadSectionIdentity(trip, group.geohash, { cellIndexes: group.indexes });
     const source = hasMissingLimit ? 'missing_posted_review' : sources[0];
     const evidence = assessSpeedLimitEvidence({
       source,

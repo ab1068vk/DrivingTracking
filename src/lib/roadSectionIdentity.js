@@ -103,12 +103,27 @@ const sampleSectionPoints = (points = []) => {
   return sampled;
 };
 
-export function buildRoadSectionIdentity(trip = {}, geohash = '') {
+/**
+ * The driven road section a trip crossed inside one geohash cell.
+ *
+ * DPD-044. `cellIndexes` — the ascending route indexes of the cell's public
+ * points — lets a caller that has already geohashed the route (the speed-limit
+ * review groups every point once) hand the cell over instead of having this
+ * function re-encode every route point again for every cell. That rescan made the
+ * review O(points × cells): ~1.0–1.8 s on a 5,000-point route on the A54, and
+ * about a minute at 50,000 points. Without `cellIndexes` the route is scanned
+ * once, exactly as before, for single lookups such as a saved correction.
+ */
+export function buildRoadSectionIdentity(trip = {}, geohash = '', { cellIndexes = null } = {}) {
   const points = Array.isArray(trip.route_points) ? trip.route_points : [];
   const cellMatches = [];
-  points.forEach((point, index) => {
-    if (isPublicPoint(point) && geohashEncode(point.lat, point.lng) === geohash) cellMatches.push(index);
-  });
+  if (Array.isArray(cellIndexes)) {
+    cellIndexes.forEach((index) => { if (isPublicPoint(points[index])) cellMatches.push(index); });
+  } else {
+    points.forEach((point, index) => {
+      if (isPublicPoint(point) && geohashEncode(point.lat, point.lng) === geohash) cellMatches.push(index);
+    });
+  }
   const dominantRoad = mode(cellMatches.map((index) => pointRoadName(points[index])));
   const matches = dominantRoad
     ? cellMatches.filter((index) => pointRoadName(points[index]) === dominantRoad)
