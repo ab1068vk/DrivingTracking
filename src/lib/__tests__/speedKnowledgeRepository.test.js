@@ -232,10 +232,17 @@ describe('speedKnowledgeRepository native mirror', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
   it('keeps saved speed rules readable by Android native auto tracking after IndexedDB migration', async () => {
+    // Road-memory confidence decays with age since `lastObservedAt`, so the mirrored values depend on
+    // "now". Pin the clock one day after the fixture's observations — the instant the native contract
+    // test (`nativeRoadMemoryUsesWebEligibilityAndRankingContract`) queries — so this contract does not
+    // drift with the wall clock (OBS-44-1: it read 0.70 on 2026-08-03, 0.68 on 2026-09-18, 0.65 on 2026-09-29).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-07-29T12:00:00.000Z'));
     isNativePlatform.mockReturnValue(true);
     getJson.mockResolvedValue({
       cells: {
@@ -369,8 +376,12 @@ describe('speedKnowledgeRepository native mirror', () => {
             id: 'candidate-50',
             source: 'local_road_memory',
             limitKmh: 50,
-            confidence: 0.68,
+            // Calibrated confidence (fresh evidence × parked-review calibration) — not the stored
+            // pre-contract `confidence: 0.68` above, and not the raw evidence value.
+            confidence: 0.7,
+            // Raw evidence from 4 agreeing trips; native re-applies age decay to this itself.
             evidenceConfidence: 0.72,
+            confidenceCalibrationFactor: expect.closeTo(0.7 / 0.72, 6),
             canAffectScoreAndAlerts: true,
             tripCount: 4,
             stage: 'operational',
@@ -382,6 +393,15 @@ describe('speedKnowledgeRepository native mirror', () => {
         }),
       })
     );
+
+    // Native contract (DriveSenseAutoTrackingService.roadMemoryCandidateCurrentConfidence): native ranks by
+    // round(effective(evidenceConfidence, now) × confidenceCalibrationFactor). At the same instant that must
+    // reproduce the mirrored calibrated `confidence`, so neither side double-counts or bypasses calibration.
+    const mirror = setJson.mock.calls.find(([key]) => key === SPEED_KNOWLEDGE_NATIVE_MIRROR_KEY)[1].payload;
+    const mirrored = mirror.roadMemory.candidates.find((candidate) => candidate.id === 'candidate-50');
+    expect(mirrored.confidence).toBeLessThan(mirrored.evidenceConfidence);
+    expect(Math.round(mirrored.evidenceConfidence * mirrored.confidenceCalibrationFactor * 100) / 100)
+      .toBe(mirrored.confidence);
   });
 
   it('recreates the native mirror while leaving legacy no-geometry rules review-only', async () => {
