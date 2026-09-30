@@ -1,4 +1,8 @@
 import { browserActiveTripSpool } from '@/lib/browserActiveTripSpool';
+import {
+  NATIVE_JOURNAL_INLINE_ROUTE_STORAGE,
+  verifiedNativeJournalRouteSource,
+} from '@/lib/nativeRouteSource';
 import { CARBON_ANALYTICS_SETTINGS_KEYS, CARBON_ANALYTICS_VEHICLE_FIELDS } from '@/lib/tripInsights';
 import { publishP7SourceChange } from '@/lib/p7SourceChange';
 import {
@@ -2082,6 +2086,25 @@ const routePage = async (trip, cursor, explicit) => {
   }
   if (trip?.route_payload_storage === 'browser_rsas_v1' && trip?.rsas_session_id) {
     return browserActiveTripSpool.readPointsPage(trip.rsas_session_id, { ...(cursor || {}), maxPoints: 128 });
+  }
+  if (trip?.route_payload_storage === NATIVE_JOURNAL_INLINE_ROUTE_STORAGE) {
+    if (!(await verifiedNativeJournalRouteSource(trip, cursor))) {
+      return { points: [], done: false, cursor, compatibilityRequired: true, bytesWorked: 0 };
+    }
+    const offset = Math.max(0, Number(cursor?.nativeOffset) || 0);
+    const points = trip.route_points.slice(offset, offset + 128);
+    const next = offset + points.length;
+    return {
+      points,
+      done: next >= trip.route_points.length,
+      cursor: next >= trip.route_points.length ? null : {
+        nativeOffset: next,
+        nativeSourceVerifiedDigest: trip.native_route_source.sha256,
+      },
+      // The canonical encrypted document contains the full inline route, so
+      // every page read incurs that source cost even though output is 128 points.
+      bytesWorked: trip.native_route_source.json_bytes + encodedJsonBytes(points),
+    };
   }
   if (!Array.isArray(trip?.route_points) || !trip.route_points.length) {
     return { points: [], done: true, cursor: null, bytesWorked: 0 };

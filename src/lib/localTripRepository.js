@@ -12,6 +12,7 @@ import {
   runUnderProjectionBarrier,
 } from '@/lib/nativeProjectionBarrier';
 import { browserActiveTripSpool } from '@/lib/browserActiveTripSpool';
+import { stampNativeJournalRouteSource, withoutClaimedRouteSource } from '@/lib/nativeRouteSource';
 import { isAndroid } from '@/lib/nativePlatform';
 import { eventRatePerDistance } from '@/lib/mathUtils';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
@@ -4602,7 +4603,10 @@ const importNativeCompletedTrips = async () => {
       if (!admitted.length) return { importedTrips: [], acknowledged: true };
 
       const importedTrips = [];
-      for (const trip of admitted) {
+      for (const nativeTrip of admitted) {
+        // Only this admitted native-journal boundary may mint a native route
+        // source. Never accept source metadata supplied by the payload itself.
+        const trip = withoutClaimedRouteSource(nativeTrip);
         const storedTrip = trip?.id == null
           ? null
           : await getStoredTripById(trip.id).catch(() => null);
@@ -4671,12 +4675,19 @@ const importNativeCompletedTrips = async () => {
             zones: privacyZones,
           }).events;
 
+          // The pending durable row intentionally has no automatic route source:
+          // privacy masking and enrichment must finish before P6 may read points.
+          const routeSource = await stampNativeJournalRouteSource({
+            ...trip, route_points: scoringRoutePoints,
+          });
+
           importedTrip = preserveResolvedSpeedLimitReview({
             ...trip,
             ...stats,
             ...scores,
             co2_saved_kg: economics.co2_saved_kg,
             route_points: scoringRoutePoints,
+            ...routeSource,
             route_points_raw_count: Number(trip.route_points_raw_count) || routePoints.length,
             route_points_map_count: Number(trip.route_points_map_count) || scoringRoutePoints.length,
             score_input_masking_applied: true,

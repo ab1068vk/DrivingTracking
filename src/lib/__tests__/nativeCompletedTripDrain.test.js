@@ -14,6 +14,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeIndexedDb } from './helpers/fakeTripIndexedDb';
+import { FakeIndexedDb as FullFakeIndexedDb } from './helpers/fakeIndexedDb';
 
 const { nativeState } = vi.hoisted(() => ({
   nativeState: {
@@ -128,6 +129,88 @@ afterEach(() => {
 });
 
 describe('AUD-005 bounded native completed-trip drain', () => {
+  it('registers an explicit native route source only after completed-journal enrichment', async () => {
+    const { syncNativeCompletedTrips, localTripRepository } = await import('@/lib/localTripRepository');
+    const points = Array.from({ length: 60 }, (_, index) => ({
+      lat: 43.65 + index * 0.0001, lng: -79.38,
+      timestamp: new Date(Date.parse('2026-03-01T08:00:00.000Z') + index * 1000).toISOString(),
+      speed_kmh: 40,
+    }));
+    nativeState.queue = [{ ...tripFixture('native_trip_123_abc'), start_source: 'native_auto',
+      route_points: points }];
+
+    await syncNativeCompletedTrips();
+
+    const stored = await localTripRepository.getLegacyTripForMigration('native_trip_123_abc');
+    expect(stored.route_payload_storage).toBe('native_journal_inline_v1');
+    expect(stored.native_route_source).toMatchObject({
+      version: 1, owner: 'native_completed_journal', trip_id: 'native_trip_123_abc',
+      point_count: 60,
+    });
+    expect(stored.route_points).toEqual(points);
+  });
+
+  it('admits a journal-sourced native route to P6 road observations and then converges', async () => {
+    backing = new FullFakeIndexedDb();
+    vi.stubGlobal('indexedDB', backing);
+    vi.stubGlobal('IDBKeyRange', backing.keyRange);
+    vi.stubGlobal('navigator', { storage: { estimate: async () => ({ quota: 4e9, usage: 0 }) } });
+    const { syncNativeCompletedTrips, localTripRepository, DB_NAME } =
+      await import('@/lib/localTripRepository');
+    const { stepP6BrowserTripDerivedUpdate } = await import('@/lib/p6TripDerivedState');
+    const id = 'native_trip_456_road';
+    nativeState.queue = [{ ...tripFixture(id), start_source: 'native_auto',
+      route_points: Array.from({ length: 60 }, (_, index) => ({
+        lat: 43.65 + index * 0.0001, lng: -79.38,
+        timestamp: new Date(Date.parse('2026-03-01T08:00:00.000Z') + index * 1000).toISOString(),
+        speed_kmh: 40,
+      })) }];
+    await syncNativeCompletedTrips();
+    const row = () => backing.getStoreState(DB_NAME, 'trips').records.get(id);
+    const revision = row().source_revision;
+    const work = () => backing.getStoreState(DB_NAME, 'p6_trip_work').records.get(id);
+    for (let turn = 0; turn < 80 && work().state !== 'COMPLETE'; turn += 1) {
+      await stepP6BrowserTripDerivedUpdate();
+    }
+    expect(work().state).toBe('COMPLETE');
+    expect(backing.getStoreState(DB_NAME, 'p6_road_observations').records.size).toBeGreaterThan(0);
+    expect(row().source_revision).toBe(revision);
+    for (let pass = 0; pass < 3; pass += 1) {
+      await localTripRepository.getFullById(id);
+      await stepP6BrowserTripDerivedUpdate();
+      expect(row().source_revision).toBe(revision);
+      expect(work().state).toBe('COMPLETE');
+    }
+  });
+
+  it('keeps an unstamped L2C7-shaped inline route at explicit-source debt', async () => {
+    backing = new FullFakeIndexedDb();
+    vi.stubGlobal('indexedDB', backing);
+    vi.stubGlobal('IDBKeyRange', backing.keyRange);
+    vi.stubGlobal('navigator', { storage: { estimate: async () => ({ quota: 4e9, usage: 0 }) } });
+    const { localTripRepository, DB_NAME } = await import('@/lib/localTripRepository');
+    const { stepP6BrowserTripDerivedUpdate } = await import('@/lib/p6TripDerivedState');
+    const id = 'native_trip_old_l2c7';
+    await localTripRepository.create({ ...tripFixture(id), start_source: 'native_auto',
+      imported_from_native: true,
+      route_points: Array.from({ length: 60 }, (_, index) => ({
+        lat: 43.65 + index * 0.0001, lng: -79.38,
+        timestamp: new Date(Date.parse('2026-03-01T08:00:00.000Z') + index * 1000).toISOString(),
+      })) });
+    await localTripRepository.getFullById(id);
+    const row = () => backing.getStoreState(DB_NAME, 'trips').records.get(id);
+    const revision = row().source_revision;
+    const work = () => backing.getStoreState(DB_NAME, 'p6_trip_work').records.get(id);
+    const states = [];
+    for (let turn = 0; turn < 25 && work().state !== 'EXPLICIT_SOURCE_REQUIRED'; turn += 1) {
+      const outcome = await stepP6BrowserTripDerivedUpdate();
+      states.push([outcome.state, work().state]);
+    }
+    expect(work().state, JSON.stringify(states)).toBe('EXPLICIT_SOURCE_REQUIRED');
+    expect(row().source_revision).toBe(revision);
+    expect(backing.getStoreState(DB_NAME, 'p6_road_observations').records.size).toBe(0);
+  });
+
   it('asks the bridge for a bounded page instead of the whole queue', async () => {
     const { syncNativeCompletedTrips, NATIVE_IMPORT_PAGE_SIZE } =
       await import('@/lib/localTripRepository');
