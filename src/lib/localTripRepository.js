@@ -4329,7 +4329,10 @@ const needsRescore = (trip, _thresholds = buildDrivingThresholds(localSettings.g
     trip.braking_efficiency_grade == null ||
     trip.overall_compliance_score == null ||
     trip.dominant_road_type == null ||
-    trip.co2_saved_kg == null ||
+    // A scored trip without a vehicle profile has a deliberately unavailable
+    // CO2-savings result (null). Only a missing field indicates a legacy trip
+    // that has never had this calculation attempted.
+    !Object.prototype.hasOwnProperty.call(trip, 'co2_saved_kg') ||
     trip.phone_use_score == null ||
     trip.phone_use_risk == null ||
     (Number(trip.phone_use_window_count) > 0 && !(trip.driving_events || []).some((event) => event?.type === 'phone_use')) ||
