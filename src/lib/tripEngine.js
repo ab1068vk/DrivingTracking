@@ -1591,6 +1591,63 @@ export function splitTripAtStops(trip, minParkMinutes = 5, thresholds = DEFAULT_
   });
 }
 
+/**
+ * Trip Detail displays only each proposed split's time, distance and duration.
+ * Keep full event detection and scoring in splitTripAtStops for the explicit
+ * Split action; running those analyses in a render memo made a stopped long
+ * route monopolize the renderer on every page open.
+ */
+export function previewTripSplitsAtStops(trip, minParkMinutes = 5, thresholds = DEFAULT_THRESHOLDS) {
+  const routePoints = Array.isArray(trip?.route_points) ? trip.route_points : [];
+  if (routePoints.length < 2) return [];
+
+  const minStopSeconds = Math.max(0, Number(minParkMinutes) || 0) * 60;
+  const stops = detectTripStops(routePoints, {
+    minStopSeconds,
+    maxSpeedKmh: thresholds.IDLE_SPEED_KMH ?? DEFAULT_THRESHOLDS.IDLE_SPEED_KMH,
+  });
+  const sortedPoints = [...routePoints].sort((a, b) => timestampMs(a) - timestampMs(b));
+  if (!stops.length) return [];
+
+  const sortedTimes = sortedPoints.map(timestampMs);
+  const chronological = sortedTimes.every((time, index) => Number.isFinite(time) && (index === 0 || time >= sortedTimes[index - 1]));
+  const findStopBoundary = (target, fromIndex, after) => {
+    if (!chronological) {
+      return sortedPoints.findIndex((point, index) => index >= fromIndex &&
+        (after ? timestampMs(point) > target : timestampMs(point) >= target));
+    }
+    let low = fromIndex;
+    let high = sortedTimes.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (after ? sortedTimes[middle] <= target : sortedTimes[middle] < target) low = middle + 1;
+      else high = middle;
+    }
+    return low < sortedTimes.length ? low : -1;
+  };
+  const ranges = [];
+  let segmentStartIndex = 0;
+  for (const stop of stops) {
+    const stopStartMs = new Date(stop.start_time).getTime();
+    const stopEndMs = new Date(stop.end_time).getTime();
+    const beforeStopEnd = findStopBoundary(stopStartMs, segmentStartIndex, false);
+    const afterStopStart = findStopBoundary(stopEndMs, 0, true);
+    const endIndex = beforeStopEnd > segmentStartIndex ? beforeStopEnd - 1 : segmentStartIndex - 1;
+    if (endIndex - segmentStartIndex + 1 >= 2) ranges.push([segmentStartIndex, endIndex]);
+    segmentStartIndex = afterStopStart >= 0 ? afterStopStart : sortedPoints.length;
+  }
+  if (sortedPoints.length - segmentStartIndex >= 2) ranges.push([segmentStartIndex, sortedPoints.length - 1]);
+
+  return ranges.map(([startIndex, endIndex]) => {
+    const points = sortedPoints.slice(startIndex, endIndex + 1);
+    const startTime = points[0].timestamp;
+    const endTime = points.at(-1).timestamp;
+    const stats = calculateSplitPreviewMetrics(points, startTime, endTime, thresholds);
+    return { start_time: startTime, end_time: endTime,
+      distance_km: stats.distance_km, duration_seconds: stats.duration_seconds };
+  });
+}
+
 // ─── Event Detection ───────────────────────────────────────────────────────────
 function finiteVehicleSpeed(value) {
   const speed = Number(value);
@@ -1787,6 +1844,45 @@ function calculateRouteDistanceKm(points = [], thresholds = DEFAULT_THRESHOLDS) 
     }
   }
   return distance + calculateEstimatedPrivateDistanceKm(points, { includeAdjacentBoundaries: false });
+}
+
+// Match calculateTripStats' displayed distance/duration without its scoring,
+// intersection, road and diagnostic analyses. The full Split action still
+// calls calculateTripStats; this is only for Trip Detail's proposed-split card.
+function calculateSplitPreviewMetrics(points, startTime, endTime, thresholds) {
+  const routePoints = points.filter(hasValidCoordinates);
+  const wallClockSeconds = Math.max(0, (new Date(endTime).getTime() - new Date(startTime).getTime()) / 1000);
+  if (routePoints.length < 2) {
+    return {
+      distance_km: Math.round(calculateEstimatedPrivateDistanceKm(points) * 1000) / 1000,
+      duration_seconds: Math.round(wallClockSeconds),
+    };
+  }
+
+  let distanceKm = 0;
+  let gapSeconds = 0;
+  for (let i = 1; i < routePoints.length; i++) {
+    const previous = routePoints[i - 1];
+    const current = routePoints[i];
+    const segment = calculateSegmentMetrics(previous, current, thresholds);
+    if (segment.dt <= 0) continue;
+    if (segment.dt > 120 && !(
+      isPrivacyBoundaryPoint(previous) &&
+      isPrivacyBoundaryPoint(current) &&
+      samePrivacyZoneBoundary(previous, current)
+    )) {
+      gapSeconds += segment.dt;
+      continue;
+    }
+    if (!segment.isNoise && segment.impliedSpeedKmh <= MAX_REASONABLE_GPS_SPEED_KMH) {
+      distanceKm += segment.distanceKm;
+    }
+  }
+  distanceKm = Math.max(distanceKm, calculateRouteDistanceKm(points, thresholds));
+  return {
+    distance_km: Math.round(distanceKm * 1000) / 1000,
+    duration_seconds: Math.round(Math.max(0, wallClockSeconds - gapSeconds)),
+  };
 }
 
 /**

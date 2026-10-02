@@ -257,10 +257,32 @@ export function selectMapRoutePoints(analysisPoints = [], recordedPoints = []) {
   };
 }
 
-export function eventIndexForRoute(event, points = []) {
+const chronologicalPointTimes = (points) => {
+  const times = [];
+  for (const point of points) {
+    const ms = pointTimeMs(point);
+    if (ms == null || (times.length && ms <= times[times.length - 1])) return null;
+    times.push(ms);
+  }
+  return times;
+};
+
+export function eventIndexForRoute(event, points = [], orderedTimes = null) {
   if (!points.length) return 0;
   const eventMs = new Date(event?.timestamp || event?.startTime || 0).getTime();
   if (Number.isFinite(eventMs)) {
+    if (orderedTimes?.length === points.length) {
+      let low = 0;
+      let high = orderedTimes.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (orderedTimes[middle] < eventMs) low = middle + 1;
+        else high = middle;
+      }
+      if (low === 0) return 0;
+      if (low === orderedTimes.length) return low - 1;
+      return eventMs - orderedTimes[low - 1] <= orderedTimes[low] - eventMs ? low - 1 : low;
+    }
     let bestIndex = 0;
     let bestDelta = Infinity;
     points.forEach((point, index) => {
@@ -324,6 +346,7 @@ const segmentDisplaySpeed = (prev, curr, distanceKm, durationSeconds) => {
 
 export function buildPlaybackTimeline(points = [], events = []) {
   const clean = cleanRoutePoints(restoreOriginalRouteGeometry(points));
+  const orderedTimes = chronologicalPointTimes(clean);
   const firstMs = pointTimeMs(clean[0]);
   const lastMs = pointTimeMs(clean[clean.length - 1]);
   const totalDurationSeconds = firstMs != null && lastMs != null && lastMs > firstMs
@@ -403,7 +426,7 @@ export function buildPlaybackTimeline(points = [], events = []) {
   const timelineEvents = (Array.isArray(events) ? events : [])
     .filter((event) => finiteNumber(event?.lat) != null && finiteNumber(event?.lng) != null)
     .map((event) => {
-      const playbackIndex = eventIndexForRoute(event, clean);
+      const playbackIndex = eventIndexForRoute(event, clean, orderedTimes);
       const eventMs = new Date(event.timestamp || event.startTime || 0).getTime();
       return {
         ...event,

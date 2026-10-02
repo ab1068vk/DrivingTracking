@@ -48,7 +48,7 @@ import {
   inferSpeedZones,
   PHONE_USE_SAFETY_WEIGHT,
   resolveEffectiveSpeedLimitForIndex,
-  splitTripAtStops,
+  previewTripSplitsAtStops,
 } from '@/lib/tripEngine';
 import { localSettings } from '@/lib/trackingStore';
 import { formatCurrencyAmount } from '@/lib/currency';
@@ -1055,7 +1055,7 @@ export default function TripDetail() {
         distance_km: segment.distanceKm ?? null,
         duration_seconds: Math.max(0, Math.round((new Date(segment.endTime).getTime() - new Date(segment.startTime).getTime()) / 1000)),
       }))
-      : (trip && parkStops.length ? splitTripAtStops(trip, 5) : [])
+      : (trip && parkStops.length ? previewTripSplitsAtStops(trip, 5) : [])
   ), [fullFidelityAnalysis?.splitSegments, nativeOverviewOnly, parkStops.length, trip]);
   const speedZoneSummary = useMemo(() => {
     if (!trip) return [];
