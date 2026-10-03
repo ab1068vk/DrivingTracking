@@ -24,6 +24,8 @@ const eligibleShape = (trip) => (
   Array.isArray(trip.route_points) && trip.route_points.length > 0
 );
 
+export const nativeJournalRouteSourceEligible = eligibleShape;
+
 /** Called only with a trip admitted from getNativeCompletedTripPage. */
 export async function stampNativeJournalRouteSource(trip) {
   if (!eligibleShape(trip)) return {};

@@ -26,8 +26,45 @@ const { nativeState } = vi.hoisted(() => ({
     unreadableTripIds: [],
     oversizedTripIds: [],
     ignorePageSize: false,
+    failSourceStamp: false,
+    stampPause: null,
+    stampEntered: null,
+    vehiclesPause: null,
+    vehiclesEntered: null,
   },
 }));
+
+vi.mock('@/lib/nativeRouteSource', async (importActual) => {
+  const actual = await importActual();
+  return {
+    ...actual,
+    stampNativeJournalRouteSource: async (trip) => {
+      if (nativeState.failSourceStamp) throw new Error('DPD-053 injected transient digest failure');
+      if (nativeState.stampPause) {
+        nativeState.stampEntered?.();
+        await nativeState.stampPause;
+      }
+      return actual.stampNativeJournalRouteSource(trip);
+    },
+  };
+});
+
+vi.mock('@/lib/localVehicleRepository', async (importActual) => {
+  const actual = await importActual();
+  return {
+    ...actual,
+    localVehicleRepository: {
+      ...actual.localVehicleRepository,
+      getByIds: async (...args) => {
+        if (nativeState.vehiclesPause) {
+          nativeState.vehiclesEntered?.();
+          await nativeState.vehiclesPause;
+        }
+        return actual.localVehicleRepository.getByIds(...args);
+      },
+    },
+  };
+});
 
 vi.mock('@/lib/nativePlatform', async (importActual) => {
   const actual = await importActual();
@@ -119,6 +156,11 @@ beforeEach(() => {
   nativeState.unreadableTripIds = [];
   nativeState.oversizedTripIds = [];
   nativeState.ignorePageSize = false;
+  nativeState.failSourceStamp = false;
+  nativeState.stampPause = null;
+  nativeState.stampEntered = null;
+  nativeState.vehiclesPause = null;
+  nativeState.vehiclesEntered = null;
   vi.stubGlobal('indexedDB', backing);
 });
 
@@ -129,6 +171,71 @@ afterEach(() => {
 });
 
 describe('AUD-005 bounded native completed-trip drain', () => {
+  it('retains an enriched source when stale rescore maintenance commits afterward', async () => {
+    backing = new FullFakeIndexedDb();
+    vi.stubGlobal('indexedDB', backing);
+    vi.stubGlobal('IDBKeyRange', backing.keyRange);
+    vi.stubGlobal('navigator', { storage: { estimate: async () => ({ quota: 4e9, usage: 0 }) } });
+    const { syncNativeCompletedTrips, rescoreProjectionMaintenanceWindow,
+      localTripRepository } = await import('@/lib/localTripRepository');
+    const id = 'native_trip_1791042050858_race';
+    const points = Array.from({ length: 149 }, (_, index) => ({
+      lat: 43.65 + index * 0.0001, lng: -79.38,
+      timestamp: new Date(Date.parse('2026-03-01T08:00:00.000Z') + index * 1000).toISOString(),
+      speed_kmh: 40,
+    }));
+    nativeState.queue = [{ ...tripFixture(id), start_source: 'native_auto',
+      vehicle_id: 'race-car', route_points: points }];
+    let releaseStamp;
+    let notifyStamp;
+    nativeState.stampPause = new Promise((resolve) => { releaseStamp = resolve; });
+    const stampStarted = new Promise((resolve) => { notifyStamp = resolve; });
+    nativeState.stampEntered = notifyStamp;
+    const intake = syncNativeCompletedTrips();
+    await stampStarted; // pending native row now exists; enrichment has not committed.
+
+    let releaseVehicles;
+    let notifyVehicles;
+    nativeState.vehiclesPause = new Promise((resolve) => { releaseVehicles = resolve; });
+    const vehiclesStarted = new Promise((resolve) => { notifyVehicles = resolve; });
+    nativeState.vehiclesEntered = notifyVehicles;
+    const maintenance = rescoreProjectionMaintenanceWindow({ limit: 1 });
+    await vehiclesStarted; // rescore holds its descriptor-less decoded snapshot.
+    releaseStamp();
+    await intake;
+    releaseVehicles();
+    await maintenance;
+    const stored = await localTripRepository.getLegacyTripForMigration(id);
+    expect(stored.native_route_source).toMatchObject({
+      owner: 'native_completed_journal', trip_id: id, point_count: 149,
+    });
+    expect(nativeState.acknowledged.filter((item) => item === id)).toHaveLength(1);
+  });
+  it('preserves a short trusted journal item for retry when source stamping fails', async () => {
+    const { syncNativeCompletedTrips, localTripRepository } = await import('@/lib/localTripRepository');
+    const id = 'native_trip_1791042050858_test';
+    const points = Array.from({ length: 149 }, (_, index) => ({
+      lat: 43.65 + index * 0.0001,
+      lng: -79.38,
+      timestamp: new Date(Date.parse('2026-03-01T08:00:00.000Z') + index * 1000).toISOString(),
+      speed_kmh: 40,
+    }));
+    nativeState.queue = [{ ...tripFixture(id), start_source: 'native_auto', route_points: points }];
+    nativeState.failSourceStamp = true;
+    await syncNativeCompletedTrips();
+    expect(nativeState.acknowledged).not.toContain(id);
+    const pending = await localTripRepository.getLegacyTripForMigration(id);
+    expect(pending.route_points).toHaveLength(149);
+    expect(pending.native_route_source).toBeUndefined();
+
+    nativeState.failSourceStamp = false;
+    await syncNativeCompletedTrips();
+    expect(nativeState.acknowledged.filter((item) => item === id)).toHaveLength(1);
+    const recovered = await localTripRepository.getLegacyTripForMigration(id);
+    expect(recovered.native_route_source).toMatchObject({
+      owner: 'native_completed_journal', trip_id: id, point_count: 149,
+    });
+  });
   it('registers an explicit native route source only after completed-journal enrichment', async () => {
     const { syncNativeCompletedTrips, localTripRepository } = await import('@/lib/localTripRepository');
     const points = Array.from({ length: 60 }, (_, index) => ({
@@ -148,6 +255,24 @@ describe('AUD-005 bounded native completed-trip drain', () => {
       point_count: 60,
     });
     expect(stored.route_points).toEqual(points);
+  });
+
+  it('retains the same descriptor contract for a long trusted native journal route', async () => {
+    const { syncNativeCompletedTrips, localTripRepository } = await import('@/lib/localTripRepository');
+    const { verifiedNativeJournalRouteSource } = await import('@/lib/nativeRouteSource');
+    const id = 'native_trip_1790974210207_long';
+    const points = Array.from({ length: 4805 }, (_, index) => ({
+      lat: 43.65 + index * 0.00001, lng: -79.38,
+      timestamp: new Date(Date.parse('2026-03-01T08:00:00.000Z') + index * 1000).toISOString(),
+      speed_kmh: 40,
+    }));
+    nativeState.queue = [{ ...tripFixture(id), start_source: 'native_auto', route_points: points }];
+    await syncNativeCompletedTrips();
+    const stored = await localTripRepository.getLegacyTripForMigration(id);
+    expect(nativeState.acknowledged).toEqual([id]);
+    expect(stored.route_points).toHaveLength(points.length);
+    expect(stored.native_route_source.point_count).toBe(points.length);
+    expect(await verifiedNativeJournalRouteSource(stored)).toBe(true);
   });
 
   it('admits a journal-sourced native route to P6 road observations and then converges', async () => {

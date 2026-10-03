@@ -12,7 +12,12 @@ import {
   runUnderProjectionBarrier,
 } from '@/lib/nativeProjectionBarrier';
 import { browserActiveTripSpool } from '@/lib/browserActiveTripSpool';
-import { stampNativeJournalRouteSource, withoutClaimedRouteSource } from '@/lib/nativeRouteSource';
+import {
+  nativeJournalRouteSourceEligible,
+  stampNativeJournalRouteSource,
+  verifiedNativeJournalRouteSource,
+  withoutClaimedRouteSource,
+} from '@/lib/nativeRouteSource';
 import { isAndroid } from '@/lib/nativePlatform';
 import { eventRatePerDistance } from '@/lib/mathUtils';
 import { RESCORE_PROGRESS_EVENT } from '@/lib/tripRepositoryEvents';
@@ -1046,9 +1051,9 @@ const rescoreStaleRecords = async (records) => {
   if (!stale.length) return 0;
   return withRescoreDebtExempt(stale.map((trip) => trip.id), async () => {
     const refreshed = await rescoreTripsIfNeeded(stale);
-    // The chunked three-store writer keeps trip, legacy summary and projection
-    // coherent under one revision per record.
-    await putTrips(refreshed);
+    // rescoreTripsIfNeeded already commits its field diff against the fresh row
+    // under per-trip locks. Rewriting its original whole-row snapshot here can
+    // erase a native source descriptor committed during the rescore.
     return refreshed.length;
   });
 };
@@ -4510,6 +4515,11 @@ export async function verifyTripsPersistedForNativeAcknowledge(trips = []) {
       storedRouteCount === expectedRouteCount;
     if (!sameIdentity) {
       missingTripIds.push(String(trip.id));
+    } else if (nativeJournalRouteSourceEligible(trip) &&
+      !(await verifiedNativeJournalRouteSource(stored))) {
+      // A journal item may be removed only after its route AND provenance have
+      // committed. A pending row left by failed enrichment remains retryable.
+      missingTripIds.push(String(trip.id));
     }
   }
 
@@ -4604,12 +4614,22 @@ const importNativeCompletedTrips = async () => {
 
       const importedTrips = [];
       for (const nativeTrip of admitted) {
+        await withTripWriteLock(nativeTrip?.id, async () => {
         // Only this admitted native-journal boundary may mint a native route
         // source. Never accept source metadata supplied by the payload itself.
         const trip = withoutClaimedRouteSource(nativeTrip);
         const storedTrip = trip?.id == null
           ? null
           : await getStoredTripById(trip.id).catch(() => null);
+        if (storedTrip &&
+            String(storedTrip.start_time || '') === String(trip.start_time || '') &&
+            String(storedTrip.end_time || '') === String(trip.end_time || '') &&
+            await verifiedNativeJournalRouteSource(storedTrip)) {
+          // A retry after an acknowledgement failure must retain the already
+          // committed trusted route, not briefly replace it with a pending row.
+          importedTrips.push(storedTrip);
+          return;
+        }
         const routePoints = trip.route_points || [];
         const pendingTrip = buildPendingNativeTripRecord(trip, storedTrip);
 
@@ -4719,6 +4739,7 @@ const importNativeCompletedTrips = async () => {
         // 100% native result with a weaker endpoint-only result when the app opens.
         // The versioned native parking snapshot is reconciled by the Parking page and
         // remains the single authority shared with the home-screen widget.
+        });
       }
 
       await verifyTripsPersistedForNativeAcknowledge(importedTrips);
