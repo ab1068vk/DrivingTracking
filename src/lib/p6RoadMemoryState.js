@@ -34,6 +34,9 @@ import {
   roadMemoryDistanceMeters,
 } from '@/lib/localRoadMemory';
 import { decodeP6PointBlock } from '@/lib/p6PointBlockCodec';
+import {
+  exactRoadWindowStatistics, maySelectRoadWindowDirectly, MAX_DIRECT_ROAD_WINDOW_POINTS,
+} from '@/lib/p6RoadOrderStatistics';
 
 const WINDOW_TARGET_M = 220;
 const MAX_POINT_GAP_M = 250;
@@ -67,6 +70,30 @@ const spillAt = async (work, ordinal) => {
     return await requestResult(tx.objectStore(P6_TRIP_DERIVED_STORES.ROAD_OBSERVATIONS)
       .get(`${work.tripId}:${work.desiredRevision}:${ordinal}`)) || null;
   } finally { db.close(); }
+};
+
+const spillEndOrdinal = (spill) => Number(spill?.pointStartOrdinal) + Number(spill?.pointCount) - 1;
+// Point ordinals increase with spill ordinals. Find the first spill intersecting
+// a staged window without materializing or decrypting an entire trip's spills.
+// A bounded exponential/binary search works for existing durable SELECT rows.
+const firstSpillForWindow = async (work, startOrdinal) => {
+  const first = await spillAt(work, 0);
+  if (!first || spillEndOrdinal(first) >= startOrdinal) return first;
+  let lower = 1;
+  let upper = 1;
+  while (true) {
+    const probe = await spillAt(work, upper);
+    if (!probe || spillEndOrdinal(probe) >= startOrdinal) break;
+    lower = upper + 1;
+    upper *= 2;
+  }
+  while (lower < upper) {
+    const middle = Math.floor((lower + upper) / 2);
+    const probe = await spillAt(work, middle);
+    if (!probe || spillEndOrdinal(probe) >= startOrdinal) upper = middle;
+    else lower = middle + 1;
+  }
+  return spillAt(work, lower);
 };
 
 const windowKey = (work, ordinal) => `window:${work.tripId}:${work.desiredRevision}:${ordinal}`;
@@ -419,15 +446,58 @@ const selectTurn = async (work, cursor) => {
     );
     return { state: 'WINDOW_REJECTED', itemsWorked: 2, bytesWorked, hasMore: true };
   }
+  // A cursor already partway through the old 64-bit selector (including the
+  // preserved L2C8 window 7) finishes unchanged. New small windows use one
+  // encrypted exact-value accumulator and only their overlapping spills.
+  const directStarted = cursor.selectionMode === 'DIRECT';
+  const directNew = !cursor.targets && !Number(cursor.bit) && !Number(cursor.sourceOrdinal)
+    && maySelectRoadWindowDirectly(window.summary);
+  if (directStarted || directNew) {
+    const values = window.selectorValues || { speeds: [], accuracies: [] };
+    const spill = directNew
+      ? await firstSpillForWindow(work, window.summary.startOrdinal)
+      : await spillAt(work, Math.max(0, Number(cursor.sourceOrdinal) || 0));
+    if (spill && Number(spill.pointStartOrdinal) <= window.summary.endOrdinal) {
+      const decoded = await decryptSensitiveValue(
+        spill.payload,
+        `p6:road-observations:${work.tripId}:${work.desiredRevision}:${spill.ordinal}`,
+      );
+      const nextValues = {
+        speeds: [...values.speeds, ...valuesFor(spill, decoded, window.summary, 'speed')],
+        accuracies: [...values.accuracies, ...valuesFor(spill, decoded, window.summary, 'accuracy')],
+      };
+      if (nextValues.speeds.length > MAX_DIRECT_ROAD_WINDOW_POINTS
+        || nextValues.accuracies.length > MAX_DIRECT_ROAD_WINDOW_POINTS) {
+        throw new Error('P6_ROAD_DIRECT_WINDOW_EXCEEDS_BOUND');
+      }
+      const bytesWorked = await saveWindowAndWork(work, ordinal,
+        { ...window, selectorValues: nextValues }, 'SELECT',
+        { phase: 'SELECT', selectionMode: 'DIRECT', windowOrdinal: ordinal, sourceOrdinal: spill.ordinal + 1 });
+      return { state: 'ORDER_STATS_DIRECT_SCAN',
+        itemsWorked: (spill.pointCount || 0) + 2,
+        bytesWorked: bytesOf(decoded || {}) + bytesWorked, hasMore: true };
+    }
+    const { selectorValues: _discard, ...finalWindow } = window;
+    const statistics = exactRoadWindowStatistics(window.summary, values);
+    const bytesWorked = await saveWindowAndWork(work, ordinal,
+      { ...finalWindow, statistics, sectionPoints: [] }, 'GEOMETRY',
+      { phase: 'GEOMETRY', windowOrdinal: ordinal, sourceOrdinal: 0, usableOrdinal: 0 });
+    return { state: 'ORDER_STATS_EXACT', itemsWorked: values.speeds.length + values.accuracies.length + 1,
+      bytesWorked, hasMore: true };
+  }
   const targets = cursor.targets || initialTargets(window.summary);
   const bit = Math.max(0, Number(cursor.bit) || 0);
   const sourceOrdinal = Math.max(0, Number(cursor.sourceOrdinal) || 0);
+  const knownStart = Number.isInteger(cursor.startSourceOrdinal)
+    ? Math.max(0, cursor.startSourceOrdinal) : null;
   if (bit < 64) {
-    const spill = await spillAt(work, sourceOrdinal);
-    if (spill) {
+    const spill = sourceOrdinal === 0 && knownStart === null
+      ? await firstSpillForWindow(work, window.summary.startOrdinal)
+      : await spillAt(work, sourceOrdinal === 0 ? knownStart : sourceOrdinal);
+    if (spill && Number(spill.pointStartOrdinal) <= window.summary.endOrdinal) {
       const decoded = await decryptSensitiveValue(
         spill.payload,
-        `p6:road-observations:${work.tripId}:${work.desiredRevision}:${sourceOrdinal}`,
+        `p6:road-observations:${work.tripId}:${work.desiredRevision}:${spill.ordinal}`,
       );
       const nextTargets = targets.map((target) => {
         let zeroCount = Number(target.zeroCount) || 0;
@@ -441,7 +511,8 @@ const selectTurn = async (work, cursor) => {
         phase: 'SELECT',
         windowOrdinal: ordinal,
         bit,
-        sourceOrdinal: sourceOrdinal + 1,
+        sourceOrdinal: spill.ordinal + 1,
+        startSourceOrdinal: knownStart ?? spill.ordinal,
         targets: nextTargets,
       });
       return {
@@ -467,7 +538,8 @@ const selectTurn = async (work, cursor) => {
       phase: 'SELECT',
       windowOrdinal: ordinal,
       bit: bit + 1,
-      sourceOrdinal: 0,
+      sourceOrdinal: knownStart ?? 0,
+      startSourceOrdinal: knownStart,
       targets: nextTargets,
     });
     return {
@@ -517,11 +589,13 @@ const geometryTurn = async (work, cursor) => {
   }
   const window = record.value;
   const sourceOrdinal = Math.max(0, Number(cursor.sourceOrdinal) || 0);
-  const spill = await spillAt(work, sourceOrdinal);
-  if (spill) {
+  const spill = sourceOrdinal === 0 && !Number(cursor.usableOrdinal)
+    ? await firstSpillForWindow(work, window.summary.startOrdinal)
+    : await spillAt(work, sourceOrdinal);
+  if (spill && Number(spill.pointStartOrdinal) <= window.summary.endOrdinal) {
     const decoded = await decryptSensitiveValue(
       spill.payload,
-      `p6:road-observations:${work.tripId}:${work.desiredRevision}:${sourceOrdinal}`,
+      `p6:road-observations:${work.tripId}:${work.desiredRevision}:${spill.ordinal}`,
     );
     let usableOrdinal = Math.max(0, Number(cursor.usableOrdinal) || 0);
     const targets = window.summary.usableCount <= 24
@@ -543,7 +617,7 @@ const geometryTurn = async (work, cursor) => {
       ordinal,
       { ...window, sectionPoints },
       'GEOMETRY',
-      { phase: 'GEOMETRY', windowOrdinal: ordinal, sourceOrdinal: sourceOrdinal + 1, usableOrdinal },
+      { phase: 'GEOMETRY', windowOrdinal: ordinal, sourceOrdinal: spill.ordinal + 1, usableOrdinal },
     );
     return {
       state: 'WINDOW_GEOMETRY_SCAN',

@@ -35,7 +35,12 @@ vi.mock('@/lib/securePayloadCrypto', () => ({
   encryptSensitiveValue: vi.fn(async (value, context) => ({
     encrypted: true, key_version: 1, context, payload: structuredClone(value),
   })),
-  decryptSensitiveValue: vi.fn(async (value) => structuredClone(value.payload)),
+  decryptSensitiveValue: vi.fn(async (value, context) => {
+    if (value?.context?.startsWith('p6:road-observations:') && value.context !== context) {
+      throw new Error('P6_ROAD_OBSERVATION_CONTEXT_MISMATCH');
+    }
+    return structuredClone(value.payload);
+  }),
   getEncryptedJson: vi.fn(async (key, fallback = null) => (
     state.storage.has(`enc:${key}`) ? structuredClone(state.storage.get(`enc:${key}`)) : fallback
   )),
@@ -196,6 +201,92 @@ describe('DPD-011 — D4 road learning on Android under shipping browser authori
     // The observable product of learning: windows on disk and a released head.
     expect(await countRows(P6_TRIP_DERIVED_STORES.ROAD_WINDOWS)).toBeGreaterThan(0);
     expect((await readP6TripDomainReadiness(P6_DOMAIN_KEYS.ROAD_LEARNING, 'trip-a')).state)
+      .toBe(P6_READINESS_STATES.VERIFIED);
+  }, 180_000);
+
+  it('selects and geometrizes only overlapping spills, and resumes a durable direct cursor', async () => {
+    const repository = await import('@/lib/speedKnowledgeRepository');
+    seedLegacyModel(repository, {
+      schemaVersion: 1, knowledgeRevision: 4, cells: {}, corrections: [],
+      excludedSections: [], roadMemory: { candidates: [] },
+    });
+    await repository.beginP6BrowserSpeedMigration();
+    for (let turn = 0; turn < 64; turn += 1) {
+      if ((await repository.stepP6BrowserSpeedMigration()).done) break;
+    }
+    const states = [];
+    let durableDirectCursor = false;
+    let converged = false;
+    for (let turn = 0; turn < 600; turn += 1) {
+      const step = await stepP6RoadMemoryUpdate();
+      states.push(step.state);
+      if (step.state === 'ORDER_STATS_DIRECT_SCAN' && !durableDirectCursor) {
+        const db = await openP6TripDerivedDatabase();
+        const work = await new Promise((resolve, reject) => {
+          const request = db.transaction(P6_TRIP_DERIVED_STORES.WORK, 'readonly')
+            .objectStore(P6_TRIP_DERIVED_STORES.WORK).get('trip-a');
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        db.close();
+        expect(work.roadCursor.selectionMode).toBe('DIRECT');
+        expect(work.roadCursor.sourceOrdinal).toBeGreaterThan(0);
+        expect(work.roadCursor.speeds).toBeUndefined();
+        durableDirectCursor = true;
+      }
+      if (step.hasMore === false) { converged = true; break; }
+    }
+    expect(durableDirectCursor).toBe(true);
+    expect(converged).toBe(true);
+    expect(states).toContain('ORDER_STATS_EXACT');
+    expect(states).not.toContain('ORDER_STATS_SCAN');
+    expect(states.length).toBeLessThan(600);
+    expect((await readP6TripDomainReadiness(P6_DOMAIN_KEYS.ROAD_LEARNING, 'trip-a')).state)
+      .toBe(P6_READINESS_STATES.VERIFIED);
+  }, 180_000);
+
+  it('retains bounded legacy radix continuation for a window above the direct-value cap', async () => {
+    const repository = await import('@/lib/speedKnowledgeRepository');
+    seedLegacyModel(repository, {
+      schemaVersion: 1, knowledgeRevision: 4, cells: {}, corrections: [],
+      excludedSections: [], roadMemory: { candidates: [] },
+    });
+    await repository.beginP6BrowserSpeedMigration();
+    for (let turn = 0; turn < 64; turn += 1) {
+      if ((await repository.stepP6BrowserSpeedMigration()).done) break;
+    }
+    const dense = tripFixture('trip-dense');
+    dense.route_points = Array.from({ length: 512 }, (_, index) => ({
+      lat: 43.6 + index * 0.0000036, lng: -79.4,
+      timestamp: 1_756_000_000_000 + index * 100,
+      speed_kmh: 48, accuracy: 6,
+    }));
+    await seedTrip(dense);
+    await drainTripDerived();
+
+    let sawLateDurableBit = false;
+    let sawLegacySelector = false;
+    let converged = false;
+    for (let turn = 0; turn < 900; turn += 1) {
+      const step = await stepP6RoadMemoryUpdate();
+      sawLegacySelector ||= step.state === 'ORDER_STATS_SCAN';
+      if (step.state === 'ORDER_STATS_BIT_COMPLETE' && !sawLateDurableBit) {
+        const db = await openP6TripDerivedDatabase();
+        const work = await new Promise((resolve, reject) => {
+          const request = db.transaction(P6_TRIP_DERIVED_STORES.WORK, 'readonly')
+            .objectStore(P6_TRIP_DERIVED_STORES.WORK).get('trip-dense');
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        db.close();
+        if (work.roadCursor?.bit >= 54) sawLateDurableBit = true;
+      }
+      if (step.hasMore === false) { converged = true; break; }
+    }
+    expect(sawLegacySelector).toBe(true);
+    expect(sawLateDurableBit).toBe(true);
+    expect(converged).toBe(true);
+    expect((await readP6TripDomainReadiness(P6_DOMAIN_KEYS.ROAD_LEARNING, 'trip-dense')).state)
       .toBe(P6_READINESS_STATES.VERIFIED);
   }, 180_000);
 
