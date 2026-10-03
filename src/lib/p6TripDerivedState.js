@@ -434,6 +434,7 @@ const retireSupersededTurn = async (work) => {
       work.cursor?.retireAfterPrimaryKey ?? null,
     );
     const nextPhase = result.hasMore ? phase : P6_RETIRE_PHASES[P6_RETIRE_PHASES.indexOf(phase) + 1];
+    const terminalState = String(work.retireTerminalState || 'COMPLETE');
     tx.objectStore(P6_TRIP_DERIVED_STORES.WORK).put(nextPhase
       ? { ...work, state: 'RETIRE_SUPERSEDED', cursor: {
         retirePhase: nextPhase,
@@ -442,11 +443,13 @@ const retireSupersededTurn = async (work) => {
       // Retirement is bounded GC, not a verdict: a subject that parked itself
       // for an explicit pass still retires its superseded rows, then lands in
       // the state it asked for rather than in COMPLETE.
-      : { ...work, state: String(work.retireTerminalState || 'COMPLETE'),
+      : { ...work, state: terminalState,
         cursor: null, updatedAt: Date.now() });
     await transactionDone(tx);
     return {
       state: 'RETIRE_SUPERSEDED', phase, itemsWorked: result.scanned + 1, bytesWorked: 0, hasMore: true,
+      roadWorkBecameEligible: !nextPhase && terminalState === 'COMPLETE'
+        && p6WorkOwnsDomain(work, P6_DOMAIN_KEYS.ROAD_LEARNING),
     };
   } finally { db.close(); }
 };

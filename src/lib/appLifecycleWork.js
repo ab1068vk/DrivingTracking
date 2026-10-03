@@ -65,6 +65,8 @@ export const P4_DOMAIN_FOLLOW_UP_REASONS = Object.freeze({
   RESCORE_WORK_ENQUEUED: 'rescore_work_enqueued',
   // DPD-041: a durable canonical trip write left derived (D1-D4) work behind mid-epoch.
   TRIP_SOURCE_COMMITTED: 'trip_source_committed',
+  // DPD-051: a durable trip-derived COMPLETE row became road-reader eligible.
+  ROAD_WORK_AVAILABLE: 'road_work_available',
 });
 
 /**
@@ -771,12 +773,18 @@ export function createP4LifecycleWorkRuntime({
     criticalSection:'unlink debt completion only',domainStateOwner:'native archive unlink debt',
   });
 
-  const p6Turn = (runDomainTurn) => async ({ budget: turnBudget, criticalSection, instanceId }) => {
+  const p6Turn = (jobKey, runDomainTurn) => async ({ budget: turnBudget, criticalSection, instanceId }) => {
     const outcome = await criticalSection.run(() => runDomainTurn({ instanceId }));
     consumeResult(turnBudget, {
       items: Math.max(0, Number(outcome?.itemsWorked) || 0),
       bytes: Math.max(0, Number(outcome?.bytesWorked) || 0),
     });
+    // The producer reports this only after its durable RETIRE_SUPERSEDED →
+    // COMPLETE commit. A prior road turn may already have settled IDLE, so a
+    // same-epoch lifecycle admission cannot carry the newly eligible row.
+    if (jobKey === P6_JOB_KEYS.TRIP_DERIVED_UPDATES && outcome?.roadWorkBecameEligible === true) {
+      domainFollowUp(P6_JOB_KEYS.ROAD_MEMORY_UPDATES, P4_DOMAIN_FOLLOW_UP_REASONS.ROAD_WORK_AVAILABLE);
+    }
     if (outcome?.state === 'DERIVED_STORAGE_BLOCKED') {
       return { outcome: APP_WORK_TURN_RESULTS.DEFERRED, wake: { type: 'storage', key: 'derived-capacity' } };
     }
@@ -800,7 +808,7 @@ export function createP4LifecycleWorkRuntime({
       triggerOrigins: [APP_WORK_TRIGGER_ORIGINS.BOOTSTRAP, APP_WORK_TRIGGER_ORIGINS.RESUME, APP_WORK_TRIGGER_ORIGINS.OTHER_REVIEWED],
       workExtent: APP_WORK_EXTENTS.BOUNDED_TURN,
       workClass: APP_WORK_CLASSES.SUSPENDIBLE_BACKGROUND,
-      runTurn: probeCoordinatorTurn(jobKey, p6Turn(probeDomainTurn(jobKey, runDomainTurn))),
+      runTurn: probeCoordinatorTurn(jobKey, p6Turn(jobKey, probeDomainTurn(jobKey, runDomainTurn))),
       // DPD-041. The derived-update job settles DONE once its work rows are clean,
       // and a same-epoch admission then creates nothing - so a rescore, edit or
       // save made while the app stays open left D1 DIRTY until the next resume
@@ -808,6 +816,9 @@ export function createP4LifecycleWorkRuntime({
       // for the committed-source event.
       ...(jobKey === P6_JOB_KEYS.TRIP_DERIVED_UPDATES
         ? { domainFollowUpReasons: [P4_DOMAIN_FOLLOW_UP_REASONS.TRIP_SOURCE_COMMITTED] }
+        : {}),
+      ...(jobKey === P6_JOB_KEYS.ROAD_MEMORY_UPDATES
+        ? { domainFollowUpReasons: [P4_DOMAIN_FOLLOW_UP_REASONS.ROAD_WORK_AVAILABLE] }
         : {}),
       budget: { ...P6_TURN_BUDGET },
       newEpochPolicy: APP_WORK_NEW_EPOCH_POLICIES.TERMINATE_AND_READMIT,

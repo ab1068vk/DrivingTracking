@@ -94,9 +94,11 @@ const seedTrip = async (trip) => {
 };
 
 const drainTripDerived = async () => {
+  const turns = [];
   for (let turn = 0; turn < 600; turn += 1) {
     const result = await stepP6BrowserTripDerivedUpdate({ explicit: true });
-    if (result.state === 'IDLE' && result.hasMore === false) return;
+    turns.push(result);
+    if (result.state === 'IDLE' && result.hasMore === false) return turns;
   }
   throw new Error('P6 trip derived drain did not converge');
 };
@@ -121,6 +123,7 @@ const countRows = async (store) => {
 
 describe('DPD-011 — D4 road learning on Android under shipping browser authority', () => {
   let indexedDb;
+  let derivedTurns;
 
   beforeEach(async () => {
     indexedDb = new FakeIndexedDb();
@@ -139,12 +142,18 @@ describe('DPD-011 — D4 road learning on Android under shipping browser authori
       return structuredClone(trip);
     });
     await seedTrip(tripFixture('trip-a'));
-    await drainTripDerived();
+    derivedTurns = await drainTripDerived();
     expect(await finalizeP6BrowserExplicitTripBuild(false))
       .toMatchObject({ state: P6_READINESS_STATES.VERIFIED, complete: true });
   }, 180_000);
 
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+  it('signals road eligibility exactly once after the durable COMPLETE transition', async () => {
+    expect(derivedTurns.filter((turn) => turn.roadWorkBecameEligible === true)).toHaveLength(1);
+    expect((await stepP6BrowserTripDerivedUpdate({ explicit: true })).roadWorkBecameEligible)
+      .not.toBe(true);
+  }, 180_000);
 
   it('runs E4 and then produces real road windows, reaching a VERIFIED D4', async () => {
     const repository = await import('@/lib/speedKnowledgeRepository');
