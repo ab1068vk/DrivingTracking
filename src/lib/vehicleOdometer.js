@@ -44,7 +44,10 @@ const isoOrNull = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString() : nu
 
 export function tripBelongsToVehicle(trip, vehicle) {
   if (!vehicle?.id || trip?.status !== 'completed') return false;
-  return String(trip.vehicle_id) === String(vehicle.id) || Boolean(vehicle.is_default && !trip.vehicle_id);
+  // A default is a display suggestion, not a durable owner. In particular,
+  // changing it must not transfer an already credited native trip with no ID.
+  return trip.vehicle_id != null && trip.vehicle_id !== '' &&
+    String(trip.vehicle_id) === String(vehicle.id);
 }
 
 export function isOdometerMigrated(vehicle) {
@@ -54,7 +57,9 @@ export function isOdometerMigrated(vehicle) {
 /** The pre-DPD-035 display value, kept only to migrate without a jump. */
 export function legacyOdometerKm(vehicle, trips = []) {
   const windowKm = trips
-    .filter((trip) => tripBelongsToVehicle(trip, vehicle))
+    // Keep the pre-migration display formula unchanged at its migration seam.
+    .filter((trip) => tripBelongsToVehicle(trip, vehicle) ||
+      (trip?.status === 'completed' && vehicle?.is_default && !trip?.vehicle_id))
     .reduce((sum, trip) => sum + km(trip.distance_km), 0);
   const anchorKm = Number(vehicle?.odometer_trip_distance_anchor_km) || 0;
   return Math.round((Number(vehicle?.odometer_km) || 0) + Math.max(0, windowKm - anchorKm));
@@ -198,7 +203,9 @@ export function planOdometerSync(vehicles = [], { windowRows = [], rows = window
     const own = state.get(String(vehicle.id));
     own.credits = own.credits.filter((entry) => {
       const trip = byTripId.get(String(entry?.id));
-      if (!trip || trip.status !== 'completed' || tripBelongsToVehicle(trip, vehicle)) return true;
+      // A historical unassigned trip has no proven new owner. Its existing
+      // physical credit stays where it was earned until an explicit edit.
+      if (!trip || trip.status !== 'completed' || !trip.vehicle_id || tripBelongsToVehicle(trip, vehicle)) return true;
       const receiver = vehicles.find((other) => isOdometerMigrated(other) && tripBelongsToVehicle(trip, other));
       if (!receiver) return true;
       const target = state.get(String(receiver.id));

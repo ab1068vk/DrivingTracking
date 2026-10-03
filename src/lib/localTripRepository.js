@@ -4512,7 +4512,8 @@ export async function verifyTripsPersistedForNativeAcknowledge(trips = []) {
       String(stored.id) === String(trip.id) &&
       String(stored.start_time || '') === String(trip.start_time || '') &&
       String(stored.end_time || '') === String(trip.end_time || '') &&
-      storedRouteCount === expectedRouteCount;
+      storedRouteCount === expectedRouteCount &&
+      String(stored.vehicle_id || '') === String(trip.vehicle_id || '');
     if (!sameIdentity) {
       missingTripIds.push(String(trip.id));
     } else if (nativeJournalRouteSourceEligible(trip) &&
@@ -4556,16 +4557,34 @@ export const preserveResolvedSpeedLimitReview = (incomingTrip = {}, storedTrip =
   };
 };
 
-export const buildPendingNativeTripRecord = (trip = {}, storedTrip = null) => (
-  preserveResolvedSpeedLimitReview({
+export const buildPendingNativeTripRecord = (trip = {}, storedTrip = null, vehicles = []) => {
+  const sameStoredIdentity = storedTrip &&
+    String(storedTrip.start_time || '') === String(trip.start_time || '') &&
+    String(storedTrip.end_time || '') === String(trip.end_time || '');
+  const active = vehicles.filter((vehicle) => !vehicle.retired_at);
+  const defaultVehicle = active.find((vehicle) => vehicle.is_default) || active[0] || null;
+  const vehicleId = (sameStoredIdentity && storedTrip.vehicle_id) || trip.vehicle_id || defaultVehicle?.id || null;
+  const inferred = !trip.vehicle_id && !(sameStoredIdentity && storedTrip.vehicle_id) && Boolean(vehicleId);
+  return preserveResolvedSpeedLimitReview({
     ...trip,
+    ...(vehicleId ? { vehicle_id: vehicleId } : {}),
+    ...(inferred ? {
+      vehicle_assignment_status: 'needs_confirmation',
+      vehicle_assignment_source: 'default_vehicle_at_native_import',
+      vehicle_assignment_confidence: 18,
+    } : {}),
+    ...(sameStoredIdentity && storedTrip?.vehicle_id ? {
+      vehicle_assignment_status: storedTrip.vehicle_assignment_status,
+      vehicle_assignment_source: storedTrip.vehicle_assignment_source,
+      vehicle_assignment_confidence: storedTrip.vehicle_assignment_confidence,
+    } : {}),
     imported_from_native: true,
     needs_rescore: true,
     score_status: trip.score_status || 'pending_javascript_scoring',
     schema_version: TRIP_SCHEMA_VERSION,
     updated_at: trip.updated_at || new Date().toISOString(),
-  }, storedTrip)
-);
+  }, storedTrip);
+};
 
 const importNativeCompletedTrips = async () => {
   if (!isAndroid()) return emptyNativeImportResult();
@@ -4588,7 +4607,9 @@ const importNativeCompletedTrips = async () => {
     const activeTripAtImport = activeTripStore.get();
     // The imported rows are not in hand yet, so this path resolves references
     // against the complete collection rather than a prefix.
-    const vehicles = await localVehicleRepository.getAllForReference().catch(() => []);
+    // Vehicle attribution is part of native intake. A transient fleet-read
+    // failure must leave the journal retryable, not acknowledge a null owner.
+    const vehicles = await localVehicleRepository.getAllForReference();
 
     // AUD-005. The whole pending journal used to cross the bridge as one payload, be
     // held as one array, and be imported and acknowledged as one unit, so the cost of
@@ -4631,7 +4652,7 @@ const importNativeCompletedTrips = async () => {
           return;
         }
         const routePoints = trip.route_points || [];
-        const pendingTrip = buildPendingNativeTripRecord(trip, storedTrip);
+        const pendingTrip = buildPendingNativeTripRecord(trip, storedTrip, vehicles);
 
         // Persist the native record before running optional scoring. A completed
         // drive must remain visible and recoverable even if enrichment fails on a
@@ -4687,7 +4708,7 @@ const importNativeCompletedTrips = async () => {
             motionSamples,
             orientationCalibration: sensorFusionSummary?.phone_orientation,
           });
-          const economics = estimateTripEconomics({ ...trip, ...stats, ...scores }, vehicleForTrip(trip, vehicles), settings);
+          const economics = estimateTripEconomics({ ...pendingTrip, ...stats, ...scores }, vehicleForTrip(pendingTrip, vehicles), settings);
           const drivingEvents = prepareScoreInputsForPrivacy({
             routePoints: [],
             events: mergePhoneUseEventsIntoDrivingEvents(scores.driving_events || feedbackAdjusted.events, phoneUse),
@@ -4703,6 +4724,12 @@ const importNativeCompletedTrips = async () => {
 
           importedTrip = preserveResolvedSpeedLimitReview({
             ...trip,
+            ...(pendingTrip.vehicle_id ? { vehicle_id: pendingTrip.vehicle_id } : {}),
+            ...(pendingTrip.vehicle_assignment_status ? {
+              vehicle_assignment_status: pendingTrip.vehicle_assignment_status,
+              vehicle_assignment_source: pendingTrip.vehicle_assignment_source,
+              vehicle_assignment_confidence: pendingTrip.vehicle_assignment_confidence,
+            } : {}),
             ...stats,
             ...scores,
             co2_saved_kg: economics.co2_saved_kg,
@@ -4856,8 +4883,9 @@ const importNativeCompletedTrips = async () => {
     };
   })().catch((error) => {
     logSystemFailure('native_completed_trips_import', error);
-    // The existing JS store remains usable if the native bridge is unavailable.
-    return emptyNativeImportResult();
+    // A failed prerequisite or bridge read cannot prove the native journal is
+    // empty. Keep the browser usable while reporting retryable unknown work.
+    return emptyNativeImportResult({ hasMore: true, blocked: true });
   }).finally(() => {
     nativeTripImportPromise = null;
   });

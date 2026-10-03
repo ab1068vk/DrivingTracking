@@ -171,6 +171,66 @@ afterEach(() => {
 });
 
 describe('AUD-005 bounded native completed-trip drain', () => {
+  it('DPD-054: assigns the durable default to a new native journal trip before acknowledgement', async () => {
+    const { localVehicleRepository } = await import('@/lib/localVehicleRepository');
+    vi.spyOn(localVehicleRepository, 'getAllForReference').mockResolvedValue([
+      { id: 'A', is_default: true }, { id: 'B', is_default: false },
+    ]);
+    const { syncNativeCompletedTrips, localTripRepository } = await import('@/lib/localTripRepository');
+    nativeState.queue = [{ ...tripFixture('native_trip_default_vehicle'), start_source: 'native_auto' }];
+    await syncNativeCompletedTrips();
+    const stored = await localTripRepository.getLegacyTripForMigration('native_trip_default_vehicle');
+    expect(nativeState.acknowledged).toEqual(['native_trip_default_vehicle']);
+    expect(stored.vehicle_id).toBe('A');
+    expect(stored.vehicle_assignment_status).toBe('needs_confirmation');
+    expect(stored.vehicle_assignment_source).toBe('default_vehicle_at_native_import');
+  });
+
+  it('DPD-054: a pending journal retry retains its first vehicle even if the default changes', async () => {
+    const { localVehicleRepository } = await import('@/lib/localVehicleRepository');
+    const fleet = [{ id: 'A', is_default: true }, { id: 'B', is_default: false }];
+    vi.spyOn(localVehicleRepository, 'getAllForReference').mockImplementation(async () => fleet);
+    const { syncNativeCompletedTrips, localTripRepository } = await import('@/lib/localTripRepository');
+    nativeState.queue = [{ ...tripFixture('native_trip_retry_vehicle'), start_source: 'native_auto',
+      route_points: Array.from({ length: 60 }, (_, index) => ({
+        lat: 43.65 + index * 0.0001, lng: -79.38,
+        timestamp: new Date(Date.parse('2026-03-01T08:00:00.000Z') + index * 1000).toISOString(),
+        speed_kmh: 40,
+      })) }];
+    nativeState.failSourceStamp = true;
+    await syncNativeCompletedTrips();
+    expect(nativeState.acknowledged).toEqual([]);
+    expect((await localTripRepository.getLegacyTripForMigration('native_trip_retry_vehicle')).vehicle_id).toBe('A');
+    fleet[0].is_default = false;
+    fleet[1].is_default = true;
+    nativeState.failSourceStamp = false;
+    await syncNativeCompletedTrips();
+    expect(nativeState.acknowledged).toEqual(['native_trip_retry_vehicle']);
+    expect((await localTripRepository.getLegacyTripForMigration('native_trip_retry_vehicle')).vehicle_id).toBe('A');
+  });
+
+  it('DPD-054: preserves an explicit native journal vehicle over the current default', async () => {
+    const { localVehicleRepository } = await import('@/lib/localVehicleRepository');
+    vi.spyOn(localVehicleRepository, 'getAllForReference').mockResolvedValue([
+      { id: 'A', is_default: true }, { id: 'B', is_default: false },
+    ]);
+    const { syncNativeCompletedTrips, localTripRepository } = await import('@/lib/localTripRepository');
+    nativeState.queue = [{ ...tripFixture('native_trip_explicit_vehicle'), start_source: 'native_auto', vehicle_id: 'B' }];
+    await syncNativeCompletedTrips();
+    expect((await localTripRepository.getLegacyTripForMigration('native_trip_explicit_vehicle')).vehicle_id).toBe('B');
+    expect(nativeState.acknowledged).toEqual(['native_trip_explicit_vehicle']);
+  });
+
+  it('DPD-054: keeps the native journal pending if vehicle collection read fails', async () => {
+    const { localVehicleRepository } = await import('@/lib/localVehicleRepository');
+    vi.spyOn(localVehicleRepository, 'getAllForReference').mockRejectedValue(new Error('fleet temporarily unavailable'));
+    const { syncNativeCompletedTrips } = await import('@/lib/localTripRepository');
+    nativeState.queue = [{ ...tripFixture('native_trip_fleet_retry'), start_source: 'native_auto' }];
+    const result = await syncNativeCompletedTrips();
+    expect(result).toMatchObject({ blocked: true, hasMore: true, importedTrips: [] });
+    expect(nativeState.acknowledged).toEqual([]);
+  });
+
   it('retains an enriched source when stale rescore maintenance commits afterward', async () => {
     backing = new FullFakeIndexedDb();
     vi.stubGlobal('indexedDB', backing);
