@@ -370,12 +370,33 @@ final class DriveSenseCompletedTripJournal {
     }
 
     static boolean addCompletedTrip(Context context, JSONObject trip) {
+        return addCompletedTrip(context, trip, () -> false, false);
+    }
+
+    static boolean addCompletedTripIfAbsent(Context context, JSONObject trip,
+                                            java.util.function.BooleanSupplier cancelled) {
+        return addCompletedTrip(context, trip, cancelled, true);
+    }
+
+    private static boolean addCompletedTrip(Context context, JSONObject trip,
+                                            java.util.function.BooleanSupplier cancelled,
+                                            boolean preserveCommittedGeneration) {
         if (context == null || trip == null) return false;
         String tripId = trip.optString("id", "").trim();
         if (tripId.isEmpty()) return false;
 
         synchronized (LOCK) {
-            ensureLegacyMigrated(context);
+            // Erasure and journal clear use this same lock. A queued completion
+            // that reaches the lock after erasure began must never recreate data.
+            if (cancelled != null && cancelled.getAsBoolean()) return false;
+            if (!ensureLegacyMigrated(context)) return false;
+            // A service restart can retry after the manifest became durable but
+            // before its completion callback ran. Preserve that one committed
+            // generation instead of rewriting the same completed trip.
+            if (preserveCommittedGeneration && hasJournalTripWithoutMigration(context, tripId)) {
+                DriveSenseJournalControlPlane.recordEntry(context, tripId);
+                return true;
+            }
             DriveSenseJournalControlPlane.beginEntryMutation(context,tripId);
             // Never delete unreferenced intake bytes by age. P3.5 recovery/cleanup is
             // catalog-state and ownership driven after raw preservation.
@@ -848,6 +869,7 @@ final class DriveSenseCompletedTripJournal {
             if (encryptedManifest.length == 0 || encryptedManifest.length > MAX_MANIFEST_BYTES) {
                 throw new IllegalStateException("Completed-trip manifest exceeded its size limit");
             }
+            maybeJournalFault("BEFORE_JOURNAL_MANIFEST_WRITE");
             writeAtomic(manifestFile, encryptedManifest);
             manifestCommitted = true;
             DriveSenseArchiveSentinelStore.fsyncDirectory(journalDirectory);

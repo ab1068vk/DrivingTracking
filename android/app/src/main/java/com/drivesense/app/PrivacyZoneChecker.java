@@ -107,9 +107,16 @@ final class PrivacyZoneChecker {
 
         ZoneReadResult zoneRead = getPrivacyZoneReadResult(context);
         if (zoneRead.failClosed) return failClosedZone();
+        return findPrivacyZone(lat, lng, zoneRead, readCellKey(context));
+    }
+
+    private static JSONObject findPrivacyZone(
+        double lat, double lng, ZoneReadResult zoneRead, byte[] cellKey
+    ) {
+        if (!isValidCoordinate(lat, lng)) return null;
+        if (zoneRead.failClosed) return failClosedZone();
 
         JSONArray zones = zoneRead.zones;
-        byte[] cellKey = readCellKey(context);
         for (int i = 0; i < zones.length(); i++) {
             JSONObject zone = zones.optJSONObject(i);
             if (zone == null) continue;
@@ -138,14 +145,20 @@ final class PrivacyZoneChecker {
         JSONArray redactedPoints = new JSONArray();
         if (points == null) return redactedPoints;
 
+        // One completed route uses one privacy-policy snapshot. Re-reading and
+        // parsing preferences for every point makes completion scale poorly.
+        ZoneReadResult zoneRead = getPrivacyZoneReadResult(context);
+        byte[] cellKey = zoneRead.failClosed ? null : readCellKey(context);
+
         for (int i = 0; i < points.length(); i++) {
             JSONObject point = points.optJSONObject(i);
             if (point == null) continue;
 
             JSONObject zone = findPrivacyZone(
-                context,
                 point.optDouble("lat", Double.NaN),
-                point.optDouble("lng", Double.NaN)
+                point.optDouble("lng", Double.NaN),
+                zoneRead,
+                cellKey
             );
             if (zone == null) {
                 redactedPoints.put(point);

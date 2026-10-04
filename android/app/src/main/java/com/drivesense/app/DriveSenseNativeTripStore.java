@@ -122,6 +122,16 @@ class DriveSenseNativeTripStore {
 
     static boolean addCompletedTrip(Context context, JSONObject trip) {
         boolean journaled = DriveSenseCompletedTripJournal.addCompletedTrip(context, trip);
+        return finishCompletedTripAdmission(context, journaled);
+    }
+
+    static boolean addCompletedTrip(Context context, JSONObject trip,
+                                    java.util.function.BooleanSupplier cancelled) {
+        boolean journaled = DriveSenseCompletedTripJournal.addCompletedTripIfAbsent(context, trip, cancelled);
+        return finishCompletedTripAdmission(context, journaled);
+    }
+
+    private static boolean finishCompletedTripAdmission(Context context, boolean journaled) {
         if (!journaled) return false;
         if (!DriveSenseP35Flags.nativeAuthorityEnabled()) return true;
         try {

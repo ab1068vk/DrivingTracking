@@ -337,6 +337,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private Location previousLocation;
     // Single thread so checkpoint writes stay ordered; the newest state always wins.
     private ExecutorService checkpointExecutor;
+    private final DriveSenseCheckpointWriteGate checkpointWriteGate = new DriveSenseCheckpointWriteGate();
     // Created lazily rather than in a field initializer: an initializer would make
     // every `new DriveSenseAutoTrackingService()` call Looper.getMainLooper(), which
     // is unmocked in JVM unit tests and took the whole JS/Android parity suite down.
@@ -369,6 +370,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     private long lastActiveCheckpointMs = 0L;
     private long checkpointRecoveryEndOverrideMs = 0L;
     private JSONObject pendingCompletedTrip;
+    private volatile boolean legacyCompletionInFlight = false;
+    private volatile boolean serviceDestroyed = false;
+    private String recoveringCompletionTripId = "";
     private JSONObject pendingSpoolCompletionMetadata;
     private long nextCompletedTripSaveRetryMs = 0L;
     private JSONArray pendingParkingRefinementPoints;
@@ -436,6 +440,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
     @Override
     public void onCreate() {
         super.onCreate();
+        serviceDestroyed = false;
         physicalHarnessInstance = new WeakReference<>(this);
         serviceRunning = true;
         explicitStopRequested = false;
@@ -602,6 +607,9 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             finishTrip("notification_end_trip", keepArmed);
             recordDiagnostic("service_armed", "Native service is armed for auto tracking.", "notification_end_trip", 0d, 0L, 0d);
             if (!keepArmed) {
+                // The legacy completion now owns a background durability turn.
+                // Keep this foreground service alive until the journal commits.
+                if (legacyCompletionInFlight || pendingCompletedTrip != null) return START_STICKY;
                 explicitStopRequested = true;
                 DriveSenseTrackingWatchdog.cancel(this);
                 DriveSenseNativeTripStore.setServiceEnabled(this, false);
@@ -683,24 +691,23 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     @Override
     public void onDestroy() {
+        serviceDestroyed = true;
         // An involuntary destroy (OEM battery sweep, low-memory stop) must not finalize the
         // drive: doing so splits one real trip into several. Freeze it as a checkpoint instead
         // so a relaunch resumes it, and let restoreActiveTripCheckpointIfAvailable() decide
         // resume-vs-finalize based on how long the gap turned out to be.
-        boolean involuntaryStop = isTripActive() && !explicitStopRequested && !dataErasureInProgress;
-        if (involuntaryStop) {
+        boolean activeAtDestroy = isTripActive() && !dataErasureInProgress;
+        if (activeAtDestroy) {
             persistActiveTripCheckpoint(System.currentTimeMillis(), true);
             recordDiagnostic(
                 "service_destroyed_involuntary",
-                "Tracking stopped without an explicit stop; trip kept resumable.",
+                "Tracking stopped before a durable completion; trip kept resumable.",
                 "service_destroyed",
                 lastKnownSpeedKmh,
                 0L,
                 0d
             );
             DriveSenseTrackingWatchdog.onTrackingInterrupted(this);
-        } else if (!dataErasureInProgress) {
-            finishTrip("service_destroyed", false);
         }
         clearPendingParkingRefinement();
         unregisterVehicleConnectionReceiver();
@@ -969,6 +976,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
     static void stopForDataErasure(Context context) {
         dataErasureInProgress = true;
+        DriveSenseCompletionPersistence.cancelAllForDataErasure();
         DriveSenseNativeTripStore.setServiceEnabled(context, false);
         context.getSharedPreferences(DELIBERATE_STOP_PREFS, Context.MODE_PRIVATE).edit().clear().commit();
         try {
@@ -2323,6 +2331,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             ? checkpointRecoveryEndOverrideMs
             : System.currentTimeMillis();
         checkpointRecoveryEndOverrideMs = 0L;
+        checkpointWriteGate.invalidatePending();
         persistActiveTripCheckpoint(endMs, true);
         JSONArray points = activePoints;
         JSONArray timeline = activeTimeline != null ? activeTimeline : new JSONArray();
@@ -2417,15 +2426,16 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         resetMotionState();
         stopMotionSensors();
         stopLocationUpdates();
-        if (keepArmed && DriveSenseNativeTripStore.isServiceEnabled(this)) {
-            startArmedLocationUpdates();
-        }
-        updateNotification(isParkedStopReason(reason) ? "Parked - waiting for movement" : "Ready when you start moving");
+        // Do not admit a new trip until the former route has durable journal
+        // ownership. The completed JSON and checkpoint remain recovery inputs.
+        updateNotification("Trip save pending - captured route preserved");
 
         TripStats stats = calculateStats(points, startMs, endMs);
         if (points.length() < MIN_POINTS_TO_SAVE || stats.durationSeconds < MIN_TRIP_MS / 1000L || stats.distanceKm < MIN_TRIP_KM) {
             DriveSenseActiveTripCheckpointStore.clear(this);
             recordDiagnostic("trip_discarded", "Native trip was too short to save.", reason, 0d, stoppedSeconds, 0d);
+            if (keepArmed && DriveSenseNativeTripStore.isServiceEnabled(this)) startArmedLocationUpdates();
+            updateNotification("Ready when you start moving");
             return;
         }
         if (stats.nightClassification != null && stats.nightClassification.optBoolean("custom_fallback_used", false)) {
@@ -2533,21 +2543,10 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             Log.w(TAG, "Could not finish trip", error);
         }
 
-        boolean completedTripSaved = DriveSenseNativeTripStore.addCompletedTrip(this, trip);
-        if (!completedTripSaved) {
-            pendingCompletedTrip = trip;
-            nextCompletedTripSaveRetryMs = System.currentTimeMillis() + COMPLETED_TRIP_SAVE_RETRY_MS;
-            recordDiagnostic(
-                "trip_save_failed",
-                "Native trip ended but could not be queued for app recovery.",
-                reason,
-                stats.maxSpeedKmh,
-                stoppedSeconds,
-                maxDriftSinceStopM
-            );
-            updateNotification("Trip save failed - open Road Sage");
-            return;
-        }
+        final JSONArray finalizedPoints = points;
+        final long finalizedEndMs = endMs;
+        pendingCompletedTrip = trip;
+        if (!submitLegacyCompletion(trip, () -> {
         recordDiagnostic(
             "trip_saved",
             "Native trip safely queued for app import.",
@@ -2556,8 +2555,16 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             stoppedSeconds,
             maxDriftSinceStopM
         );
-        DriveSenseActiveTripCheckpointStore.clear(this);
-        JSONObject rawParkingEndpoint = points.optJSONObject(points.length() - 1);
+        markDeliberateStopTargetTerminalIfMatches(tripId);
+        if (serviceDestroyed) return;
+        String awaitingStop = pendingDeliberateStopRequestId;
+        if (awaitingStop != null) {
+            mainHandler().post(() -> handleDeliberateConfigurationStop(awaitingStop));
+        } else if (keepArmed && DriveSenseNativeTripStore.isServiceEnabled(this)) {
+            startArmedLocationUpdates();
+        }
+        updateNotification(isParkedStopReason(reason) ? "Parked - waiting for movement" : "Ready when you start moving");
+        JSONObject rawParkingEndpoint = finalizedPoints.optJSONObject(finalizedPoints.length() - 1);
         boolean privateParkingEndpoint = rawParkingEndpoint != null && PrivacyZoneChecker.isInsidePrivacyZone(
             this,
             rawParkingEndpoint.optDouble("lat", Double.NaN),
@@ -2565,7 +2572,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         );
         JSONObject parkedResolution = isAdministrativeStopReason(reason) || privateParkingEndpoint
             ? null
-            : DriveSenseParkingResolver.resolve(points, endMs, parkingSignals);
+            : DriveSenseParkingResolver.resolve(finalizedPoints, finalizedEndMs, parkingSignals);
         String parkingSource = tailTrim.removedPoints > 0
             ? "native_trimmed_parked_tail"
             : isParkedStopReason(reason) ? "native_parking_stop" : "native_trip_end";
@@ -2595,17 +2602,17 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
                 this,
                 parkedResolution.optDouble("lat"),
                 parkedResolution.optDouble("lng"),
-                endMs,
+                finalizedEndMs,
                 tripId,
                 parkingSource,
                 parkedResolution
             );
             if (!privateParkingEndpoint) {
                 beginParkingRefinement(
-                    points,
+                    finalizedPoints,
                     parkedResolution,
                     parkingSignals,
-                    endMs,
+                    finalizedEndMs,
                     tripId,
                     parkingSource,
                     !keepArmed
@@ -2617,7 +2624,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
             // distinguish a protected stop from a GPS result that needs review.
             DriveSenseNativeTripStore.suppressLastParkedLocation(
                 this,
-                endMs,
+                finalizedEndMs,
                 tripId,
                 privateParkingEndpoint ? "privacy_zone" : "trip_end_unavailable"
             );
@@ -2629,6 +2636,16 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         // reached on a background trip is reported straight away, rather than
         // the next time the user opens the Settings page.
         CalibrationMilestoneNotifier.recordCompletedTrip(this, stats == null ? 0d : stats.distanceKm);
+        if (!keepArmed && pendingDeliberateStopRequestId == null) {
+            explicitStopRequested = true;
+            DriveSenseTrackingWatchdog.cancel(this);
+            DriveSenseNativeTripStore.setServiceEnabled(this, false);
+            if (pendingParkingRefinementPoints == null) stopSelf();
+        }
+        })) {
+            nextCompletedTripSaveRetryMs = System.currentTimeMillis() + COMPLETED_TRIP_SAVE_RETRY_MS;
+            updateNotification("Trip save pending - captured route preserved");
+        }
     }
 
     /** P3.5 bounded producer completion. Legacy completion remains dark-gate fallback only. */
@@ -3740,7 +3757,69 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         });
     }
 
+    private boolean submitLegacyCompletion(JSONObject trip, Runnable onDurable) {
+        String tripId = trip == null ? "" : trip.optString("id", "").trim();
+        if (tripId.isEmpty() || onDurable == null || legacyCompletionInFlight) return false;
+        legacyCompletionInFlight = true;
+        Context appContext = getApplicationContext();
+        long erasureEpoch = DriveSenseCompletionPersistence.erasureEpoch();
+        boolean submitted = DriveSenseCompletionPersistence.submit(
+            tripId,
+            () -> {
+                if (dataErasureInProgress
+                    || !DriveSenseCompletionPersistence.isErasureEpochCurrent(erasureEpoch)) return false;
+                boolean saved = DriveSenseNativeTripStore.hasCompletedTrip(appContext, tripId)
+                    || DriveSenseNativeTripStore.addCompletedTrip(
+                        appContext, trip, () -> dataErasureInProgress
+                            || !DriveSenseCompletionPersistence.isErasureEpochCurrent(erasureEpoch)
+                    );
+                if (saved && !dataErasureInProgress
+                    && DriveSenseCompletionPersistence.isErasureEpochCurrent(erasureEpoch)) {
+                    checkpointWriteGate.clearAfterDurable(
+                        () -> clearCompletedCheckpointIfOwned(appContext, tripId)
+                    );
+                }
+                return saved;
+            },
+            saved -> {
+                legacyCompletionInFlight = false;
+                if (saved) {
+                    pendingCompletedTrip = null;
+                    nextCompletedTripSaveRetryMs = 0L;
+                    if (!dataErasureInProgress) onDurable.run();
+                    return;
+                }
+                nextCompletedTripSaveRetryMs = System.currentTimeMillis() + COMPLETED_TRIP_SAVE_RETRY_MS;
+                if (serviceDestroyed) return;
+                recordDiagnostic(
+                    "trip_save_failed",
+                    "Native trip ended but could not be queued for app recovery.",
+                    "completed_trip_journal", 0d, 0L, 0d
+                );
+                updateNotification("Trip save pending - captured route preserved");
+                mainHandler().postDelayed(
+                    () -> retryPendingCompletedTripSave(false),
+                    COMPLETED_TRIP_SAVE_RETRY_MS
+                );
+            }
+        );
+        if (!submitted) legacyCompletionInFlight = false;
+        return submitted;
+    }
+
+    private static void clearCompletedCheckpointIfOwned(Context context, String tripId) {
+        JSONObject checkpoint = DriveSenseActiveTripCheckpointStore.load(context, System.currentTimeMillis());
+        if (checkpoint != null && tripId.equals(checkpoint.optString("trip_id", ""))) {
+            DriveSenseActiveTripCheckpointStore.clear(context);
+        }
+    }
+
     private boolean retryPendingCompletedTripSave(boolean force) {
+        if (recoveringCompletionTripId != null && !recoveringCompletionTripId.isEmpty()) {
+            if (DriveSenseCompletionPersistence.isInFlight(recoveringCompletionTripId)) return false;
+            recoveringCompletionTripId = "";
+        }
+        if (legacyCompletionInFlight) return false;
         if (pendingSpoolCompletionMetadata != null) {
             long nowMs = System.currentTimeMillis();
             if (!force && nowMs < nextCompletedTripSaveRetryMs) return false;
@@ -3761,26 +3840,25 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (pendingCompletedTrip == null) return true;
         long nowMs = System.currentTimeMillis();
         if (!force && nowMs < nextCompletedTripSaveRetryMs) return false;
-        String completedTripId = pendingCompletedTrip.optString("id", "").trim();
-        if (!DriveSenseNativeTripStore.addCompletedTrip(this, pendingCompletedTrip)) {
+        JSONObject retryTrip = pendingCompletedTrip;
+        String completedTripId = retryTrip.optString("id", "").trim();
+        if (!submitLegacyCompletion(retryTrip, () -> {
+            markDeliberateStopTargetTerminalIfMatches(completedTripId);
+            if (!serviceDestroyed) {
+                recordDiagnostic(
+                    "trip_save_recovered",
+                    "Previous trip was safely queued after a storage retry.",
+                    "completed_trip_retry", 0d, 0L, 0d
+                );
+                updateNotification("Previous trip recovered - ready for movement");
+                if (DriveSenseNativeTripStore.isServiceEnabled(this)) startArmedLocationUpdates();
+            }
+        })) {
             nextCompletedTripSaveRetryMs = nowMs + COMPLETED_TRIP_SAVE_RETRY_MS;
             updateNotification("Previous trip recovery pending - open Road Sage");
             return false;
         }
-        pendingCompletedTrip = null;
-        nextCompletedTripSaveRetryMs = 0L;
-        DriveSenseActiveTripCheckpointStore.clear(this);
-        markDeliberateStopTargetTerminalIfMatches(completedTripId);
-        recordDiagnostic(
-            "trip_save_recovered",
-            "Previous trip was safely queued after a storage retry.",
-            "completed_trip_retry",
-            0d,
-            0L,
-            0d
-        );
-        updateNotification("Previous trip recovered - ready for movement");
-        return true;
+        return false;
     }
 
     private boolean isNativeVoiceAlertTypeEnabled(String alertKey) {
@@ -5939,6 +6017,15 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         if (checkpoint == null) return;
 
         String checkpointTripId = checkpoint.optString("trip_id", "").trim();
+        if (DriveSenseCompletionPersistence.observeInFlight(checkpointTripId, saved -> {
+            recoveringCompletionTripId = "";
+            if (!serviceDestroyed && !dataErasureInProgress) {
+                restoreActiveTripCheckpointIfAvailable(preserveStalePhysicalHarnessCase);
+            }
+        })) {
+            recoveringCompletionTripId = checkpointTripId;
+            return;
+        }
         if (DriveSenseNativeTripStore.hasCompletedTrip(this, checkpointTripId)) {
             DriveSenseActiveTripCheckpointStore.clear(this);
             return;
@@ -6153,6 +6240,7 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
 
         lastActiveCheckpointMs = nowMs;
         final JSONObject pendingCheckpoint = checkpoint;
+        final long checkpointGeneration = checkpointWriteGate.generation();
         final ExecutorService executor = checkpointExecutor;
         if (executor == null || executor.isShutdown()) {
             recordCheckpointSaveResult(DriveSenseActiveTripCheckpointStore.save(this, pendingCheckpoint), nowMs);
@@ -6160,7 +6248,11 @@ public class DriveSenseAutoTrackingService extends Service implements SensorEven
         }
         try {
             executor.execute(() -> {
-                boolean saved = DriveSenseActiveTripCheckpointStore.save(this, pendingCheckpoint);
+                Boolean saved = checkpointWriteGate.saveIfCurrent(
+                    checkpointGeneration,
+                    () -> DriveSenseActiveTripCheckpointStore.save(this, pendingCheckpoint)
+                );
+                if (saved == null) return;
                 if (saved) return;
                 mainHandler().post(() -> recordCheckpointSaveResult(false, nowMs));
             });
